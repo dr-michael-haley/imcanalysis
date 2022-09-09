@@ -59,7 +59,7 @@ def celltable_to_adata(column_properties,cell_table,dictionary,misc_table=False,
     for index, row in columns_table.iterrows():
         
         # Make all lower case
-        row = row.lower()
+        row['Category'] = row['Category'].lower()
         
         if row['Category']=='marker':
             markers.append(row['Column'])
@@ -109,7 +109,8 @@ def celltable_to_adata(column_properties,cell_table,dictionary,misc_table=False,
         adata = sc.AnnData(master[markers])
     elif marker_normalisation=='99th':
         raw_markers = master[markers]
-        markers_normalised = raw_markers.div(raw_markers.quantile(q=.99)).clip(upper=1)
+        markers_normalised = raw_markers.div(raw_markers.quantile(q=.99)).clip(upper=1)        
+        markers_normalised = np.nan_to_num(markers_normalised, nan=0)
         adata = sc.AnnData(markers_normalised)
         print('\nData normalised to 99th percentile')
 
