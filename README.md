@@ -1,5 +1,5 @@
 # Contents
-## Mike_IMC_Pipeline - last updated 8th Sept 2022
+## Mike_IMC_Pipeline - last updated 21st Sept 2022
 This is the latest iteration of my Python pipeline for IMC analysis, which includes some basic details on how to get setup the Conda environment and get started. This is a work in progress, and should be treated as such.
 
 ## Mike_IMC_Denoise.ipynb
