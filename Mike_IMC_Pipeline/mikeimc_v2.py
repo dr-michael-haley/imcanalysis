@@ -39,6 +39,8 @@ def celltable_to_adata(column_properties,cell_table,dictionary,misc_table=False,
     """
     import pandas as pd
     import scanpy as sc
+    global markers
+    global markers_normalised
     
     #This stops a warning getting returned that we don't need to worry about
     pd.set_option('mode.chained_assignment',None)
@@ -112,6 +114,7 @@ def celltable_to_adata(column_properties,cell_table,dictionary,misc_table=False,
         markers_normalised = raw_markers.div(raw_markers.quantile(q=.99)).clip(upper=1)        
         markers_normalised = np.nan_to_num(markers_normalised, nan=0)
         adata = sc.AnnData(markers_normalised)
+        adata.var_names=markers
         print('\nData normalised to 99th percentile')
 
     # Add in a master index to uniquely identify each cell over the entire dataset    
@@ -651,8 +654,12 @@ def pop_stats(adata_plotting,groups,Case_id,ROI_id,x_axis,display_tables=True,fi
     
         print('Statistics:')
         display(stats)
+    
+    pop_stats.cells = cells
 
 
+    
+    
 def reset_plt():
     import matplotlib
     matplotlib.pyplot.rcParams.update(matplotlib.rcParamsDefault)
@@ -740,11 +747,17 @@ def interactions_summary(so, #Define spatial heterogeneity object
                         title=True,
                         reindex=False, #List of populations in the order they should appear
                         calc_ttest_p_value=False,
-                        cmap='coolwarm'):
+                        cmap='coolwarm',
+                        vmax=None,
+                        vmin=None,
+                        mult_comp=None,
+                        mult_comp_alpha=0.05,
+                        cluster_map=False):
 
     import seaborn as sb
     import matplotlib.pyplot as plt 
     from scipy.stats import ttest_1samp
+    import statsmodels as sm
     #print(interaction_reference + ' - ' + var + ' - ' + aggregate_function)    
     
     
@@ -780,11 +793,19 @@ def interactions_summary(so, #Define spatial heterogeneity object
         pvalues = []
 
         for count, i in enumerate(summary.index.values):
-            stats_row = results_df.reset_index()[results_df.index==i]['diff']
+            stats_row = results_df.reset_index()[results_df.index==i][var]
             pvalue = ttest_1samp(stats_row,0).pvalue
             pvalues.append(pvalue)
 
-        summary['pvalue']=pvalues
+        
+        ######## Correct for multiple comparissons using statsmodels
+        
+        if not mult_comp:
+            summary['pvalue']=pvalues
+        else:
+            summary['pvalue']=sm.stats.multitest.multipletests(pvalues,alpha=mult_comp_alpha,method=mult_comp)[1]
+        
+        
 
     ####################### Calculate number of pops if not specifed
     
@@ -841,36 +862,45 @@ def interactions_summary(so, #Define spatial heterogeneity object
     
     if var=='p':
         sb.heatmap(data=df1, cmap=cmap, robust=True, vmax=0.05,vmin=0,ax=ax,linewidths=.5, cbar_kws=cbar_kws)
+    
     elif calc_ttest_p_value:
-        sb.heatmap(data=df1, cmap=cmap, robust=True,ax=ax,linewidths=.5,annot=sig_array, fmt="",
-                   annot_kws=annot_kws,
-                  cbar_kws=cbar_kws)      
+        
+        if not cluster_map:        
+            sb.heatmap(data=df1, cmap=cmap, vmax=vmax, vmin=vmin, robust=True,ax=ax,linewidths=.5,annot=sig_array, fmt="",
+                       annot_kws=annot_kws,
+                      cbar_kws=cbar_kws)
+        else:
+            sb.clustermap(data=df1, cmap=cmap, vmax=vmax, vmin=vmin)            
+        
     else:
         sb.heatmap(data=df1, cmap=cmap, robust=True,ax=ax,linewidths=.5, cbar_kws=cbar_kws)
     
-    ax.set_aspect(1)
-    ax.set_yticklabels(ax.get_yticklabels(), rotation=0)
+    if not cluster_map:
+        ax.set_aspect(1)
+        ax.set_yticklabels(ax.get_yticklabels(), rotation=0)
     
-    
-    ####################### Set a title, or use a default title
-    if title==True:
-        ax.set_title(interaction_reference + ' - ' + var + ' - ' + aggregate_function)
-    elif title==False:
-        'Nothing'
-    else:
-        ax.set_title(title)
-    
-    if save:    
-        fig = ax.get_figure()
-        fig.savefig(save, bbox_inches='tight',dpi=200)
 
-    if show:
-        fig.show()
+        ####################### Set a title, or use a default title
+        if title==True:
+            ax.set_title(interaction_reference + ' - ' + var + ' - ' + aggregate_function)
+        elif title==False:
+            'Nothing'
+        else:
+            ax.set_title(title)
+
+        if save:    
+            fig = ax.get_figure()
+            fig.savefig(save, bbox_inches='tight',dpi=200)
+
+        if show:
+            fig.show()
     
     interactions_summary.new = new    
     interactions_summary.roi_data = results_df
     interactions_summary.summary_data = summary
     interactions_summary.heatmap_data = df1
+    interactions_summary.stats_array = stats_array
+    interactions_summary.sig_array = sig_array    
     
 def interactions_table(so, #Define spatial heterogeneity object
                         samples_list, #Specify list of samples to combine
@@ -1250,6 +1280,8 @@ def plot_voronoi(points,colors,invert_y = True,edge_color = 'facecolor',line_wid
 
         #     plt.scatter(np.mean(p.boundary.xy[0]),np.mean(p.boundary.xy[1]),c = colors[i])
     return areas
+
+
 def draw_voronoi_scatter(spot,c,voronoi_palette = sns.color_palette('bright'),scatter_palette = 'voronoi',X = 'X:X', Y = 'Y:Y',voronoi_hue = 'neighborhood10',scatter_hue = 'ClusterName',
         figsize = (5,5),
          voronoi_kwargs = {},
@@ -1295,3 +1327,695 @@ def draw_voronoi_scatter(spot,c,voronoi_palette = sns.color_palette('bright'),sc
                    )
     plt.axis('off');
     return a
+
+def graph_simplify_once(g, attr, use_xy=False, x='x', y='y'):
+    import numpy as np
+    import networkx as nx
+    global new_node
+    global start_len
+    global end_len
+    import copy as copy
+    
+    graph=g.copy()
+    
+    # To enable first loop
+    update=False
+    
+    # Itterate through all nodes        
+    nodes = list(graph.nodes)
+    for n in nodes:
+
+        if update==False:
+
+            # Itterate through each nodes neighbours
+            neighs = list(graph.neighbors(n))
+            for m in neighs:
+
+                if update==False:
+
+                    # If one of the neighbours is in the same type
+                    if graph.nodes[n][attr]==graph.nodes[m][attr]:
+
+                        attr_value=graph.nodes[n][attr]
+
+                        # Add a new (blank) node
+                        #new_node = np.max(graph.nodes)+1        
+                        new_node = np.max(len(graph.nodes))+1     
+
+
+                        #graph.add_nodes_from([(new_node, dict(graph.nodes(data=True)[n]))])
+                        graph.add_nodes_from([(new_node, {attr:attr_value})])
+
+
+                        # Add in links between the original node..
+                        n_neigh = list(graph.neighbors(n))
+                        for n_edge in n_neigh: 
+                            graph.add_edge(new_node, n_edge)
+
+                        # And the neighbour with which it had a shared attribute....
+                        m_neigh = list(graph.neighbors(m))
+                        for m_edge in m_neigh: 
+                            graph.add_edge(new_node, m_edge)
+
+                        # Add the number of cells together
+                        n_cells = graph.nodes[n]['cells']
+                        m_cells = graph.nodes[m]['cells']
+                        
+                        if use_xy:
+                            new_x = graph.nodes[n][x] + graph.nodes[m][x]
+                            new_y = graph.nodes[n][y] + graph.nodes[m][y]
+                            nx.set_node_attributes(graph, {new_node: {x:new_x, y:new_y}})                       
+                        
+                        nx.set_node_attributes(graph, {new_node: {'cells':(n_cells+m_cells)}})
+
+                        # Remove self referrential edges            
+                        try:                           
+                            graph.remove_edges_from(new_node,new_node)
+                        except:
+                            pass
+
+                        # Remove the original nodes
+                        graph.remove_node(n)
+
+                        try:
+                            graph.remove_node(m)
+                        except:
+                            pass
+
+                        # Update
+                        update = True        
+                    else:
+                        update = False
+
+                else:
+                    break
+
+        else:
+            break
+
+    # Final pruning of self edges
+    graph.remove_edges_from(nx.selfloop_edges(graph))
+    
+    return graph
+
+
+def graph_simplify(g, attr, use_xy=False, x='x', y='y', progress=None):
+    
+    import networkx as nx
+    
+    graph=g.copy()
+    nx.set_node_attributes(graph,1,name='cells')
+    
+    if use_xy:
+        for node in graph.nodes:
+            graph.nodes[node][x]=[graph.nodes[node][x]]
+            graph.nodes[node][y]=[graph.nodes[node][y]]
+
+    if progress:
+        original_length=len(graph.nodes)
+        print('Starting size of graph: '+str(len(graph.nodes)))
+        prog_count=0
+            
+            
+    while True:
+        start=len(graph.nodes)
+                
+        graph = graph_simplify_once(g=graph, attr=attr, use_xy=use_xy, x=x, y=y)
+        prog_count+=1
+        
+        end=len(graph.nodes)
+        
+        if progress:
+            if prog_count==round(original_length/progress):
+                print('Current size:' + str(end))
+                prog_count=0
+        
+        if start==end:
+            break
+            
+    
+    if use_xy:
+        for node in graph.nodes:
+            graph.nodes[node][x]=np.mean(graph.nodes[node][x])
+            graph.nodes[node][y]=np.mean(graph.nodes[node][y])
+                    
+    
+    return graph
+
+
+
+def graph_simplify_BACKUP(g, attr):
+    import numpy as np
+    import networkx as nx
+    global new_node
+    global start_len
+    global end_len
+    import copy as copy
+    
+    graph=g.copy()
+    
+    # Set all cells to 1 cell - we will use this to keep track of node/cell aggregation
+    # nx.set_node_attributes(graph,1,name='cells')
+    
+    
+    # Keep iterating through all the nodes until there are no nodes that are connected with the same attribute        
+    end_len=0   
+    start_len=len(graph.nodes)
+
+    
+    while True:
+        
+        update=False
+    
+        #Get initial size of network
+        start_len=len(graph.nodes)
+        
+        # Itterate through all nodes        
+        nodes = list(graph.nodes)
+        
+        for n in nodes:
+
+            if update==False:
+            
+                # Itterate through each nodes neighbours
+                neighs = list(graph.neighbors(n))
+                for m in neighs:
+
+                    if update==False:
+
+                        # If one of the neighbours is in the same type
+                        if graph.nodes[n][attr]==graph.nodes[m][attr]:
+
+                            attr_value=graph.nodes[n][attr]
+                            
+                            # Add a new (blank) node
+                            #new_node = np.max(graph.nodes)+1        
+                            new_node = np.max(len(graph.nodes))+1     
+                            
+                            
+                            #graph.add_nodes_from([(new_node, dict(graph.nodes(data=True)[n]))])
+                            graph.add_nodes_from([(new_node, {attr:attr_value})])
+                            
+
+                            # Add in links between the original node..
+                            n_neigh = list(graph.neighbors(n))
+                            for n_edge in n_neigh: 
+                                graph.add_edge(new_node, n_edge)
+
+                            # And the neighbour with which it had a shared attribute....
+                            m_neigh = list(graph.neighbors(m))
+                            for m_edge in m_neigh: 
+                                graph.add_edge(new_node, m_edge)
+                                
+                            # Add the number of cells together
+                            n_cells = graph.nodes[n]['cells']
+                            m_cells = graph.nodes[m]['cells']                                                       
+                            nx.set_node_attributes(graph, {new_node: {'cells':(n_cells+m_cells)}})
+
+                            # Remove self referrential edges            
+                            try:                           
+                                graph.remove_edges_from(new_node,new_node)
+                            except:
+                                pass
+
+                            # Remove the original nodes
+                            graph.remove_node(n)
+                                                 
+                            try:
+                                graph.remove_node(m)
+                            except:
+                                print('Could not remove node '+str(m))
+
+                            # Update
+                            update = True        
+                        else:
+                            update = False
+
+                    else:
+                        break
+                
+            else:
+                break
+
+        #Get end length of network        
+        end_len=len(graph.nodes)
+        
+        #print('START:'+str(start_len)+' END:'+str(end_len))
+        
+        if start_len==end_len:
+            #print('DONE')
+            break
+        
+    
+    # Final pruning of self edges
+    graph.remove_edges_from(nx.selfloop_edges(graph))
+    
+    return graph
+
+
+def load_single_img(filename):
+    
+    """
+    Loading single image from directory.
+    Parameters
+    ----------
+    filename : The image file name, must end with .tiff.
+        DESCRIPTION.
+    Returns
+    -------
+    Img_in : int or float
+        Loaded image data.
+    """
+    if filename.endswith('.tiff') or filename.endswith('.tif'):
+        Img_in = tp.imread(filename).astype('float32')
+    else:
+        raise ValueError('Raw file should end with tiff or tif!')
+    if Img_in.ndim != 2:
+        raise ValueError('Single image should be 2d!')
+    return Img_in
+
+def load_imgs_from_directory(load_directory,channel_name,quiet=False):
+    Img_collect = []
+    img_folders = glob(join(load_directory, "*", ""))
+    Img_file_list=[]
+
+    if not quiet:
+        print('Image data loaded from ...\n')
+    
+    for sub_img_folder in img_folders:
+        Img_list = [f for f in listdir(sub_img_folder) if isfile(join(sub_img_folder, f)) & (f.endswith(".tiff") or f.endswith(".tif"))]
+        for Img_file in Img_list:
+            if channel_name.lower() in Img_file.lower():
+                Img_read = load_single_img(sub_img_folder + Img_file)
+                
+                if not quiet:
+                    print(sub_img_folder + Img_file)
+                
+                Img_file_list.append(Img_file)
+                Img_collect.append(Img_read)
+                break
+
+    if not quiet:
+        print('\n' + 'Image data loaded completed!')
+    
+    if not Img_collect:
+        print(f'No such channel as {channel_name}. Please check the channel name again!')
+        return
+
+    return Img_collect, Img_file_list, img_folders
+
+
+def processed_folder_rename(acquisition_metadata='acquisition_metadata.csv',
+                            folder='processed',
+                            new_title_column='description'):
+
+                            
+    ''' This function goes through a folder, renaming the subfolders with a matched list in a .csv file. I've been using this to rename the weird folder names produced by the Bodenmiller pipeline into actual ROI names. '''                            
+
+
+    roi_folder_names = pd.read_csv(acquisition_metadata)
+
+    t = [x[0] for x in os.walk(folder)]
+
+    for folder, name in zip(t[1:],list(roi_folder_names[new_title_column])): 
+
+        os.rename(folder,os.path.join(folder, name))
+        
+def slice_adata_rois(adata,
+              divide_by,
+              ROI_size,
+              ROI_col='ROI',
+              X='X_loc',
+              Y='Y_loc'):
+    
+    '''This will add a new adata.obs column that slices the ROI into chunks'''
+    
+    global sliced
+    
+    bins = np.array(range(0, dimension, int(ROI_size/divide_by)))
+
+    y_bins = np.digitize(adata.obs[X], bins)
+    x_bins = np.digitize(adata.obs[Y], bins)
+
+    combined =[r+"_x"+str(m)+"_y"+str(n) for r,m,n in zip(adata.obs[ROI_col] ,x_bins, y_bins)]
+    
+    sliced = 'sliced_'+str(divide_by)
+    
+    adata.obs[sliced]=combined
+    adata.obs[sliced]=adata.obs[sliced].astype('category')
+    
+    
+def pos_dict(g, x='X_loc', y='Y_loc'):
+    
+    ''' Generates a position dictionary for draw_networkx '''
+    
+    pos_dict={}
+    for n in g.nodes:
+       
+        #try:
+            x_val=g.nodes[n][x]
+            y_val=g.nodes[n][y]
+            pos_dict.update({n:np.array([x_val,y_val])})
+       # except:
+       #     print(f'Error in node {n}')
+    return pos_dict
+
+
+def display_networkx(g, colour_attr, figsize=(20,20), dpi=75, cmap=cc.glasbey_category10, pos=None, ax=None, save=None, show_edges=True, labels=None, node_size=300):
+
+    import networkx as nx
+    
+    pop_list=[]
+    for i in g.nodes:
+        pop_list.append(g.nodes[i][colour_attr])
+
+    colours = [cmap[x] for x in pop_list]
+        
+    if ax==None:   
+        fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+
+    if show_edges:
+        nx.draw_networkx(
+            g,
+            pos,
+            node_color=colours,
+            ax=ax,
+            labels=labels, 
+            node_size=node_size)
+    else:
+        nx.draw_networkx(
+            g,
+            pos,
+            node_color=colours,
+            ax=ax,
+            edgelist=[],
+            labels=labels, 
+            node_size=node_size)
+        
+    if save:
+        fig.savefig(save)
+
+def extract_athena_graph(so, sample_id, graph_type, obs, cell_id='cell_id'):
+
+    if type(obs) != list:
+        obs=[obs]
+    
+    import networkx as nx
+    
+    # Extract networkx graph from SO object
+    g = so.G[sample_id][graph_type].copy()
+
+    # Create a new data frame with node annotations
+    df_nodes = pd.DataFrame()
+    df_nodes[cell_id]=so.obs[sample_id].index
+    
+    for o in obs:
+        df_nodes[o]=so.obs[sample_id][o].reset_index()[o]
+
+    
+    # Set attributes
+    pops_dict = df_nodes.set_index(cell_id).to_dict('index')
+    nx.set_node_attributes(g, pops_dict)
+
+    # This removes self referential loops
+    g.remove_edges_from(nx.selfloop_edges(g))
+    
+    return g
+ 
+    
+    
+def athena_networkx_display(so, sample_id, graph_type, obs_colour, obs, cell_id='cell_id', cmap=cc.glasbey_category10, palette=None, figsize=(20,20), dpi=75, return_graph=False):
+
+    if type(obs) != list:
+        obs=[obs]    
+    
+    
+    import networkx as nx
+    # Extract networkx graph from SO object
+    g = so.G[sample_id][graph_type].copy()
+
+
+    # Create a new data frame with node annotations
+    df_nodes = pd.DataFrame()
+    df_nodes[cell_id]=so.obs[sample_id].index
+
+    
+    for o in obs:
+        df_nodes[o]=so.obs[sample_id][o].reset_index()[o]
+
+    if palette:
+        df_nodes['colour']=df_nodes['population'].map(palette)                 
+    else:                 
+        df_nodes['colour']=[cmap[x] for x in df_nodes[obs_colour].cat.codes]
+
+    # Set attributes from a dictionary made from dataframe
+    pops_dict = df_nodes.set_index(cell_id).to_dict('index')
+    nx.set_node_attributes(g, pops_dict)
+
+    # This removes self referential loops
+    g.remove_edges_from(nx.selfloop_edges(g))
+
+    #for n in g.nodes:
+    #    del g.nodes[n]['X_loc']
+    #    del g.nodes[n]['Y_loc']    
+
+    athena_networkx_display.nodes = df_nodes
+    
+    node_attributes = (obs,)
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+
+    nx.draw_networkx(
+        g,
+        node_color=df_nodes['colour'],
+        ax=ax
+    )
+
+    plt.show()
+    
+    if return_graph==True:
+        return g
+
+    
+def add_graph_back_to_so(so, sample, graph, graph_title, node_attr, add_to_obs=True):
+
+    import pandas as pd
+    
+    from copy import copy
+    
+    global new_df
+    global cell_id
+    global attr
+    
+    so.G[sample].update({graph_title:graph})
+
+    cell_id=[]
+    attr=[]    
+    for n in graph.nodes:
+        
+        if not n in so.obs[sample].index:
+            cell_id.append(copy(n))
+            attr.append(copy(graph.nodes[n][node_attr]))
+            
+    
+    new_df = pd.DataFrame(zip(cell_id,attr), columns=['cell_id', node_attr]).set_index('cell_id')
+    
+    so.obs[sample]=pd.concat([new_df, so.obs[sample]])
+    
+    
+def mlm_pops(adata_plotting,
+                 groups,
+                 Case_id,
+                 ROI_id,
+                 x_axis,
+                 display_tables=True,
+             fig_size=(5,5), 
+             confidence_interval=68,
+             save=False, 
+             log_scale=True,
+            crosstab_norm=False,
+            col_remap=None):
+
+    import seaborn as sb
+    import pandas as pd
+    import statsmodels as sm
+    import scipy as sp
+    import matplotlib.pyplot as plt 
+    #import statsmodels.api as sm
+    import statsmodels.formula.api as smf
+    
+    global cells
+    global cells_long
+    global case_average_long
+    
+    cells = pd.crosstab([adata_plotting.obs[groups], adata_plotting.obs[Case_id], adata_plotting.obs[ROI_id]],adata_plotting.obs[x_axis],normalize=crosstab_norm)
+    cells.columns=cells.columns.astype('str')
+
+    cells_long = cells.reset_index().melt(id_vars=[groups,Case_id,ROI_id])
+    cells_long.columns=cells_long.columns.astype('str')
+
+    fig, ax = plt.subplots(figsize=fig_size)
+    
+    #Plotting
+    #sb.barplot(data = cells_long, y = "value", x = x_axis, hue = groups, ci=confidence_interval, ax=ax)
+    sb.boxplot(data = cells_long, y = "value", x = x_axis, hue = groups, ax=ax)
+    
+    #Plotting settings
+    ax.set_xticklabels(ax.get_xticklabels(),rotation = 90, fontsize = 10)
+    ax.set_ylabel('Cells')
+              
+    if log_scale:
+        ax.set_yscale("log")
+   
+    ax.set_xlabel(x_axis)
+    ax.legend(bbox_to_anchor=(1.01, 1))
+    
+    if save:
+        fig.savefig(save, bbox_inches='tight',dpi=200)
+
+    col_names = adata_plotting.obs[groups].unique().tolist()
+
+    celltype = []
+    ttest = []
+    mw = []
+    mlm = []
+
+    stats_df = cells
+    
+    if col_remap:
+        stats_df.rename(columns=col_remap, inplace=True)
+    
+    for i in [' ', ',', '+', '/']:
+        stats_df.columns = stats_df.columns.str.replace(i, '_')
+ 
+    
+    mlm_pops.stats = stats_df
+    
+    for i,s in zip(cells.columns.tolist(), stats_df.columns.tolist()):
+        
+        formula = f"{s} ~ {groups}"
+        print(formula)
+        md = smf.mixedlm(formula, stats_df.reset_index(), groups=stats_df.reset_index()[Case_id])
+        mdf = md.fit()
+
+        celltype.append(i)
+        ttest.append(sp.stats.ttest_ind(cells.loc[col_names[0]][i], cells.loc[col_names[1]][i]).pvalue) 
+        mw.append(sp.stats.mannwhitneyu(cells.loc[col_names[0]][i], cells.loc[col_names[1]][i]).pvalue)
+        mlm.append(mdf.pvalues[1])
+
+    stats = pd.DataFrame(list(zip(celltype,ttest,mw, mlm)),columns = ['Cell Type','T test','Mann-Whitney', 'Mixed linear model'])   
+
+    #Multiple comparissons correction
+    for stat_column in ['T test','Mann-Whitney', 'Mixed linear model']:
+        corrected_stats = sm.stats.multitest.multipletests(stats[stat_column],alpha=0.05,method='holm-sidak')
+        stats[(stat_column+' Reject null?')]=corrected_stats[0]
+        stats[(stat_column+' Corrected Pval')]=corrected_stats[1]
+    
+    if display_tables:
+        print('ROI totals:')
+        display(cells)
+    
+        print('Statistics:')
+        display(stats)
+        
+
+
+def rgb_to_hex_colourmap(rgb_colour_map):
+    
+    import matplotlib
+
+    for p, c in rgb_colour_map.items():
+        colours_hex[p] = matplotlib.colors.to_hex(c)
+    
+    return colours_hex
+
+
+def mlm_table(data_frame,
+               value,
+                 groups,
+                 Case_id,
+                 ROI_id,
+                 x_axis,
+                 display_tables=True,
+             fig_size=(5,5), 
+             confidence_interval=68,
+             save=False, 
+             log_scale=True,
+            crosstab_norm=False,
+            col_remap=None):
+
+    import seaborn as sb
+    import pandas as pd
+    import statsmodels as sm
+    import scipy as sp
+    import matplotlib.pyplot as plt 
+    #import statsmodels.api as sm
+    import statsmodels.formula.api as smf
+    
+    global cells
+    global cells_long
+    global case_average_long
+    
+    fig, ax = plt.subplots(figsize=fig_size)
+
+    sb.boxplot(data = data_frame, y = value, x = x_axis, hue = groups, ax=ax)
+    
+    #Plotting settings
+    ax.set_xticklabels(ax.get_xticklabels(),rotation = 90, fontsize = 10)
+    ax.set_ylabel('Cells')
+              
+    if log_scale:
+        ax.set_yscale("log")
+   
+    ax.set_xlabel(x_axis)
+    ax.legend(bbox_to_anchor=(1.01, 1))
+    
+    if save:
+        fig.savefig(save, bbox_inches='tight',dpi=200)
+
+    col_names = data_frame[groups].unique().tolist()
+
+    celltype = []
+    ttest = []
+    mw = []
+    mlm = []
+
+    stats_df = pd.crosstab([data_frame[groups], data_frame[Case_id], data_frame[ROI_id]],data_frame[x_axis],normalize=crosstab_norm)
+    
+    if col_remap:
+        stats_df.rename(columns=col_remap, inplace=True)
+    
+    for i in [' ', ',', '+', '/']:
+        stats_df.columns = stats_df.columns.str.replace(i, '_')
+ 
+    
+    mlm_pops.stats = stats_df
+    
+    for s in stats_df.columns.tolist():
+        
+        formula = f"{s} ~ {groups}"
+        print(formula)
+        md = smf.mixedlm(formula, stats_df.reset_index(), groups=stats_df.reset_index()[Case_id])
+        mdf = md.fit()
+
+        celltype.append(i)
+        #ttest.append(sp.stats.ttest_ind(cells.loc[col_names[0]][s], cells.loc[col_names[1]][s]).pvalue) 
+        #mw.append(sp.stats.mannwhitneyu(cells.loc[col_names[0]][s], cells.loc[col_names[1]][s]).pvalue)
+        mlm.append(mdf.pvalues[1])
+
+    #stats = pd.DataFrame(list(zip(celltype,ttest,mw, mlm)),columns = ['Cell Type','T test','Mann-Whitney', 'Mixed linear model'])   
+    stats = pd.DataFrame(list(zip(celltype, mlm)),columns = ['Cell Type', 'Mixed linear model'])   
+
+    #Multiple comparissons correction
+    #for stat_column in ['T test','Mann-Whitney', 'Mixed linear model']:
+    for stat_column in ['Mixed linear model']:
+
+        corrected_stats = sm.stats.multitest.multipletests(stats[stat_column],alpha=0.05,method='holm-sidak')
+        stats[(stat_column+' Reject null?')]=corrected_stats[0]
+        stats[(stat_column+' Corrected Pval')]=corrected_stats[1]
+    
+    if display_tables:
+    
+        print('Statistics:')
+        display(stats)
+        
