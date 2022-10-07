@@ -584,7 +584,7 @@ def grouped_graph(adata_plotting, ROI_id, group_by_obs, x_axis, display_tables=T
         display(stats)
         
     grouped_graph.cells = cells     
-                
+    grouped_graph.cells = stats                     
     
 def pop_stats(adata_plotting,groups,Case_id,ROI_id,x_axis,display_tables=True,fig_size=(5,5), confidence_interval=68,save=False, log_scale=True):
 
@@ -712,10 +712,14 @@ def cell_metrics(so,s,o,g):
         print(f'Error caclculating sample:{s}, graph:{g}, observation:{o}')
         print(f"Unexpected {err=}, {type(err)=}")
 
-def analyse_cell(raw_image, size0, size1, radius, cell_axis0, cell_axis1):
+def analyse_cell(raw_image, size0, size1, radius, cell_axis0, cell_axis1, return_props=None):
     """ Used to multithread extraction of regions around cells""" 
-    try:
     
+    import numpy as np
+    from skimage.draw import disk
+    from skimage.measure import label, regionprops, regionprops_table
+
+    try:       
         # Create a circle mask
         cell_mask = np.zeros((size0, size1))
         rr, cc = disk((cell_axis0,cell_axis1),radius)
@@ -725,14 +729,18 @@ def analyse_cell(raw_image, size0, size1, radius, cell_axis0, cell_axis1):
         cell_label = label(cell_mask)
         cell_properties = regionprops(cell_label,raw_image, cache=False)
 
+
         # Return the area intensity
-        return cell_properties[0].intensity_mean
-    
+        if return_props:
+            return cell_properties
+        else:
+            return cell_properties[0].intensity_mean
+
     except:
         
-       #  Return NaN if can't perform, usually if the circle goes over edge of image
-       return np.nan
-        
+        #Return NaN if can't perform, usually if the circle goes over edge of image
+        return np.nan
+
         
 def interactions_summary(so, #Define spatial heterogeneity object
                         samples_list, #Specify list of samples to combine
@@ -1575,6 +1583,8 @@ def graph_simplify_BACKUP(g, attr):
 
 def load_single_img(filename):
     
+    import tifffile as tp
+
     """
     Loading single image from directory.
     Parameters
@@ -1595,6 +1605,12 @@ def load_single_img(filename):
     return Img_in
 
 def load_imgs_from_directory(load_directory,channel_name,quiet=False):
+    
+    import os
+    from os import listdir
+    from os.path import isfile, join, abspath, exists
+    from glob import glob
+    
     Img_collect = []
     img_folders = glob(join(load_directory, "*", ""))
     Img_file_list=[]
@@ -2019,3 +2035,8 @@ def mlm_table(data_frame,
         print('Statistics:')
         display(stats)
         
+        
+def print_full(x):
+    pd.set_option('display.max_rows', len(x))
+    display(x)
+    pd.reset_option('display.max_rows')
