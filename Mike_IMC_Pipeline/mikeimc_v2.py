@@ -584,7 +584,7 @@ def grouped_graph(adata_plotting, ROI_id, group_by_obs, x_axis, display_tables=T
         display(stats)
         
     grouped_graph.cells = cells     
-    grouped_graph.cells = stats                     
+    grouped_graph.stats = stats                     
     
 def pop_stats(adata_plotting,groups,Case_id,ROI_id,x_axis,display_tables=True,fig_size=(5,5), confidence_interval=68,save=False, log_scale=True):
 
