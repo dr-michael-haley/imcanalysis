@@ -682,7 +682,7 @@ def neigh_int(so,m,o,s,g):
     import athena as sh
     try:
         so_copy = so.copy()
-        sh.neigh.interactions(so_copy, s, o, mode=m, prediction_type='diff', graph_key=g)
+        sh.neigh.interactions(so_copy, s, o, mode=m, prediction_type='diff', graph_key=g,  n_permutations=1000)
         key = f'{o}_{m}_diff_{g}'
         return so_copy.uns[s]['interactions'][key]      
         
@@ -741,7 +741,148 @@ def analyse_cell(raw_image, size0, size1, radius, cell_axis0, cell_axis1, return
         #Return NaN if can't perform, usually if the circle goes over edge of image
         return np.nan
 
+def analyse_cell_features(raw_image, size0, size1, cell_id, marker, quant_value, cell_index_id, radius, cell_axis0, cell_axis1):
+    """ Used to multithread extraction of regions around cells""" 
+    
+    import numpy as np
+    from skimage.draw import rectangle
+    from skimage.measure import label, regionprops, regionprops_table
+
+    # Round the cell location and radius to whole pixels
+    cell_axis0 = int(round(cell_axis0))    
+    cell_axis1 = int(round(cell_axis1))    
+    
+    # Check if the square will go over the edge
+    try:   
+        assert cell_axis0-radius>=0
+        assert cell_axis0+radius<=size0
+        assert cell_axis1-radius>=0
+        assert cell_axis1+radius<=size1    
+    except:
+        #Return NaN if the square goes over edge of image - we can drop these later
+        return None         
         
+    img_square = raw_image[(cell_axis0-radius):(cell_axis0+radius), (cell_axis1-radius):(cell_axis1+radius)]
+
+    cell_properties = extract_cell_features(img_square,cell_id,marker,quant_value, cell_index_id)
+
+    return cell_properties
+
+
+    
+def extract_cell_features(image, cell_id, marker, quant_value, cell_index_id):
+
+    from skimage.feature import graycomatrix, graycoprops
+    from skimage.util import img_as_ubyte,img_as_int, img_as_uint
+    from scipy.stats import kurtosis, skew
+        
+    import pathlib
+    from copy import copy
+    import numpy as np
+    import itertools
+    from tqdm import tqdm
+    from skimage.measure import label, regionprops, regionprops_table
+    import skimage.io as skio
+    import os                           
+
+    results_df_list=[]
+        
+    # Create blank lists for measurements
+    cell_id_measurement_list =[]
+    marker_measurement_list=[]
+
+    contrast_list = []
+    dissimilarity_list  = []
+    homogeneity_list = []
+    energy_list = []
+    correlation_list = []
+    ASM_list = []
+    kurtosis_list = []
+    skew_list=[]
+
+    mean_list=[]
+    max_list=[]
+    min_list=[]
+    median_list=[]
+    std_list=[]    
+
+    # Clip the data from 0 to the 99th percentile of all the data for that marker
+    raw_img_norm = image.clip(0, quant_value)
+
+    # Scale each image from 0 to the quant value
+    raw_img_norm = raw_img_norm / quant_value
+
+    # Convert to 8 bit image
+    img = img_as_ubyte(raw_img_norm)           
+
+    # Image identifiers
+    cell_id_measurement_list.append(copy(cell_id))
+    marker_measurement_list.append(copy(marker))
+
+    # Pixel intensity features
+    mean_list.append(np.mean(img))
+    #max_list.append(np.max(img))
+    #min_list.append(np.min(img))
+    median_list.append(np.median(img))
+    std_list.append(np.std(img))
+
+    # Scipy stats
+    kurtosis_list.append(kurtosis(img.flat))
+    skew_list.append(skew(img.flat))
+
+    # Perform GLCM
+    glcm = graycomatrix(img, distances=[5], angles=[0], symmetric=True, normed=True)
+
+    # GLCM features
+    contrast_list.append(graycoprops(glcm, 'contrast')[0,0])
+    dissimilarity_list.append(graycoprops(glcm, 'dissimilarity')[0,0])
+    homogeneity_list.append(graycoprops(glcm, 'homogeneity')[0,0])
+    energy_list.append(graycoprops(glcm, 'energy')[0,0])
+    correlation_list.append(graycoprops(glcm, 'correlation')[0,0])
+    ASM_list.append(graycoprops(glcm, 'ASM')[0,0])
+ 
+
+    zipped_list=zip(cell_id_measurement_list,
+                #marker_measurement_list,
+                mean_list,
+                #max_list,
+                #min_list,
+                median_list,
+                std_list,
+                contrast_list,
+                dissimilarity_list,
+                homogeneity_list,
+                energy_list,
+                correlation_list,
+                ASM_list,
+                kurtosis_list,
+                skew_list)
+
+    column_names=[str(cell_index_id),
+                #'Channel',
+                'Mean',
+                #'Max',
+                #'Min',
+                'Median',
+                'Std',
+                'Contrast',
+                'Dissimilarity',
+                'Homogeneity',
+                'Energy',
+                'Correlation',
+                'ASM',
+                'Kurtosis',
+                'Skew']
+
+    column_names = [f"{marker}_{x}" for x in column_names]
+
+    column_names[0]=cell_index_id
+
+    results_df = pd.DataFrame(zipped_list, columns=column_names).set_index(cell_index_id)
+    
+    return results_df
+    
+    
 def interactions_summary(so, #Define spatial heterogeneity object
                         samples_list, #Specify list of samples to combine
                         interaction_reference, #Specify which interaction we want to combine
@@ -1608,21 +1749,38 @@ def load_imgs_from_directory(load_directory,channel_name,quiet=False):
     
     import os
     from os import listdir
+    from pathlib import Path
+
     from os.path import isfile, join, abspath, exists
     from glob import glob
     
     Img_collect = []
-    img_folders = glob(join(load_directory, "*", ""))
     Img_file_list=[]
+    img_folders = glob(join(load_directory, "*", ""))
+    
+    # If only one folder is returned, make into a list anyway
+    #if not isinstance(img_folders, list):
+    #    img_folders = [img_folders]
 
     if not quiet:
         print('Image data loaded from ...\n')
     
+    if img_folders==[]:
+        img_folders=[load_directory]
+        
+    
     for sub_img_folder in img_folders:
         Img_list = [f for f in listdir(sub_img_folder) if isfile(join(sub_img_folder, f)) & (f.endswith(".tiff") or f.endswith(".tif"))]
+        
+        # If only one image is returned, make into a list anyway      
+        if not isinstance(Img_list, list):
+            Img_list = [Img_list]        
+        
         for Img_file in Img_list:
             if channel_name.lower() in Img_file.lower():
-                Img_read = load_single_img(sub_img_folder + Img_file)
+                #Img_read = load_single_img(sub_img_folder + Img_file)
+                Img_read = load_single_img(join(sub_img_folder,Img_file))
+
                 
                 if not quiet:
                     print(sub_img_folder + Img_file)
@@ -1647,7 +1805,9 @@ def processed_folder_rename(acquisition_metadata='acquisition_metadata.csv',
 
                             
     ''' This function goes through a folder, renaming the subfolders with a matched list in a .csv file. I've been using this to rename the weird folder names produced by the Bodenmiller pipeline into actual ROI names. '''                            
-
+    
+    import os as os
+    import pandas as pd
 
     roi_folder_names = pd.read_csv(acquisition_metadata)
 
@@ -1850,7 +2010,12 @@ def mlm_pops(adata_plotting,
              save=False, 
              log_scale=True,
             crosstab_norm=False,
-            col_remap=None):
+            col_remap=None,
+            hue_order=None,
+            boxplot=True,
+            mult_comp='holm-sidak',
+            order=None,
+            scale_factor=None):
 
     import seaborn as sb
     import pandas as pd
@@ -1869,12 +2034,18 @@ def mlm_pops(adata_plotting,
 
     cells_long = cells.reset_index().melt(id_vars=[groups,Case_id,ROI_id])
     cells_long.columns=cells_long.columns.astype('str')
+    
+    if scale_factor:
+        cells_long['value'] = cells_long['value'] / scale_factor
 
     fig, ax = plt.subplots(figsize=fig_size)
     
     #Plotting
-    #sb.barplot(data = cells_long, y = "value", x = x_axis, hue = groups, ci=confidence_interval, ax=ax)
-    sb.boxplot(data = cells_long, y = "value", x = x_axis, hue = groups, ax=ax)
+    #
+    if boxplot:
+        sb.boxplot(data = cells_long, y = "value", x = x_axis, hue = groups, hue_order=hue_order, ax=ax, showfliers=False)       
+    else:
+        sb.barplot(data = cells_long, y = "value", x = x_axis, hue = groups, hue_order=hue_order, ci=confidence_interval, ax=ax, order=order)
     
     #Plotting settings
     ax.set_xticklabels(ax.get_xticklabels(),rotation = 90, fontsize = 10)
@@ -1923,7 +2094,7 @@ def mlm_pops(adata_plotting,
 
     #Multiple comparissons correction
     for stat_column in ['T test','Mann-Whitney', 'Mixed linear model']:
-        corrected_stats = sm.stats.multitest.multipletests(stats[stat_column],alpha=0.05,method='holm-sidak')
+        corrected_stats = sm.stats.multitest.multipletests(stats[stat_column],alpha=0.05,method=mult_comp)
         stats[(stat_column+' Reject null?')]=corrected_stats[0]
         stats[(stat_column+' Corrected Pval')]=corrected_stats[1]
     
@@ -2040,3 +2211,484 @@ def print_full(x):
     pd.set_option('display.max_rows', len(x))
     display(x)
     pd.reset_option('display.max_rows')
+    
+    
+def environmental_analysis_texture(adata, #The adata object where the cell locations are stored
+                           samples_list, #The list of samples
+                           marker_list, 
+                           radius=20, #This is the 'radius' of the square, so by default a 40 x 40 area of pixels
+                           num_cores=4, #The number of cores to use for multithreading
+                           folder_dir='images',
+                           roi_id='ROI',
+                           x_loc = 'X_loc', 
+                           y_loc = 'Y_loc', 
+                           cell_index_id = 'Master_Index',
+                           quantile=0.999, #The quantile at which to take as the maximum stain intensity to scale all images in each marker at
+                           return_quant_table=False,
+                           return_markers_concatenated=True):
+    
+    import pathlib
+    #from mikeimc_v2 import analyse_cell_features
+    import numpy as np
+    from multiprocessing import Pool
+    import itertools
+    from tqdm import tqdm
+    from skimage.measure import label, regionprops, regionprops_table
+    import skimage.io as skio
+    import os
+    from copy import copy
+
+    master_list = []
+    
+    quant_list=[]
+
+            
+    for marker in marker_list:
+        
+               
+        # Make blank lists which will be re-used to make dictionaries
+        all_marker_data=[]
+
+        print('Marker: ' +marker)
+
+        Img_collect, Img_file_list, img_folders = load_imgs_from_directory(folder_dir,marker,quiet=True)
+        roi_list = [os.path.basename(pathlib.Path(x)) for x in img_folders]
+
+        
+        # Calculate the value at which to cap off the staining
+        quant_value=[]
+        for i in Img_collect:
+            quant_value.append(np.quantile(i, quantile))
+        quant_value = np.array(quant_value).mean()
+        
+        quant_list.append(quant_value)
+        
+        
+        for image, img_file_name, roi in tqdm(zip(Img_collect, Img_file_list, roi_list), total=len(samples_list)):
+
+            # Check that the image found is in the samples list we want to analyse
+            if roi in samples_list:        
+
+                #print('ROI: '+roi)
+
+                adata_roi = adata.obs[adata.obs[roi_id]==roi]
+                number_of_cells = range(len(adata_roi))
+
+                raw_image = image
+                size0 = [len(raw_image[0]) for i in number_of_cells]
+                size1 = [len(raw_image[1]) for i in number_of_cells]                   
+                
+                raw_image_list = [raw_image for i in number_of_cells]
+                cells_id_list = adata_roi[cell_index_id]
+                mark_list = [marker for i in number_of_cells]
+                qvalue_list = [quant_value for i in number_of_cells]
+                cell_index_id_list = [cell_index_id for i in number_of_cells]
+                
+                                           
+                radius_list = [radius for i in number_of_cells]
+                roi_cells_x = adata_roi[x_loc]
+                roi_cells_y = adata_roi[y_loc]
+
+                analyse_cells_inputs=list(zip(raw_image_list,
+                                              size0,
+                                              size1,
+                                              cells_id_list,
+                                              mark_list,
+                                              qvalue_list,
+                                              cell_index_id_list,
+                                              radius_list,
+                                              roi_cells_x,
+                                              roi_cells_y))
+
+                #analyse_cell(raw_image, size0, size1, radius, cell_axis0, cell_axis1)
+
+                #This will return a list of dataframes, one for each cell
+                with Pool(processes = num_cores) as pool:
+                    marker_data = pool.starmap(analyse_cell_features, analyse_cells_inputs)
+                
+                
+                #Concat into one dataframe, with all the data for this marker in this ROI
+                all_marker_data.extend(copy(marker_data))
+                                
+            else:
+                pass
+
+        # Remove any 'none', which is usually because the cell was on the edge of the ROI and couldn't be measured
+        all_marker_data = [i for i in all_marker_data if i is not None]
+        
+        # Concatenate all the data into a dataframe        
+        all_marker_data = pd.concat(all_marker_data)
+        
+        # Add this marker data on
+        master_list.append(copy(all_marker_data))
+        
+    # Join all the markers together (will be done by default, but can be disabled if you want markers separately) 
+    if return_markers_concatenated:
+        master_list = pd.concat(master_list,axis=1)
+    
+    if not return_quant_table:
+        return master_list
+    else:       
+        quant_table = pd.DataFrame(zip(marker_list,quant_list),columns=['Marker','Max value images scaled to']) 
+        return master_list, quant_table
+                                   
+        # Create a mapping dictionary for all the cells
+        #mapping_dict = dict(zip(cell_id,intensity))
+
+        # Map into a new obs in the original adata
+        #adata.obs[(marker+"_"+str(radius))]=adata.obs[cell_index_id].map(mapping_dict)
+        
+    
+def clean_text(text):
+    for ch in ['\\','`','*','_','{','}','[',']','(',')','>','#','+','-','.','!','$','\'',',',' ', '/']:
+        if ch in text:
+            text = text.replace(ch,'')
+            
+    return text
+
+def load_channel(load_directory,channel_name):
+    
+    import os
+    from os import listdir
+    from pathlib import Path
+
+    from os.path import isfile, join, abspath, exists
+    from glob import glob
+   
+    Img_collect=[]
+    
+    Img_list = [f for f in listdir(load_directory) if isfile(join(load_directory, f)) & (f.endswith(".tiff") or f.endswith(".tif"))]
+
+    # If only one image is returned, make into a list anyway      
+    if not isinstance(Img_list, list):
+        Img_list = [Img_list]
+
+    for Img_file in Img_list:
+        if channel_name.lower() in Img_file.lower():
+            Img_read = load_single_img(join(load_directory,Img_file))
+            Img_collect.append(Img_read)
+            break
+
+    return Img_collect
+
+
+def make_images(image_folder, 
+                samples_list,
+                output_folder,
+                name_prefix='',
+                minimum=0.2,
+                max_quantile='q0.97',
+                red=None,
+                red_range=None,
+                green=None,
+                green_range=None,
+                blue=None, 
+                blue_range=None,
+                magenta=None,
+                magenta_range=None,
+                cyan=None,
+                cyan_range=None,
+                yellow=None,
+                yellow_range=None,
+                white=None,
+                white_range=None,
+                ):
+    
+    """This function will create RGB images using up to 7 channels, similar to MCD Viewer or ImageJ 
+    Args:
+        image_folder:
+            The folder with the source images. In this folder, each ROI should have its own subfolder, with the folder named after the ROI.
+        samples_list:
+            List of samples to use from the image_folder. Only these samples will be used for auto-exposure if using quatiles (which is the default)
+        output_folder:
+            Output folder for images
+        name_prefix:
+            A prefix that will be put at the front of the file names
+        minimum:
+            The default minimum value (see 'range' below')
+        max_quantile:
+            The default max staining, which is the 97th quantile
+        {colour}:
+            The name of the marker to use for that colour
+        {colour_range}:
+            You can specify the range that should be the maximum and minimum, using the format (minimum, maximum). Both are specified by raw counts by default. However, if you put in a 'q' before a number, it will use that quantile range instead. e.g. 'q0.99' will use the 99th percentile as the maximum.
+    Returns:
+        Saves a .png per roi in the specified output directory
+    """
+    
+    from pathlib import Path
+    import tifffile as tp
+    from skimage import io, exposure, data, img_as_ubyte
+    from itertools import compress
+    import numpy as np
+    import os
+
+    if not isinstance(samples_list, list):
+        samples_list = [samples_list]
+
+    global red_imgs, blue_imgs, green_imgs, red_master, green_master, blue_master, red_rois, green_rois, blue_rois, white_imgs, red_summary, green_summary, blue_summary, rum_rois
+    
+    # Create output directory if doesn't exist
+    output = Path(output_folder)
+    try:
+        os.makedirs(output_folder)
+    except:
+        pass
+    
+    # Define empty lists
+    red_imgs, green_imgs, blue_imgs,magenta_imgs,cyan_imgs,yellow_imgs,white_imgs = [], [], [], [], [], [], []
+    red_rois, green_rois, blue_rois,magenta_rois,cyan_rois,yellow_rois,white_rois = [], [], [], [], [], [], []    
+    roi_master=[]
+
+
+    # Read in all the different colours (if used), including appropriate scaling
+    # This is very sloppy and not very pythonic, but it works!
+
+    if red is not None:
+        
+        if red_range is not None:
+            min_v=red_range[0]
+            max_q=red_range[1]
+        else:
+            min_v=minimum
+            max_q=max_quantile
+            
+        red_imgs, red_rois = load_rescale_images(image_folder, samples_list, red, min_v, max_q)
+        roi_master.append(red_rois)
+        red="r_"+red+"_"
+
+    if green is not None:
+        
+        if green_range is not None:
+            min_v=green_range[0]
+            max_q=green_range[1]
+        else:
+            min_v=minimum
+            max_q=max_quantile
+            
+        green_imgs, green_rois = load_rescale_images(image_folder, samples_list, green, min_v, max_q)
+        roi_master.append(green_rois)
+        green='g_'+green+"_"
+    
+    if blue is not None:
+        
+        if blue_range is not None:
+            min_v=blue_range[0]
+            max_q=blue_range[1]
+        else:
+            min_v=minimum
+            max_q=max_quantile
+        
+        blue_imgs, blue_rois = load_rescale_images(image_folder, samples_list, blue, min_v, max_q)
+        roi_master.append(blue_rois)
+        blue='b_'+blue+"_"
+                
+    if magenta is not None:
+        
+        if magenta_range is not None:
+            min_v=magenta_range[0]
+            max_q=magenta_range[1]
+        else:
+            min_v=minimum
+            max_q=max_quantile
+                       
+        magenta_imgs, magenta_rois = load_rescale_images(image_folder, samples_list, magenta, min_v, max_q)
+        roi_master.append(magenta_rois)
+        magenta='m_'+magenta+"_"
+        
+    if cyan is not None:
+        
+        if cyan_range is not None:
+            min_v=cyan_range[0]
+            max_q=cyan_range[1]
+        else:
+            min_v=minimum
+            max_q=max_quantile
+        
+        cyan_imgs, cyan_rois = load_rescale_images(image_folder, samples_list, cyan, min_v, max_q)
+        roi_master.append(cyan_rois)
+        cyan='c_'+cyan+"_"
+       
+    if yellow is not None:
+        
+        if yellow_range is not None:
+            min_v=yellow_range[0]
+            max_q=yellow_range[1]
+        else:
+            min_v=minimum
+            max_q=max_quantile
+        
+        yellow_imgs, yellow_rois = load_rescale_images(image_folder, samples_list, yellow, min_v, max_q)
+        roi_master.append(yellow_rois)
+        yellow = 'y_'+yellow+"_"   
+
+    if white is not None:
+                        
+        if white_range is not None:
+            min_v=white_range[0]
+            max_q=white_range[1]
+        else:
+            min_v=minimum
+            max_q=max_quantile
+            
+        white_imgs, white_rois = load_rescale_images(image_folder, samples_list, white, min_v, max_q)
+        roi_master.append(white_rois)
+        white='w_'+white+"_"
+        
+    # Calculate number of ROIs found    
+    num_rois = np.array([len(x) for x in [red_rois, green_rois, blue_rois,magenta_rois,cyan_rois,yellow_rois,white_rois]]).max()
+    print(f'Found {num_rois} regions of interest')
+    
+    
+    # Set non-used colours to empty
+    if red is None:
+        red_imgs = [0 for x in range(num_rois)]
+        red=''
+        
+    if green is None:
+        green_imgs = [0 for x in range(num_rois)]
+        green=''
+        
+    if blue is None:
+        blue_imgs = [0 for x in range(num_rois)]
+        blue=''
+        
+    if magenta is None:
+        magenta_imgs = [0 for x in range(num_rois)]
+        magenta=''
+        
+    if cyan is None:
+        cyan_imgs = [0 for x in range(num_rois)]
+        cyan=''
+        
+    if yellow is None:
+        yellow_imgs = [0 for x in range(num_rois)]
+        yellow=''           
+                
+    if white is None:
+        white_imgs = [0 for x in range(num_rois)]
+        white=''      
+    
+    # Add up the various colours to make an RGB compatible colour space   
+    red_summary = [np.clip((white_imgs[x] + red_imgs[x] + magenta_imgs[x] + yellow_imgs[x]),0,1) for x in range(num_rois)]
+    blue_summary = [np.clip((white_imgs[x] + blue_imgs[x] + magenta_imgs[x] + cyan_imgs[x]),0,1) for x in range(num_rois)]
+    green_summary = [np.clip((white_imgs[x] + green_imgs[x] + cyan_imgs[x] + yellow_imgs[x]),0,1) for x in range(num_rois)]
+          
+    
+    # If using images which have no R, G or B at all, then use empty values
+    for sample, r, g, b in zip(roi_master[0], red_summary, green_summary, blue_summary):
+    
+        print('Saving: '+sample)
+        
+        if np.shape(b)==():
+            if np.shape(g)==():
+                b=np.zeros(r.shape)
+                g=np.zeros(r.shape)
+            elif np.shape(r)==():
+                b=np.zeros(g.shape)                
+                r=np.zeros(g.shape)
+            else:
+                b=np.zeros(r.shape)
+        elif np.shape(r)==():
+            if np.shape(g)==():
+                r=np.zeros(b.shape)
+                g=np.zeros(b.shape)
+            else:
+                r=np.zeros(b.shape)
+        elif np.shape(g)==():
+            g=np.zeros(r.shape)
+                  
+        
+        stack = np.dstack((r,g,b))
+                
+        filename=f'{name_prefix}{sample}_{red}{green}{blue}{cyan}{magenta}{white}'
+        filename = filename.rstrip('_')
+        
+        save_path=os.path.join(output_folder,f'{filename}.png')
+        io.imsave(save_path,img_as_ubyte(stack))
+               
+
+def load_rescale_images(image_folder, samples_list,marker, minimum, max_val):
+    
+    import numpy as np
+    import os
+    from pathlib import Path
+    from skimage import exposure
+    from itertools import compress
+    
+    ''' Helper function to rescale images for above function'''
+    
+    mode = 'value'
+    if str(max_val)[0]=='q':
+        max_quantile=float(str(max_val)[1:])
+        mode='quantile'
+
+    
+    # Load the imaes
+    image_list, _, folder_list = load_imgs_from_directory(image_folder,marker,quiet=True)
+
+    # Get the list of ROIs
+    roi_list = [os.path.basename(Path(x)) for x in folder_list]
+        
+    # Filter out any samples not in the samples list
+    sample_filter = [x in samples_list for x in roi_list]
+    image_list = list(compress(image_list, sample_filter))
+    roi_list = list(compress(roi_list, sample_filter))
+    
+    # Calculate the value at which to cap off the staining by taking the average of the max quantile value    
+    if mode=='quantile':
+        max_value = [np.quantile(i, max_quantile) for i in image_list]    
+        max_value = np.array(max_value).mean()
+        print(f'Marker: {marker}, Min value: {minimum}, Quantile: {max_quantile}, Calculated max value: {max_value}')
+    else:
+        max_value = max_val
+        print(f'Marker: {marker}, Min value: {minimum},  Max value: {max_value}')
+    
+    # Clip
+    image_list = [i.clip(minimum, max_value) for i in image_list]
+    
+    # Rescale intensity
+    image_list = [exposure.rescale_intensity(i) for i in image_list]
+
+    return image_list, roi_list
+
+def cells_in_environment(so, samples, image_folder, save_folder, marker, low_val=0.2, upper_val='q0.99', show=True, node_size=10):
+    
+    from pathlib import Path
+    import os
+    
+    # If only one sample, make into a list anyway
+    if not isinstance(samples, list):
+        samples = [samples] 
+    
+    # Create output folder if not already made
+    save_folder = Path(save_folder)
+    try:
+        os.makedirs(save_folder)
+    except:
+        pass
+    
+    image_list, roi_list = load_rescale_images(image_folder, samples, marker, low_val, upper_val)
+
+
+    for image, roi in zip(image_list,roi_list):
+
+        #raw_image  = skio.imread('processed/1A1/32_20_Dy163_GLUT1.tiff')
+
+        #norm_value = np.quantile(raw_image, q=0.99)
+
+        #norm_image = np.clip((raw_image / norm_value),0,1)
+
+        fig, ax = plt.subplots(figsize=(20,20),dpi=300)
+        ax.imshow(image, vmin=0, vmax = 1, cmap='gist_gray')
+
+        #sh.pl.spatial(so, '1A1', attr='population_broad_id', mode='mask', ax=ax, background_color='white')
+        sh.pl.spatial(so_myeloid, roi, attr='population_broad_id', ax=ax, node_size=node_size)
+
+        filename=f'{roi}_{marker}.png'
+        fig.savefig(os.path.join(save_folder,filename), bbox_inches='tight')
+
+        if not show:
+            plt.close()
+
+
