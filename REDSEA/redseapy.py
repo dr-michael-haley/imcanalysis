@@ -422,8 +422,8 @@ def redsea_batch_bodenmiller(image_folder,
     
     batch_dataframe = pd.concat([Mask_df,Image_df],axis=1)
 
-    uncorrrected_list = []
-    corrected_list = []
+    unc_list = []
+    cor_list = []
     
     num_rois = len(batch_dataframe)
     
@@ -436,7 +436,7 @@ def redsea_batch_bodenmiller(image_folder,
         
         print(f"Processing {index}. Region {count} of {num_rois}")
         
-        uncorrrected, corrected = run_redsea(tiff=r['ImagePath'],
+        unc, cor = run_redsea(tiff=r['ImagePath'],
                                             seg_mask =r['MaskPath'],
                                             markers_csv  =markers,
                                             output_dir = output_folder,
@@ -449,14 +449,14 @@ def redsea_batch_bodenmiller(image_folder,
                                             roi=index,
                                             save_individual=save_individual)
                
-        uncorrrected_list.append(uncorrrected.copy())
-        corrrected_list.append(corrrected.copy())
+        unc_list.append(unc.copy())
+        cor_list.append(cor.copy())
         
         count += 1
                 
-    corrected_concat = pd.concat(corrected_list)
-    uncorrected_concat = pd.concat(uncorrrected_list)
+    cor_concat = pd.concat(cor_list)
+    unc_concat = pd.concat(unc_list)
     
-    corrected_concat.to_csv(os.path.join(output_folder, 'corrected_celltable.csv'))
-    uncorrected_concat.to_csv(os.path.join(output_folder, 'uncorrected_celltable.csv'))
+    cor_concat.to_csv(os.path.join(output_folder, 'corrected_celltable.csv'))
+    unc_concat.to_csv(os.path.join(output_folder, 'uncorrected_celltable.csv'))
 
