@@ -397,7 +397,9 @@ def redsea_batch_bodenmiller(image_folder,
                              output_folder, 
                              excluded_markers=['DNA1','DNA3'], 
                              markers_of_interest=None, 
-                             save_individual=False):
+                             save_individual=False,
+                            image_underscores=1,
+                            mask_underscores=3):
     
     from os import listdir
     from os.path import isfile, join   
@@ -409,8 +411,8 @@ def redsea_batch_bodenmiller(image_folder,
     Mask_paths = [join(segmentation_masks, x) for x in Mask_list]
     Image_paths = [join(image_folder, x) for x in Image_list]    
     
-    Image_ROI_list = ['_'.join(x.split('_')[:-1]) for x in Image_list]
-    Mask_ROI_list = ['_'.join(x.split('_')[:-3]) for x in Mask_list]
+    Image_ROI_list = ['_'.join(x.split('_')[:-image_underscores]) for x in Image_list]
+    Mask_ROI_list = ['_'.join(x.split('_')[:-mask_underscores]) for x in Mask_list]
         
     try:
         assert Image_ROI_list==Mask_ROI_list
