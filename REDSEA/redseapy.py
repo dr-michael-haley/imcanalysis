@@ -457,6 +457,6 @@ def redsea_batch_bodenmiller(image_folder,
     cor_concat = pd.concat(cor_list)
     unc_concat = pd.concat(unc_list)
     
-    cor_concat.to_csv(os.path.join(output_folder, 'corrected_celltable.csv'))
-    unc_concat.to_csv(os.path.join(output_folder, 'uncorrected_celltable.csv'))
+    cor_concat.to_csv(join(output_folder, 'corrected_celltable.csv'))
+    unc_concat.to_csv(join(output_folder, 'uncorrected_celltable.csv'))
 
