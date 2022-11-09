@@ -399,11 +399,18 @@ def redsea_batch_bodenmiller(image_folder,
                              markers_of_interest=None, 
                              save_individual=False,
                             image_underscores=1,
-                            mask_underscores=3):
+                            mask_underscores=3,
+                            element_shape=2,
+                            element_size=1): #By default this was 2, but that was for MIBI, setting to 1 by default for IMC
     
     from os import listdir
     from os.path import isfile, join   
     import pandas as pd
+    from pathlib import Path
+    
+    # Create folder for saving
+    output_folder = Path(output_folder)
+    output_folder.mkdir(exist_ok=True)
     
     Image_list = [f for f in listdir(image_folder) if isfile(join(image_folder, f)) & (f.endswith(".tiff") or f.endswith(".tif"))]
     Mask_list = [f for f in listdir(segmentation_masks) if isfile(join(segmentation_masks, f)) & (f.endswith(".tiff") or f.endswith(".tif"))]
@@ -446,8 +453,8 @@ def redsea_batch_bodenmiller(image_folder,
                                             markers_of_interest = markers_of_interest,
                                             boundary_mode=2,  # Ignored atm
                                             compensation_mode=1,
-                                            element_shape=2,
-                                            element_size=2,
+                                            element_shape=element_shape,
+                                            element_size=element_size,
                                             roi=index,
                                             save_individual=save_individual)
                
