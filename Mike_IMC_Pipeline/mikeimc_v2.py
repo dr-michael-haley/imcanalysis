@@ -10,7 +10,8 @@ import seaborn as sns
 # from shapely.ops import polygonize,unary_union
 from shapely.geometry import MultiPoint, Point, Polygon
 from scipy.spatial import Voronoi
-
+import networkx as nx
+import math
     
 def celltable_to_adata(column_properties,cell_table,dictionary,misc_table=False,dict_index='ROI',quiet=False,marker_normalisation=None,xy_as_obs=True):
     
@@ -896,6 +897,7 @@ def interactions_summary(so, #Define spatial heterogeneity object
                         title=True,
                         reindex=False, #List of populations in the order they should appear
                         calc_ttest_p_value=False,
+                        test='ttest', 
                         cmap='coolwarm',
                         vmax=None,
                         vmin=None,
@@ -905,7 +907,7 @@ def interactions_summary(so, #Define spatial heterogeneity object
 
     import seaborn as sb
     import matplotlib.pyplot as plt 
-    from scipy.stats import ttest_1samp
+    from scipy.stats import ttest_1samp, wilcoxon
     import statsmodels as sm
     #print(interaction_reference + ' - ' + var + ' - ' + aggregate_function)    
     
@@ -939,11 +941,17 @@ def interactions_summary(so, #Define spatial heterogeneity object
     ####################### Does a 1 sample t test, comparing against a theoretical mean of 0 
     
     if calc_ttest_p_value:
+        
         pvalues = []
 
-        for count, i in enumerate(summary.index.values):
+        for count, i in enumerate(summary.index.values):            
             stats_row = results_df.reset_index()[results_df.index==i][var]
-            pvalue = ttest_1samp(stats_row,0).pvalue
+            
+            if test=='wilcoxon':
+                pvalue = wilcoxon(stats_row, zero_method='wilcox', correction=False).pvalue
+            elif test=='ttest':
+                pvalue = ttest_1samp(stats_row,0).pvalue
+
             pvalues.append(pvalue)
 
         
@@ -1048,8 +1056,11 @@ def interactions_summary(so, #Define spatial heterogeneity object
     interactions_summary.roi_data = results_df
     interactions_summary.summary_data = summary
     interactions_summary.heatmap_data = df1
-    interactions_summary.stats_array = stats_array
-    interactions_summary.sig_array = sig_array    
+    try:
+        interactions_summary.stats_array = stats_array
+        interactions_summary.sig_array = sig_array
+    except:
+        None
     
 def interactions_table(so, #Define spatial heterogeneity object
                         samples_list, #Specify list of samples to combine
@@ -2036,7 +2047,13 @@ def mlm_pops(adata_plotting,
     cells_long.columns=cells_long.columns.astype('str')
     
     if scale_factor:
-        cells_long['value'] = cells_long['value'] / scale_factor
+        
+        if isinstance(scale_factor, dict):       
+            for g in scale_factor:                    
+                cells_long.loc[cells_long[groups]==g, 'value'] = cells_long.loc[cells_long[groups]==g, 'value'] / scale_factor[g]
+        else:
+            cells_long['value'] = cells_long['value'] / scale_factor        
+            
 
     fig, ax = plt.subplots(figsize=fig_size)
     
@@ -2692,3 +2709,253 @@ def cells_in_environment(so, samples, image_folder, save_folder, marker, low_val
             plt.close()
 
 
+def subset_typeofnode(G, pop, pop_attr='population_broad'):
+    '''return those nodes in graph G that match type = typestr.'''
+    return [name for name, d in G.nodes(data=True) 
+            if pop_attr in d and (d[pop_attr] == pop)]
+
+#All computations happen in this function
+def find_nearest(G, typeofnode, fromnode):
+
+    import networkx as nx
+    
+    #Calculate the length of paths from fromnode to all other nodes
+    lengths=nx.single_source_dijkstra_path_length(G, fromnode, weight='distance')
+    #paths = nx.single_source_dijkstra_path(G, fromnode)
+
+    #We are only interested in a particular type of node
+    subnodes = subset_typeofnode(G, typeofnode)
+    subdict = {k: v for k, v in lengths.items() if k in subnodes}
+    
+    #if fromnode in subdict:
+    #    del subdict[fromnode]
+
+    #return the smallest of all lengths to get to typeofnode
+    if subdict: #dict of shortest paths to all entrances/toilets
+        nearest =  min(subdict, key=subdict.get) #shortest value among all the keys
+        #return(nearest, subdict[nearest], paths[nearest])
+        return subdict[nearest]
+
+    else: #not found, no path from source to typeofnode
+        return None
+
+    
+    
+    
+def average_nearest(roi_name, G, to_pop, from_pop, pop_attr='population_broad', distance=True):
+
+    roi_list=[]
+        
+    distance_list=[]
+    distance_std_list=[]
+    
+    nearest_list=[]
+    nearest_std_list=[]
+    #edgecore_list=[]
+    number_from_list=[]
+    number_to_list=[]
+    from_list=[]
+    to_list=[]
+
+    from copy import copy
+
+    from_nodes = subset_typeofnode(G, from_pop, pop_attr)
+    to_nodes =  subset_typeofnode(G, to_pop, pop_attr)
+  
+    if not distance:
+        Nearest = [find_nearest(G, to_pop, x) for x in from_nodes]
+        Distance = [0 for x in from_nodes]
+    else:        
+        #if (len(from_nodes)!=0)&(len(from_nodes)!=0):
+        Raw = [find_nearest_distance(G, to_pop, x) for x in from_nodes]
+        Unzip = list(zip(*Raw))
+        
+        try:
+            Nearest = Unzip[0]
+            Distance = Unzip[1]
+        except:
+            Nearest=[]
+            Distance=[]
+        #else:
+        #    Nearest = np.nan
+        #    Distance = np.nan
+        
+            
+    roi_list.append(copy(roi_name))        
+    from_list.append(copy(from_pop))
+    to_list.append(copy(to_pop))                                                          
+    
+    try:
+        nearest_list.append(np.array(Nearest).mean())
+        nearest_std_list.append(np.std(Nearest))
+    except:
+        nearest_list.append(np.nan)
+        nearest_std_list.append(np.nan)
+    
+    try:
+        distance_list.append(np.array(Distance).mean())
+        distance_std_list.append(np.std(Distance))
+    except:
+        distance_list.append(np.nan)
+        distance_std_list.append(np.nan)        
+        
+    
+    #edgecore_list.append(copy(so.spl.loc[s,'HEClass_2class']))
+    number_from_list.append(len(from_nodes))
+    number_to_list.append(len(to_nodes))
+    
+    nearest_df = pd.DataFrame(zip(roi_list, from_list, to_list, nearest_list,nearest_std_list,distance_list,distance_std_list,number_from_list, number_to_list), columns=['ROI','From_pop','To_pop','Avg_Nearest','STD_Nearest','Avg_Distance','STD_Distance','Number_from_pop','Number_to_pop'])
+                              
+    return nearest_df
+
+
+def find_nearest_distance(G, typeofnode, fromnode, X_loc='X_loc', Y_loc='Y_loc'):
+ 
+    global subdict
+    global subdict_distance
+    #We are only interested in a particular type of node
+    subnodes = subset_typeofnode(G, typeofnode)
+    
+    #Calculate the WEIGHT length of paths from fromnode to all other nodes, ie each cell jump is 1
+    lengths=nx.single_source_dijkstra_path_length(G, fromnode, weight='weight')
+    subdict = {k: v for k, v in lengths.items() if k in subnodes}
+
+    #Calculate the DISTANCE of paths from fromnode to all other nodes
+    lengths_distance=nx.single_source_dijkstra_path_length(G, fromnode, weight='distance')
+    subdict_distance = {k: v for k, v in lengths_distance.items() if k in subnodes}
+    
+    #If the 'from' and 'to' populations are the same, looks for next nearest instead by removing 'fromnode' from list
+    if fromnode in subdict:
+        del subdict[fromnode]
+        del subdict_distance[fromnode]
+            
+    #return the smallest of all lengths to get to typeofnode
+    if subdict: #dict of shortest paths to all entrances/toilets
+        nearest =  min(subdict, key=subdict.get) #shortest value among all the keys   
+        nearest_distance =  min(subdict_distance, key=subdict_distance.get) #shortest distance path among all the keys   
+              
+        #Calculate euclidian distance between nodes directly, rather than using a path between nodes
+        distance = math.dist([G.nodes[fromnode][X_loc], G.nodes[fromnode][Y_loc]],[G.nodes[nearest_distance][X_loc], G.nodes[nearest_distance][Y_loc]])
+        
+        return subdict[nearest], distance
+
+    else: #not found, no path from source to typeofnode
+        return None, None
+    
+def graph_add_distances(Graph, X_loc='X_loc', Y_loc='Y_loc',edge_attr='distance'):
+
+    #import math
+
+    G = Graph.copy()
+
+    for u,v,a in G.edges(data=True):
+        G.edges[u, v][edge_attr]=math.dist([G.nodes[u][X_loc], G.nodes[u][Y_loc]],[G.nodes[v][X_loc], G.nodes[v][Y_loc]]) 
+
+    return G
+
+def randomise_graph(g, attr):
+
+    import random
+
+    g_perm = g.copy()
+
+    attr_list = [g_perm.nodes[x][attr] for x in g_perm.nodes()]
+    random.shuffle(attr_list)
+
+    for a, n in zip(attr_list, g_perm.nodes()):
+        g_perm.nodes[n].update({attr:a})
+
+    return g_perm
+
+def predict_distances(from_number, to_number, itterations=10, roi_size=1500):
+
+    import numpy as np
+    import scipy.stats
+    import matplotlib.pyplot as plt
+    import math
+
+    if (from_number==0) or (to_number==0):
+        return np.nan, np.nan, np.nan
+    
+    #Setup size of ROI
+
+    #Simulation window parameters
+    xMin=0;xMax=roi_size;
+    yMin=0;yMax=roi_size;
+    xDelta=xMax-xMin;yDelta=yMax-yMin; #rectangle dimensions
+    areaTotal=xDelta*yDelta;
+
+    results=[]
+
+    for x in range(itterations):
+        #Simulate Poisson point process
+        from_xx = xDelta*scipy.stats.uniform.rvs(0,1,((from_number,1)))+xMin#x coordinates of Poisson points
+        from_yy = yDelta*scipy.stats.uniform.rvs(0,1,((from_number,1)))+yMin#y coordinates of Poisson points
+        to_xx = xDelta*scipy.stats.uniform.rvs(0,1,((to_number,1)))+xMin#x coordinates of Poisson points
+        to_yy = yDelta*scipy.stats.uniform.rvs(0,1,((to_number,1)))+yMin#y coordinates of Poisson points
+
+        from_cells = list(zip(from_xx,from_yy))
+        to_cells = list(zip(to_xx,to_yy))
+
+        #For each cells in from_cells, calculate the minimum distance to the nearest to_cell, then take the average overall
+        results.append(np.mean([min([math.dist(f, t) for t in to_cells]) for f in from_cells]))
+
+    return np.mean(results), np.std(results), (np.std(results, ddof=1) / np.sqrt(np.size(results)))
+
+import numpy as np
+import matplotlib
+import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import AxesGrid
+
+def shiftedColorMap(cmap, start=0, midpoint=0.5, stop=1.0, name='shiftedcmap'):
+    '''
+    Taken from: https://stackoverflow.com/questions/7404116/defining-the-midpoint-of-a-colormap-in-matplotlib
+    
+    Function to offset the "center" of a colormap. Useful for
+    data with a negative min and positive max and you want the
+    middle of the colormap's dynamic range to be at zero.
+
+    Input
+    -----
+      cmap : The matplotlib colormap to be altered
+      start : Offset from lowest point in the colormap's range.
+          Defaults to 0.0 (no lower offset). Should be between
+          0.0 and `midpoint`.
+      midpoint : The new center of the colormap. Defaults to 
+          0.5 (no shift). Should be between 0.0 and 1.0. In
+          general, this should be  1 - vmax / (vmax + abs(vmin))
+          For example if your data range from -15.0 to +5.0 and
+          you want the center of the colormap at 0.0, `midpoint`
+          should be set to  1 - 5/(5 + 15)) or 0.75
+      stop : Offset from highest point in the colormap's range.
+          Defaults to 1.0 (no upper offset). Should be between
+          `midpoint` and 1.0.
+    '''
+    cdict = {
+        'red': [],
+        'green': [],
+        'blue': [],
+        'alpha': []
+    }
+
+    # regular index to compute the colors
+    reg_index = np.linspace(start, stop, 257)
+
+    # shifted index to match the data
+    shift_index = np.hstack([
+        np.linspace(0.0, midpoint, 128, endpoint=False), 
+        np.linspace(midpoint, 1.0, 129, endpoint=True)
+    ])
+
+    for ri, si in zip(reg_index, shift_index):
+        r, g, b, a = cmap(ri)
+
+        cdict['red'].append((si, r, r))
+        cdict['green'].append((si, g, g))
+        cdict['blue'].append((si, b, b))
+        cdict['alpha'].append((si, a, a))
+
+    newcmap = matplotlib.colors.LinearSegmentedColormap(name, cdict)
+    plt.register_cmap(cmap=newcmap)
+
+    return newcmap
