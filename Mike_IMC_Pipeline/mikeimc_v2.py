@@ -587,7 +587,7 @@ def grouped_graph(adata_plotting, ROI_id, group_by_obs, x_axis, display_tables=T
     grouped_graph.cells = cells     
     grouped_graph.stats = stats                     
     
-def pop_stats(adata_plotting,groups,Case_id,ROI_id,x_axis,display_tables=True,fig_size=(5,5), confidence_interval=68,save=False, log_scale=True):
+def pop_stats(adata_plotting,groups,Case_id,ROI_id,x_axis,display_tables=True,fig_size=(5,5), confidence_interval=68,save=False, log_scale=True, scale_factor=False):
 
     import seaborn as sb
     import pandas as pd
@@ -600,6 +600,13 @@ def pop_stats(adata_plotting,groups,Case_id,ROI_id,x_axis,display_tables=True,fi
 
     cells_long = cells.reset_index().melt(id_vars=[groups,Case_id,ROI_id])
     cells_long.columns=cells_long.columns.astype('str')
+    
+    if scale_factor:        
+        if isinstance(scale_factor, dict):       
+            for g in scale_factor:                    
+                cells_long.loc[cells_long[groups]==g, 'value'] = cells_long.loc[cells_long[groups]==g, 'value'] / scale_factor[g]
+        else:
+            cells_long['value'] = cells_long['value'] / scale_factor      
 
     #Use this for plotting
     case_average_long = cells_long.groupby([groups,Case_id,x_axis],observed=True).mean().reset_index()
