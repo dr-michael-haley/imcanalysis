@@ -12,6 +12,12 @@ from shapely.geometry import MultiPoint, Point, Polygon
 from scipy.spatial import Voronoi
 import networkx as nx
 import math
+import statsmodels.api as sm
+from copy import copy
+
+
+from sklearn.utils._testing import ignore_warnings
+from sklearn.exceptions import ConvergenceWarning
     
 def celltable_to_adata(column_properties,cell_table,dictionary,misc_table=False,dict_index='ROI',quiet=False,marker_normalisation=None,xy_as_obs=True):
     
@@ -2037,7 +2043,7 @@ def mlm_pops(adata_plotting,
 
     import seaborn as sb
     import pandas as pd
-    import statsmodels as sm
+    import statsmodels.api as sm
     import scipy as sp
     import matplotlib.pyplot as plt 
     #import statsmodels.api as sm
@@ -2416,6 +2422,9 @@ def make_images(image_folder,
                 yellow_range=None,
                 white=None,
                 white_range=None,
+                roi_folder_save=False,
+                simple_file_names=False,
+                save_subfolder=''
                 ):
     
     """This function will create RGB images using up to 7 channels, similar to MCD Viewer or ImageJ 
@@ -2625,10 +2634,38 @@ def make_images(image_folder,
         
         stack = np.dstack((r,g,b))
                 
-        filename=f'{name_prefix}{sample}_{red}{green}{blue}{cyan}{magenta}{white}'
-        filename = filename.rstrip('_')
+        # If using sample_file_names, then each image just gets saved as its ROI name
+        if not simple_file_names:
+            filename=f'{name_prefix}{sample}_{red}{green}{blue}{yellow}{cyan}{magenta}{white}'
+            filename = filename.rstrip('_')
+        else:
+            filename=sample
         
-        save_path=os.path.join(output_folder,f'{filename}.png')
+        if not roi_folder_save:
+            save_path=os.path.join(output_folder,f'{filename}.png')
+        else:
+            # Create output directory if doesn't exist
+            
+            roi_folder=os.path.join(output_folder,sample)           
+
+            try:
+                os.makedirs(roi_folder)
+            except:
+                pass
+            
+            save_path=os.path.join(roi_folder,f'{filename}.png')
+        
+        if save_subfolder!='':
+             
+            sub_path=os.path.join(output_folder,save_subfolder)           
+
+            try:
+                os.makedirs(sub_path)
+            except:
+                pass
+            
+            save_path=os.path.join(sub_path,f'{filename}.png')       
+                    
         io.imsave(save_path,img_as_ubyte(stack))
                
 
@@ -2874,7 +2911,7 @@ def randomise_graph(g, attr):
 
     return g_perm
 
-def predict_distances(from_number, to_number, itterations=10, roi_size=1500):
+def predict_distances(from_number, to_number, itterations=10, roi_size=1500, to_cells=None):
 
     import numpy as np
     import scipy.stats
@@ -2898,11 +2935,12 @@ def predict_distances(from_number, to_number, itterations=10, roi_size=1500):
         #Simulate Poisson point process
         from_xx = xDelta*scipy.stats.uniform.rvs(0,1,((from_number,1)))+xMin#x coordinates of Poisson points
         from_yy = yDelta*scipy.stats.uniform.rvs(0,1,((from_number,1)))+yMin#y coordinates of Poisson points
-        to_xx = xDelta*scipy.stats.uniform.rvs(0,1,((to_number,1)))+xMin#x coordinates of Poisson points
-        to_yy = yDelta*scipy.stats.uniform.rvs(0,1,((to_number,1)))+yMin#y coordinates of Poisson points
-
         from_cells = list(zip(from_xx,from_yy))
-        to_cells = list(zip(to_xx,to_yy))
+
+        if not to_cells:
+            to_xx = xDelta*scipy.stats.uniform.rvs(0,1,((to_number,1)))+xMin#x coordinates of Poisson points
+            to_yy = yDelta*scipy.stats.uniform.rvs(0,1,((to_number,1)))+yMin#y coordinates of Poisson points
+            to_cells = list(zip(to_xx,to_yy))        
 
         #For each cells in from_cells, calculate the minimum distance to the nearest to_cell, then take the average overall
         results.append(np.mean([min([math.dist(f, t) for t in to_cells]) for f in from_cells]))
@@ -2966,3 +3004,590 @@ def shiftedColorMap(cmap, start=0, midpoint=0.5, stop=1.0, name='shiftedcmap'):
     plt.register_cmap(cmap=newcmap)
 
     return newcmap
+
+@ignore_warnings(category=ConvergenceWarning)
+def mlm_two_way(data_full, 
+                value_cols, 
+                groups_col, #Assumes only two groups - check
+                populations_col,
+                control_population=None, 
+                populations_list=None,
+                Case_col='Case',
+                use_cell_level=True,
+                ROI_col='ROI',
+                mult_comp='holm-sidak',
+                factors='both'): #'both','populations', 'groups'
+    
+    from copy import copy
+    import statsmodels as sm
+    import pandas as pd
+    import warnings
+    
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=ConvergenceWarning)
+
+    # Check that the factors is one of the options
+    assert factors=='both' or factors=='populations' or factors=='groups', 'Factors must be one of: both, populations, groups'
+    
+    # If only a single marker given, make into a list anyway
+    if not isinstance(value_cols, list):
+        value_cols=[value_cols]
+    
+    # If not populations given, just use all of them from the data
+    if not populations_list: 
+        populations_list = data_full[populations_col].unique().tolist()
+        
+    # Assign a control pop if not given
+    if not control_population:        
+        control_population = data_full[populations_col].value_counts().index[0]
+        print(f'No control populaton provided, using most abundant population: {control_population}')
+    
+    # Check number of groups is two
+    groups_list = data_full[groups_col].unique().tolist()
+    assert len(groups_list)==2, f'More than two groups found in the groups column: {groups_list}'
+    
+    # Setup MLM parameters if using cell-level data, if not will assume values are at ROI level
+    if use_cell_level:
+        vc = {f'{ROI_col}': f'0 + C({ROI_col})'}
+        re_formula='1'
+    else:
+        vc=None
+        re_formula=None
+    
+    results_list=[]
+    
+    for marker in value_cols:
+        
+        marker_list=[]
+        pop_list=[]
+        p_value=[]
+        formula_list=[]             
+        
+        
+        if factors=='groups' or factors=='both':
+        
+            #################### Compare groups WITHIN each population               
+            for pop in populations_list:
+
+                # Filter down to population of interest
+
+                data=data_full.loc[data_full[populations_col]==pop, :]
+                mlm_two_way.data = data
+
+                formula = f"{marker} ~ {groups_col}"
+
+                md = sm.regression.mixed_linear_model.MixedLM.from_formula(formula=formula,
+                                                                           vc_formula=vc, 
+                                                                           data=data, 
+                                                                           groups=Case_col, 
+                                                                           re_formula=re_formula)
+                mdf = md.fit()
+
+                marker_list.append(copy(marker))
+                formula_list.append(copy(formula))
+                pop_list.append(copy(pop))                    
+                p_value.append(mdf.pvalues[1])
+            
+   
+               
+        if factors=='populations' or factors=='both':
+
+            #################### Compare populations, regardless of groups 
+            
+            populations_limited = populations_list.copy()
+            populations_limited.remove(control_population)
+
+            for pop in populations_limited:
+
+                # Filter down to population of interest AND control pop only
+                data=data_full.loc[data_full[populations_col].isin([pop, control_population]), :]
+                data[populations_col].cat.remove_unused_categories(inplace=True)
+
+                mlm_two_way.data = data
+
+                formula = f"{marker} ~ {populations_col}"
+
+                md = sm.api.regression.mixed_linear_model.MixedLM.from_formula(formula=formula,
+                                                                           vc_formula=vc, 
+                                                                           data=data, 
+                                                                           groups=Case_col, 
+                                                                           re_formula=re_formula)
+                mdf = md.fit()
+
+                marker_list.append(copy(marker))
+                formula_list.append(copy(formula))
+                pop_list.append(f'{control_population} -- {pop}')                    
+                p_value.append(mdf.pvalues[1])
+            
+        marker_dataframe = pd.DataFrame(zip(marker_list, formula_list, pop_list, p_value), columns=['Marker','Formula','Population','Pvalue'])
+        
+        if mult_comp:
+            marker_dataframe['Pval_corr'] = sm.stats.multitest.multipletests(marker_dataframe['Pvalue'],alpha=0.05,method=mult_comp)[1]
+            marker_dataframe['Significant'] = sm.stats.multitest.multipletests(marker_dataframe['Pvalue'],alpha=0.05,method=mult_comp)[0]
+                        
+        results_list.append(marker_dataframe)
+    
+    results_dataframe=pd.concat(results_list)
+    
+    return results_dataframe
+
+
+def get_top_columns(row, number):
+    top = tuple(row.nlargest(number).index)
+    return '__'.join(top)
+
+
+def backgating(adata,
+               cell_index,
+               radius,
+               image_folder,
+                red=None,
+                red_range=None,
+                green=None,
+                green_range=None,
+                blue=None, 
+                blue_range=None,
+                magenta=None,
+                magenta_range=None,
+                cyan=None,
+                cyan_range=None,
+                yellow=None,
+                yellow_range=None,
+                white=None,
+                white_range=None,
+                output_folder='Backgating',
+              roi_obs='ROI',
+              x_loc_obs='X_loc',
+              y_loc_obs='Y_loc',
+              cell_index_obs='Master_Index',
+              use_masks=False,
+              cells_per_row=5,
+              overview_images=True,
+              save_subfolder='',
+              minimum=0.2,
+              max_quantile='q0.97',
+              training=False):
+
+    """This function perform a backgating assessment on a given selection of cells as specified by a cell index
+    Args:
+        adata: adata object
+        cell_index: List of cells to visualise
+        radius=15: Size of square over cell to visualise
+
+        image_folder: Folder with raw or denoised images. Each ROI has it's own folder.
+        {colour}: Channel to use for that colours
+        {colour_range}: Format is tuple, with lower and upper range. If not given, will calcuate from quartiles.
+        
+        roi_obs: adata.obs identifying ROIs,
+        x_loc_obs: adata.obs identifying X location,
+        y_loc_obs: adata.obs identifying Y location,
+        cell_index_obs: Identifier for individual cells,
+        use_masks: If specified, is a .csv file that has two ,
+        cells_per_row: Cells per row to plot,
+        overview_images: Whether or not to save ROI images with cell areas overlayed,
+        output_folder: Output folder for saving
+        save_subfolder: Specify a subfolder within output folder to save,
+        minimum=0.2,
+        max_quantile='q0.97',
+        training=False
+        
+    Output:
+        Will save everthing to a folder called 'Backgating', with each population having it's own subfolder
+    """    
+        
+    
+    
+    from skimage import io, segmentation
+    from skimage.draw import polygon, rectangle_perimeter
+    import os
+    import copy
+
+    # If only one cell index is supplied, make it into a list anyway
+    if not isinstance(cell_index, list):
+        cell_index=[cell_index]
+        
+    #Extract only the data for cells of index
+    adata_obs_cells = adata.obs.loc[adata.obs[cell_index_obs].isin(cell_index),:].copy()
+    
+    # Get a list of the ROIs to generate images for:
+    roi_list = adata_obs_cells[roi_obs].unique().tolist()
+                    
+    # Create images for all ROIs we're taking cells from
+    make_images(image_folder=image_folder, 
+                samples_list=roi_list,
+                output_folder=output_folder,
+                red=red,
+                red_range=red_range,
+                green=green,
+                green_range=green_range,
+                blue=blue, 
+                blue_range=blue_range,
+                magenta=magenta,
+                magenta_range=magenta_range,
+                cyan=cyan,
+                cyan_range=cyan_range,
+                yellow=yellow,
+                yellow_range=yellow_range,
+                white=white,
+                white_range=white_range,
+                simple_file_names=True,
+                minimum=minimum,
+                max_quantile=max_quantile,
+                save_subfolder=save_subfolder
+                )
+    
+    # Load all images, and the sizes of the images
+    images = [io.imread(os.path.join(output_folder,save_subfolder, (x+'.png'))) for x in roi_list]
+    y_lengths = [i.shape[0] for i in images]
+    x_lengths = [i.shape[1] for i in images]
+    
+    img_df = pd.DataFrame(zip(roi_list,images,x_lengths,y_lengths),columns=[roi_obs,'image','x_length','y_length']).set_index(roi_obs)
+    
+    # Map back into the sampled dataframe
+    adata_obs_cells['x_max']=adata_obs_cells[roi_obs].map(dict(zip(roi_list,x_lengths)))
+    adata_obs_cells['y_max']=adata_obs_cells[roi_obs].map(dict(zip(roi_list,y_lengths)))
+    
+    # Filter cells which are out of bounds -ie, a box of given radius wont go over the edge of the image        
+    adata_obs_cells['in_range']=(adata_obs_cells[x_loc_obs]-radius>=0) & (adata_obs_cells[y_loc_obs]-radius>=0) & ((adata_obs_cells[y_loc_obs]+radius)<=adata_obs_cells['y_max']) & ((adata_obs_cells[x_loc_obs]+radius)<=adata_obs_cells['x_max'])  
+    adata_obs_cells_filtered = adata_obs_cells[adata_obs_cells['in_range']==True]
+    
+    # Count number of exluded cells
+    excluded_cell_nums = str(len(adata_obs_cells) - len(adata_obs_cells_filtered))
+    cell_nums = len(adata_obs_cells_filtered)
+    
+    print(f'{excluded_cell_nums} cells out of bounds for plotting, proceeding with plotting ')
+    
+    if use_masks:
+        # Load the mask dictionary
+        masks = pd.read_csv(use_masks).set_index(roi_obs)
+        
+        # Map the mask_paths
+        img_df['mask_path']=img_df.index.map(masks['mask_path'].to_dict())
+        
+        # Load the images into the images_df
+        img_df['mask']=[io.imread(x) for x in img_df['mask_path']]  
+        
+    if overview_images:    
+        img_overviews = img_df.copy()
+
+                                   
+    # Create the figs and axs 
+    rows = rounded_up = -(-cell_nums // cells_per_row)                        
+    fig, axs = plt.subplots(rows, cells_per_row, figsize=(10, rows*2), dpi=100)                                                 
+                               
+    # Create an itterable for axes
+    axs_iter = iter(axs.flatten())
+                              
+    # Create empty list to store cell data frames
+    cell_dfs=[]
+    
+    # Loop through each ROI in turn 
+    for roi, image in img_df.iterrows():
+                                              
+        # Filter down to only the cells from this specific ROI                      
+        cells = adata_obs_cells_filtered.loc[adata_obs_cells_filtered[roi_obs]==roi,:].copy()
+                                      
+        # loop through each of the cells in this ROI
+        for i, cell_row in cells.iterrows():
+            
+            y_cell = int(round(cell_row[y_loc_obs]))    
+            x_cell = int(round(cell_row[x_loc_obs]))
+            
+            thumb=image['image'][(y_cell-radius):(y_cell+radius), (x_cell-radius):(x_cell+radius), :]
+            ax = next(axs_iter)            
+            ax.imshow(thumb)
+            
+            if use_masks:
+                # Trim mask to right areas
+                mask=image['mask'][(y_cell-radius):(y_cell+radius), (x_cell-radius):(x_cell+radius)]
+                orig_mask = mask
+                
+                # Here, we should be able to remove any masks that aren't in the centre of the image
+                # Find the pixel value at the centre, corresponding to centre cell
+                centre_cell = mask[int(mask.shape[0]/2),int(mask.shape[1]/2)]
+                
+                # Remove non-centre cells from the mask
+                mask = np.where(mask != centre_cell, 0, mask)
+                
+                # Calculate boundaries
+                boundaries = segmentation.find_boundaries(mask, connectivity=1, mode='inner')
+                
+                # Convert boundaries into a true/false mask
+                boundaries = np.ma.masked_where(boundaries == 0, boundaries)
+                
+                # Display mask
+                ax.imshow(boundaries,  interpolation='none', cmap="gray", alpha=1, vmin=0, vmax=1)
+
+
+            ax.grid(None)
+            ax.get_xaxis().set_visible(False)
+            ax.get_yaxis().set_visible(False)
+            ax.set_title(label=f'{roi}--{i}', fontdict={'fontsize':10})
+            
+            if training:
+                fig_temp, ax_temp = plt.subplots(figsize=(5,5))
+                ax_temp.imshow(thumb)
+                ax_temp.imshow(boundaries,  interpolation='none', cmap="gray", alpha=1, vmin=0, vmax=1)
+                ax_temp.grid(None)
+                ax_temp.get_xaxis().set_visible(False)
+                ax_temp.get_yaxis().set_visible(False)
+                ax_temp.set_title(label=f'{roi}--{i}', fontdict={'fontsize':10})
+                
+                show_figure(fig_temp)
+                
+                cells.loc[i,'training']=copy(answer)
+                
+        # Append a list of the viewed cells
+        cell_dfs.append(cells.copy())                    
+            
+            
+    # Create the subfolders, if using
+    
+    save_path=os.path.join(output_folder, save_subfolder)
+    
+    if not os.path.exists(save_path):
+        os.makedirs(save_path)
+    
+    if overview_images:
+
+        for roi, image in img_overviews.iterrows():
+            
+            # Filter down to only the cells from this specific ROI                      
+            cells = adata_obs_cells_filtered.loc[adata_obs_cells_filtered[roi_obs]==roi,:].copy()
+            
+            # loop through each of the cells in this ROI
+            for i, cell_row in cells.iterrows():
+                
+                y_cell = int(round(cell_row[y_loc_obs]))    
+                x_cell = int(round(cell_row[x_loc_obs]))
+            
+                # Get coordinates of a square over cell
+                rr, cc = rectangle_perimeter((y_cell - radius, x_cell - radius), extent=(radius*2, radius*2), shape=image['image'].shape)
+
+                # Set the coordinates to white
+                img_overviews.loc[roi,'image'][rr, cc, :]=255
+                
+            io.imsave(os.path.join(save_path, (roi+'_overview.png')), image['image']) 
+                
+    fig.tight_layout()
+    fig.suptitle(f'Population: {save_subfolder}. Red: {red}. Green: {green}. Blue: {blue}')
+    fig.show()
+    
+    fig.savefig(os.path.join(save_path, ('Cells.png')), bbox_inches='tight',dpi=200)
+    
+    cell_dfs =pd.concat(cell_dfs)
+    cell_dfs.to_csv(os.path.join(save_path, 'cells_list.csv'))
+    
+
+
+def backgating_assessment(adata,                          
+                          image_folder,
+                          pop_obs,
+                          cells_per_group=50,
+                          radius=15,
+                          roi_obs='ROI',
+                          x_loc_obs='X_loc',
+                          y_loc_obs='Y_loc',
+                          cell_index_obs='Master_Index',
+                          use_masks='mask_dict.csv',
+                          output_folder='Backgating',
+                          minimum=0.4,
+                          max_quantile='q0.98',
+                          markers_exclude=[],
+                          only_use_markers=[],
+                          number_top_markers=3,
+                          mode='full',
+                         specify_red=None,
+                         specify_green=None,
+                         specify_blue=None):
+    
+    """This function perform a backgating assessment on a supplied adata.obs grouping, usually a populations
+    Args:
+        adata: adata object
+        image_folder: Folder with raw or denoised images. Each ROI has it's own folder.
+        pop_obs: adata.obs that identifies populations
+        cells_per_group: Cells per group to plot
+        radius=15: Size of square over cell to visualise
+        roi_obs: adata.obs identifying ROIs,
+        x_loc_obs: adata.obs identifying X location,
+        y_loc_obs: adata.obs identifying Y location,
+        cell_index_obs: Identifier for individual cells,
+        use_masks: If specified, is a .csv file that maps ROIs onto paths to masks,
+        output_folder: Output folder for saving,
+        minimum: Minimum pixel value for images,
+        max_quantile: Quantile of signal for max intensity of images,
+        markers_exclude: List of markers to exclude when calculating highest expression of markers in group,
+        only_use_markers: Supply a list of markers to use when calculating highest expression of markers in group,
+        number_top_markers: Number of highest expression of markers, between 1 and 3
+        mode:
+            full: Will calculate top markers, then immediately backgate
+            save_markers: Will only calculate markers then save in a file, which can be reviewed and modified
+            load_markers: Loads a saved marker file, then runs backgating           
+        specify_red:Specify a channel which all pops will use for red,
+        specify_green:Specify a channel which all pops will use for green,
+        specify_blue:Specify a channel which all pops will use for blue
+        
+    Output:
+        Will save everthing to output, with each population having it's own subfolder
+    """    
+    
+    
+
+    from IPython.display import display
+    import os
+
+    
+    if mode == 'full' or mode == 'save_markers':
+    
+        # Get a table of the mean expression of the different populations
+        res = pd.DataFrame(columns=adata.var_names, index=adata.obs[pop_obs].cat.categories)                                                                                                 
+
+        for clust in adata.obs[pop_obs].cat.categories: 
+            res.loc[clust] = adata[adata.obs[pop_obs].isin([clust]),:].X.mean(0)
+
+        # Convert to numbers
+        res = res.astype('float64')
+
+        # Drop any markers we don't want in the 'top' assessment
+        res = res.drop(columns=markers_exclude)
+
+        # If given, only use markers from a specific list
+        if only_use_markers != []:
+            res=res.loc[:,only_use_markers]
+
+        # Extract top markers in descending order 
+        res['top'] = res.apply(lambda x : get_top_columns(x, number_top_markers), axis=1)
+                
+        # Extract colours from top columns
+        if number_top_markers==1:
+            res['Red'] = res['top']
+            res[['Green','Blue']]=None
+                
+        elif number_top_markers==2:
+            res[['Red','Green']] = res['top'].str.split("__", expand = True)
+            res['Blue']=None
+                
+        elif number_top_markers==3:
+            res[['Red','Green','Blue']] = res['top'].str.split("__", expand = True)
+                
+        # If channels have been specified, select them here
+        if specify_red:
+            res['Red']=specify_red
+        if specify_green:
+            res['Green']=specify_green
+        if specify_blue:
+            res['Blue']=specify_blue
+                                    
+        # Save to file    
+        res.to_csv(os.path.join(output_folder,'markers_used.csv'))
+        
+    elif mode == 'load_markers':
+        
+        
+        res = pd.read_csv(os.path.join(output_folder,'markers_used.csv'),index_col=0)
+        
+        # 'None' values are saved as strings, so converting them back into actual None
+        for c in ['Red', 'Blue', 'Green']:
+            res.loc[res[c]=='None', c]=None
+        
+                
+    if mode == 'full' or mode == 'load_markers':
+        
+        print('Calculated or loaded markers:')
+        display(res[['Red','Green','Blue']])         
+        
+        for pop, row in res.iterrows():
+
+            print(f'Backgating population: {pop}')
+
+            backgating(adata=adata,
+                        cell_index=list(adata[adata.obs[pop_obs]==pop].obs[cell_index_obs].sample(cells_per_group)),
+                        radius=radius,
+                        image_folder=image_folder,
+                        red=row['Red'],
+                        green=row['Green'],
+                        blue=row['Blue'],
+                        use_masks=use_masks,
+                        output_folder=output_folder,
+                        overview_images=True,
+                        minimum=minimum,
+                        max_quantile=max_quantile,
+                        save_subfolder=clean_text(pop)
+                        )
+
+            plt.close()
+    else:
+        print('Proposed markers:')
+        display(res[['Red','Green','Blue']])
+            
+        return res
+        
+        
+            
+def abundance_clustermap(adata,
+                         row_obs,
+                         col_obs,
+                         row_colourmap=None,
+                         col_colourmap=None,
+                         row_cluster=True,
+                         col_cluster=True,
+                         ROI_obs='ROI',
+                         log10=False,
+                         figsize=(10,10),
+                         zscore=None,
+                         cmap=None, 
+                         vmin=None, 
+                         vmax=None,
+                         save=None,
+                         palette=sc.plotting.palettes.zeileis_28
+                        ):
+
+    import pandas as pd
+    import numpy as np
+    import seaborn as sb
+    import scanpy as sc
+
+    # Crosstab to get abundances
+    plotting = pd.crosstab(adata.obs[row_obs],[adata.obs[col_obs],adata.obs[ROI_obs]],normalize=False)
+
+    if not row_colourmap:
+        row_colourmap = dict(zip(adata.obs[row_obs].unique(), 
+                                 [palette[x] for x in range(len(adata.obs[row_obs].unique()))]))
+        
+    if not col_colourmap:
+        col_colourmap = dict(zip(adata.obs[col_obs].unique(), 
+                                 [palette[x] for x in range(len(adata.obs[col_obs].unique()))]))
+                
+        
+    row_colours = list(plotting.reset_index()[row_obs].map(row_colourmap))
+    col_colours = list(plotting.T.reset_index()[col_obs].map(col_colourmap))
+    
+
+    if log10:
+        plotting= np.log10(plotting)
+        plotting.replace([np.inf, -np.inf], 0, inplace=True)
+
+    clustermap = sb.clustermap(plotting,
+                                figsize=figsize, 
+                                linewidths=0.5,
+                                method='single',
+                                z_score=zscore,
+                                row_cluster=row_cluster,
+                                col_cluster=col_cluster,
+                                col_colors=col_colours,
+                                row_colors=row_colours,
+                                cmap=cmap, 
+                                vmin=vmin, 
+                                vmax=vmax
+                 )
+
+    if save:
+        clustermap.savefig(save, dpi=200, bbox_inches='tight')                         
+
+
+
+
+
+        
+
+        
