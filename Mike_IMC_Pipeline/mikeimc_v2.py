@@ -593,7 +593,7 @@ def grouped_graph(adata_plotting, ROI_id, group_by_obs, x_axis, display_tables=T
     grouped_graph.cells = cells     
     grouped_graph.stats = stats                     
     
-def pop_stats(adata_plotting,groups,Case_id,ROI_id,x_axis,display_tables=True,fig_size=(5,5), confidence_interval=68,save=False, log_scale=True, scale_factor=False):
+def pop_stats(adata_plotting,groups,Case_id,x_axis,ROI_id='ROI',display_tables=True,fig_size=(5,5), confidence_interval=68,save=False, log_scale=True, scale_factor=False):
 
     import seaborn as sb
     import pandas as pd
@@ -910,7 +910,7 @@ def interactions_summary(so, #Define spatial heterogeneity object
                         title=True,
                         reindex=False, #List of populations in the order they should appear
                         calc_ttest_p_value=False,
-                        test='ttest', 
+                        test='wilcoxon', 
                         cmap='coolwarm',
                         vmax=None,
                         vmin=None,
@@ -1213,12 +1213,12 @@ def interactions_summary_UMAP(so, #Define spatial heterogeneity object
                 ax.annotate(txt, loc)
         
         fig.gca().set_aspect('equal', 'datalim')
-        plt.title(i)
+        plt.title(i+"--"+interaction_reference)
         
         if save:
-            plt.savefig('figures/'+i+'_UMAPsummary.svg')
+            plt.savefig(save)
         
-        plt.show()
+        #plt.show()
      
     interactions_summary_UMAP.summary = df2
     interactions_summary_UMAP.embedding = embedding
@@ -2024,10 +2024,10 @@ def add_graph_back_to_so(so, sample, graph, graph_title, node_attr, add_to_obs=T
     
     
 def mlm_pops(adata_plotting,
-                 groups,
-                 Case_id,
-                 ROI_id,
                  x_axis,
+                 grouping_obs=None,
+                 Case_id=None,
+                 ROI_id='ROI',
                  display_tables=True,
              fig_size=(5,5), 
              confidence_interval=68,
@@ -2036,10 +2036,12 @@ def mlm_pops(adata_plotting,
             crosstab_norm=False,
             col_remap=None,
             hue_order=None,
-            boxplot=True,
+            boxplot=False,
             mult_comp='holm-sidak',
             order=None,
-            scale_factor=None):
+            use_mm2=True,
+            scale_factor=None,
+            skip_stats=False):
 
     import seaborn as sb
     import pandas as pd
@@ -2048,39 +2050,61 @@ def mlm_pops(adata_plotting,
     import matplotlib.pyplot as plt 
     #import statsmodels.api as sm
     import statsmodels.formula.api as smf
+    from statsmodels.stats.multitest import multipletests
     
-    global cells
-    global cells_long
-    global case_average_long
     
-    cells = pd.crosstab([adata_plotting.obs[groups], adata_plotting.obs[Case_id], adata_plotting.obs[ROI_id]],adata_plotting.obs[x_axis],normalize=crosstab_norm)
+    crosstab_list = [x for x in [grouping_obs, Case_id, ROI_id] if x is not None]
+        
+    cells = pd.crosstab([adata_plotting.obs[x] for x in crosstab_list],adata_plotting.obs[x_axis],normalize=crosstab_norm)
     cells.columns=cells.columns.astype('str')
+    
+    if display_tables:
+        print('ROI totals:')
+        display(cells)
 
-    cells_long = cells.reset_index().melt(id_vars=[groups,Case_id,ROI_id])
+    cells_long = cells.reset_index().melt(id_vars=crosstab_list)
     cells_long.columns=cells_long.columns.astype('str')
     
-    if scale_factor:
+    if grouping_obs:
+        num_groups=len(cells_long[grouping_obs].cat.categories)
+    else:
+        num_groups=1
+    
+    if num_groups!=2:
+        print(f'Number of groups in {grouping_obs} is not equal to 2, so cant do statistics')
+        skip_stats=True
+    
+    if (Case_id==None) or (grouping_obs==None):
+        print('Case ID or Grouping obs not given, skipping statistics')
+        skip_stats=True
+    
+    
+    if use_mm2:
         
-        if isinstance(scale_factor, dict):       
-            for g in scale_factor:                    
-                cells_long.loc[cells_long[groups]==g, 'value'] = cells_long.loc[cells_long[groups]==g, 'value'] / scale_factor[g]
-        else:
-            cells_long['value'] = cells_long['value'] / scale_factor        
-            
+        corrected =[]
+        for i, row in cells_long.iterrows():
+            mm2 = adata.uns['sample'].loc[row['ROI'],'mm2']
+            corrected.append(row['value']/mm2)
 
+        cells_longs['values']=corrected  
+            
     fig, ax = plt.subplots(figsize=fig_size)
     
     #Plotting
-    #
+    
     if boxplot:
-        sb.boxplot(data = cells_long, y = "value", x = x_axis, hue = groups, hue_order=hue_order, ax=ax, showfliers=False)       
+        sb.boxplot(data = cells_long, y = "value", x = x_axis, hue = grouping_obs, hue_order=hue_order, ax=ax, showfliers=False)       
     else:
-        sb.barplot(data = cells_long, y = "value", x = x_axis, hue = groups, hue_order=hue_order, ci=confidence_interval, ax=ax, order=order)
+        sb.barplot(data = cells_long, y = "value", x = x_axis, hue = grouping_obs, hue_order=hue_order, ci=confidence_interval, ax=ax, order=order)
     
     #Plotting settings
     ax.set_xticklabels(ax.get_xticklabels(),rotation = 90, fontsize = 10)
-    ax.set_ylabel('Cells')
-              
+    
+    if use_mm2:
+        ax.set_ylabel('Cells / mm2')
+    else:
+        ax.set_ylabel('Cells per ROI')
+                      
     if log_scale:
         ax.set_yscale("log")
    
@@ -2089,52 +2113,53 @@ def mlm_pops(adata_plotting,
     
     if save:
         fig.savefig(save, bbox_inches='tight',dpi=200)
-
-    col_names = adata_plotting.obs[groups].unique().tolist()
-
-    celltype = []
-    ttest = []
-    mw = []
-    mlm = []
-
-    stats_df = cells
-    
-    if col_remap:
-        stats_df.rename(columns=col_remap, inplace=True)
-    
-    for i in [' ', ',', '+', '/']:
-        stats_df.columns = stats_df.columns.str.replace(i, '_')
- 
-    
-    mlm_pops.stats = stats_df
-    
-    for i,s in zip(cells.columns.tolist(), stats_df.columns.tolist()):
         
-        formula = f"{s} ~ {groups}"
-        print(formula)
-        md = smf.mixedlm(formula, stats_df.reset_index(), groups=stats_df.reset_index()[Case_id])
-        mdf = md.fit()
-
-        celltype.append(i)
-        ttest.append(sp.stats.ttest_ind(cells.loc[col_names[0]][i], cells.loc[col_names[1]][i]).pvalue) 
-        mw.append(sp.stats.mannwhitneyu(cells.loc[col_names[0]][i], cells.loc[col_names[1]][i]).pvalue)
-        mlm.append(mdf.pvalues[1])
-
-    stats = pd.DataFrame(list(zip(celltype,ttest,mw, mlm)),columns = ['Cell Type','T test','Mann-Whitney', 'Mixed linear model'])   
-
-    #Multiple comparissons correction
-    for stat_column in ['T test','Mann-Whitney', 'Mixed linear model']:
-        corrected_stats = sm.stats.multitest.multipletests(stats[stat_column],alpha=0.05,method=mult_comp)
-        stats[(stat_column+' Reject null?')]=corrected_stats[0]
-        stats[(stat_column+' Corrected Pval')]=corrected_stats[1]
+    if not skip_stats:
     
-    if display_tables:
-        print('ROI totals:')
-        display(cells)
-    
-        print('Statistics:')
-        display(stats)
+        col_names = adata_plotting.obs[grouping_obs].unique().tolist()
+
+        celltype = []
+        ttest = []
+        mw = []
+        mlm = []
+
+        stats_df = cells
+
+        if col_remap:
+            stats_df.rename(columns=col_remap, inplace=True)
+
+        for i in [' ', ',', '+', '/']:
+            stats_df.columns = stats_df.columns.str.replace(i, '_')
+
+
+        mlm_pops.stats = stats_df
+
+        for i,s in zip(cells.columns.tolist(), stats_df.columns.tolist()):
+
+            formula = f"{s} ~ {grouping_obs}"
+            print(formula)
+            md = smf.mixedlm(formula, stats_df.reset_index(), groups=stats_df.reset_index()[Case_id])
+            mdf = md.fit()
+
+            celltype.append(i)
+            ttest.append(sp.stats.ttest_ind(cells.loc[col_names[0]][i], cells.loc[col_names[1]][i]).pvalue) 
+            mw.append(sp.stats.mannwhitneyu(cells.loc[col_names[0]][i], cells.loc[col_names[1]][i]).pvalue)
+            mlm.append(mdf.pvalues[1])
+
+        stats = pd.DataFrame(list(zip(celltype,ttest,mw, mlm)),columns = ['Cell Type','T test','Mann-Whitney', 'Mixed linear model'])   
+
+        #Multiple comparissons correction
+        for stat_column in ['T test','Mann-Whitney', 'Mixed linear model']:
+            corrected_stats = multipletests(stats[stat_column],alpha=0.05,method=mult_comp)
+            stats[(stat_column+' Reject null?')]=corrected_stats[0]
+            stats[(stat_column+' Corrected Pval')]=corrected_stats[1]
+
+        if display_tables:
+            print('Statistics:')
+            display(stats)
         
+    mlm_pops.cells = cells
+    mlm_pops.cells_long = cells_long        
 
 
 def rgb_to_hex_colourmap(rgb_colour_map):
@@ -3201,6 +3226,7 @@ def backgating(adata,
     from skimage.draw import polygon, rectangle_perimeter
     import os
     import copy
+    from pathlib import Path
 
     # If only one cell index is supplied, make it into a list anyway
     if not isinstance(cell_index, list):
@@ -3257,7 +3283,10 @@ def backgating(adata,
     
     print(f'{excluded_cell_nums} cells out of bounds for plotting, proceeding with plotting ')
     
-    if use_masks:
+    if use_masks==True:
+        img_df['mask']=[io.imread(Path('masks',(x+'.tiff'))) for x in img_df.index] 
+    
+    elif isinstance(use_masks, str):
         # Load the mask dictionary
         masks = pd.read_csv(use_masks).set_index(roi_obs)
         
@@ -3389,7 +3418,7 @@ def backgating_assessment(adata,
                           x_loc_obs='X_loc',
                           y_loc_obs='Y_loc',
                           cell_index_obs='Master_Index',
-                          use_masks='mask_dict.csv',
+                          use_masks=True,
                           output_folder='Backgating',
                           minimum=0.4,
                           max_quantile='q0.98',
@@ -3435,7 +3464,10 @@ def backgating_assessment(adata,
 
     from IPython.display import display
     import os
-
+    from pathlib import Path
+    
+    figure_dir=Path('Backgating')
+    os.makedirs(figure_dir, exist_ok=True)
     
     if mode == 'full' or mode == 'save_markers':
     
@@ -3526,7 +3558,7 @@ def backgating_assessment(adata,
             
 def abundance_clustermap(adata,
                          row_obs,
-                         col_obs,
+                         col_obs=None,
                          row_colourmap=None,
                          col_colourmap=None,
                          row_cluster=True,
@@ -3546,9 +3578,14 @@ def abundance_clustermap(adata,
     import numpy as np
     import seaborn as sb
     import scanpy as sc
-
+    
     # Crosstab to get abundances
-    plotting = pd.crosstab(adata.obs[row_obs],[adata.obs[col_obs],adata.obs[ROI_obs]],normalize=False)
+    if col_obs==None:
+        plotting = pd.crosstab(adata.obs[row_obs],adata.obs[ROI_obs],normalize=False)
+        col_obs='ROI'
+    else:
+        # Crosstab to get abundances
+        plotting = pd.crosstab(adata.obs[row_obs],[adata.obs[col_obs],adata.obs[ROI_obs]],normalize=False)
 
     if not row_colourmap:
         row_colourmap = dict(zip(adata.obs[row_obs].unique(), 
@@ -3587,7 +3624,959 @@ def abundance_clustermap(adata,
 
 
 
-
+global images_dir, masks_dir, panel_df, sample_df
         
 
+def stacks_to_imagefolders(input_folder,#=images_dir, #The folder with the ometiffs
+                           masks_folder,#=masks_dir,
+                            panel_df,#=panel_df,
+                            sample_df,#=sample_df,
+                            unstacked_output_folder = 'images', #The name of the folder where tiffs will be extracted
+                            masks_output_folder = 'masks', #The name of the folder where renamed masks will be stored
+                            sample_df_filename_col='FileName_FullStack',
+                            sample_df_mask_col='FileName_cellmask',
+                            panel_df_target_col='Target'):
+
+    from pathlib import Path
+    from tqdm import tqdm
+    import tifffile as tp
+    from copy import copy
+    from os.path import join
+    import shutil
+    import os
+
+    # Make output directories if they don't exist
+    output = Path(unstacked_output_folder)
+    output.mkdir(exist_ok=True)
+
+    # Get paths for all the .tiff files in the input directory
+    tiff_paths = list(input_folder.rglob('*.tiff'))
+   
+    print(f'Unpacking {str(len(tiff_paths))} ROIs...')
+    
+    metadata_rois = sample_df[sample_df_filename_col].tolist()
+    detectedimages_rois = [os.path.basename(x) for x in tiff_paths]
+    
+    meta_not_actual = [x for x in metadata_rois if x not in detectedimages_rois]
+    actual_not_meta = [x for x in detectedimages_rois if x not in metadata_rois]    
+    
+    try:
+        assert meta_not_actual == actual_not_meta, f"Number of ROIs in image file not equal to number of full stacks found"
+    except:                
+        print('ROIs referred in metadata without image stacks being detected:')
+        print(meta_not_actual)
+        print('ROIs with images that arent referred to in metadata:')
+        print(actual_not_meta)
+    
+    
+    # Find all masks in folder
+    mask_paths = list(masks_folder.rglob('*.tiff'))
+    
+    metadata_masks_rois = sample_df[sample_df_mask_col].tolist()
+    detectedmaskss_rois = [os.path.basename(x) for x in mask_paths]
+    
+    meta_not_actual = [x for x in metadata_masks_rois if x not in detectedmaskss_rois]
+    actual_not_meta = [x for x in detectedmaskss_rois if x not in metadata_masks_rois]      
+                           
+    try:
+        assert meta_not_actual == actual_not_meta, f"Number of masks in image file not equal to number of mask files found"
+    except:                
+        print('ROIs referred in metadata without masks being detected:')
+        print(meta_not_actual)
+        print('Masks that arent referred to in metadata:')
+        print(actual_not_meta)                           
+                           
+   
+    for path in tiff_paths:
+
+        # Load the image
+        image = tp.imread(path)
         
+        # Get the file name from the path
+        image_filename = os.path.basename(path)
+        
+        # Get the ROI name from the sample table
+        folder_name = sample_df.loc[sample_df[sample_df_filename_col]==image_filename, sample_df_filename_col].index[0]
+                      
+        # Make the output folder
+        output_dir = Path(unstacked_output_folder,folder_name)
+        output_dir.mkdir(exist_ok=True)        
+
+        # Itterate through channels, writing an image for each
+        for i, channel_name in enumerate(panel_df[panel_df_target_col]):
+                              
+            tp.imwrite(join(output_dir, (channel_name+'.tiff')), image[i])
+                   
+    # Make mask directory if doesnt exist
+    masks_output_folder = Path(masks_output_folder)
+    masks_output_folder.mkdir(exist_ok=True)  
+
+    # Find all masks in folder
+    mask_paths = list(masks_folder.rglob('*.tiff'))
+
+    for path in mask_paths:
+
+        mask_filename = os.path.basename(path)
+
+        # Get the ROI name from the sample table
+        roi_name = sample_df.loc[sample_df[sample_df_mask_col]==mask_filename, sample_df_mask_col].index[0]            
+
+        shutil.copy(path,os.path.join(masks_output_folder, (roi_name+'.tiff')))
+
+                           
+def setup_anndata(cell_df,#=cell_df,
+                  sample_df,#=sample_df,
+                  panel_df,#=panel_df, 
+                  image_df,#=image_df,                                    
+                  cell_df_x='Location_Center_X',
+                  cell_df_y='Location_Center_Y',
+                  cell_df_ROIcol='',
+                  dictionary='dictionary.csv',
+                  cell_df_extra_columns=[],
+                  marker_normalisation='99th',
+                  panel_df_target_col='Target',
+                  cell_table_format='bodenmmiller'):
+
+    import os
+    import pandas as pd
+    import scanpy as sc
+    import numpy as np
+    
+    #This stops a warning getting returned that we don't need to worry about
+    pd.set_option('mode.chained_assignment',None)
+    
+    if cell_table_format=='bodenmmiller':
+       
+        # Extract only the intensities from the cell table
+        cell_df_intensities = cell_df[[col for col in cell_df.columns if 'Intensity_MeanIntensity_FullStack' in col]].copy()
+
+        # Remap the column names to the proper channel names
+        mapping = dict(zip(panel_df['cell_table_channel'],panel_df[panel_df_target_col]))
+        cell_df_intensities.rename(columns=mapping, inplace=True)    
+        
+    elif cell_table_format=='redsea':
+        
+        # Extract columns from those in the panel file
+        redsea_marker_cols = [col for col in cell_df.columns if col in panel_df[panel_df_target_col].values.tolist()]
+        cell_df_intensities = cell_df[redsea_marker_cols].copy()
+           
+    # If only a single normalisation provided, make a list anyway
+    if not isinstance(marker_normalisation, list):
+        marker_normalisation=[marker_normalisation]
+    
+    # Cell cell intensities
+    markers_normalised = cell_df_intensities
+    
+    # For each method in the list, intrepret it and assess results
+    for method in marker_normalisation:
+        
+        if method[0]=='q':
+            quantile = round(float(method[1:])/100,5)
+            markers_normalised = markers_normalised.div(markers_normalised.quantile(q=quantile)).clip(upper=1)        
+            markers_normalised = np.nan_to_num(markers_normalised, nan=0)
+            print(f'\nData normalised to {str(quantile)} quantile')
+        
+        elif 'arcsinh' in method:
+            cofactor=int(method[7:])
+            markers_normalised = np.arcsinh(markers_normalised/cofactor)
+            print(f'\nData Arcsinh adjusted with cofactor {str(cofactor)}')            
+        
+        elif method=='log2':
+            markers_normalised = np.log2(cell_df_intensities)
+            print(f'\nData Log2 adjusted')            
+        
+        elif method=='log10':
+            markers_normalised = np.log10(cell_df_intensities)          
+            print(f'\nData Log10 adjusted')
+            
+        else:
+            print(f'Normalised method {method} no recognised')
+    
+    # Create AnnData object using the normalised markers
+    adata = sc.AnnData(markers_normalised)
+
+        
+    if cell_table_format=='bodenmmiller':
+
+        # Add in the marker/var names
+        adata.var_names=panel_df[panel_df_target_col].values.tolist()
+        
+        # Map ROI information
+        adata.obs['ROI']=cell_df['ImageNumber'].map(dict(zip(sample_df['ImageNumber'],sample_df.index))).values.tolist()        
+        
+    elif cell_table_format=='redsea':
+        
+        adata.var_names=redsea_marker_cols
+    
+        # Map ROI information
+        adata.obs['ROI']=cell_df[cell_df_ROIcol].values.tolist()        
+        
+        #'adata.obs['ROI']=adata.obs['ROI'].map(dict(zip(sample_df['AcSession'],sample_df.index)))
+                                                
+    # Add in any extra columns from cell table
+    for c in cell_df_extra_columns:
+        adata.b[c]=cell_df[c].values.tolist()
+                                                
+    # Add in spatial information
+    adata.obsm['spatial'] = cell_df[[cell_df_x, cell_df_y]].to_numpy()                                                
+    adata.obs['X_loc'] = cell_df[cell_df_x].values.tolist()
+    adata.obs['Y_loc'] = cell_df[cell_df_y].values.tolist()
+    
+    # Add in a master cell index
+    adata.obs['Master_Index']=adata.obs.index.values.tolist()
+                                                
+    if not dictionary==None:
+        #Read dictionary from file
+        obs_dict = pd.read_csv(dictionary, low_memory=False, index_col=0).to_dict()
+
+        # Add the new columns based off the dictionary file
+        for i in obs_dict.keys():
+            adata.obs[i]=adata.obs['ROI'].map(obs_dict[i]).values.tolist()
+    
+    print('Markers imported:')
+    print(adata.var_names)
+    print(adata)
+    
+    adata.uns.update({'sample':sample_df.copy(),
+                     'panel':panel_df.copy()})
+    
+    return adata
+
+import tkinter as tk
+from tkinter import colorchooser
+
+def choose_colors(color_dict, item, result_labels):
+    color = colorchooser.askcolor(title=f"Choose color for {item}", initialcolor=color_dict[item])[1]
+    color_dict[item] = color
+    result_labels[item].config(bg=color)
+
+def show_colors(color_dict):
+    result = tk.Tk()
+    result.title("Selected colors")
+    result_labels = {}
+    for item in color_dict.keys():
+        result_labels[item] = tk.Label(result, text=f"{item}:", bg=color_dict[item])
+        result_labels[item].pack()
+    tk.Button(result, text="OK", command=result.destroy).pack()
+    for item in color_dict.keys():
+        tk.Button(result, text=item, command=lambda item=item: choose_colors(color_dict, item, result_labels)).pack()
+    result.mainloop()
+
+def recolour_population(so,
+                        population_obs,
+                        colour_maps):
+    
+    from matplotlib.colors import ListedColormap, Normalize
+    import tkinter as tk
+    from tkinter import colorchooser
+
+    # Get the existing colour map    
+    color_dict = colour_maps[population_obs]
+
+    root = tk.Tk()
+    root.title("Color chooser")
+    tk.Button(root, text="Choose colors", command=lambda: show_colors(color_dict)).pack()
+    root.mainloop()
+
+    # Update the colour map in ATHENA with the updated version
+    new_colours = [matplotlib.colors.to_rgb(x) for x in colour_maps[population_obs].values()]
+    cmap = ListedColormap(new_colours)
+    display(cmap)
+    so.uns['cmaps'].update({f'{population_obs}_id': cmap})
+    display(colour_maps[population_obs])
+    print(f'Successfully updated colours map for: {population_obs}')
+    
+def athena_from_adata(adata,
+                      sample_df,
+                      roi_obs='ROI',
+                      cellindex_obs='Master_Index',
+                      population_obs_list=[],
+                      sample_level_obs=['ROI','Case'],
+                      mask_subdirectory='masks',
+                      colourmap = cc.glasbey_category10,
+                      return_alternate_colourmaps=True,
+                      show_spl=True):
+
+    import numpy as np
+    import pandas as pd
+    import matplotlib
+    import os
+    from spatialOmics import SpatialOmics
+    import athena as sh
+    from matplotlib.colors import ListedColormap, Normalize
+    from IPython.display import display
+
+
+    
+    if not isinstance(population_obs_list, list):
+        population_obs_list=[population_obs_list]
+    
+    # Make a copy of adata to import
+    ad = adata.copy() 
+    
+    # Add a cell index
+    for roi in ad.obs[roi_obs].cat.categories:
+        ad.obs.loc[ad.obs[roi_obs]==roi,'cell_id'] = ad.obs.loc[ad.obs[roi_obs]==roi,cellindex_obs].astype('int') - ad.obs.loc[ad.obs[roi_obs]==roi,cellindex_obs].astype('int').min() + 1
+                      
+    # Create new 'obs_id' for each population_obs_list - this is quirk for ATHENA to allow plotting
+    for c in population_obs_list:
+        ad.obs[f'{c}_id'] = ad.obs.groupby(c).ngroup().astype('category')                      
+    
+    spl = ad.obs[sample_level_obs]  #These are the sample/ROI level obs in the adata
+    spl = spl[~spl.duplicated()]
+    spl = spl.dropna(subset='ROI') # Couldn't figure out why kept getting ROIs with 'NaN' appearing
+    spl.set_index('ROI', inplace=True) #Set the index as ROI, which is the unique ID for each region
+    
+                      
+    # Check sample_df matches adata.obs                   
+    try:
+         assert pd.concat([spl,sample_df],axis=1).shape[0] == spl.shape[0], 'Spl and sample_df do not match - ROI names are different'
+    except:                
+        sample_df_rois = sample_df.ROI.tolist()
+        spl_rois = spl.index.tolist()
+    
+        sample_not_spl = [x for x in sample_df_rois if x not in spl_rois]
+        spl_not_sample = [x for x in spl_rois if x not in sample_df_rois]            
+        
+        print('ROIs found in sample_df but not spl:')
+        print(sample_not_spl)
+        print('ROIs found in spl but not sample_df:')
+        print(spl_not_sample)
+   
+    
+    spl = pd.concat([spl,sample_df],axis=1)
+                      
+    # Add in locations of mask
+    spl.loc[:, 'cell_mask_file'] = [os.path.join(mask_subdirectory,(str(spl.index[x])+'.tiff')) for x,_ in enumerate(spl.index)]
+    
+    print('Created spl:')
+    if show_spl:
+        print_full(spl)
+                      
+    # Create the SpatialOmics instance and add in the sample data
+    so = SpatialOmics()
+    so.spl = spl
+                      
+    # Transfer over data from adata to new so object
+    for r in so.spl.index:
+        print(f'Adding in data for roi: {r}')
+        mask = ad.obs.ROI == r
+        so.X[r] = pd.DataFrame(ad.X[mask], columns=ad.var.index)
+        so.obs[r] = ad.obs[mask]
+        so.obs[r].set_index('cell_id', inplace=True)
+        so.X[r].index = so.obs[r].index
+
+        # this is how you can add masks to the spatial omics instance
+        # please use `to_store=False` as this prevents writing the file to disk which is still experimental
+        cell_mask_file = spl.loc[r].cell_mask_file
+
+        # first argument is the sample name
+        # second argument is the KEY in so.masks[KEY] under which the mask is stored
+        # third argument the file name
+        so.add_mask(r, 'cellmasks', cell_mask_file, to_store=False)
+        so.masks[r]['cellmasks'] = so.masks[r]['cellmasks'].astype(int)  # should be int
+
+        # process segmentation masks and remove masks that do not represent a cell
+        existing_cells = set(so.obs[r].index)
+        segmentation_ids = set(np.unique(so.masks[r]['cellmasks']))
+        idsToDelete = segmentation_ids - existing_cells
+        for i in idsToDelete:
+            cm = so.masks[r]['cellmasks']
+            cm[cm == i] = 0
+    
+    
+    # Setup ATHENA populations and colour maps to enabling plotting
+    for i in population_obs_list:
+
+        # Create colour map labels
+        dictionary = dict(zip(ad.obs[f'{i}_id'].cat.categories, ad.obs[i].cat.categories)) 
+        so.uns['cmap_labels'].update({f'{i}_id': dictionary})    
+
+        # Create actual colour maps
+        length = len(so.obs[so.spl.index[0]][f'{i}_id'].cat.categories)
+        cmap = colourmap[:length]
+        cmap = ListedColormap(cmap)
+        print(f'{i}_id')
+        display(cmap)
+        so.uns['cmaps'].update({f'{i}_id': cmap})
+
+    if return_alternate_colourmaps:
+    
+        # Create colourmaps that work with Scanpy/Matplotlib
+        colour_maps = {}
+
+        for i in population_obs_list:    
+            pops = ad.obs[i].cat.categories
+            colours = so.uns['cmaps'][f'{i}_id'].colors
+            colours = [matplotlib.colors.to_hex(x) for x in colours] #Convert to HEX
+            colour_dict={pops[x]: colours[x] for x in range(len(pops))}
+            colour_maps.update({i:colour_dict})
+    
+    if return_alternate_colourmaps:
+        return so, colour_maps
+    
+    else:
+        return so
+
+    
+def so_groupby_roimean(so,
+                    population_obs,
+                    samples,
+                    roi_obs='ROI',
+                    categorical_obs=None):
+    
+    ''' This function takes the ROI average (over all samples by default) for a given population obs for an SO object, returning a dataframe'''
+    
+    from copy import copy
+    
+    results_df=[]
+    
+    for s in samples:
+
+        working_obs = so.obs[s]
+        results = working_obs.groupby(population_obs,observed=True).mean().reset_index()
+        results[roi_obs]=copy(s)
+        
+        if categorical_obs:
+            results[categorical_obs]=so.spl.loc[s,categorical_obs]
+
+        results_df.append(results.copy())
+
+    results_df= pd.concat(results_df)
+
+    if categorical_obs:
+        final_df = results_df.groupby([population_obs,categorical_obs,roi_obs],observed=True).mean().reset_index()
+    else:
+        final_df = results_df.groupby([population_obs,roi_obs],observed=True).mean().reset_index()
+    
+    final_df[population_obs]= final_df[population_obs].astype('category')
+    
+    return final_df
+
+def ripley_roiavg_calc(adata,
+           samples,
+           population,
+           mode='L',          
+           roi_obs='ROI'):
+    
+    import squidpy as sq
+    import pandas as pd
+    
+    # Create blank dataframes
+    ripley_results_df = []
+    sims_results_df = []
+
+    # Perform ripleys on
+    for roi in samples:
+        a = adata[adata.obs[roi_obs]==roi].copy()
+
+        sq.gr.ripley(a, cluster_key=population, mode=mode, max_dist=40)
+
+        ripley_results = a.uns[f'{population}_ripley_{mode}'][f'{mode}_stat']
+        ripley_results[roi_obs] = roi
+
+        sims_results = a.uns[f'{population}_ripley_{mode}']['sims_stat']
+        sims_results[roi_obs] = roi
+
+        ripley_results_df.append(ripley_results.copy())
+        sims_results_df.append(sims_results.copy())
+
+    ripley_results_df = pd.concat(ripley_results_df)
+    sims_results_df = pd.concat(sims_results_df)
+    
+    return ripley_results_df, sims_results_df
+                      
+                      
+def interactions_bargraph(so,
+                        samples,
+                        population_obs,
+                        target_population,
+                        colourmap=None,
+                        var='diff',
+                        so_graph='contact',
+                        interactions_mode='proportion',
+                        figsize=(3,3),
+                        sort_values=True,
+                        ci=68,
+                        save=True):
+    
+    from pathlib import Path
+    import seaborn as sb
+    
+    # Extract data from SO object interactions table
+    summary = interactions_table(so,
+                        samples_list=samples,
+                        interaction_reference=f'{population_obs}_id_{interactions_mode}_diff_{so_graph}',
+                        var=var,
+                        population_dictionary=so.uns['cmap_labels'][f'{population_obs}_id'],
+                        mode='individual')
+
+    # Filter to interactions with target populatoin
+    data = summary.loc[summary.target_label==target_population,:]
+               
+    # Remove unused groups    
+    try:
+        data.source_label.cat.remove_unused_categories(inplace=True)
+        data.target_label.cat.remove_unused_categories(inplace=True)
+    except:
+        'None'
+
+    fig, axs = plt.subplots(figsize=figsize, dpi=150)
+    fig.suptitle(target_population, fontsize=16)
+
+    # Sort values for plotting
+    if sort_values:
+        order=data.groupby(['source_label','target_label']).mean().sort_values(var).reset_index()['source_label']
+    else:
+        order=None
+
+
+    sb.barplot(data = data, 
+       x = "source_label", 
+       y = var, 
+       ci=ci,
+       ax=axs,
+       palette=colourmap,
+       order=order
+      )
+
+    #axs.set_title(i)
+    axs.tick_params(axis='x', labelrotation = 90, labelsize=8)
+    axs.tick_params(axis='y', labelsize=8)
+    #plt.xticks(rotation=90)
+    
+    if var=='diff':
+        t='Proportion of interactions \n(diff from chance)'
+    else:
+        t='Proportion of interactions'
+        
+    axs.set_ylabel(t, fontsize=10)
+    axs.set_xlabel(f'{population_obs} population', fontsize=10)
+
+
+    if save:
+        figure_dir=Path('Figures')
+        figure_dir.mkdir(exist_ok=True)
+        figure_dir=Path('Figures','Interaction_bargraphs')
+        figure_dir.mkdir(exist_ok=True)
+        save_path=Path(figure_dir, f'{population_obs}_interactionswith_{target_population}_{var}_{so_graph}.png')
+        fig.savefig(save_path, bbox_inches='tight')
+    
+
+def calculate_cell_distances(adata,
+                           samples_list,
+                           population_obs,
+                           specify_pops=[],
+                           X_loc='X_loc',
+                           Y_loc='Y_loc',
+                           ROI_obs='ROI',
+                           cell_id='Master_Index',
+                           save=True,
+                           simulation_number=300):
+                       
+
+    from scipy import spatial
+    from tqdm import tqdm
+    import numpy as np
+    import os
+    from pathlib import Path
+    
+    # Extract a list of populations from population_obs
+    if specify_pops == []:
+        populations_list=adata.obs[population_obs].cat.categories.tolist()
+        print(f'Found following populations in {population_obs}:\n')
+        print(populations_list)
+    else:
+        populations_list=specify_pops
+        print(f'Populations provided:\n')
+        print(populations_list)
+
+    roi_list=[]
+    cell_id_list=[]
+    frompop_list=[]
+    topop_list=[]
+    num_frompop_list=[]
+    num_topop_list=[]
+    distance_list=[]
+    
+    
+    for s in tqdm(samples_list):
+
+        for from_pop in populations_list:
+        
+            # Get all cells from this ROI for this population
+            from_cells = adata.obs.loc[(adata.obs[population_obs]==from_pop)&(adata.obs[ROI_obs]==s), :]
+
+            for to_pop in populations_list:
+
+                to_cells = adata.obs.loc[(adata.obs[population_obs]==to_pop)&(adata.obs[ROI_obs]==s), :]
+                to_locs = to_cells[[X_loc,Y_loc]].to_numpy() 
+                to_cell_tree = spatial.KDTree(to_locs)
+
+                for i, cell in from_cells.iterrows():
+                    cell_loc = cell[[X_loc,Y_loc]].to_numpy() 
+                    
+                    # To stop just finding the same cell, find second nearest if to and from the same population
+                    if from_pop==to_pop:
+                        distance,_ = to_cell_tree.query(cell_loc, k=2)
+                        distance = distance[1]
+                    else:
+                        distance,_ = to_cell_tree.query(cell_loc)
+
+                    roi_list.append(copy(s))
+                    cell_id_list.append(copy(cell[cell_id]))
+                    frompop_list.append(copy(cell[population_obs]))
+                    topop_list.append(copy(to_pop))
+                    num_frompop_list.append(int(len(copy(from_cells))))
+                    num_topop_list.append(int(len(copy(to_cells))))
+                    distance_list.append(float(copy(distance)))
+                
+    sc_results_df = pd.DataFrame(zip(roi_list,cell_id_list,distance_list,frompop_list,topop_list,num_frompop_list,num_topop_list),
+                              columns=[ROI_obs,cell_id,'Distance','From_pop','To_pop','Number_from_pop', 'Number_to_pop'])
+                                         
+    # Replace infinites with NaN
+    sc_results_df.replace([np.inf, -np.inf], np.nan, inplace=True)
+    
+    # Average for each population over ROIs
+    summary_df=sc_results_df.groupby(['ROI','From_pop','To_pop'], observed=True).mean()
+    # Drop NaNs and reset index
+    summary_df = summary_df.reset_index().dropna()
+    
+    if simulation_number != None:
+        
+        print('Calculating predicted distance between cells if they were randomly distributed...')
+       
+        # Calculate the predicted distances based upon the abundances of each population
+        predicted_distance=[]
+        for index, data in tqdm(summary_df.iterrows(), total=len(summary_df)):
+            val,_,_ =predict_distances(int(data['Number_from_pop']), int(data['Number_to_pop']),simulation_number)
+            predicted_distance.append(copy(val))
+
+        summary_df['Distance_pred']=predicted_distance
+        summary_df['Distance_diff']=summary_df['Distance']-summary_df['Distance_pred']
+
+    if save:
+        figure_dir=Path('Figures','Distance_Analyses','Calculations')
+        figure_dir.mkdir(exist_ok=True)
+        sc_results_df.to_csv(Path(figure_dir, f'singlecelldistances_{population_obs}.csv'))
+        summary_df.to_csv(Path(figure_dir, f'roiavgcelldistances_{population_obs}.csv'))
+    
+    return sc_results_df, summary_df
+
+from scipy.stats import ttest_1samp, wilcoxon
+
+def groupby_ttest(data, groupby_list,variable, mult_comp='fdr_bh', alpha=0.05, test='ttest'):
+    import statsmodels as sm
+    
+    if test=='ttest':
+        ttest_df = data.groupby(groupby_list).agg(ttest).reset_index()
+    elif test=='wilcoxon':
+        ttest_df = data.groupby(groupby_list).agg(wilcox).reset_index()
+        
+
+    if mult_comp:    
+        mult_comp=sm.stats.multitest.multipletests(ttest_df[variable],alpha=0.05,method=mult_comp)
+        ttest_df['pvalue']=mult_comp[1]
+        ttest_df['reject_null']=mult_comp[0]
+    else:
+        ttest_df = ttest_df.rename(columns={variable:'pvalue'})
+
+    return ttest_df
+                  
+def ttest(data):
+    return ttest_1samp(data,0).pvalue
+
+def wilcox(data):
+    return wilcoxon(data, zero_method='wilcox', correction=False).pvalue
+
+
+def distances_clustermap(distances_df,
+                         population_obs,
+                         colour_map=None,
+                         metric='Distance_diff',
+                         minimum_cells=5,
+                         vmin=-50,
+                         vmax=200,
+                         figsize=(6,6),
+                        row_cluster=True,
+                        col_cluster=False,
+                        return_stats=True,
+                        mult_comp='fdr_bh',
+                        test='wilcoxon',
+                        save=True):
+    
+    import seaborn as sb
+    from pathlib import Path
+    import seaborn as sb
+    import matplotlib.pyplot as plt
+    import os
+    
+    figure_dir=Path('Figures','Distance_Analyses')
+    figure_dir.mkdir(exist_ok=True)
+    
+    # Don't include if less than minimum number of from or to cells in ROI
+    results_filtered = distances_df[(distances_df['Number_from_pop']>minimum_cells) & (distances_df['Number_to_pop']>minimum_cells)]
+    
+    # Average over ROIs
+    results_filtered = results_filtered.groupby(['From_pop','To_pop']).mean().reset_index()
+    
+    # Create heatmap
+    results_heatmap = results_filtered.pivot(index='From_pop',columns='To_pop',values=metric)
+    
+    shiftedColorMap(plt.get_cmap('cet_coolwarm_r'), midpoint=(1 - vmax / (vmax + abs(vmin))), name='shiftedcmap')
+    
+    if colour_map:
+        colour_map=results_heatmap.index.map(colour_map)
+    
+    
+    sb.clustermap(results_heatmap, 
+                  square=True, 
+                  cmap='shiftedcmap', 
+                  vmin=vmin, 
+                  vmax=vmax, 
+                  row_colors=colour_map, 
+                  col_colors=colour_map,
+                  figsize=figsize,
+                  row_cluster=row_cluster,
+                  col_cluster=col_cluster).savefig(Path(figure_dir,f'clustermap_{population_obs}.svg'))
+    
+    if return_stats:
+    
+        # Stats
+        results_stats = groupby_ttest(results_filtered, ['From_pop','To_pop'], variable=metric, mult_comp=mult_comp, test=test)
+        results_stats = results_stats[['From_pop','To_pop','pvalue','reject_null']]
+        
+        figure_dir=Path('Figures','Distance_Analyses','Calculations')
+        os.makedirs(figure_dir, exist_ok=True)
+        results_stats.to_csv(Path(figure_dir, f'distancestats_{test}_{mult_comp}_{population_obs}.csv'))
+    
+        return results_stats
+
+'''
+
+This is an unused function that tried to use graphs to calculate distances - may come back to this as could be useul if we use graphs instead of euclidean distance
+
+    def calculate_population_distances(so,
+                                   samples_list,
+                                   population_obs,
+                                   graph_type,
+                                   specify_pops=[],
+                                   X_loc='X_loc',
+                                   Y_loc='Y_loc',
+                                   so_cell_id='cell_id',
+                                   multithreading_cores=6,
+                                   simulation_number=300):
+                       
+    from copy import copy
+
+    # Create empty list for results
+    results_list=[]
+    
+    # Extract a list of populations from population_obs
+    if specify_pops == []:
+        populations_list=so.obs[so.spl.index[0]][population_obs].cat.categories.tolist()
+        print(f'Found following populations in {population_obs}:\n')
+        print(populations_list)
+    else:
+        populations_list=specify_pops
+        print(f'Populations provided:\n')
+        print(populations_list)
+        
+    for s in so.spl.index:
+    
+        # Define which graph we want to use for calculations
+        g = mikeimc_v2.extract_athena_graph(so, s, graph_type, [population_obs,X_loc,Y_loc], cell_id=so_cell_id)    
+
+        # Add distances into the graph
+        g = mikeimc_v2.graph_add_distances(g)
+
+        print('Calculating ROI: '+s)
+
+        for to_pop in tqdm(populations_list):
+
+            from_pop_list = populations_list             
+
+            # Multithreading for calculations
+            average_nearest_partial = partial(mikeimc_v2.average_nearest, s, g, to_pop, pop_attr=population_obs)
+
+            with Pool(processes = 6) as pool:
+                data = pool.map(average_nearest_partial, from_pop_list)
+
+            results_list.append(pd.concat(data))
+
+    # Join results from all ROIs together
+    results = pd.concat(results_list)
+    
+    print('Calculating predicted distance between cells if they were randomly distributed...')
+    
+    # Calculate the predicted distances based upon the abundances of each population
+    predicted_distance=[]
+    for index, data in tqdm(results.iterrows(), total=len(results)):
+        val,_,_ =mikeimc_v2.predict_distances(data['Number_from_pop'], data['Number_to_pop'],simulation_number)
+        predicted_distance.append(copy(val))
+
+    results['predicted_distance']=predicted_distance
+    results['Distance_diff']=results['Avg_Distance']-results['predicted_distance']
+    
+    results.to_csv(f'{population_obs}_population_distances.csv')
+    
+    return results
+'''                       
+                       
+    
+def distances_bargraph(distances_df,
+                        population_obs,
+                        target_population,
+                        pop_column='To_pop',
+                        colourmap=None,
+                        metric='Distance_diff',
+                        figsize=(3,3),
+                        sort_values=True,
+                        ci=68,
+                        save=True):
+    
+    from pathlib import Path
+    import seaborn as sb
+    import os
+    
+    if pop_column=='To_pop':
+        opp_column='From_pop'
+    else:
+        opp_column='To_pop'
+        
+    # Filter to distances only to target populatoin
+    data = distances_df.loc[distances_df[pop_column]==target_population,:]
+               
+    # Remove unused groups    
+    try:
+        data.To_pop.cat.remove_unused_categories(inplace=True)
+        data.From_pop.cat.remove_unused_categories(inplace=True)
+    except:
+        'None'
+
+    fig, axs = plt.subplots(figsize=figsize, dpi=150)
+    fig.suptitle(f'{pop_column}: {target_population}', fontsize=16)
+
+    # Sort values for plotting
+    if sort_values:      
+        order=data.groupby(['From_pop','To_pop']).mean().sort_values(metric).reset_index()[opp_column]
+    else:
+        order=None
+
+    sb.barplot(data = data, 
+       x = opp_column, 
+       y = metric, 
+       ci=ci,
+       ax=axs,
+       palette=colourmap,
+       order=order
+      )
+
+    #axs.set_title(i)
+    axs.tick_params(axis='x', labelrotation = 90, labelsize=8)
+    axs.tick_params(axis='y', labelsize=8)
+    #plt.xticks(rotation=90)
+    
+    if metric=='Distance_diff':
+        t='Distance between populations \n(diff from chance) (um)'
+    else:
+        t=metric
+        
+    axs.set_ylabel(t, fontsize=10)
+    axs.set_xlabel(f'{opp_column}, {population_obs} population', fontsize=10)
+
+    if save:
+        figure_dir=Path('Figures','Distance_Analyses')
+        os.makedirs(figure_dir, exist_ok=True)
+        save_path=Path(figure_dir, f'{population_obs}_distance_{target_population}_{metric}.png')
+        fig.savefig(save_path, bbox_inches='tight')
+        
+        
+
+def normalisation_optimisation(cell_dfs,
+                              sample_df,
+                              panel_df, 
+                              image_df,
+                              cell_table_format='bodenmmiller',
+                              cell_df_ROIcol='ImageNumber',
+                              marker_normalisation_list=[['nonorm'],['q99.99'],['q99.9'],['q99'],['arcsinh5'], ['arcsinh5', 'q99.99'],['arcsinh5', 'q99.9'],['arcsinh5', 'q99']],
+                              batch_correction_list=['none','bbknn'],
+                              umap_categories=['ROI','Case'],
+                              batch_correct_obs='Case',
+                              clustering=True,
+                              clustering_resolution=0.3):
+
+    import scanpy as sc
+    import os
+    from pathlib import Path
+    
+    figure_dir=Path('Figures_Optimisation')
+    os.makedirs(figure_dir, exist_ok=True)
+    
+    if not isinstance(cell_dfs, list):
+        cell_dfs=[cell_dfs]
+    
+    for i, cell_df in enumerate(cell_dfs):
+        
+        cell_df_count=str(i)
+
+        for mark_norm in marker_normalisation_list:
+
+            mn='_'.join(mark_norm)
+
+            for batch_correct in batch_correction_list:
+
+                adata_optim = setup_anndata(cell_df=cell_df,
+                                  sample_df=sample_df,
+                                  panel_df=panel_df, 
+                                  image_df=image_df,
+                                  cell_table_format=cell_table_format,
+                                  cell_df_ROIcol=cell_df_ROIcol,
+                                  marker_normalisation=mark_norm)
+
+                n_for_pca = len(adata_optim.var_names)-1
+
+                if batch_correct=='bbknn':
+
+                    # Define the 'obs' which defines the different cases
+                    batch_correction_obs = batch_correct_obs
+
+                    # Calculate PCA, this must be done before BBKNN
+                    sc.tl.pca(adata_optim, n_comps=n_for_pca)
+
+                    # BBKNN - it is used in place of the scanpy 'neighbors' command that calculates nearest neighbours in the feature space
+                    sc.external.pp.bbknn(adata_optim, batch_key=batch_correct_obs, n_pcs=n_for_pca)
+
+                else:
+
+                    sc.pp.neighbors(adata_optim, n_neighbors=10, n_pcs=n_for_pca)
+
+
+                sc.tl.umap(adata_optim)
+
+                pop = []
+
+                if clustering:
+
+                    # This will perform the clustering, then add an 'obs' with name specified above, e.g leiden_0.35
+                    sc.tl.leiden(adata_optim, resolution=clustering_resolution, key_added = 'population')
+
+                    pop = ['population']
+                    
+                    fig = sc.pl.matrixplot(adata_optim,
+                                             adata_optim.var_names.tolist(), 
+                                             groupby='population', 
+                                             dendrogram=True,
+                                            return_fig=True)
+                    
+                    fig.savefig(Path(figure_dir, f'Heatmap_{batch_correct}_{mn}_{cell_df_count}.png'), bbox_inches='tight', dpi=150)
+
+
+                # Plot UMAPs coloured by list above
+                fig = sc.pl.umap(adata_optim, color=(umap_categories+pop), size=3, return_fig=True)
+                fig.savefig(Path(figure_dir, f'Categories_{batch_correct}_{mn}_{cell_df_count}.png'), bbox_inches='tight', dpi=150)
+
+                # This will plot a UMAP for each of the individual markers
+                fig = sc.pl.umap(adata_optim, color=adata_optim.var_names.tolist(), color_map='plasma', ncols=4, size=10, return_fig=True)
+                fig.savefig(Path(figure_dir, f'Marker_{batch_correct}_{mn}_{cell_df_count}.png'), bbox_inches='tight', dpi=150)
+
