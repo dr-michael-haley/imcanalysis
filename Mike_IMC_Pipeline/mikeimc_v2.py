@@ -3723,19 +3723,37 @@ def stacks_to_imagefolders(input_folder,#=images_dir, #The folder with the ometi
 
         shutil.copy(path,os.path.join(masks_output_folder, (roi_name+'.tiff')))
 
-                           
+        
+def compare_lists(L1, L2, L1_name, L2_name, return_error=True):
+    
+    L1_not_L2 = [x for x in L1 if x not in L2]
+    L2_not_L1 = [x for x in L2 if x not in L1]    
+    
+    try:
+        assert L1_not_L2 == L2_not_L1, "Lists did not match:"
+    except:                
+        print(f'{L1_name} items NOT in {L2_name}:')
+        print(L1_not_L2)
+        print(f'{L2_name} items NOT in {L1_name}:')
+        print(L2_not_L1)
+        
+        if return_error:
+            raise TypeError(f"{L1_name} and {L2_name} should have exactly the same items")
+        
+        
 def setup_anndata(cell_df,#=cell_df,
                   sample_df,#=sample_df,
                   panel_df,#=panel_df, 
                   image_df,#=image_df,                                    
                   cell_df_x='Location_Center_X',
                   cell_df_y='Location_Center_Y',
-                  cell_df_ROIcol='',
+                  cell_df_ROIcol='ROI',
                   dictionary='dictionary.csv',
                   cell_df_extra_columns=[],
-                  marker_normalisation='99th',
+                  marker_normalisation='q99',
                   panel_df_target_col='Target',
-                  cell_table_format='bodenmmiller'):
+                  cell_table_format='bodenmmiller',
+                  return_normalised_markers=False):
 
     import os
     import pandas as pd
@@ -3744,7 +3762,7 @@ def setup_anndata(cell_df,#=cell_df,
     
     #This stops a warning getting returned that we don't need to worry about
     pd.set_option('mode.chained_assignment',None)
-    
+        
     if cell_table_format=='bodenmmiller':
        
         # Extract only the intensities from the cell table
@@ -3754,12 +3772,16 @@ def setup_anndata(cell_df,#=cell_df,
         mapping = dict(zip(panel_df['cell_table_channel'],panel_df[panel_df_target_col]))
         cell_df_intensities.rename(columns=mapping, inplace=True)    
         
-    elif cell_table_format=='redsea':
+    elif cell_table_format=='cleaned':
         
         # Extract columns from those in the panel file
-        redsea_marker_cols = [col for col in cell_df.columns if col in panel_df[panel_df_target_col].values.tolist()]
-        cell_df_intensities = cell_df[redsea_marker_cols].copy()
-           
+        marker_cols = [col for col in cell_df.columns if col in panel_df[panel_df_target_col].values.tolist()]
+              
+        # Check that all the markers in panel file were found in the cell table, and vice versa
+        compare_lists(marker_cols, panel_df[panel_df_target_col].tolist(), 'Markers from cell DF columns', 'Markers in panel file', return_error=True)
+
+        cell_df_intensities = cell_df[marker_cols].copy()
+               
     # If only a single normalisation provided, make a list anyway
     if not isinstance(marker_normalisation, list):
         marker_normalisation=[marker_normalisation]
@@ -3767,13 +3789,20 @@ def setup_anndata(cell_df,#=cell_df,
     # Cell cell intensities
     markers_normalised = cell_df_intensities
     
+    # Error catching
+    assert markers_normalised.shape[1] == panel_df.shape[0], 'Length of panel and markers do not match!'    
+        
+    # Get in order that appear in panel
+    compare_lists(panel_df['Target'].tolist(), markers_normalised.columns.tolist(),'PanelFile','MarkerDF')   
+    markers_normalised = markers_normalised.reindex(columns=panel_df['Target'])
+            
     # For each method in the list, intrepret it and assess results
     for method in marker_normalisation:
         
         if method[0]=='q':
             quantile = round(float(method[1:])/100,5)
             markers_normalised = markers_normalised.div(markers_normalised.quantile(q=quantile)).clip(upper=1)        
-            markers_normalised = np.nan_to_num(markers_normalised, nan=0)
+            markers_normalised.fillna(0, inplace=True)    
             print(f'\nData normalised to {str(quantile)} quantile')
         
         elif 'arcsinh' in method:
@@ -3794,25 +3823,20 @@ def setup_anndata(cell_df,#=cell_df,
     
     # Create AnnData object using the normalised markers
     adata = sc.AnnData(markers_normalised)
-
-        
+    
+    # Get var names from hraders of markers_normalised
+    adata.var_names=markers_normalised.columns.tolist()
+    
     if cell_table_format=='bodenmmiller':
-
-        # Add in the marker/var names
-        adata.var_names=panel_df[panel_df_target_col].values.tolist()
         
         # Map ROI information
         adata.obs['ROI']=cell_df['ImageNumber'].map(dict(zip(sample_df['ImageNumber'],sample_df.index))).values.tolist()        
         
-    elif cell_table_format=='redsea':
+    elif cell_table_format=='cleaned':
         
-        adata.var_names=redsea_marker_cols
-    
         # Map ROI information
         adata.obs['ROI']=cell_df[cell_df_ROIcol].values.tolist()        
-        
-        #'adata.obs['ROI']=adata.obs['ROI'].map(dict(zip(sample_df['AcSession'],sample_df.index)))
-                                                
+                                                        
     # Add in any extra columns from cell table
     for c in cell_df_extra_columns:
         adata.b[c]=cell_df[c].values.tolist()
@@ -3826,12 +3850,26 @@ def setup_anndata(cell_df,#=cell_df,
     adata.obs['Master_Index']=adata.obs.index.values.tolist()
                                                 
     if not dictionary==None:
-        #Read dictionary from file
-        obs_dict = pd.read_csv(dictionary, low_memory=False, index_col=0).to_dict()
-
+       
+        #Read dictionary from file - look in this directory, and in 'cpout'   
+        try:
+            obs_dict = pd.read_csv(dictionary, low_memory=False, index_col=0).to_dict()
+        except:
+            obs_dict = pd.read_csv(Path('cpout', dictionary), low_memory=False, index_col=0).to_dict()
+            
         # Add the new columns based off the dictionary file
         for i in obs_dict.keys():
             adata.obs[i]=adata.obs['ROI'].map(obs_dict[i]).values.tolist()
+    
+        # Checking for NaNs in adata.obs, which could indicate the dictionary mapping has failed
+        obs_nans = adata.obs.isna().sum(axis=0) / len(adata.obs) * 100
+        
+        if obs_nans.mean() != 0:
+            print('WARNING! Some obs columns have NaNs present, which could indicate your dictionary has not been setup correctly')
+            print_full(pd.DataFrame(obs_nans, columns = ['Percentage of NaNs']))
+        
+    else:
+        print('No dictionary provided')
     
     print('Markers imported:')
     print(adata.var_names)
@@ -3840,7 +3878,10 @@ def setup_anndata(cell_df,#=cell_df,
     adata.uns.update({'sample':sample_df.copy(),
                      'panel':panel_df.copy()})
     
-    return adata
+    if return_normalised_markers:
+        return adata, markers_normalised
+    else:
+        return adata
 
 import tkinter as tk
 from tkinter import colorchooser
@@ -4498,7 +4539,7 @@ def normalisation_optimisation(cell_dfs,
                               panel_df, 
                               image_df,
                               cell_table_format='bodenmmiller',
-                              cell_df_ROIcol='ImageNumber',
+                              cell_df_ROIcol='ROI',
                               marker_normalisation_list=[['nonorm'],['q99.99'],['q99.9'],['q99'],['arcsinh5'], ['arcsinh5', 'q99.99'],['arcsinh5', 'q99.9'],['arcsinh5', 'q99']],
                               batch_correction_list=['none','bbknn'],
                               umap_categories=['ROI','Case'],
