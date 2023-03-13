@@ -15,7 +15,7 @@ import math
 import statsmodels.api as sm
 from copy import copy
 
-
+interactions_table
 from sklearn.utils._testing import ignore_warnings
 from sklearn.exceptions import ConvergenceWarning
     
@@ -3750,7 +3750,7 @@ def setup_anndata(cell_df,#=cell_df,
                   cell_df_ROIcol='ROI',
                   dictionary='dictionary.csv',
                   cell_df_extra_columns=[],
-                  marker_normalisation='q99',
+                  marker_normalisation='q99.9',
                   panel_df_target_col='Target',
                   cell_table_format='bodenmmiller',
                   return_normalised_markers=False):
@@ -4397,72 +4397,73 @@ def distances_clustermap(distances_df,
 
 This is an unused function that tried to use graphs to calculate distances - may come back to this as could be useul if we use graphs instead of euclidean distance
 
-    def calculate_population_distances(so,
-                                   samples_list,
-                                   population_obs,
-                                   graph_type,
-                                   specify_pops=[],
-                                   X_loc='X_loc',
-                                   Y_loc='Y_loc',
-                                   so_cell_id='cell_id',
-                                   multithreading_cores=6,
-                                   simulation_number=300):
-                       
-    from copy import copy
+def calculate_population_distances(so,
+                               samples_list,
+                               population_obs,
+                               graph_type,
+                               specify_pops=[],
+                               X_loc='X_loc',
+                               Y_loc='Y_loc',
+                               so_cell_id='cell_id',
+                               multithreading_cores=6,
+                               simulation_number=300):
 
-    # Create empty list for results
-    results_list=[]
-    
-    # Extract a list of populations from population_obs
-    if specify_pops == []:
-        populations_list=so.obs[so.spl.index[0]][population_obs].cat.categories.tolist()
-        print(f'Found following populations in {population_obs}:\n')
-        print(populations_list)
-    else:
-        populations_list=specify_pops
-        print(f'Populations provided:\n')
-        print(populations_list)
-        
-    for s in so.spl.index:
-    
-        # Define which graph we want to use for calculations
-        g = mikeimc_v2.extract_athena_graph(so, s, graph_type, [population_obs,X_loc,Y_loc], cell_id=so_cell_id)    
+from copy import copy
 
-        # Add distances into the graph
-        g = mikeimc_v2.graph_add_distances(g)
+# Create empty list for results
+results_list=[]
 
-        print('Calculating ROI: '+s)
+# Extract a list of populations from population_obs
+if specify_pops == []:
+    populations_list=so.obs[so.spl.index[0]][population_obs].cat.categories.tolist()
+    print(f'Found following populations in {population_obs}:\n')
+    print(populations_list)
+else:
+    populations_list=specify_pops
+    print(f'Populations provided:\n')
+    print(populations_list)
 
-        for to_pop in tqdm(populations_list):
+for s in so.spl.index:
 
-            from_pop_list = populations_list             
+    # Define which graph we want to use for calculations
+    g = mikeimc_v2.extract_athena_graph(so, s, graph_type, [population_obs,X_loc,Y_loc], cell_id=so_cell_id)    
 
-            # Multithreading for calculations
-            average_nearest_partial = partial(mikeimc_v2.average_nearest, s, g, to_pop, pop_attr=population_obs)
+    # Add distances into the graph
+    g = mikeimc_v2.graph_add_distances(g)
 
-            with Pool(processes = 6) as pool:
-                data = pool.map(average_nearest_partial, from_pop_list)
+    print('Calculating ROI: '+s)
 
-            results_list.append(pd.concat(data))
+    for to_pop in tqdm(populations_list):
 
-    # Join results from all ROIs together
-    results = pd.concat(results_list)
-    
-    print('Calculating predicted distance between cells if they were randomly distributed...')
-    
-    # Calculate the predicted distances based upon the abundances of each population
-    predicted_distance=[]
-    for index, data in tqdm(results.iterrows(), total=len(results)):
-        val,_,_ =mikeimc_v2.predict_distances(data['Number_from_pop'], data['Number_to_pop'],simulation_number)
-        predicted_distance.append(copy(val))
+        from_pop_list = populations_list             
 
-    results['predicted_distance']=predicted_distance
-    results['Distance_diff']=results['Avg_Distance']-results['predicted_distance']
-    
-    results.to_csv(f'{population_obs}_population_distances.csv')
-    
-    return results
-'''                       
+        # Multithreading for calculations
+        average_nearest_partial = partial(mikeimc_v2.average_nearest, s, g, to_pop, pop_attr=population_obs)
+
+        with Pool(processes = 6) as pool:
+            data = pool.map(average_nearest_partial, from_pop_list)
+
+        results_list.append(pd.concat(data))
+
+# Join results from all ROIs together
+results = pd.concat(results_list)
+
+print('Calculating predicted distance between cells if they were randomly distributed...')
+
+# Calculate the predicted distances based upon the abundances of each population
+predicted_distance=[]
+for index, data in tqdm(results.iterrows(), total=len(results)):
+    val,_,_ =mikeimc_v2.predict_distances(data['Number_from_pop'], data['Number_to_pop'],simulation_number)
+    predicted_distance.append(copy(val))
+
+results['predicted_distance']=predicted_distance
+results['Distance_diff']=results['Avg_Distance']-results['predicted_distance']
+
+results.to_csv(f'{population_obs}_population_distances.csv')
+
+return results
+'''
+
                        
     
 def distances_bargraph(distances_df,
@@ -4620,4 +4621,266 @@ def normalisation_optimisation(cell_dfs,
                 # This will plot a UMAP for each of the individual markers
                 fig = sc.pl.umap(adata_optim, color=adata_optim.var_names.tolist(), color_map='plasma', ncols=4, size=10, return_fig=True)
                 fig.savefig(Path(figure_dir, f'Marker_{batch_correct}_{mn}_{cell_df_count}.png'), bbox_inches='tight', dpi=150)
+
+
+def population_clustering(so,
+                          samples,
+                          graph_id,
+                          population_obs,
+                          population_list=[],
+                          minimum_cells=1,
+                          bootstrap_permutations=300):
+    
+    import networkx as nx
+    from tqdm import tqdm
+    import pandas as pd
+    from copy import copy
+    
+
+    # If list of samples not given, then extract from SO object
+    if population_list==[]:
+        population_list = so.obs[samples[0]][population_obs].cat.categories.tolist()              
+
+    # Blank lists
+    roi_list = []
+    pops_list = []
+    avg_clustering_list = []
+
+    print('Running samples')
+    for i in tqdm(samples):
+
+        g = extract_athena_graph(so, i,graph_id,[population_obs])
+
+        for pop in population_list:
+
+            roi_list.append(copy(i))
+            pops_list.append(copy(pop))
+
+            # Get a list of nodes and subgraph for each sub pop
+            pop_data = [n for n,d in g.nodes().items() if d[population_obs] == pop]
+            pop_subgraph = g.subgraph(pop_data)
+
+            if len(pop_data)>minimum_cells:
+                 avg_clustering_list.append(nx.average_clustering(pop_subgraph))
+            else:
+                avg_clustering_list.append(np.nan)
+
+    clustering_results = pd.DataFrame(zip(roi_list,pops_list,avg_clustering_list),columns=['ROI','Population','AvgClustering'])
+
+    perm_list = []
+
+    print('Running permutations')
+    for n in tqdm(range(bootstrap_permutations)):
+
+        for i in samples:
+
+            # Blank lists
+            roi_list = []
+            pops_list = []
+            avg_clustering_list = []
+
+            g = extract_athena_graph(so, i,graph_id,[population_obs])
+            g = randomise_graph(g, population_obs)
+
+            for pop in population_list:
+
+                roi_list.append(copy(i))
+                pops_list.append(copy(pop))
+
+                # Get a list of nodes and subgraph for each sub pop
+                pop_data = [n for n,d in g.nodes().items() if d[population_obs] == pop]
+                pop_subgraph = g.subgraph(pop_data)
+
+                if len(pop_data)>minimum_cells: #Population must be at least 5 cells
+                     avg_clustering_list.append(nx.average_clustering(pop_subgraph))
+                else:
+                    avg_clustering_list.append(np.nan)
+
+
+
+            perm = pd.DataFrame(zip(roi_list,pops_list,avg_clustering_list),columns=['ROI','Population','AvgClustering'])
+
+            perm_list.append(copy(perm))
+
+    perm_results = pd.concat(perm_list)
+
+    clustering_results = clustering_results.groupby(['ROI','Population']).mean().reset_index()
+    perm_results = perm_results.groupby(['ROI','Population']).mean().reset_index()
+
+    clustering_results['AvgClustering_simulated']=perm_results['AvgClustering']
+    clustering_results['AvgClustering_diff'] = clustering_results['AvgClustering'] - clustering_results['AvgClustering_simulated']
+
+    # Add in all sample level values
+    for c in so.spl.columns:
+        clustering_results[c]=clustering_results['ROI'].map(dict(so.spl)[c])
+        
+    return clustering_results
+
+
+def population_assortativity(so,
+                          samples,
+                          graph_id,
+                          population_obs,
+                          bootstrap_permutations=300):
+    
+    import networkx as nx
+    from tqdm import tqdm
+    import pandas as pd
+    from copy import copy
+    
+    # Blank lists
+    roi_list = []
+    assort = []
+
+    print('Running samples')
+    for i in tqdm(samples):
+
+        g = extract_athena_graph(so, i,graph_id,[population_obs])
+
+        assort.append(nx.attribute_assortativity_coefficient(g, population_obs))
+        roi_list.append(copy(i))
+
+    assort_results = pd.DataFrame(zip(roi_list,assort),columns=['ROI','Assort'])
+
+    roi_perm_list = []
+    perm = []
+
+    print('Running permutations')
+    for n in tqdm(range(bootstrap_permutations)):
+
+        for i in samples:
+
+            g = extract_athena_graph(so, i,graph_id,[population_obs])
+            g = randomise_graph(g, population_obs)
+
+            perm.append(nx.attribute_assortativity_coefficient(g, population_obs))                    
+            roi_perm_list.append(copy(i))
+
+    assort_perm_results = pd.DataFrame(zip(roi_perm_list, perm),columns=['ROI','Assort_perm'])
+
+    assort_results = assort_results.groupby(['ROI']).mean().reset_index()
+    assort_perm_results = assort_perm_results.groupby(['ROI']).mean().reset_index()
+
+    assort_results['Assort_perm']=assort_perm_results['Assort_perm']
+    assort_results['Assort_diff'] = assort_results['Assort'] - assort_results['Assort_perm']
+
+    # Add in all sample level values
+    for c in so.spl.columns:
+        assort_results[c]=assort_results['ROI'].map(dict(so.spl)[c])
+        
+    return assort_results
+
+def adata_subclustering(adata,
+                        population_obs,
+                        populations,
+                        marker_list,
+                        umap_categories=['ROI','Case'],
+                        batch_correct='bbknn',
+                        batch_correct_obs='Case',
+                        clustering=True,
+                        clustering_resolutions=[0.3],
+                        close_plots=True):
+
+    import scanpy as sc
+    import pandas as pd
+    import os
+    from pathlib import Path
+    from copy import copy
+    
+    # Make populations into a list if only one given
+    if not isinstance(populations, list):
+        populations=[populations]
+        
+    pops_str='_'.join(populations)
+            
+    # Make save directories
+    figure_dir=Path('Figures',f'{population_obs}_{pops_str}_Subclustering')
+    os.makedirs(figure_dir, exist_ok=True)
+
+    if not isinstance(clustering_resolutions, list):
+        clustering_resolutions=[clustering_resolutions]
+    
+    # Filter AnnData down to specific population 
+    adata_new = adata[adata.obs[population_obs].isin(populations), marker_list].copy()
+                                                     
+    n_for_pca = len(adata_new.var_names)-1
+    
+    # Batch correction
+    if batch_correct=='bbknn':
+
+        # Define the 'obs' which defines the different cases
+        batch_correction_obs = batch_correct_obs
+
+        # Calculate PCA, this must be done before BBKNN
+        sc.tl.pca(adata_new, n_comps=n_for_pca)
+
+        # BBKNN - it is used in place of the scanpy 'neighbors' command that calculates nearest neighbours in the feature space
+        sc.external.pp.bbknn(adata_new, batch_key=batch_correct_obs, n_pcs=n_for_pca)
+
+    else:
+        sc.pp.neighbors(adata_new, n_neighbors=10, n_pcs=n_for_pca)
+                                                     
+    sc.tl.umap(adata_new)
+                                                 
+    new_pops = []
+    
+    if clustering:
+        
+        for c in clustering_resolutions:
+        
+            pop_key = f'leiden_{str(c)}'
+            
+            sc.tl.leiden(adata_new, resolution=c, key_added = pop_key)
+
+            new_pops.append(copy(pop_key))
+
+            try:
+                del adata.uns[f'dendrogram_{pop_key}']
+            except:
+                pass
+                                    
+            fig = sc.pl.matrixplot(adata_new,
+                                   adata_new.var_names.tolist(), 
+                                   groupby=pop_key, 
+                                   dendrogram=True,
+                                   return_fig=True)
+
+            fig.savefig(Path(figure_dir, f'Heatmap_{pop_key}_{population_obs}_subanalyses.png'), bbox_inches='tight', dpi=150)
+
+    # Plot UMAPs coloured by list above
+    fig = sc.pl.umap(adata_new, color=(umap_categories+new_pops), size=3, return_fig=True)
+    fig.savefig(Path(figure_dir, f'Categories_{population_obs}_subanalyses.png'), bbox_inches='tight', dpi=150)
+
+    # This will plot a UMAP for each of the individual markers
+    fig = sc.pl.umap(adata_new, color=adata_new.var_names.tolist(), color_map='plasma', ncols=4, return_fig=True)
+    fig.savefig(Path(figure_dir, f'Markers_{population_obs}_subanalyses.png'), bbox_inches='tight', dpi=150)
+    
+    if close_plots:
+        plt.close('all')
+    
+    return adata_new
+
+def transfer_populations(adata_source,
+                         adata_source_populations_obs,
+                         adata_target,
+                         adata_target_populations_obs,
+                         common_cell_index='Master_Index',
+                         pop_prefix=''):
+    
+    remap_dict = dict(zip(adata_source.obs[common_cell_index], adata_source.obs[adata_source_populations_obs]))
+    
+    new_col_data = adata_target.obs[common_cell_index].map(remap_dict)
+    
+    new_col_data = pop_prefix + '_' + new_col_data
+                      
+    try:
+        adata_target.obs[adata_target_populations_obs]=np.where(new_col_data.isna(), 
+                                                                adata_target.obs[adata_target_populations_obs],
+                                                                new_col_data)
+    except:
+        adata_target.obs[adata_target_populations_obs]=new_col_data        
+        
+    
+
+
 
