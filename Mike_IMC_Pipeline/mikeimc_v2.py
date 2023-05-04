@@ -15,7 +15,6 @@ import math
 import statsmodels.api as sm
 from copy import copy
 
-interactions_table
 from sklearn.utils._testing import ignore_warnings
 from sklearn.exceptions import ConvergenceWarning
     
