@@ -919,7 +919,8 @@ def interactions_summary(so, #Define spatial heterogeneity object
                         figsize=(5,5),
                         annot_size=None,
                         col_colors=None,
-                        row_colors=None
+                        row_colors=None,
+                        palette=None,
                         ):
 
     import seaborn as sb
@@ -1010,7 +1011,14 @@ def interactions_summary(so, #Define spatial heterogeneity object
     
     ####################### Makes sure populations are appropriately ordered
     df1.columns=pop_ids_ordered
-    df1.index=pop_ids_ordered     
+    df1.index=pop_ids_ordered
+
+    if col_colors:
+        col_colors = df1.columns.map(palette)
+
+    if row_colors:
+        row_colors = df1.index.map(palette)    
+    
 
     # Rename the columns and rows with pop names, if not will just use numbers
     if population_dictionary:
