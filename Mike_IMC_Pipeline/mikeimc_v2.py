@@ -4882,4 +4882,46 @@ def transfer_populations(adata_source,
     
 
 
+def save_so(so, filename='so_object'):
 
+    '''
+    This function will save the SpatialOmics object in two files. 
+    The uns part (where many calculations are stored) are saved separately.
+    '''
+
+   
+    import pickle
+    print('Saving SO object...')
+    so.to_h5py(filename)
+    
+    uns_filename = filename+'_uns'
+    print(f'Saving so.uns as {uns_filename}')
+    
+    with open(uns_filename, 'wb') as f:
+        pickle.dump(so.uns, f, pickle.HIGHEST_PROTOCOL)
+           
+
+def load_so(filename='so_object'):
+
+    '''
+    This function will load a saved the SpatialOmics object, and assumes the _uns file is also in the same location
+    
+    The SO object will be returned by the function
+    '''
+    
+    import spatialOmics
+    import pickle
+    
+    print('Loading SO object...')
+    so = spatialOmics.from_h5py(filename)
+    
+    uns_filename = filename+'_uns'
+       
+    print(f'Loading so.uns from {uns_filename}')
+
+    with open(uns_filename, 'rb') as f:  # Overwrites any existing file.
+        so_uns = pickle.load(f)
+        
+    so.uns = so_uns
+    
+    return so
