@@ -915,7 +915,12 @@ def interactions_summary(so, #Define spatial heterogeneity object
                         vmin=None,
                         mult_comp=None,
                         mult_comp_alpha=0.05,
-                        cluster_map=False):
+                        cluster_map=False,
+                        figsize=(5,5),
+                        annot_size=None,
+                        col_colors=None,
+                        row_colors=None
+                        ):
 
     import seaborn as sb
     import matplotlib.pyplot as plt 
@@ -1024,7 +1029,7 @@ def interactions_summary(so, #Define spatial heterogeneity object
         show = False
     
     # Alter the key words for the * annotations showing significant results
-    annot_kws={'fontsize':'x-large', 'fontweight':'extra bold','va':'center','ha':'center'}
+    annot_kws={'fontsize':'x-large', 'fontweight':'extra bold','va':'center','ha':'center', "size": annot_size}
     
     # Colour map keywords to make sure the color bars are a sensible shape and size  
     cbar_kws={'fraction':0.046, 'pad':0.04}
@@ -1034,12 +1039,12 @@ def interactions_summary(so, #Define spatial heterogeneity object
     
     elif calc_ttest_p_value:
         
-        if not cluster_map:        
-            sb.heatmap(data=df1, cmap=cmap, vmax=vmax, vmin=vmin, robust=True,ax=ax,linewidths=.5,annot=sig_array, fmt="",
+        if cluster_map==False:        
+            sb.heatmap(data=df1, cmap=cmap, vmax=vmax, vmin=vmin, robust=True, ax=ax, linewidths=.5, annot=sig_array, fmt="",
                        annot_kws=annot_kws,
                       cbar_kws=cbar_kws)
         else:
-            sb.clustermap(data=df1, cmap=cmap, vmax=vmax, vmin=vmin)            
+            sb.clustermap(data=df1, cmap=cmap, vmax=vmax, vmin=vmin, linewidths=0.5, figsize=figsize, fmt="", annot_kws=annot_kws, col_colors=col_colors, row_colors=row_colors)            
         
     else:
         sb.heatmap(data=df1, cmap=cmap, robust=True,ax=ax,linewidths=.5, cbar_kws=cbar_kws)
