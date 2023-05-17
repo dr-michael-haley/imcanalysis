@@ -921,6 +921,8 @@ def interactions_summary(so, #Define spatial heterogeneity object
                         col_colors=None,
                         row_colors=None,
                         palette=None,
+                        row_pops=None,
+                        col_pops=None
                         ):
 
     import seaborn as sb
@@ -1037,7 +1039,7 @@ def interactions_summary(so, #Define spatial heterogeneity object
         show = False
     
     # Alter the key words for the * annotations showing significant results
-    annot_kws={'fontsize':'x-large', 'fontweight':'extra bold','va':'center','ha':'center', "size": annot_size}
+    annot_kws={'\fontweight':'extra bold','va':'center','ha':'center', "size": annot_size}
     
     # Colour map keywords to make sure the color bars are a sensible shape and size  
     cbar_kws={'fraction':0.046, 'pad':0.04}
@@ -4926,7 +4928,7 @@ def load_so(filename='so_object'):
     import pickle
     
     print('Loading SO object...')
-    so = spatialOmics.from_h5py(filename)
+    so = spatialOmics.SpatialOmics.from_h5py(filename)
     
     uns_filename = filename+'_uns'
        
