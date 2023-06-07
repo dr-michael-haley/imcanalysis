@@ -178,6 +178,23 @@ def consensus(adata,
         print('Install sc3s with \'pip install sc3s\'')
         return None
     
+    # Make clusters a list
+    if not type(n_clusters)==list:
+        n_clusters = [n_clusters]
+    
+    # Check if clusters already exist
+    for o in [('sc3s_'+str(x)) for x in n_clusters]:
+        try:
+            adata.obs[o]
+            r = input('That clustering already exists in the AnnData, so any new clustering will overwrite the old results. Respond yes to continue')
+            if r != 'yes':
+                print('Aborting')
+                return None
+            else:
+                adlog(adata, f'Existing obs {o} to be overwritten ', sc)    
+        except:
+            pass
+    
     import warnings
 
     adlog(adata, f'Starting SC3s consensus clustering', sc3s)

@@ -302,7 +302,7 @@ def setup_anndata(cell_df='cell.csv',#=cell_df,
     print(adata.var_names)
     print(adata)
     
-    utils.adata_log(adata, 'AnnData object created', sc)
+    utils.adlog(adata, 'AnnData object created', sc)
     
     adata.uns.update({'sample':sample_df.copy(),
                      'panel':panel_df.copy()})
