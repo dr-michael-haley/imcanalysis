@@ -4794,9 +4794,6 @@ def adata_subclustering(adata,
                         clustering=True,
                         clustering_resolutions=[0.3],
                         close_plots=True):
-    '''
-    OLD CODE, needs updating
-    '''
 
     import scanpy as sc
     import pandas as pd
@@ -4883,9 +4880,6 @@ def transfer_populations(adata_source,
                          adata_target_populations_obs,
                          common_cell_index='Master_Index',
                          pop_prefix=''):
-    '''
-    OLD CODE, needs updating
-    '''
     
     remap_dict = dict(zip(adata_source.obs[common_cell_index], adata_source.obs[adata_source_populations_obs]))
     
