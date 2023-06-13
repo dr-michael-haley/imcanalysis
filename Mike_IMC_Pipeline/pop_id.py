@@ -637,6 +637,13 @@ def read_remapping(adata,
         
     df = pd.read_csv(file, index_col=0)
     
+    for c in df.columns.tolist():
+        if df[c].isnull().values.any():
+            print(f'Column {c} contained null or empty values, will not be used')
+            df.drop(columns=c, inplace=True)
+        else:
+            print(f'Found {c}')
+    
     # Make sure everything is a string, as leidens look like numbers
     df = df.astype(str)
     df.index = df.index.astype(str)

@@ -209,7 +209,7 @@ def Neighborhood_Identification(data,
     else:
         keep_cols = [reg,cluster_col,X,Y] + keep_cols    
     
-    cells = pd.concat([cells,pd.get_dummies(cells[cluster_col])],1)
+    cells = pd.concat([cells,pd.get_dummies(cells[cluster_col])],axis=1)
 
     sum_cols = cells[cluster_col].unique()
     values = cells[sum_cols].values
