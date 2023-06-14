@@ -266,12 +266,12 @@ def Neighborhood_Identification(data,
 
     for k in ks:
 
-        window = pd.concat([pd.DataFrame(out_dict[(exp,k)][0],index = out_dict[(exp,k)][1].astype(int),columns = sum_cols) for exp in exps],0)
+        window = pd.concat([pd.DataFrame(out_dict[(exp,k)][0],index = out_dict[(exp,k)][1].astype(int),columns = sum_cols) for exp in exps],axis=0)
         window = window.loc[cells.index.values]
         #window = pd.concat([cells[keep_cols],window],1)
         windows[k] = window
         
-        window_connect = pd.concat([pd.DataFrame(out_dict_connectivity[(exp,k)][0],index = out_dict[(exp,k)][1].astype(int),columns = sum_cols) for exp in exps],0)
+        window_connect = pd.concat([pd.DataFrame(out_dict_connectivity[(exp,k)][0],index = out_dict[(exp,k)][1].astype(int),columns = sum_cols) for exp in exps],axis=0)
         window_connect = window_connect.loc[cells.index.values]
         #window_connect = pd.concat([cells[keep_cols],window_connect],1)
         
