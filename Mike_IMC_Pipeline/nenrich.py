@@ -61,7 +61,7 @@ def get_windows(job,n_neighbors):
 
 
 
-def population_connectivity(nodes, cells, X, Y, radius, cluster_col, population_list):
+def population_connectivity(nodes, cells, X, Y, radius, cluster_col, population_list, bootstrap=None):
     '''
     This is a helper function for neighbourhood detection. It creates a network of the window of cells, then returns a connectivity score for each population
     '''    
@@ -90,15 +90,35 @@ def population_connectivity(nodes, cells, X, Y, radius, cluster_col, population_
     #nx.set_node_attributes(graph, cells.loc[nodes, cluster_col].T.to_dict(), 'pop')
     nx.set_node_attributes(graph, node_pop_dict, 'pop')
 
-    
    # aver = calculate_average_edges_by_population(graph, 'population', population_list)
     
+    observed_avg = _average_connections_per_pop(graph, population_list=population_list, attr='pop')
+    
+    if bootstrap:
+        predicted_avg = []
+        
+        for n in range(bootstrap):
+            graph = _randomise_graph(graph, attr='pop')
+            predicted_avg.append(_average_connections_per_pop(graph, population_list=population_list, attr='pop'))
+        
+        predicted_avg = np.mean(np.array(predicted_avg), axis=0)
+        
+        return (observed_avg - predicted_avg)   
+    
+    else:
+        return observed_avg        
+            
+    
+
+
+def _average_connections_per_pop(graph, population_list, attr='pop'):
+        
     population_edges = {population: 0 for population in population_list}
     population_counts = {population: 0 for population in population_list}
     
     for node in graph.nodes():
-        if 'pop' in graph.nodes[node]:
-            population = graph.nodes[node]['pop']
+        if attr in graph.nodes[node]:
+            population = graph.nodes[node][attr]
             if population in population_edges:
                 population_edges[population] += graph.degree(node)
                 population_counts[population] += 1
@@ -116,6 +136,19 @@ def population_connectivity(nodes, cells, X, Y, radius, cluster_col, population_
     return average_edges
 
 
+def _randomise_graph(g, attr):
+
+    import random
+
+    g_perm = g.copy()
+
+    attr_list = [g_perm.nodes[x][attr] for x in g_perm.nodes()]
+    random.shuffle(attr_list)
+
+    for a, n in zip(attr_list, g_perm.nodes()):
+        g_perm.nodes[n].update({attr:a})
+
+    return g_perm
 
 
 def population_connectivity_new(nodes, cells, X, Y, radius, cluster_col, population_list):
@@ -161,7 +194,8 @@ def Neighborhood_Identification(data,
                                 Y = 'Y_loc',
                                 reg = 'ROI',
                                 connect_suffix='_CON',
-                                return_raw=False):
+                                return_raw=False,
+                                bootstrap=None):
     '''
     This has been developed from the Schurch data.
     
@@ -175,7 +209,11 @@ def Neighborhood_Identification(data,
     reg = Column defining each separate ROI
     
     '''    
-
+    
+    if keep_cols=='all':
+        keep_cols = data.columns.tolist()
+    else:
+        keep_cols = [reg,cluster_col,X,Y] + keep_cols
 
     # Make accessible
     Neighborhood_Identification.cluster_col = cluster_col
@@ -191,23 +229,12 @@ def Neighborhood_Identification(data,
     if type(data) == pd.core.frame.DataFrame:
         cells = data
     elif type(data) == ad._core.anndata.AnnData:
-        cells = data.obs.copy()
-        cells.index = cells.index.astype(int)
+        cells = data.obs        
     elif type(data) == str: 
         cells = pd.read_csv(data)
     else:
         print(f'Input data of type {str(type(data))} not recognised as input')
         return None
-    
-    # Remove categorical columns    
-    for col in [x for x in cells.columns.tolist() if x not in [reg]]:
-        if cells[col].dtype == 'category':
-            cells[col] = cells[col].astype(cells[col].cat.categories.to_numpy().dtype)
-    
-    if keep_cols=='all':
-        keep_cols = cells.columns.tolist()
-    else:
-        keep_cols = [reg,cluster_col,X,Y] + keep_cols    
     
     cells = pd.concat([cells,pd.get_dummies(cells[cluster_col])],axis=1)
 
@@ -255,7 +282,8 @@ def Neighborhood_Identification(data,
                                     Y = Y,
                                     radius=radius,
                                     cluster_col=cluster_col,
-                                    population_list =  sum_cols) for n in tqdm(neighbors, position=0, leave=True)]
+                                    population_list =  sum_cols,
+                                    bootstrap=bootstrap) for n in tqdm(neighbors, position=0, leave=True)]
         
             window_connectivity = np.array(window_connectivity, dtype=np.float16)
             out_dict_connectivity[(tissue_name,k)] = (window_connectivity.astype(np.float16),indices)
