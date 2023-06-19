@@ -61,7 +61,7 @@ def get_windows(job,n_neighbors):
 
 
 
-def population_connectivity(nodes, cells, X, Y, radius, cluster_col, population_list, bootstrap=None):
+def population_connectivity(nodes, cells, X, Y, radius, cluster_col, population_list, bootstrap=None, connectivity_modes=['conn_all','conn_self']):
     '''
     This is a helper function for neighbourhood detection. It creates a network of the window of cells, then returns a connectivity score for each population
     '''    
@@ -87,26 +87,46 @@ def population_connectivity(nodes, cells, X, Y, radius, cluster_col, population_
     node_pop_dict = dict(zip(cells.loc[nodes, :].index.astype(str),
                              cells.loc[nodes, cluster_col]))
     
-    #nx.set_node_attributes(graph, cells.loc[nodes, cluster_col].T.to_dict(), 'pop')
     nx.set_node_attributes(graph, node_pop_dict, 'pop')
 
-   # aver = calculate_average_edges_by_population(graph, 'population', population_list)
+    observed = {}
+    predicted = {}
+    output = {}
     
-    observed_avg = _average_connections_per_pop(graph, population_list=population_list, attr='pop')
+    # Calculate observed values for each connection modality
+    for m in connectivity_modes:
+        if m == 'conn_all':
+            observed[m] = _average_connections_per_pop(graph, population_list=population_list, attr='pop')
+        if m == 'conn_self':
+            observed[m] = _proportion_samepop_interactions_per_pop(graph, population_list=population_list, attr='pop')
+            
     
     if bootstrap:
-        predicted_avg = []
         
+        for m in connectivity_modes:
+            predicted[m] = []
+
         for n in range(bootstrap):
             graph = _randomise_graph(graph, attr='pop')
-            predicted_avg.append(_average_connections_per_pop(graph, population_list=population_list, attr='pop'))
-        
-        predicted_avg = np.mean(np.array(predicted_avg), axis=0)
-        
-        return (observed_avg - predicted_avg)   
+            
+            for m in connectivity_modes:
+                if m == 'conn_all':
+                    predicted[m].append(_average_connections_per_pop(graph, population_list=population_list, attr='pop'))
+                if m == 'conn_self':
+                    predicted[m].append(_proportion_samepop_interactions_per_pop(graph, population_list=population_list, attr='pop'))                
+                
+        for m in connectivity_modes:        
+            predicted[m] = np.mean(np.array(predicted[m]), axis=0)
+            output[m] = observed[m] - predicted[m]
     
     else:
-        return observed_avg        
+        for m in connectivity_modes:        
+            output[m] = observed[m]
+
+        
+    return output    
+        
+
             
     
 
@@ -134,6 +154,38 @@ def _average_connections_per_pop(graph, population_list, attr='pop'):
     average_edges = [np.float16(average_edges[x]) for x in population_list]
     
     return average_edges
+
+
+def _proportion_samepop_interactions_per_pop(graph, population_list, attr='pop'):
+    population_conn_prop = {population: 0 for population in population_list}
+    population_counts = {population: 0 for population in population_list}
+    
+    for node in graph.nodes():
+
+        population = graph.nodes[node][attr]
+        total_connections = graph.degree[node]
+
+        if total_connections != 0:
+            connections_same_pop = sum(1 for neighbor in graph.neighbors(node) if graph.nodes[neighbor][attr] == population)
+            proportion_same_pop = connections_same_pop / total_connections
+        else:
+            proportion_same_pop = 0
+
+        population_conn_prop[population] += proportion_same_pop
+        population_counts[population] += 1
+
+    average_proportion = {population: 0 for population in population_list}
+    
+    for population in population_list:
+        if population_counts[population] > 0:
+            average_proportion[population] = population_conn_prop[population] / population_counts[population]
+        else:
+            average_proportion[population] = 0
+
+    # Convert back into a numpy array of length equal to the population list
+    average_proportion = [np.float16(average_proportion[x]) for x in population_list]
+    
+    return average_proportion
 
 
 def _randomise_graph(g, attr):
@@ -193,9 +245,12 @@ def Neighborhood_Identification(data,
                                 X = 'X_loc',
                                 Y = 'Y_loc',
                                 reg = 'ROI',
-                                connect_suffix='_CON',
+                                modes=['abundancy','connectivity'],
+                                connect_suffix=True,
                                 return_raw=False,
-                                bootstrap=None):
+                                bootstrap=75,
+                                connectivity_modes=['conn_all','conn_self'],
+                                reset_index=True):
     '''
     This has been developed from the Schurch data.
     
@@ -210,10 +265,8 @@ def Neighborhood_Identification(data,
     
     '''    
     
-    if keep_cols=='all':
-        keep_cols = data.columns.tolist()
-    else:
-        keep_cols = [reg,cluster_col,X,Y] + keep_cols
+    from copy import copy
+    
 
     # Make accessible
     Neighborhood_Identification.cluster_col = cluster_col
@@ -227,14 +280,22 @@ def Neighborhood_Identification(data,
 
     
     if type(data) == pd.core.frame.DataFrame:
-        cells = data
+        cells = data.copy()
     elif type(data) == ad._core.anndata.AnnData:
-        cells = data.obs        
+        cells = data.obs.copy()        
     elif type(data) == str: 
         cells = pd.read_csv(data)
     else:
         print(f'Input data of type {str(type(data))} not recognised as input')
         return None
+        
+    if keep_cols=='all':
+        keep_cols = cells.columns.tolist()
+    else:
+        keep_cols = [reg,cluster_col,X,Y] + keep_cols
+        
+    if reset_index:
+        cells.reset_index(drop=True, inplace=True)
     
     cells = pd.concat([cells,pd.get_dummies(cells[cluster_col])],axis=1)
 
@@ -252,11 +313,14 @@ def Neighborhood_Identification(data,
     #print(exps)
     tissue_chunks = [(time.time(),exps.index(t),t,a) for t,indices in tissue_group.groups.items() for a in np.array_split(indices,1)] 
     tissues = [get_windows(job,n_neighbors) for job in tissue_chunks]   
-    
-    #for each cell and its nearest neighbors, reshape and count the number of each cell type in those neighbors.
-    out_dict = {}
-    out_dict_connectivity = {}
-    
+        
+    modalities = copy(modes)
+    if 'connectivity' in modalities:
+        modalities.remove('connectivity')
+        modalities += connectivity_modes
+        
+    out_dict_all = {m:{} for m in modalities}
+
     counter=0
     for k in ks:
         for neighbors,job in zip(tissues,tissue_chunks):
@@ -267,48 +331,61 @@ def Neighborhood_Identification(data,
             
             counter +=1
             print(f'{str(counter)} of {str(len(tissues))} - Calculating for region {str(tissue_name)}')
-          
-            ############## ABUNDANCY  
             
-            window = values[neighbors[chunk,:k].flatten()].reshape(len(chunk),k,len(sum_cols)).sum(axis = 1)
-            out_dict[(tissue_name,k)] = (window.astype(np.float16),indices)
-            #window_itter = window.copy()
+            ''' 
+            This function is currently broken due to the way at that the out_dict is structured - modalities need to be nested inside out_dict, not the other way around as they are currently
+            '''
+                        
+            if 'abundancy' in modes:
+                m = 'abundancy'
             
-            ########### CONNECTIVITY
+                window = values[neighbors[chunk,:k].flatten()].reshape(len(chunk),k,len(sum_cols)).sum(axis = 1)
+
+                out_dict_all[m][(tissue_name,k)] = (window.astype(np.float16),indices)
+                                
+                    
+            if 'connectivity' in modes:
+
+                window = [population_connectivity(nodes = n.tolist()[:k],
+                                        cells = cells,
+                                        X = X,
+                                        Y = Y,
+                                        radius=radius,
+                                        cluster_col=cluster_col,
+                                        population_list =  sum_cols,
+                                        bootstrap=bootstrap) for n in tqdm(neighbors, position=0, leave=True)]
+
+                
+                window_connectivity = {}
+                
+                for m in connectivity_modes:
+                    window_connectivity[m] = [window[x][m] for x in range(len(window))]
+                
+                    window_connectivity[m] = np.array(window_connectivity[m], dtype=np.float16)
             
-            window_connectivity = [population_connectivity(nodes = n.tolist()[:k],
-                                    cells = cells,
-                                    X = X,
-                                    Y = Y,
-                                    radius=radius,
-                                    cluster_col=cluster_col,
-                                    population_list =  sum_cols,
-                                    bootstrap=bootstrap) for n in tqdm(neighbors, position=0, leave=True)]
-        
-            window_connectivity = np.array(window_connectivity, dtype=np.float16)
-            out_dict_connectivity[(tissue_name,k)] = (window_connectivity.astype(np.float16),indices)
+                    out_dict_all[m][(tissue_name,k)] = (window_connectivity[m].astype(np.float16),indices)
+                
+                
 
     #concatenate the summed windows and combine into one dataframe for each window size tested.
-    windows = {}
-    windows_connect = {}
-
+    
+    modalities_output={}
+    modalities_output.update(dict([(k, {}) for x in ks]))
+    
     for k in ks:
 
-        window = pd.concat([pd.DataFrame(out_dict[(exp,k)][0],index = out_dict[(exp,k)][1].astype(int),columns = sum_cols) for exp in exps],axis=0)
-        window = window.loc[cells.index.values]
-        #window = pd.concat([cells[keep_cols],window],1)
-        windows[k] = window
+        for m in modalities:
+            out_dict = out_dict_all[m]
         
-        window_connect = pd.concat([pd.DataFrame(out_dict_connectivity[(exp,k)][0],index = out_dict[(exp,k)][1].astype(int),columns = sum_cols) for exp in exps],axis=0)
-        window_connect = window_connect.loc[cells.index.values]
-        #window_connect = pd.concat([cells[keep_cols],window_connect],1)
-        
-        # Add suffix onto connectivity column names
-        if connect_suffix:
-            window_connect.columns = window_connect.columns + connect_suffix
-        
-        windows_connect[k] = window_connect
-    
+            window = pd.concat([pd.DataFrame(out_dict[(exp,k)][0],index = out_dict[(exp,k)][1].astype(int),columns = sum_cols) for exp in exps],axis=0)
+            window = window.loc[cells.index.values]
+
+            # Add suffix onto connectivity column names
+            if connect_suffix:
+                window.columns = window.columns.astype('str') + '_' + str(m)            
+            
+            modalities_output[k].update({str(m): copy(window)})
+
     metadata = cells[keep_cols]
     
     # These are simplty here for diagnosing errors
@@ -325,17 +402,20 @@ def Neighborhood_Identification(data,
     
     
     if return_raw:
-        return windows, windows_connect, metadata
+        return modalities_output, metadata
+    
     else:
         
         adatas = {}
 
         for k in ks:
 
-            combined_data = pd.merge(left = windows[k],
-                     right= windows_connect[k],
-                     left_index=True,
-                     right_index=True)
+            #combined_data = pd.merge(left = windows[k],
+            #        right= windows_connect[k],
+            #       left_index=True,
+            #      right_index=True)
+            
+            combined_data = pd.concat([modalities_output[k][x] for x in modalities], axis=1)
 
             scaler = StandardScaler()
 
