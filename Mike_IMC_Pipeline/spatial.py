@@ -77,10 +77,10 @@ def run_spoox(adata,
         print(samples)
         
     # Specify functions to run, by default will run all
-    if specify_functions:
-        functions=f' -f {specify_functions}'
-    elif specify_functions=='all':
+    if specify_functions=='all':
         functions=''
+    elif specify_functions:
+        functions=f' -f {specify_functions}'    
     else:
         functions=' -f paircorrelationfunction morueta-holme networkstatistics'
 
