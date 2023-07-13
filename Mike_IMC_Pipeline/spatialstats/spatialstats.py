@@ -421,8 +421,8 @@ def moruetaHolmeAssociationMatrix(ds, df_annotations, colors, clusterNames, coun
         clusterNames_MH = list(clusterNames.values())
        
         ###
-        O_df = pd.DataFrame(O)
-        O_df.to_csv(str(ds.sample)+'.csv')
+        #O_df = pd.DataFrame(O)
+        #O_df.to_csv(str(ds.sample)+'.csv')
         ###
        
         # ORIGINAL
@@ -445,8 +445,8 @@ def moruetaHolmeAssociationMatrix(ds, df_annotations, colors, clusterNames, coun
             clusterNames_MH = np.delete(clusterNames_MH,toExclude,0)
         
         ###
-        O_df = pd.DataFrame(O)
-        O_df.to_csv(str(ds.sample)+'_post.csv')
+        #O_df = pd.DataFrame(O)
+        #O_df.to_csv(str(ds.sample)+'_post.csv')
         ###
        
 
