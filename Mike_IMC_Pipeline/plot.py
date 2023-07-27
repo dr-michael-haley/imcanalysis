@@ -386,14 +386,22 @@ def mlm_stats(data, pop_col, group_col, case_col='Case', value_col='Cells', roi_
             if average_cases:
                 subset = subset.groupby([group_col, case_col], observed=True).mean(numeric_only=True).reset_index()
 
-            # Perform the t-test
+            # Get data for the groups
             group1 = subset[subset[group_col] == subset[group_col].unique()[0]][value_col]
             group2 = subset[subset[group_col] == subset[group_col].unique()[1]][value_col]
+            
+            # T-test
             t_stat, t_pval = stats.ttest_ind(group1, group2)
+            
+            # Mann-Whitney
+            u_stat, mwu_pval = stats.mannwhitneyu(group1, group2)
 
             result['t_test_p_value'] = t_pval
+            result['mannwhitneyu_p_value'] = mwu_pval
+            
             if show_t_values:
                 result['t_value'] = t_stat
+                result['u_value'] = u_stat
 
         results.append(result)
 
@@ -404,7 +412,15 @@ def mlm_stats(data, pop_col, group_col, case_col='Case', value_col='Cells', roi_
     results_df['mlm_p_value_corrected'] = pvals_corrected_mlm
 
     if 't_test_p_value' in results_df.columns:
-        reject_ttest, pvals_corrected_ttest, _, _ = multipletests(results_df['t_test_p_value'], method=method)
+        _, pvals_corrected_ttest, _, _ = multipletests(results_df['t_test_p_value'], method=method)
         results_df['t_test_p_value_corrected'] = pvals_corrected_ttest
-
+        
+        _, pvals_corrected_mwu, _, _ = multipletests(results_df['mannwhitneyu_p_value'], method=method)
+        results_df['mannwhitneyu_p_value_corrected'] = pvals_corrected_mwu
+    
+    # MLM is not appropriate if averaged over cases
+    if average_cases:
+        results_df = results_df.drop(columns=['mlm_p_value','mlm_warnings','mlm_p_value_corrected'])
+    
+    
     return results_df
