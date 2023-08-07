@@ -269,6 +269,11 @@ def _create_heatmap(data, states, col, vmin, vmax, norm, cluster_mh, cmap, figsi
         None. The heatmap is displayed and saved to a file.
     """
     fig, axs = plt.subplots(1, len(states), figsize=(len(states)*figsize, figsize))
+    
+    # In case only one state is found
+    if not hasattr(axs, '__iter__'):
+        axs = [axs]
+    
     fig.suptitle(f"Heatmaps for analysis: {col}", fontsize=16, y=1.02)
 
     # Fill NaN values if clustering is enabled.
