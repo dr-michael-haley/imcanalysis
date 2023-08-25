@@ -275,6 +275,7 @@ def _create_heatmap(data, states, col, vmin, vmax, norm, cluster_mh, cmap, figsi
         axs = [axs]
     
     fig.suptitle(f"Heatmaps for analysis: {col}", fontsize=16, y=1.02)
+    
 
     # Fill NaN values if clustering is enabled.
     if cluster_mh:
@@ -345,6 +346,15 @@ def create_spoox_heatmaps(data_input, percentile=95, sig_threshold=0.05, cluster
     _validate_inputs(data, cols_of_interest)    
     
     states = data['state'].unique()
+    
+    # Warn if any 'No data' rows are detected, and filter them out.
+    no_data_count = sum(data['gr10 PCF lower',]!='ND')
+    if  no_data_count != 0:
+        print(f'WARNING: {str(no_data_count)} instances of no data detected, which is where a cell interaction was never found in that state. These will be excluded.')
+        data = data[data['gr10 PCF lower']!='ND']
+        # Reassign default datatypes
+        data = data.convert_dtypes()
+        
 
     for col in cols_of_interest:
         
