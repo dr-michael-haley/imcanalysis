@@ -275,11 +275,10 @@ def _create_heatmap(data, states, col, vmin, vmax, norm, cluster_mh, cmap, figsi
         axs = [axs]
     
     fig.suptitle(f"Heatmaps for analysis: {col}", fontsize=16, y=1.02)
-    
 
     # Fill NaN values if clustering is enabled.
     if cluster_mh:
-        data[col] = data[col].fillna(0)
+        data[col] = data[col].fillna(0)     
     
     # If the column is not 'Morueta-Holme' or if clustering is enabled, create a clustermap.
     if 'Morueta-Holme' in col or cluster_mh:
@@ -316,7 +315,7 @@ def _create_heatmap(data, states, col, vmin, vmax, norm, cluster_mh, cmap, figsi
     plt.show()
 
 
-def create_spoox_heatmaps(data_input, percentile=95, sig_threshold=0.05, cluster_mh=True, save_folder='spoox_figures', save_extension='.png', figsize=10):
+def create_spoox_heatmaps(data_input, percentile=95, sig_threshold=0.05, cluster_mh=True, save_folder='spoox_figures', save_extension='.png', figsize=10, cell_type_1_list=None, cell_type_2_list=None):
     """
     Creates heatmaps from the SpOOx sumary data
     
@@ -328,33 +327,49 @@ def create_spoox_heatmaps(data_input, percentile=95, sig_threshold=0.05, cluster
         save_folder (str): Folder to save the generated heatmaps. Default is 'spoox_figures'.
         save_extension (str): File extension for the saved heatmaps. Default is '.png'.
         figsize (int): Size of the figure for the heatmaps. Default is 10.
+        cell_type_1_list (list, strs): Populations to filter to in cell type 1 (rows).
+        cell_type_2_list (list, strs): Populations to filter to in cell type 1 (columns).
+
         
     Returns:
         None. The function saves heatmap figures in the specified folder.
     """
+    # These are the columns from the SpOOx output
     cols_of_interest = ['gr10 PCF lower', 'gr20 PCF lower', 'Morueta-Holme_Significant', 'Morueta-Holme_All', 'contacts', '%contacts', 'Network', 'Network(%)']
 
     # Create output folder if it doesn't exist.
     if not os.path.exists(save_folder):
         os.makedirs(save_folder)
     
+    # Copy data
     data = data_input.copy()
+    
+    # Warn if any 'No data' rows are detected, and filter them out.
+    no_data_count = sum(data['gr10 PCF lower']=='ND')
+    if  no_data_count != 0:
+        print(f'WARNING: {str(no_data_count)} instances of no data detected, which is where a cell interaction was never found in that state. These will be excluded.')
+        data = data[data['gr10 PCF lower']!='ND']
+        
+        for c in ['gr10 PCF lower', 'gr20 PCF lower', 'MH_PC', 'MH_SES', 'MH_FDR', 'contacts', '%contacts', 'Network', 'Network(%)']:
+            data[c] = data[c].astype('float64')
+    
+    # Add column names with more meaningful titles
     data['Morueta-Holme_Significant'] = np.where(data['MH_FDR']<sig_threshold, data['MH_SES'], np.nan)
     data['Morueta-Holme_All'] = data['MH_SES']
+    
+    # Filter to only specific cells on axes
+    if cell_type_1_list:
+        data = data[data['Cell Type 1'].isin(cell_type_1_list)]
+  
+    if cell_type_2_list:
+        data = data[data['Cell Type 2'].isin(cell_type_2_list)]   
     
     # Validate the input data.
     _validate_inputs(data, cols_of_interest)    
     
+    # Get a list of unique states for plotting
     states = data['state'].unique()
     
-    # Warn if any 'No data' rows are detected, and filter them out.
-    no_data_count = sum(data['gr10 PCF lower',]!='ND')
-    if  no_data_count != 0:
-        print(f'WARNING: {str(no_data_count)} instances of no data detected, which is where a cell interaction was never found in that state. These will be excluded.')
-        data = data[data['gr10 PCF lower']!='ND']
-        # Reassign default datatypes
-        data = data.convert_dtypes()
-        
 
     for col in cols_of_interest:
         
