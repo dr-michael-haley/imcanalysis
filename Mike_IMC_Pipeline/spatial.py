@@ -329,8 +329,7 @@ def create_spoox_heatmaps(data_input, percentile=95, sig_threshold=0.05, cluster
         figsize (int): Size of the figure for the heatmaps. Default is 10.
         cell_type_1_list (list, strs): Populations to filter to in cell type 1 (rows).
         cell_type_2_list (list, strs): Populations to filter to in cell type 1 (columns).
-
-        
+       
     Returns:
         None. The function saves heatmap figures in the specified folder.
     """
@@ -492,7 +491,7 @@ def _generate_graph(state_data, node_color_map, layout_scale, layout_type, edge_
     # If a center cell population was specified, prune graph to only include nodes connected to the center node
     if center_cell_population is not None:
         if center_cell_population not in G.nodes:
-            print('Specified population not present, skipping')
+            print('Specified population not present, skipping. This could be only significant interactions are visualised, and this population has none with the current settings of filters')
             return None, None
         else:
             connected_nodes = list(G.neighbors(center_cell_population))
@@ -582,7 +581,7 @@ def _draw_graph(G, fig_size, pos, center_cell_population, draw_labels, node_scal
     
     
 def create_network_graphs(
-    dataframe, 
+    data, 
     output_folder='spoox_figures',
     fig_size=(5,5), 
     edge_color_map='Reds',
@@ -590,6 +589,8 @@ def create_network_graphs(
     edge_color_max=None,
     node_color_map=None,
     filters={'gr20_greater': 1, 'gr20 PCF lower_greater': 1, 'MH_FDR_less': 0.05, 'MH_SES': (0, 100)},
+    cell_type_1_list=None,
+    cell_type_2_list=None,
     edge_weight_column='gr20',
     edge_color_column='%contacts',
     edge_scale=1, 
@@ -623,6 +624,8 @@ def create_network_graphs(
             gr20 lower bound of 95% CI > 1 (ie, statistically significant) 
             Morueta-Holme false discovery rate < 0.05 (ie, statistically significant) 
             Morueta-Holme standard effect size from 0 to 100 (ie, positive associations only)
+        cell_type_1_list (list, strs): Populations to filter to in cell type 1.
+        cell_type_2_list (list, strs): Populations to filter to in cell type 2.
         edge_weight_column: The column from the dataframe that defines the edge weights. Defaults to 'gr20'.
         edge_color_column: The column from the dataframe that defines the edge colors. Defaults to '%contacts'.
         edge_scale: A value to scale the edge weights by. Defaults to 1.
@@ -644,6 +647,9 @@ def create_network_graphs(
     Output:
         Saved one graph per state/tissue type detailed in the 'state' colun
     """
+    
+    dataframe = data.copy()
+    
     # Check if the output folder exists. If not, create it.
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
@@ -651,6 +657,13 @@ def create_network_graphs(
     # Apply filters to the dataframe
     if filters is not None:
         dataframe = _apply_filters(dataframe, filters)
+        
+    # Filter to only specific cells on axes
+    if cell_type_1_list:
+        dataframe = dataframe[dataframe['Cell Type 1'].isin(cell_type_1_list)]
+  
+    if cell_type_2_list:
+        dataframe = dataframe[dataframe['Cell Type 2'].isin(cell_type_2_list)]   
     
     # Create a color map for cell types
     node_color_map = _create_color_map(dataframe, node_color_map)
