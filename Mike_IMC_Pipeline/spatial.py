@@ -73,6 +73,22 @@ def run_spoox(adata,
         
     '''
     
+    import pandas as pd
+    import numpy as np
+    import seaborn as sns
+    import anndata as ad
+    import os
+    import shutil
+
+    import networkx as nx
+
+    import matplotlib.pyplot as plt
+    from matplotlib.colors import ListedColormap, Normalize, TwoSlopeNorm
+    from matplotlib.pyplot import get_cmap
+
+    from matplotlib.lines import Line2D
+    from matplotlib.patches import Patch
+    
     # Load from file if given a string
     if type(adata) == str: 
         adata = ad.read_h5ad(adata)
