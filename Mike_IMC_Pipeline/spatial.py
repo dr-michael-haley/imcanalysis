@@ -4,6 +4,7 @@ import seaborn as sns
 import anndata as ad
 import os
 import shutil
+from copy import copy
 
 import networkx as nx
 
@@ -264,7 +265,7 @@ def _validate_inputs(data, cols_of_interest):
             raise ValueError(f"Column '{col}' not found in input data.")
     # If the function completes without raising an error, the input data is valid.
 
-def _create_heatmap(data, states, col, vmin, vmax, norm, cluster_mh, cmap, figsize, save_folder, save_extension):
+def _create_heatmap(data_input, states, col, vmin, vmax, norm, cluster_mh, cmap, figsize, save_folder, save_extension, sig_annot=None):
     """
     Create a heatmap for a specific column.
 
@@ -280,10 +281,13 @@ def _create_heatmap(data, states, col, vmin, vmax, norm, cluster_mh, cmap, figsi
         figsize (tuple): The size of the figure for the heatmap.
         save_folder (str): The folder to save the heatmap in.
         save_extension (str): The file extension to use for the saved heatmap.
+        sig_annot - Column in data that has annotations
 
     Returns:
         None. The heatmap is displayed and saved to a file.
     """
+    
+    data = data_input.copy()
     fig, axs = plt.subplots(1, len(states), figsize=(len(states)*figsize, figsize))
     
     # In case only one state is found
@@ -311,18 +315,36 @@ def _create_heatmap(data, states, col, vmin, vmax, norm, cluster_mh, cmap, figsi
     for ax, state in zip(axs, states):
         state_data = data[data['state'] == state]
         heatmap_data = state_data.pivot(index='Cell Type 1', columns='Cell Type 2', values=col)
-
+        
+        # Retrieve annotations from the given column in the raw data
+        if sig_annot:
+            annotations = state_data.pivot(index='Cell Type 1', columns='Cell Type 2', values=sig_annot)
+         
         # Reorder the rows and columns according to the clustermap if the column is not 'MH' or if clustering is enabled.
         if 'Morueta-Holme' not in col or cluster_mh:
             heatmap_data = heatmap_data.iloc[row_order, col_order]
+            
+            # Reorder is needed
+            if sig_annot:
+                annotations = annotations.iloc[row_order, col_order]
 
         cbar_kws = {'fraction':0.046, 'pad':0.04}
 
         # Generate the heatmap.
-        if norm:
-            sns.heatmap(heatmap_data, ax=ax, cmap=cmap, cbar=True, robust=True, square=True, vmin=vmin, vmax=vmax, norm=norm, cbar_kws=cbar_kws)
+        
+        if not sig_annot:
+            if norm:
+                sns.heatmap(heatmap_data, ax=ax, cmap=cmap, cbar=True, robust=True, square=True, vmin=vmin, vmax=vmax, norm=norm, cbar_kws=cbar_kws)
+            else:
+                sns.heatmap(heatmap_data, ax=ax, cmap=cmap, cbar=True, robust=True, square=True, vmin=vmin, vmax=vmax, cbar_kws=cbar_kws)
         else:
-            sns.heatmap(heatmap_data, ax=ax, cmap=cmap, cbar=True, robust=True, square=True, vmin=vmin, vmax=vmax, cbar_kws=cbar_kws)
+            
+            annot_kws={'fontsize':'x-large', 'fontweight':'extra bold','va':'center','ha':'center'}
+
+            if norm:
+                sns.heatmap(heatmap_data, ax=ax, cmap=cmap, cbar=True, robust=True, square=True, vmin=vmin, vmax=vmax, norm=norm, cbar_kws=cbar_kws, annot=annotations, annot_kws=annot_kws, fmt="")
+            else:
+                sns.heatmap(heatmap_data, ax=ax, cmap=cmap, cbar=True, robust=True, square=True, vmin=vmin, vmax=vmax, cbar_kws=cbar_kws, annot=annotations, annot_kws=annot_kws, fmt="")        
 
         ax.set_title(state)
         
@@ -331,7 +353,7 @@ def _create_heatmap(data, states, col, vmin, vmax, norm, cluster_mh, cmap, figsi
     plt.show()
 
 
-def create_spoox_heatmaps(data_input, percentile=95, sig_threshold=0.05, cluster_mh=True, save_folder='spoox_figures', save_extension='.png', figsize=10, cell_type_1_list=None, cell_type_2_list=None):
+def create_spoox_heatmaps(data_input, percentile=95, sig_threshold=0.05, cluster_mh=True, save_folder='spoox_figures', save_extension='.png', figsize=10, cell_type_1_list=None, cell_type_2_list=None, annotate_signficance=True):
     """
     Creates heatmaps from the SpOOx sumary data
     
@@ -345,12 +367,13 @@ def create_spoox_heatmaps(data_input, percentile=95, sig_threshold=0.05, cluster
         figsize (int): Size of the figure for the heatmaps. Default is 10.
         cell_type_1_list (list, strs): Populations to filter to in cell type 1 (rows).
         cell_type_2_list (list, strs): Populations to filter to in cell type 1 (columns).
+        annotate_signficance - whether to annotate signififant values or not
        
     Returns:
         None. The function saves heatmap figures in the specified folder.
     """
     # These are the columns from the SpOOx output
-    cols_of_interest = ['gr10 PCF lower', 'gr20 PCF lower', 'Morueta-Holme_Significant', 'Morueta-Holme_All', 'contacts', '%contacts', 'Network', 'Network(%)']
+    cols_of_interest = ['gr10 PCF lower', 'gr20', 'gr20 PCF lower', 'gr20 PCF upper', 'gr20 PCF combined', 'Morueta-Holme_Significant', 'Morueta-Holme_All', 'contacts', '%contacts', 'Network', 'Network(%)']
 
     # Create output folder if it doesn't exist.
     if not os.path.exists(save_folder):
@@ -359,18 +382,25 @@ def create_spoox_heatmaps(data_input, percentile=95, sig_threshold=0.05, cluster
     # Copy data
     data = data_input.copy()
     
+    # PCF combined
+    data['gr20 PCF combined'] = data.apply(_pcf_combined, axis=1)
+    
     # Warn if any 'No data' rows are detected, and filter them out.
     no_data_count = sum(data['gr10 PCF lower']=='ND')
     if  no_data_count != 0:
         print(f'WARNING: {str(no_data_count)} instances of no data detected, which is where a cell interaction was never found in that state. These will be excluded.')
         data = data[data['gr10 PCF lower']!='ND']
         
-        for c in ['gr10 PCF lower', 'gr20 PCF lower', 'MH_PC', 'MH_SES', 'MH_FDR', 'contacts', '%contacts', 'Network', 'Network(%)']:
+        for c in ['gr20', 'gr10 PCF lower', 'gr20 PCF lower', 'gr20 PCF upper', 'MH_PC', 'MH_SES', 'MH_FDR', 'contacts', '%contacts', 'Network', 'Network(%)']:
             data[c] = data[c].astype('float64')
     
     # Add column names with more meaningful titles
     data['Morueta-Holme_Significant'] = np.where(data['MH_FDR']<sig_threshold, data['MH_SES'], np.nan)
     data['Morueta-Holme_All'] = data['MH_SES']
+    
+    if annotate_signficance:
+        data['Morueta-Holme_Annotation'] = np.where(data['MH_FDR']<sig_threshold, "*", "")
+        data['gr20_Annotation'] = copy(np.where(~data['gr20 PCF combined'].isna(), "*", ""))
     
     # Filter to only specific cells on axes
     if cell_type_1_list:
@@ -388,6 +418,8 @@ def create_spoox_heatmaps(data_input, percentile=95, sig_threshold=0.05, cluster
 
     for col in cols_of_interest:
         
+        sig_annot = None
+        
         cmap = get_cmap("Reds")
         cmap.set_under("darkgrey")
         
@@ -397,20 +429,66 @@ def create_spoox_heatmaps(data_input, percentile=95, sig_threshold=0.05, cluster
             vmin = 1
             norm = None
             
+        elif col == 'gr20 PCF upper':
+            cmap = get_cmap("Blues_r")
+            cmap.set_over("darkgrey")
+            vmax=1
+            vmin=None
+            
+        elif col == 'gr20 PCF combined':
+            
+            #vmax = np.percentile(data.dropna().loc[data[col] != 0, col], percentile)
+            vmax = np.percentile(data[col].dropna(), percentile)
+
+            print(vmax)
+            #vmin = np.percentile(data[col].dropna(), (100-percentile))
+            vmin = np.min(data[col].dropna())
+            print(vmin)
+            
+            cmap = get_cmap("coolwarm")
+            
+            #cmap.set_over("darkgrey")
+            cmap.set_under("darkgrey")
+            #cmap.set_bad('darkgrey')
+            
+            norm = TwoSlopeNorm(vmin=vmin, vcenter=1, vmax=vmax)
+            
+            if annotate_signficance:
+                sig_annot = 'gr20_Annotation'
+                
+         
+        elif col == 'gr20':
+            
+            vmax = np.percentile(data[col].dropna(), percentile)
+            vmin = np.percentile(data[col].dropna(), (100-percentile))
+            cmap = get_cmap("coolwarm")
+            
+            norm = TwoSlopeNorm(vmin=vmin, vcenter=1, vmax=vmax)
+            
+            if annotate_signficance:
+                sig_annot = 'gr20_Annotation'
+                       
         elif 'Morueta-Holme' in col:
             vmax = np.percentile(data[col].dropna(), percentile)
             vmin = np.percentile(data[col].dropna(), (100-percentile))
             cmap = get_cmap("coolwarm")
             
             norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
+            
+            if annotate_signficance:
+                sig_annot = 'Morueta-Holme_Annotation'
+                             
         else:
             vmin = 0
             norm = None
         
         # Call the function to create the heatmap for the current column.
-        _create_heatmap(data, states, col, vmin, vmax, norm, cluster_mh, cmap, figsize, save_folder, save_extension)
+        _create_heatmap(data, states, col, vmin, vmax, norm, cluster_mh, cmap, figsize, save_folder, save_extension, sig_annot)
 
         print(f"Saved heatmap for column '{col}' in folder '{save_folder}'")
+        
+        
+    return data
 
 
 def _apply_filters(dataframe, filters):
@@ -690,3 +768,13 @@ def create_network_graphs(
         
         if G is not None and pos is not None:
             _draw_graph(G, fig_size, pos, center_cell_population, draw_labels, node_scale, edge_scale, edge_color_map, node_outline, add_legend, legend_bbox_to_anchor, state, figure_showtitle, figure_padding, figure_box, output_folder, save_extension, node_color_map, edge_color_min, edge_color_max, edge_color_column, edge_weight_column)
+
+
+# Define a function to apply the logic
+def _pcf_combined(row):
+    if row['gr20 PCF lower'] > 1:
+        return row['gr20 PCF lower']
+    elif row['gr20 PCF upper'] < 1:
+        return row['gr20 PCF upper']
+    else:
+        return None
