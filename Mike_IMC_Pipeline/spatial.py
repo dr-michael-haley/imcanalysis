@@ -15,6 +15,8 @@ from matplotlib.pyplot import get_cmap
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
+from IPython.display import display
+
 def run_spoox(adata, 
              population_obs, 
              groupby=None, 
@@ -265,7 +267,7 @@ def _validate_inputs(data, cols_of_interest):
             raise ValueError(f"Column '{col}' not found in input data.")
     # If the function completes without raising an error, the input data is valid.
 
-def _create_heatmap(data_input, states, col, vmin, vmax, norm, cluster_mh, cmap, figsize, save_folder, save_extension, sig_annot=None):
+def _create_heatmap(data_input, states, col, vmin, vmax, norm, cluster_mh, cmap, figsize, save_folder, save_extension, sig_annot=None, specify_row_order=None, specify_col_order=None, cmap_ticks=None):
     """
     Create a heatmap for a specific column.
 
@@ -282,6 +284,9 @@ def _create_heatmap(data_input, states, col, vmin, vmax, norm, cluster_mh, cmap,
         save_folder (str): The folder to save the heatmap in.
         save_extension (str): The file extension to use for the saved heatmap.
         sig_annot - Column in data that has annotations
+        specify_row_order - Specify a row order
+        specify_col_order - Specify a column order
+        cmap_ticks - Can provide of a list of where ticks should appear on the colourmap
 
     Returns:
         None. The heatmap is displayed and saved to a file.
@@ -328,10 +333,23 @@ def _create_heatmap(data_input, states, col, vmin, vmax, norm, cluster_mh, cmap,
             if sig_annot:
                 annotations = annotations.iloc[row_order, col_order]
 
-        cbar_kws = {'fraction':0.046, 'pad':0.04}
+        # Overwrite column orders if given
+        if specify_row_order:
+            heatmap_data = heatmap_data.loc[specify_row_order, specify_col_order]
+            if sig_annot:
+                annotations = annotations.loc[specify_row_order, specify_col_order]           
+        
+        if type(cmap_ticks) != list and cmap_ticks:
+            cmap_ticks = [vmin, 1, vmax]
+        
+        cbar_kws = {'fraction':0.046, 'pad':0.04, 'ticks':cmap_ticks}
+        
+        #if sig_annot:
+        #    print(col)
+        #    display(heatmap_data)
+        #   display(annotations)
 
         # Generate the heatmap.
-        
         if not sig_annot:
             if norm:
                 sns.heatmap(heatmap_data, ax=ax, cmap=cmap, cbar=True, robust=True, square=True, vmin=vmin, vmax=vmax, norm=norm, cbar_kws=cbar_kws)
@@ -342,18 +360,19 @@ def _create_heatmap(data_input, states, col, vmin, vmax, norm, cluster_mh, cmap,
             annot_kws={'fontsize':'x-large', 'fontweight':'extra bold','va':'center','ha':'center'}
 
             if norm:
-                sns.heatmap(heatmap_data, ax=ax, cmap=cmap, cbar=True, robust=True, square=True, vmin=vmin, vmax=vmax, norm=norm, cbar_kws=cbar_kws, annot=annotations, annot_kws=annot_kws, fmt="")
+                sns.heatmap(heatmap_data, ax=ax, cmap=cmap, cbar=True, robust=True, square=True, vmin=vmin, vmax=vmax, norm=norm, cbar_kws=cbar_kws, annot=annotations.to_numpy(), annot_kws=annot_kws, fmt="")
             else:
-                sns.heatmap(heatmap_data, ax=ax, cmap=cmap, cbar=True, robust=True, square=True, vmin=vmin, vmax=vmax, cbar_kws=cbar_kws, annot=annotations, annot_kws=annot_kws, fmt="")        
+                sns.heatmap(heatmap_data, ax=ax, cmap=cmap, cbar=True, robust=True, square=True, vmin=vmin, vmax=vmax, cbar_kws=cbar_kws, annot=annotations.to_numpy(), annot_kws=annot_kws, fmt="")        
 
         ax.set_title(state)
+
         
     plt.tight_layout()
     plt.savefig(os.path.join(save_folder, f'heatmap_{col}{save_extension}'), bbox_inches='tight', dpi=400)
     plt.show()
 
 
-def create_spoox_heatmaps(data_input, percentile=95, sig_threshold=0.05, cluster_mh=True, save_folder='spoox_figures', save_extension='.png', figsize=10, cell_type_1_list=None, cell_type_2_list=None, annotate_signficance=True):
+def create_spoox_heatmaps(data_input, percentile=95, sig_threshold=0.05, cluster_mh=True, save_folder='spoox_figures', save_extension='.png', figsize=10, cell_type_1_list=None, cell_type_2_list=None, annotate_signficance=True, specify_row_order=None, specify_col_order=None, cmap_ticks=None):
     """
     Creates heatmaps from the SpOOx sumary data
     
@@ -368,6 +387,9 @@ def create_spoox_heatmaps(data_input, percentile=95, sig_threshold=0.05, cluster
         cell_type_1_list (list, strs): Populations to filter to in cell type 1 (rows).
         cell_type_2_list (list, strs): Populations to filter to in cell type 1 (columns).
         annotate_signficance - whether to annotate signififant values or not
+        specify_row_order - Specify a row order
+        specify_col_order - Specify a column order
+        cmap_ticks - Can provide of a list of where ticks should appear on the colourmap
        
     Returns:
         None. The function saves heatmap figures in the specified folder.
@@ -483,7 +505,7 @@ def create_spoox_heatmaps(data_input, percentile=95, sig_threshold=0.05, cluster
             norm = None
         
         # Call the function to create the heatmap for the current column.
-        _create_heatmap(data, states, col, vmin, vmax, norm, cluster_mh, cmap, figsize, save_folder, save_extension, sig_annot)
+        _create_heatmap(data, states, col, vmin, vmax, norm, cluster_mh, cmap, figsize, save_folder, save_extension, sig_annot, specify_row_order, specify_col_order, cmap_ticks)
 
         print(f"Saved heatmap for column '{col}' in folder '{save_folder}'")
         
