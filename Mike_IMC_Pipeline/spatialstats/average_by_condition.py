@@ -175,8 +175,10 @@ def average_mh(mh_folder,diseases,pathToSS,annotations):
             fl = os.path.join(mhPath, f)
             if not os.path.exists(fl):
                 continue
-            with open(fl,"rb") as fid:
-                result = pickle.load(fid)
+            
+            result = pd.read_pickle(fl)
+            #with open(fl,"rb") as fid:
+            #    result = pickle.load(fid)
 
             O = result['O']
             N = result['Ns']
@@ -372,7 +374,9 @@ def average_network(nt_folder,diseases,pathToSS,annotations):
             sample_id=f.replace("_networkAnalysis_data.p","")
             fi = os.path.join(dir,f)
             with open (fi,"rb") as fo:
-                x=pickle.load(fo)
+                #x=pickle.load(fo)
+                x=pd.read_pickle(fi)
+                
                 for cl in x["outputs"]:
                     index=0
                     cellsn=[0] * cl_length
@@ -443,8 +447,11 @@ def average_pcf(pc_folder,diseases,pathToSS,pathToData,clusteringIdColumn, annot
         pfiles={}
         for roi in rois:
             pfile = os.path.join(pathToSS,"paircorrelationfunction",f'{roi}_PCF_data.p')     
-            with open(pfile,"rb") as fid:
-                pfiles[roi] = pickle.load(fid)
+            
+            pfiles[roi] = pd.read_pickle(pfile)
+          
+            #with open(pfile,"rb") as fid:
+            #    pfiles[roi] = pickle.load(fid)
 
 
         for a,cla in enumerate(annotations.Annotation):
