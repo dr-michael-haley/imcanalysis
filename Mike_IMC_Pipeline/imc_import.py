@@ -222,11 +222,11 @@ def setup_anndata(cell_df='cell.csv',#=cell_df,
             print(f'\nData Arcsinh adjusted with cofactor {str(cofactor)}')            
         
         elif method=='log2':
-            markers_normalised = np.log2(cell_df_intensities)
+            markers_normalised = np.log2(markers_normalised)
             print(f'\nData Log2 adjusted')            
         
         elif method=='log10':
-            markers_normalised = np.log10(cell_df_intensities)          
+            markers_normalised = np.log10(markers_normalised)          
             print(f'\nData Log10 adjusted')
             
         else:
@@ -460,4 +460,3 @@ def remove_ROIs_and_markers(adata,
                             markers_limited]
 
         
-               

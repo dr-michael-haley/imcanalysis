@@ -1,5 +1,7 @@
 import pandas as pd
 import anndata as ad
+import subprocess
+
 
 import datetime 
 from types import ModuleType
@@ -189,3 +191,22 @@ def _to_list(data):
         
     return data
         
+        
+def pip_freeze_to_dataframe():
+    # Run pip freeze and capture its output
+    result = subprocess.run(['pip', 'freeze'], stdout=subprocess.PIPE, text=True)
+
+    # Split the output into lines
+    lines = result.stdout.split('\n')
+
+    # Parse each line into package name and version
+    packages = []
+    for line in lines:
+        if '==' in line:
+            name, version = line.split('==')
+            packages.append({'Package': name, 'Version': version})
+
+    # Create a DataFrame
+    df = pd.DataFrame(packages)
+
+    return df
