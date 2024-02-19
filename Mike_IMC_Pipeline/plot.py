@@ -23,6 +23,11 @@ import seaborn as sb
 
 from utils import _cleanstring, _save, _check_input_type, _to_list, subset, adlog, print_full, compare_lists
 
+import sklearn.preprocessing
+import umap
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+
 
 def count_summary(data,
                  pop_col=None,
@@ -424,3 +429,82 @@ def mlm_stats(data, pop_col, group_col, case_col='Case', value_col='Cells', roi_
     
     
     return results_df
+        
+
+
+def cellabundance_UMAP(adata, ROI_id, population, colour_by=None, annotate=True, save=None, normalize=False, dim_red='UMAP', ax=None, cmap='tab20', figsize=(3, 3), point_size=50):
+    """
+    Visualizes the abundance of cell populations within regions of interest (ROI) using UMAP, PCA, or tSNE with Seaborn's scatterplot.
+
+    Parameters:
+    - adata: AnnData object containing the single-cell data.
+    - ROI_id: String, the name of the column in adata.obs that contains the ROI identifiers.
+    - population: String, the name of the column in adata.obs that contains cell population identifiers.
+    - colour_by: String (optional), the name of the column to color the points by. If None, points are colored by ROI_id.
+    - annotate: Boolean, whether to annotate the points with ROI identifiers.
+    - save: String or None, file path to save the plot. If None, the plot is not saved.
+    - normalize: Boolean, whether to normalize the cell counts across ROIs when using Pandas Crosstabulate function.
+    - dim_red: String, the dimensionality reduction technique to use ('UMAP', 'PCA', 'tSNE').
+    - ax: matplotlib.axes.Axes object (optional), the axes on which to draw the plot. If None, a new figure and axes object are created.
+    - cmap: String, the name of the Matplotlib colormap to use. Defaults to 'tab20'.
+    - figsize: Tuple of integers, the size of the figure to create. Ignored if 'ax' is not None.
+    - point_size: Integer, the size of the points in the scatter plot.
+
+    Returns:
+    The matplotlib figure or axes object containing the plot.
+    """
+    
+    # Create cells table based on whether colour_by is specified
+    if colour_by:
+        cells = pd.crosstab([adata.obs[ROI_id], adata.obs[colour_by]], adata.obs[population], normalize=normalize).reset_index().copy()
+    else:
+        cells = pd.crosstab(adata.obs[ROI_id], adata.obs[population], normalize=normalize).reset_index().copy()
+    
+    # Prepare data for dimensionality reduction
+    summary_data = cells.iloc[:, 2:] if colour_by else cells.iloc[:, 1:]
+    scaled_summary_data = sklearn.preprocessing.StandardScaler().fit_transform(summary_data)
+
+    # Select and apply dimensionality reduction method
+    if dim_red == 'UMAP':
+        reducer = umap.UMAP()
+        embedding = reducer.fit_transform(scaled_summary_data)
+    elif dim_red == 'PCA':
+        pca = PCA(n_components=2)
+        embedding = pca.fit_transform(scaled_summary_data)
+    elif dim_red == 'tSNE':
+        tsne = TSNE(n_components=2, verbose=1, perplexity=40, n_iter=300)
+        embedding = tsne.fit_transform(scaled_summary_data)
+    
+    # Prepare the DataFrame for Seaborn
+    plot_data = pd.DataFrame(embedding, columns=[f'{dim_red} Dimension 1', f'{dim_red} Dimension 2'])
+    plot_data['color'] = cells[colour_by] if colour_by else cells[ROI_id]
+
+    # Determine if we need to create a new figure
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+        created_new_fig = True
+    else:
+        created_new_fig = False
+    
+    # Plot using Seaborn
+    sb.scatterplot(data=plot_data, x=f'{dim_red} Dimension 1', y=f'{dim_red} Dimension 2', hue='color', ax=ax, palette=cmap, s=point_size, legend="full")
+
+    # Adjust legend to not overlap with data
+    ax.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
+
+    # Annotation (optional)
+    if annotate:
+        for _, row in plot_data.iterrows():
+            ax.text(row[f'{dim_red} Dimension 1'], row[f'{dim_red} Dimension 2'], row['color'], ha='right', size='small')
+    
+    # Save plot if requested
+    if save:
+        fig.savefig(save, bbox_inches='tight')
+    
+    # Show plot if a new figure was created
+    if created_new_fig:
+        plt.show()
+        return fig
+    else:
+        return ax
+
