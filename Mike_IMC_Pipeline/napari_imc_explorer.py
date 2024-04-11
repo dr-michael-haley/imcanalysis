@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 def napari_imc_explorer(masks_folder = 'Masks',
-                        image_folder = 'Images',
+                        image_folders = ['Images'],
                         HE_folder = 'HE',
                         roi_obs='ROI',
                         adata = ad.AnnData(),
@@ -24,10 +24,14 @@ def napari_imc_explorer(masks_folder = 'Masks',
     
     adata - AnnData object as created from the pipeline
     masks_folder - Directory containing a mask for each ROI, each file named after the ROI. Masks should be uint16 .tif files.
-    image_folder - Directory containing subdirectories, each named after ROIs in the AnnData. Images are named after channels (adata.var_names), uint16 .tiff files 
+    image_folders - Directories containing subdirectories, each named after ROIs in the AnnData. Images are named after channels (adata.var_names), uint16 .tiff files 
     HE_folder - Directory containing a colour (RGFB) .tif file, named after each ROI
     check_masks - If True, will check that all the masks match the number of cells in the AnnData object.
     '''
+    
+    # If only one image folder given, make it into a list of one
+    if not isinstance(image_folders,list):
+        image_folders = [image_folders]
     
     def check_all_masks(adata, roi_obs=roi_obs):
         '''
@@ -60,7 +64,7 @@ def napari_imc_explorer(masks_folder = 'Masks',
     
     def find_tiff_files(directory):
         """
-        Find all TIFF files in a specified directory.
+        Find all TIFF/TIF files in a specified directory.
 
         Parameters:
         directory (str): The path to the directory.
@@ -139,7 +143,12 @@ def napari_imc_explorer(masks_folder = 'Masks',
     
         # Load the mask and TIFFS for the ROI
         mask = sk.io.imread(Path(masks_folder,f'{roi_name}.tif'))
-        tiffs = find_tiff_files(Path(image_folder,roi_name))
+        
+        # Find all .tiff/.tif paths in any image folders
+        tiffs =[]
+        for i in image_folders:
+            tiff_paths = find_tiff_files(Path(i,roi_name))
+            tiffs = tiffs + tiff_paths
 
         #viewer.add_labels(mask, name='cell_mask')
 
@@ -236,9 +245,6 @@ def napari_imc_explorer(masks_folder = 'Masks',
             
             viewer.add_image(parameter_map, name=quant, blending='additive')
             
-        
-        
-
     def add_HE(roi_name):    
         
         # Get size of ROI from mask file
@@ -347,9 +353,33 @@ def napari_imc_explorer(masks_folder = 'Masks',
                                    
     
     ############ WIDGET 2 - Image selector
-    
-    im_files = find_tiff_files(Path(image_folder, roi_list[0]))
-    im_list = [os.path.basename(x).replace('.tiff','') for x in im_files]
+     
+    # This now handles being given a list of image directories, and works with .tiff and .tif files
+    image_folder_dict = {}
+    image_ext_dict = {}
+    im_list = []
+    for i in image_folders:
+        
+        # Not all folders may have images for all rois, so find first folder with images
+        im_files = []
+        for roi in roi_list:
+            im_files = find_tiff_files(Path(i, roi))
+            if im_files:
+                break
+                
+        im_list_new = [os.path.basename(x).split('.')[:-1] for x in im_files]
+        im_list_new = [".".join(x) for x in im_list_new]
+        
+        im_extensions = [os.path.basename(x).split('.')[-1] for x in im_files]
+        
+        for x, ext in zip(im_list_new, im_extensions):
+            image_ext_dict[x] = ext
+        
+        for x in im_list_new:
+            image_folder_dict[x]=str(i)
+        
+        im_list = im_list + im_list_new
+        
     
     # Selector for different images
     @magicgui(x=dict(widget_type='Select', choices=im_list, label='Select images'), 
@@ -362,7 +392,8 @@ def napari_imc_explorer(masks_folder = 'Masks',
         
         for image, colour in zip(selected_images, itertools.cycle(['r', 'g', 'b', 'c', 'm', 'y'])):
 
-            file = Path(image_folder, roi_selector.value, f'{image}.tiff')
+            file = Path(image_folder_dict[image], roi_selector.value, f'{image}.{image_ext_dict[image]}')
+            print(file)
             
             load_imc_image(file,
                            quantile=quant_select.value, 
@@ -428,6 +459,8 @@ def napari_imc_explorer(masks_folder = 'Masks',
                       add_individual_pops=individual_pops_toggle.value)
         
     viewer.window.add_dock_widget(quant_selector, name='Numeric as masks')   
+    
+
     # Start the Napari event loop
     napari.run()
     return viewer
