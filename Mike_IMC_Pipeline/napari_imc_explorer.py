@@ -427,7 +427,7 @@ def napari_imc_explorer(masks_folder = 'Masks',
                       adata = adata,
                       pop_obs=obs, 
                       roi_obs='ROI', 
-                      adata_colormap=False,
+                      adata_colormap=True,
                       colour_map=colormaps['tab20'].colors,
                       add_individual_pops=individual_pops_toggle.value)
     
