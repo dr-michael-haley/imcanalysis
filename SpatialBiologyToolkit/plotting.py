@@ -1,0 +1,980 @@
+import os
+import warnings
+from pathlib import Path
+
+import anndata as ad
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import scanpy as sc
+import scipy as sp
+import seaborn as sb
+import skimage.io as io
+from matplotlib import cm
+from matplotlib.colors import Normalize, to_hex
+from scipy import stats
+from shapely.geometry import MultiPoint, Point, Polygon
+from skimage.util import map_array
+from skimage.transform import resize
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+from sklearn.preprocessing import StandardScaler
+from statsmodels.stats.multitest import multipletests
+import statsmodels.api as sm
+import statsmodels.formula.api as smf
+import umap
+from scipy.spatial import Voronoi
+import seaborn as sns
+from matplotlib.cm import ScalarMappable
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+from .image_analysis import save_labelled_image, save_labelled_image_as_svg
+from .utils import (_cleanstring, _save, _check_input_type, _to_list, subset,
+                    adlog, print_full, compare_lists)
+
+
+def _count_summary(data: ad.AnnData | pd.DataFrame | str,
+                 pop_col: str = None,
+                 levels: list = ['ROI'],
+                 mean_over: list = ['ROI'],
+                 crosstab_normalize: bool = False,
+                 mode: str = 'population_counts') -> tuple[pd.DataFrame, pd.DataFrame]:
+    '''
+    Summarize data into long and wide formats for plotting.
+
+    Parameters
+    ----------
+    data : AnnData, DataFrame, or str
+        The input data.
+    pop_col : str, optional
+        Column identifying a population.
+    levels : list, optional
+        Levels at which the data is structured.
+    mean_over : list, optional
+        Levels at which to calculate a mean.
+    crosstab_normalize : bool, optional
+        Whether, and how, to normalize crosstab results.
+    mode : str, optional
+        'population_counts' for counts, 'numeric' for numeric data summarization.
+
+    Returns
+    -------
+    tuple
+        Wide and long form data.
+    '''
+    from pandas.api.types import is_numeric_dtype
+
+    data = _check_input_type(data)
+    levels = _to_list(levels)
+    mean_over = _to_list(mean_over)
+    wide, long = None, None
+
+    if mean_over:
+        assert all([x in levels for x in mean_over]), 'Observation to mean over should also be in levels list'
+
+    if mode == 'numeric':
+        if pop_col:
+            levels.append(pop_col)
+            mean_over.append(pop_col)
+        long = data.groupby(levels, observed=True).mean(numeric_only=True)
+        if mean_over:
+            long = long.groupby(mean_over, observed=True).mean(numeric_only=True)
+            levels = mean_over
+        if pop_col:
+            levels.remove(pop_col)
+            wide = pd.pivot(data=long.reset_index(), index=levels, columns=pop_col)
+    elif mode == 'population_counts':
+        assert not is_numeric_dtype(data[pop_col]), 'Column is numeric, cannot calculate population-level counts'
+        crosstab_df = pd.crosstab([data[x] for x in levels], columns=data[pop_col], normalize=crosstab_normalize)
+        wide = crosstab_df
+        long = crosstab_df.reset_index().melt(id_vars=levels)
+        if mean_over:
+            wide = wide.groupby(mean_over).mean(numeric_only=True)
+        long = long.groupby(mean_over + [pop_col], observed=True).mean(numeric_only=True).reset_index()
+
+    return wide, long
+
+def bargraph(data: ad.AnnData | pd.DataFrame | str,
+             pop_col: str = None,
+             value_col: str = None,
+             hue: str = None,
+             hue_order: list = None,
+             specify_populations: list = [],
+             levels: list = None,
+             mean_over: list = None,
+             confidence_interval: int = 68,
+             figsize: tuple = (5, 5),
+             crosstab_normalize: bool = False,
+             cells_per_mm: bool = False,
+             palette: dict = None,
+             hide_grid: bool = False,
+             legend: bool = True,
+             save_data: bool = True,
+             save_figure: bool = False,
+             return_data: bool = True,
+             rotate_x_labels: int = 90,
+             case_col_name: str = 'Case',
+             ROI_col_name: str = 'ROI') -> pd.DataFrame | plt.Figure:
+    '''
+    Plot bar graphs for population abundances or measured values.
+
+    Parameters
+    ----------
+    data : AnnData, DataFrame, or str
+        The input data.
+    pop_col : str, optional
+        Column identifying a population.
+    value_col : str, optional
+        Column identifying the measured values.
+    hue : str, optional
+        Column to subgroup the graph.
+    hue_order : list, optional
+        Order of hues.
+    specify_populations : list, optional
+        List of specific populations to plot.
+    levels : list, optional
+        Levels at which the data is structured.
+    mean_over : list, optional
+        Levels at which to calculate a mean.
+    confidence_interval : int, optional
+        Confidence interval for error bars.
+    figsize : tuple, optional
+        Size of the figure.
+    crosstab_normalize : bool, optional
+        Whether, and how, to normalize crosstab results.
+    cells_per_mm : bool, optional
+        Normalize values by mm².
+    palette : dict, optional
+        Color palette.
+    hide_grid : bool, optional
+        Whether to hide the grid.
+    legend : bool, optional
+        Whether to display the legend.
+    save_data : bool, optional
+        Whether to save the raw data.
+    save_figure : bool, optional
+        Whether to save the figure.
+    return_data : bool, optional
+        Whether to return the data.
+    rotate_x_labels : int, optional
+        Angle of x labels.
+    case_col_name : str, optional
+        Name of the case column.
+    ROI_col_name : str, optional
+        Name of the ROI column.
+
+    Returns
+    -------
+    DataFrame or Figure
+        The data used to create the figure or the figure itself.
+    '''
+    from pandas.api.types import is_numeric_dtype
+
+    data = _check_input_type(data)
+    if not levels and not mean_over:
+        assert ROI_col_name in data.columns, f'{ROI_col_name} column not found in data'
+        if case_col_name in data.columns:
+            levels = ['Case', 'ROI']
+            mean_over = ['Case', 'ROI']
+        else:
+            levels = ['ROI']
+            mean_over = ['ROI']
+    levels = _to_list(levels)
+    mean_over = _to_list(mean_over)
+    specify_populations = _to_list(specify_populations)
+
+    if specify_populations:
+        data = data[data[pop_col].isin(specify_populations)]
+
+    if hue and hue not in levels:
+        levels.append(hue)
+    if hue and hue not in mean_over:
+        mean_over.append(hue)
+
+    if not palette:
+        if hue:
+            try:
+                palette = adata.uns[f'{hue}_colormap']
+            except:
+                pass
+        else:
+            try:
+                palette = adata.uns[f'{pop_col}_colormap']
+            except:
+                pass
+
+    if pop_col and value_col:
+        _, long_form_data = _count_summary(data, pop_col, levels, mean_over, crosstab_normalize, 'numeric')
+        plot_data = long_form_data.reset_index()
+        y_plot, x_plot = value_col, pop_col
+    elif not pop_col and value_col:
+        _, long_form_data = _count_summary(data, pop_col, levels, mean_over, crosstab_normalize, 'numeric')
+        plot_data = long_form_data.reset_index()
+        y_plot, x_plot = value_col, levels[-1]
+    elif pop_col and not value_col:
+        _, long_form_data = _count_summary(data, pop_col, levels, mean_over, crosstab_normalize)
+        long_form_data.rename(columns={'value': 'Cells'}, inplace=True)
+        plot_data = long_form_data
+        y_plot, x_plot = 'Cells', pop_col
+
+    if cells_per_mm:
+        try:
+            size_dict = adata.uns['sample']['mm2'].to_dict()
+            plot_data['mm2'] = plot_data['ROI'].map(size_dict)
+            new_y = f'{y_plot} per mm²'
+            plot_data[new_y] = plot_data[y_plot] / plot_data['mm2']
+            y_plot = new_y
+        except:
+            pass
+
+    fig, ax = plt.subplots(figsize=figsize)
+    sb.barplot(data=plot_data, y=y_plot, x=x_plot, hue=hue, hue_order=hue_order, palette=palette, ax=ax)
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=rotate_x_labels)
+
+    if hide_grid:
+        ax.grid(False)
+    if legend:
+        ax.legend(bbox_to_anchor=(1.01, 1))
+    else:
+        try:
+            ax.get_legend().remove()
+        except:
+            pass
+
+    filename = f'Bargraph_{_cleanstring(pop_col)}_{_cleanstring(levels)}_{_cleanstring(mean_over)}'
+    if save_data:
+        file_path = _save(('Figures', 'Barcharts', 'Raw'), f'{filename}.csv')
+        long_form_data.to_csv(file_path)
+    if save_figure:
+        for ext in ['.png', '.svg']:
+            file_path = _save(('Figures', 'Barcharts'), f'{filename}{ext}')
+            fig.savefig(file_path, bbox_inches='tight', dpi=300)
+
+    if return_data:
+        return plot_data
+    return fig
+
+def mlm_stats(data: pd.DataFrame, 
+              pop_col: str, 
+              group_col: str, 
+              case_col: str = 'Case', 
+              value_col: str = 'Cells', 
+              roi_col: str = 'ROI', 
+              method: str = 'holm-sidak', 
+              average_cases: bool = False, 
+              show_t_values: bool = False, 
+              run_t_tests: bool = True) -> pd.DataFrame:
+    """
+    Conduct mixed linear model analysis and optional t-test on data.
+
+    Parameters
+    ----------
+    data : pd.DataFrame
+        The input data.
+    pop_col : str
+        Column identifying different populations.
+    group_col : str
+        Column identifying 2 groups.
+    case_col : str, optional
+        Column identifying cases.
+    value_col : str, optional
+        Column containing the values to be analyzed.
+    roi_col : str, optional
+        Column identifying ROIs.
+    method : str, optional
+        Method to correct for multiple comparisons.
+    average_cases : bool, optional
+        Average results over cases before performing t-test.
+    show_t_values : bool, optional
+        Include t-values in the output.
+    run_t_tests : bool, optional
+        Run t-tests.
+
+    Returns
+    -------
+    pd.DataFrame
+        P-values of the mixed linear model analysis and t-tests.
+    """
+    assert set([pop_col, group_col, case_col, value_col, roi_col]).issubset(data.columns), "Some required columns are missing from the input DataFrame."
+    assert data[group_col].nunique() == 2, "'group_col' must identify exactly two groups."
+
+    data[pop_col] = [_cleanstring(x) for x in data[pop_col]]
+    pop_list = data[pop_col].unique().tolist()
+    results = []
+
+    for i in pop_list:
+        subset = data[data[pop_col] == i]
+        formula = f"{value_col} ~ {group_col}"
+        roi_counts = subset.groupby(case_col)[roi_col].nunique()
+        case_roi_counts = subset.groupby([case_col, roi_col], observed=True).size()
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            if (case_roi_counts > 1).any():
+                vc_formula = {roi_col: f'0 + C({roi_col})'}
+                re_formula = '1'
+                md = smf.mixedlm(formula=formula, data=subset, groups=subset[case_col], vc_formula=vc_formula, re_formula=re_formula)
+            else:
+                md = smf.mixedlm(formula=formula, data=subset, groups=subset[case_col])
+            mdf = md.fit()
+        warning_messages = [str(warn.message) for warn in w]
+        result = {pop_col: i, 'mlm_p_value': mdf.pvalues[1], 'mlm_warnings': str(warning_messages)}
+        if run_t_tests:
+            if average_cases:
+                subset = subset.groupby([group_col, case_col], observed=True).mean(numeric_only=True).reset_index()
+            group1 = subset[subset[group_col] == subset[group_col].unique()[0]][value_col]
+            group2 = subset[subset[group_col] == subset[group_col].unique()[1]][value_col]
+            t_stat, t_pval = stats.ttest_ind(group1, group2)
+            u_stat, mwu_pval = stats.mannwhitneyu(group1, group2)
+            result['t_test_p_value'] = t_pval
+            result['mannwhitneyu_p_value'] = mwu_pval
+            if show_t_values:
+                result['t_value'] = t_stat
+                result['u_value'] = u_stat
+        results.append(result)
+
+    results_df = pd.DataFrame(results)
+    reject_mlm, pvals_corrected_mlm, _, _ = multipletests(results_df['mlm_p_value'], method=method)
+    results_df['mlm_p_value_corrected'] = pvals_corrected_mlm
+
+    if 't_test_p_value' in results_df.columns:
+        _, pvals_corrected_ttest, _, _ = multipletests(results_df['t_test_p_value'], method=method)
+        results_df['t_test_p_value_corrected'] = pvals_corrected_ttest
+        _, pvals_corrected_mwu, _, _ = multipletests(results_df['mannwhitneyu_p_value'], method=method)
+        results_df['mannwhitneyu_p_value_corrected'] = pvals_corrected_mwu
+
+    if average_cases:
+        results_df = results_df.drop(columns=['mlm_p_value', 'mlm_warnings', 'mlm_p_value_corrected'])
+
+    return results_df
+
+def cellabundance_UMAP(adata: ad.AnnData, 
+                       ROI_id: str, 
+                       population: str, 
+                       colour_by: str = None, 
+                       annotate: bool = True, 
+                       save: str = None, 
+                       normalize: bool = False, 
+                       dim_red: str = 'UMAP', 
+                       ax: plt.Axes = None, 
+                       cmap: str = 'tab20', 
+                       figsize: tuple = (3, 3), 
+                       point_size: int = 50) -> plt.Figure | plt.Axes:
+    """
+    Visualize cell population abundance within ROIs using UMAP, PCA, or tSNE with Seaborn's scatterplot.
+
+    Parameters
+    ----------
+    adata : AnnData
+        The AnnData object containing single-cell data.
+    ROI_id : str
+        Column in adata.obs that contains ROI identifiers.
+    population : str
+        Column in adata.obs that contains cell population identifiers.
+    colour_by : str, optional
+        Column to color points by. If None, points are colored by ROI_id.
+    annotate : bool, optional
+        Annotate points with ROI identifiers.
+    save : str, optional
+        File path to save the plot.
+    normalize : bool, optional
+        Normalize cell counts across ROIs.
+    dim_red : str, optional
+        Dimensionality reduction technique to use ('UMAP', 'PCA', 'tSNE').
+    ax : matplotlib.axes.Axes, optional
+        Axes on which to draw the plot. If None, a new figure and axes object are created.
+    cmap : str, optional
+        Matplotlib colormap to use.
+    figsize : tuple, optional
+        Size of the figure to create. Ignored if 'ax' is not None.
+    point_size : int, optional
+        Size of the points in the scatter plot.
+
+    Returns
+    -------
+    plt.Figure or plt.Axes
+        The figure or axes object containing the plot.
+    """
+    if colour_by:
+        cells = pd.crosstab([adata.obs[ROI_id], adata.obs[colour_by]], adata.obs[population], normalize=normalize).reset_index().copy()
+    else:
+        cells = pd.crosstab(adata.obs[ROI_id], adata.obs[population], normalize=normalize).reset_index().copy()
+
+    summary_data = cells.iloc[:, 2:] if colour_by else cells.iloc[:, 1:]
+    scaled_summary_data = sklearn.preprocessing.StandardScaler().fit_transform(summary_data)
+
+    if dim_red == 'UMAP':
+        reducer = umap.UMAP()
+        embedding = reducer.fit_transform(scaled_summary_data)
+    elif dim_red == 'PCA':
+        pca = PCA(n_components=2)
+        embedding = pca.fit_transform(scaled_summary_data)
+    elif dim_red == 'tSNE':
+        tsne = TSNE(n_components=2, verbose=1, perplexity=40, n_iter=300)
+        embedding = tsne.fit_transform(scaled_summary_data)
+
+    plot_data = pd.DataFrame(embedding, columns=[f'{dim_red} Dimension 1', f'{dim_red} Dimension 2'])
+    plot_data['color'] = cells[colour_by] if colour_by else cells[ROI_id]
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+        created_new_fig = True
+    else:
+        created_new_fig = False
+
+    sb.scatterplot(data=plot_data, x=f'{dim_red} Dimension 1', y=f'{dim_red} Dimension 2', hue='color', ax=ax, palette=cmap, s=point_size, legend="full")
+    ax.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0.)
+
+    if annotate:
+        for _, row in plot_data.iterrows():
+            ax.text(row[f'{dim_red} Dimension 1'], row[f'{dim_red} Dimension 2'], row['color'], ha='right', size='small')
+
+    if save:
+        fig.savefig(save, bbox_inches='tight')
+
+    if created_new_fig:
+        plt.show()
+        return fig
+    return ax
+
+
+def overlayed_heatmaps(dfs: list[pd.DataFrame], 
+                       cmaps: list[str] = ['Reds', 'Greens', 'Greens', 'Purples', 'Oranges', 'Greys'],
+                       mode: str = 'horizontal', 
+                       vmin_list: list[float] = None, 
+                       vmax_list: list[float] = None, 
+                       figsize: tuple[int, int] = (10, 10), 
+                       grid_color: str = 'black', 
+                       grid_linewidth: int = 1, 
+                       save_path: str = None, 
+                       colorbar_plot_list: list[bool] = None, 
+                       colorbar_params: dict = {'size': "2%", 'pad': 0.25, 'spacing': 0.25}, 
+                       colorbar_labels: list[str] = None, 
+                       **heatmap_kwargs) -> None:
+    """
+    Overlay multiple heatmaps on the same plot.
+
+    Parameters
+    ----------
+    dfs : list of pd.DataFrame
+        List of DataFrames to plot for 'horizontal' mode; exactly two for 'diagonal' mode. DataFrames must be the same size.
+    cmaps : list of str, optional
+        List of colormaps for each DataFrame.
+    mode : str, optional
+        'horizontal' for horizontal bars; 'diagonal' for a diagonal split of the second DataFrame.
+    vmin_list : list of float, optional
+        List of vmin values. Default is to calculate automatically.
+    vmax_list : list of float, optional
+        List of vmax values. Default is to calculate automatically.
+    figsize : tuple of int, optional
+        Tuple for the figure size.
+    grid_color : str, optional
+        Color of the manually plotted grid lines.
+    grid_linewidth : int, optional
+        Width of the manually plotted grid lines.
+    save_path : str, optional
+        Path to save the output image. If None, the image is not saved.
+    colorbar_plot_list : list of bool, optional
+        By default all will be plotted, can alternatively provide a list of True/False entries to indicate which should be plotted.
+    colorbar_params : dict, optional
+        Dictionary to customize the size and placement of colour bars (size, pad, spacing).
+    colorbar_labels : list of str, optional
+        List of labels to associate with colorbars.
+    **heatmap_kwargs
+        Additional keyword arguments for sns.heatmap.
+    """
+    assert all(d.shape == dfs[0].shape for d in dfs), 'Data frames are not all the same shape' 
+
+    if mode == 'diagonal' and len(dfs) != 2:
+        raise ValueError("Diagonal mode requires exactly two DataFrames.")
+    if mode not in ['horizontal', 'diagonal']:
+        raise ValueError("Mode must be either 'horizontal' or 'diagonal'.")
+        
+    if not vmin_list:
+        vmin_list = [df.min().min() for df in dfs]
+    if not vmax_list:
+        vmax_list = [df.max().max() for df in dfs]
+        
+    if not colorbar_plot_list:
+        colorbar_plot_list = [True for _ in range(len(dfs))]
+
+    fig, ax = plt.subplots(figsize=figsize)
+    sns.heatmap(dfs[0], cmap=cmaps[0], cbar=False, ax=ax, **heatmap_kwargs)
+
+    mappables = [ScalarMappable(Normalize(vmin=vmin_list[0], vmax=vmax_list[0]), cmap=cmaps[0])]
+    
+    if mode == 'horizontal':
+        cell_height = 1.0 / len(dfs)
+        for idx, df in enumerate(dfs[1:], start=1):
+            norm = Normalize(vmin=vmin_list[idx], vmax=vmax_list[idx])
+            mappable = ScalarMappable(norm=norm, cmap=cmaps[idx])
+            mappables.append(mappable)
+
+            for i in range(df.shape[0]):
+                for j in range(df.shape[1]):
+                    bottom = i + cell_height * (len(dfs) - idx - 1)
+                    rect = plt.Rectangle((j, bottom), 1, cell_height, color=mappable.to_rgba(df.iloc[i, j]))
+                    ax.add_patch(rect)
+    elif mode == 'diagonal':
+        df = dfs[1]
+        norm = Normalize(vmin=vmin_list[1], vmax=vmax_list[1])
+        mappable = ScalarMappable(norm=norm, cmap=cmaps[1])
+        mappables.append(mappable)
+
+        for i in range(df.shape[0]):
+            for j in range(df.shape[1]):
+                triangle = plt.Polygon([(j, i), (j + 1, i), (j, i + 1)], color=mappable.to_rgba(df.iloc[i, j]))
+                ax.add_patch(triangle)
+
+    for i in range(dfs[0].shape[0] + 1):
+        ax.axhline(i, color=grid_color, linewidth=grid_linewidth)
+    for j in range(dfs[0].shape[1] + 1):
+        ax.axvline(j, color=grid_color, linewidth=grid_linewidth)
+
+    ax.set_xlim([0, dfs[0].shape[1]])
+    ax.set_ylim([0, dfs[0].shape[0]])
+
+    divider = make_axes_locatable(ax)
+    for idx, mappable in enumerate(mappables, start=0):
+        if colorbar_plot_list[idx]:
+            cax = divider.append_axes("right", size=colorbar_params.get('size', "2%"), pad=colorbar_params.get('pad', 0.02) + colorbar_params.get('spacing', 0.1) * idx)
+            plt.colorbar(mappable, cax=cax)
+
+            if colorbar_labels:
+                cax.set_ylabel(colorbar_labels[idx])
+
+    if save_path:
+        plt.savefig(save_path, bbox_inches='tight')
+
+    plt.show()
+
+
+def plot_colorbar(
+    array: np.ndarray = None,
+    vmin: float = None,
+    vmax: float = None,
+    cmap: str = 'viridis',
+    save: str = None,
+    aspect: int = 10,
+    fontsize: int = None,
+    hide_ticks: bool = False
+) -> plt.Figure:
+    """
+    Plot a colorbar based on the provided array and customization parameters.
+
+    Parameters
+    ----------
+    array : np.ndarray, optional
+        Input array to generate the colorbar. If the array is 1-dimensional, 
+        it will be repeated to form a 2-dimensional array. If not provided, 
+        a default array of shape (100, 100) filled with `vmax` will be used.
+    vmin : float, optional
+        Minimum data value that corresponds to the lower limit of the color scale. 
+        Defaults to None, in which case the minimum value in `array` is used.
+    vmax : float, optional
+        Maximum data value that corresponds to the upper limit of the color scale. 
+        Defaults to None, in which case the maximum value in `array` is used.
+    cmap : str, optional
+        Colormap used for the colorbar. Defaults to 'viridis'.
+    save : str, optional
+        File path to save the colorbar image. If provided, the colorbar will be saved 
+        to this file path, and the function will not return any value. Defaults to None.
+    aspect : int, optional
+        Aspect ratio of the colorbar. Defaults to 10.
+    fontsize : int, optional
+        Font size for the colorbar tick labels. Defaults to None, in which case the 
+        default font size is used.
+    hide_ticks : bool, optional
+        If True, the colorbar ticks will be hidden. Defaults to False.
+
+    Returns
+    -------
+    matplotlib.figure.Figure
+        The generated figure containing the colorbar, if `save` is not provided.
+    """
+    if array is None:
+        array = np.full((100, 100), vmax, dtype=float)
+    elif array.ndim == 1:
+        array = np.repeat(array[:, np.newaxis], 100, axis=1)
+    
+    fig, ax = plt.subplots(figsize=(2, 2))
+    pos = ax.imshow(array, vmin=vmin, vmax=vmax, cmap=cmap)
+    cbar = fig.colorbar(pos, ax=ax, aspect=aspect)
+    
+    if fontsize:
+        ticklabs = cbar.ax.get_yticklabels()
+        cbar.ax.set_yticklabels(ticklabs, fontsize=fontsize)
+    
+    if hide_ticks:
+        cbar.ax.set_yticks([])
+    
+    ax.remove()
+    
+    if save:
+        fig.savefig(save, bbox_inches='tight', dpi=300)
+        plt.close()
+    else:
+        return fig
+
+
+def obs_to_mask(
+    adata: ad.AnnData,
+    roi: str,
+    roi_obs: str = 'ROI',
+    cat_obs: str = None,
+    cat_colour_map: str = 'tab20',
+    cat_obs_groups: list = None,
+    quant_obs: str = None,
+    quant_colour_map: str = 'viridis',
+    adata_colormap: bool = True,
+    masks_folder: str = 'Masks',
+    masks_ext: str = 'tif',
+    min_val: float = None,
+    max_val: float = None,
+    quantile: float = None,
+    save_path: str = None,
+    background_color: str = None,
+    hide_axes: bool = False,
+    hide_ticks: bool = True,
+    svg_smoothing_factor: int = 0
+) -> tuple:
+    """
+    Map values from an AnnData object to a mask and generate a color map, with options to save the resulting image.
+
+    Parameters
+    ----------
+    adata : AnnData
+        Annotated data matrix.
+    roi : str
+        Region of interest identifier.
+    roi_obs : str, optional
+        Column in adata.obs that contains ROI information (default is 'ROI').
+    cat_obs : str, optional
+        Categorical observation to map.
+    cat_colour_map : str, list or dict, optional
+        Colormap for categorical data (default is 'tab20').
+    cat_obs_groups : list or str, optional
+        Specific groups to include.
+    quant_obs : str, optional
+        Quantitative observation to map.
+    quant_colour_map : str, optional
+        Colormap for quantitative data (default is 'viridis').
+    adata_colormap : bool, optional
+        Whether to use colormap from AnnData if available (default is True).
+    masks_folder : str, optional
+        Folder containing mask files (default is 'Masks').
+    masks_ext : str, optional
+        File extension for mask files (default is 'tif').
+    min_val : float, optional
+        Minimum value for quantitative color scaling.
+    max_val : float, optional
+        Maximum value for quantitative color scaling.
+    quantile : float, optional
+        Quantile to set the maximum value for quantitative color scaling.
+    save_path : str, optional
+        File path to save the output image. Supports PNG and SVG formats.
+    background_color : str, optional
+        Background color of the saved image. If None, the background will be transparent for PNG files.
+    hide_axes : bool, optional
+        If True, hides the axes completely in the saved image (default is False).
+    hide_ticks : bool, optional
+        If True, hides the ticks and labels on the axes in the saved image (default is True).
+    svg_smoothing_factor : int, optional
+        Smoothing factor for SVG output (default is 0).
+
+    Returns
+    -------
+    tuple
+        Mapped mask, pixel colormap, and category dictionary (if applicable).
+    """
+    # Read in mask
+    mask = io.imread(Path(masks_folder, f'{roi}.{masks_ext}'))
+
+    # Get cell table
+    adata_roi_obs = adata.obs.loc[adata.obs[roi_obs] == roi, :].copy()   
+    adata_roi_obs.reset_index(drop=True, inplace=True)
+
+    # Check number of cells match
+    cells_in_roi = adata_roi_obs.shape[0]
+    cells_in_mask = len(np.unique(mask)) - 1
+    assert cells_in_roi == cells_in_mask, f'Number of cells in mask ({cells_in_mask}) does not match cells in AnnData ({cells_in_roi}) for ROI {roi}'
+
+    # Setup a blank mask we will map values into
+    mapped_mask = np.zeros(mask.shape, dtype='uint16')    
+    
+    # If an adata.obs is categorical
+    if cat_obs:
+        # Get categories
+        cats = adata.obs[cat_obs].cat.categories.tolist()
+        
+        # Use AnnData colormap, if available
+        if adata_colormap and f'{cat_obs}_colormap' in adata.uns:
+            cat_colour_map = adata.uns[f'{cat_obs}_colormap']
+
+        ### Generate category colormap
+        # If dict is supplied, use directly
+        if isinstance(cat_colour_map, dict):
+            cat_cmap = cat_colour_map
+        # If a string, then get matplotlib cmap. Anything else, use the list/array directly.
+        else:
+            if isinstance(cat_colour_map, str):
+                cat_colour_map = cm.get_cmap(cat_colour_map).colors
+            cat_cmap = {cat: to_hex(cat_colour_map[i % len(cat_colour_map)]) for i, cat in enumerate(cats)}
+        
+        # Filter specific observations, if specified
+        if cat_obs_groups:
+            if not isinstance(cat_obs_groups, list):
+                cat_obs_groups = [cat_obs_groups]
+            cats = [x for x in cats if x in cat_obs_groups]
+
+        # Cat numbers
+        cat_num = np.array(range(len(cats))) + 1    
+   
+        # Initialize dictionaries for mapping
+        cat_dict = {}
+        pixel_colormap = {}
+        
+        for cat, num in zip(cats, cat_num):
+            try:
+                objects = adata_roi_obs.loc[adata_roi_obs[cat_obs] == cat, :].index.to_numpy() + 1
+                cat_mask = np.isin(mask, objects)
+                mapped_mask = np.where(cat_mask, num, mapped_mask)
+                cat_dict[num] = str(cat)
+                pixel_colormap[num] = cat_cmap[cat]
+            except:
+                print(f'Error adding group {cat} from {cat_obs}')
+
+    # If a quantitative value is supplied
+    if quant_obs:
+        # Label IDs
+        objects = adata_roi_obs.index.to_numpy() + 1
+
+        # Get values from adata.obs or adata.var_names
+        if quant_obs in adata.obs:
+            values = adata_roi_obs[quant_obs]
+        elif quant_obs in adata.var_names:
+            values = adata.X[adata.obs[roi_obs] == roi, adata.var_names == quant_obs].tolist()
+        
+        # Map array values
+        quant_mask = map_array(np.asarray(mask), np.asarray(objects), np.asarray(values))        
+        
+        # If supplied, then use the masks calculated above to only show specific pops
+        if cat_obs_groups != None and cat_obs != None:
+            mapped_mask = np.where(mapped_mask != 0, quant_mask, 0)
+        else:
+            mapped_mask = quant_mask
+        
+        # Map pixel values to hex colours
+        pixel_colormap = map_pixel_values_to_colors(mapped_mask, cmap_name=quant_colour_map, min_val=min_val, max_val=max_val, quantile=quantile)
+        cat_dict = None
+        
+    if not save_path:
+        return mapped_mask, pixel_colormap, cat_dict
+    else:
+        if save_path.split('.')[-1] == 'svg':
+            save_labelled_image_as_svg(mapped_mask, pixel_colormap, save_path, exclude_zero=True, smoothing_factor=svg_smoothing_factor, background_color=background_color)
+        else:
+            save_labelled_image(mapped_mask, pixel_colormap, save_path, background_color=background_color, hide_axes=hide_axes, hide_ticks=hide_ticks)
+            
+            
+# Voronoi plot functions from Nolan lab (https://github.com/nolanlab)
+
+
+def _voronoi_finite_polygons_2d(vor, radius=None):
+    """
+    Reconstruct infinite Voronoi regions in a 2D diagram to finite regions.
+
+    Parameters
+    ----------
+    vor : Voronoi
+        Input diagram.
+    radius : float, optional
+        Distance to 'points at infinity'. Default is None.
+
+    Returns
+    -------
+    list of tuples
+        Indices of vertices in each revised Voronoi region.
+    list of tuples
+        Coordinates for revised Voronoi vertices.
+    """
+    if vor.points.shape[1] != 2:
+        raise ValueError("Requires 2D input")
+
+    new_regions = []
+    new_vertices = vor.vertices.tolist()
+    center = vor.points.mean(axis=0)
+    if radius is None:
+        radius = vor.points.ptp().max()
+
+    all_ridges = {}
+    for (p1, p2), (v1, v2) in zip(vor.ridge_points, vor.ridge_vertices):
+        all_ridges.setdefault(p1, []).append((p2, v1, v2))
+        all_ridges.setdefault(p2, []).append((p1, v1, v2))
+
+    for p1, region in enumerate(vor.point_region):
+        vertices = vor.regions[region]
+        if all(v >= 0 for v in vertices):
+            new_regions.append(vertices)
+            continue
+
+        ridges = all_ridges[p1]
+        new_region = [v for v in vertices if v >= 0]
+        for p2, v1, v2 in ridges:
+            if v2 < 0:
+                v1, v2 = v2, v1
+            if v1 >= 0:
+                continue
+
+            t = vor.points[p2] - vor.points[p1]
+            t /= np.linalg.norm(t)
+            n = np.array([-t[1], t[0]])
+            midpoint = vor.points[[p1, p2]].mean(axis=0)
+            direction = np.sign(np.dot(midpoint - center, n)) * n
+            far_point = vor.vertices[v2] + direction * radius
+
+            new_region.append(len(new_vertices))
+            new_vertices.append(far_point.tolist())
+
+        vs = np.asarray([new_vertices[v] for v in new_region])
+        c = vs.mean(axis=0)
+        angles = np.arctan2(vs[:, 1] - c[1], vs[:, 0] - c[0])
+        new_region = np.array(new_region)[np.argsort(angles)]
+        new_regions.append(new_region.tolist())
+
+    return new_regions, np.asarray(new_vertices)
+
+def _plot_voronoi(
+    points: np.ndarray,
+    colors: list,
+    invert_y: bool = True,
+    edge_color: str = 'facecolor',
+    line_width: float = 0.1,
+    alpha: float = 1,
+    size_max: float = np.inf
+) -> list:
+    """
+    Plot a Voronoi diagram.
+
+    Parameters
+    ----------
+    points : np.ndarray
+        Coordinates of points to plot.
+    colors : list
+        List of colors for the Voronoi regions.
+    invert_y : bool, optional
+        If True, invert the Y-axis. Default is True.
+    edge_color : str, optional
+        Color of the edges. Default is 'facecolor'.
+    line_width : float, optional
+        Width of the edges. Default is 0.1.
+    alpha : float, optional
+        Alpha value for the Voronoi regions. Default is 1.
+    size_max : float, optional
+        Maximum size of the Voronoi regions. Default is np.inf.
+
+    Returns
+    -------
+    list
+        List of areas of the Voronoi regions.
+    """
+    if invert_y:
+        points[:, 1] = max(points[:, 1]) - points[:, 1]
+    vor = Voronoi(points)
+    regions, vertices = _voronoi_finite_polygons_2d(vor)
+    pts = MultiPoint([Point(i) for i in points])
+    mask = pts.convex_hull
+    new_vertices = []
+    if not isinstance(alpha, list):
+        alpha = [alpha] * len(points)
+    areas = []
+    for i, (region, alph) in enumerate(zip(regions, alpha)):
+        polygon = vertices[region]
+        shape = list(polygon.shape)
+        shape[0] += 1
+        p = Polygon(np.append(polygon, polygon[0]).reshape(*shape)).intersection(mask)
+        areas.append(p.area)
+        if p.area < size_max:
+            poly = np.array(list(zip(p.boundary.coords.xy[0][:-1], p.boundary.coords.xy[1][:-1])))
+            new_vertices.append(poly)
+            if edge_color == 'facecolor':
+                plt.fill(*zip(*poly), alpha=alph, edgecolor=colors[i], linewidth=line_width, facecolor=colors[i])
+            else:
+                plt.fill(*zip(*poly), alpha=alph, edgecolor=edge_color, linewidth=line_width, facecolor=colors[i])
+    return areas
+
+
+def draw_voronoi_scatter(
+    spot: pd.DataFrame,
+    c: pd.DataFrame,
+    voronoi_palette=sb.color_palette('bright'),
+    scatter_palette='voronoi',
+    X='X:X',
+    Y='Y:Y',
+    voronoi_hue='neighborhood10',
+    scatter_hue='ClusterName',
+    figsize=(5, 5),
+    voronoi_kwargs={},
+    scatter_kwargs={}
+) -> list:
+    """
+    Plot Voronoi of a region and overlay the location of specific cell types.
+
+    Parameters
+    ----------
+    spot : pd.DataFrame
+        Cells that are used for Voronoi diagram.
+    c : pd.DataFrame
+        Cells that are plotted over Voronoi.
+    voronoi_palette : list, optional
+        Color palette used for coloring neighborhoods. Default is sb.color_palette('bright').
+    scatter_palette : str or list, optional
+        Color palette for scatter plot. Default is 'voronoi'.
+    X : str, optional
+        Column name used for X locations. Default is 'X:X'.
+    Y : str, optional
+        Column name used for Y locations. Default is 'Y:Y'.
+    voronoi_hue : str, optional
+        Column name used for neighborhood allocation. Default is 'neighborhood10'.
+    scatter_hue : str, optional
+        Column name used for scatter plot. Default is 'ClusterName'.
+    figsize : tuple, optional
+        Size of figure. Default is (5, 5).
+    voronoi_kwargs : dict, optional
+        Arguments passed to plot_voronoi function. Default is {}.
+    scatter_kwargs : dict, optional
+        Arguments passed to plt.scatter(). Default is {}.
+
+    Returns
+    -------
+    list
+        Sizes of each Voronoi region.
+    """
+    if scatter_palette == 'voronoi':
+        scatter_palette = voronoi_palette
+        scatter_hue = voronoi_hue
+
+    if len(c) > 0:
+        neigh_alpha = 0.3
+    else:
+        neigh_alpha = 1
+
+    voronoi_kwargs = {**{'alpha': neigh_alpha}, **voronoi_kwargs}
+    scatter_kwargs = {**{'s': 50, 'alpha': 1, 'marker': '.'}, **scatter_kwargs}
+
+    plt.figure(figsize=figsize)
+    colors = [voronoi_palette[i] for i in spot[voronoi_hue]]
+    areas = _plot_voronoi(spot[[X, Y]].values, colors, **voronoi_kwargs)
+
+    if len(c) > 0:
+        if 'c' not in scatter_kwargs:
+            colors = [scatter_palette[i] for i in c[scatter_hue]]
+            scatter_kwargs['c'] = colors
+
+        plt.scatter(
+            x=c[X],
+            y=(max(spot[Y]) - c[Y].values),
+            **scatter_kwargs
+        )
+
+    plt.axis('off')
+    return areas

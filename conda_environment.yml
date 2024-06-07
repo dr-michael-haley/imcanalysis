@@ -1,0 +1,39 @@
+name: spatbiotools
+channels:
+    - conda-forge
+    - bioconda
+    - pytorch
+    - defaults
+dependencies:
+    - python >=3.10
+    - anndata
+    - colorcet
+    - ipykernel
+    - ipython
+    - magicgui
+    - matplotlib
+    - napari
+    - networkx
+    - numpy
+    - pandas
+    - pip
+    - scanpy
+    - scikit-learn
+    - scikit-image
+    - scipy
+    - shapely
+    - sphinx
+    - seaborn
+    - setuptools
+    - statsmodels
+    - squidpy
+    - tifffile
+    - tqdm
+    - umap-learn
+    - vispy
+    - pip:
+        - harmonypy
+        - sc3s
+        - ehrapy
+        - tensorflow
+        - bbknn
