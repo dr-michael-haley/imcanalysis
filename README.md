@@ -1,9 +1,9 @@
 <table>
   <tr>
-    <td style="vertical-align: top; padding-right: 20px;">
-      <img src="Other/logo.png" alt="Logo" width="150" height="150" style="margin-right: 10px;"/>
+    <td style="padding-right: 20px;">
+      <img src="Other/logo.png" alt="Logo" width="150" />
     </td>
-    <td style="vertical-align: top;">
+    <td>
       <h1>Spatial Biology Toolkit</h1>
       <p>
         This is a collection of tools for analysing high-dimensional tissue data. It includes tools for analysing IMC data in the Scanpy ecosystem, but also several image-based analysis tools.
@@ -12,6 +12,7 @@
     </td>
   </tr>
 </table>
+
 
 ## SpatialBiologyToolkit package
 
