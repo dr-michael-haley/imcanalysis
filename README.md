@@ -1,7 +1,7 @@
 <table>
   <tr>
     <td style="padding-right: 20px;">
-      <img src="Other/logo.png" alt="Logo" width="250" />
+      <img src="Other/logo.png" alt="Logo" width="350" />
     </td>
     <td>
       <h1>Spatial Biology Toolkit</h1>
