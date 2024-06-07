@@ -7,6 +7,8 @@ Currently, most of the tools  are designed to work with IMC data, but most shoul
 
 All the tools are in the SpatialBiologyToolkit package
 
+Documentation can be viewed if download the repository locally, and by opening *'index.html' in Documentation*
+
 ### Installing
 - Clone/download repo locally
 - Create an environment using conda_environment.yml, which should install all the required packages. 
