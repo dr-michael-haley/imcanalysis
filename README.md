@@ -1,5 +1,7 @@
-<img src="Other/logo.png" alt="Logo" width="200"/>
-# SpatialBiologyToolkit
+<div style="display: flex; align-items: center;">
+  <img src="Other/logo.png" alt="Logo" width="150" height="150" style="margin-right: 10px;"/>
+  <h1>Spatial Biology Toolkit</h1>
+</div>
 
 This is a collection of tools for analysing high-dimensional tissue data. It includes tools for analysing IMC data in the Scanpy ecosystem, but also several image-based analysis tools.
 Currently, most of the tools  are designed to work with IMC data, but most should be adaptable to other modalities.
