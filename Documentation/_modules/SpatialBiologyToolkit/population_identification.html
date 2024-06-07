@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SpatialBiologyToolkit.population_identification &mdash; SpatialBiologyToolkit 0.1 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=19f00094" />
+
+  
+  <!--[if lt IE 9]>
+    <script src="../../_static/js/html5shiv.min.js"></script>
+  <![endif]-->
+  
+        <script src="../../_static/jquery.js?v=5d32c60e"></script>
+        <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+        <script src="../../_static/documentation_options.js?v=2709fde1"></script>
+        <script src="../../_static/doctools.js?v=9a2dae69"></script>
+        <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            SpatialBiologyToolkit
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../introduction.html">Introduction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../SpatialBiologyToolkit.html">SpatialBiologyToolkit package</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">SpatialBiologyToolkit</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">SpatialBiologyToolkit.population_identification</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for SpatialBiologyToolkit.population_identification</h1><div class="highlight"><pre>
+<span></span><span class="c1"># Standard Library Imports</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">from</span> <span class="nn">copy</span> <span class="kn">import</span> <span class="n">copy</span>
+<span class="kn">from</span> <span class="nn">pathlib</span> <span class="kn">import</span> <span class="n">Path</span>
+<span class="kn">import</span> <span class="nn">tkinter</span> <span class="k">as</span> <span class="nn">tk</span>
+<span class="kn">from</span> <span class="nn">tkinter</span> <span class="kn">import</span> <span class="n">colorchooser</span>
+<span class="kn">import</span> <span class="nn">warnings</span>
+<span class="kn">from</span> <span class="nn">warnings</span> <span class="kn">import</span> <span class="n">simplefilter</span>
+<span class="kn">import</span> <span class="nn">re</span>
+<span class="kn">from</span> <span class="nn">typing</span> <span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Tuple</span><span class="p">,</span> <span class="n">Union</span>
+
+<span class="c1"># Third-Party Imports</span>
+<span class="kn">import</span> <span class="nn">anndata</span> <span class="k">as</span> <span class="nn">ad</span>
+<span class="kn">import</span> <span class="nn">colorcet</span> <span class="k">as</span> <span class="nn">cc</span>
+<span class="kn">import</span> <span class="nn">matplotlib</span>
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+<span class="kn">import</span> <span class="nn">pandas</span> <span class="k">as</span> <span class="nn">pd</span>
+<span class="kn">import</span> <span class="nn">scanpy</span> <span class="k">as</span> <span class="nn">sc</span>
+<span class="kn">import</span> <span class="nn">seaborn</span> <span class="k">as</span> <span class="nn">sb</span>
+<span class="kn">from</span> <span class="nn">matplotlib</span> <span class="kn">import</span> <span class="n">cm</span><span class="p">,</span> <span class="n">colors</span><span class="p">,</span> <span class="n">rcParams</span>
+<span class="kn">import</span> <span class="nn">matplotlib.pyplot</span> <span class="k">as</span> <span class="nn">plt</span>
+<span class="kn">from</span> <span class="nn">matplotlib.colors</span> <span class="kn">import</span> <span class="n">ListedColormap</span><span class="p">,</span> <span class="n">Normalize</span>
+<span class="kn">import</span> <span class="nn">sc3s</span>
+
+<span class="c1"># Local Application Imports</span>
+<span class="kn">from</span> <span class="nn">.utils</span> <span class="kn">import</span> <span class="n">adlog</span>
+
+<span class="c1"># Set up Scanpy settings</span>
+<span class="n">sc</span><span class="o">.</span><span class="n">set_figure_params</span><span class="p">(</span><span class="n">figsize</span><span class="o">=</span><span class="p">(</span><span class="mi">5</span><span class="p">,</span> <span class="mi">5</span><span class="p">))</span>
+
+<span class="c1"># Set up output figure settings</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">rcParams</span><span class="p">[</span><span class="s1">&#39;figure.figsize&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="mi">5</span><span class="p">,</span> <span class="mi">5</span><span class="p">)</span>  <span class="c1"># rescale figures, increase size here</span>
+
+<span class="c1"># Set up Scanpy settings</span>
+<span class="n">sc</span><span class="o">.</span><span class="n">settings</span><span class="o">.</span><span class="n">verbosity</span> <span class="o">=</span> <span class="mi">3</span>
+<span class="n">sc</span><span class="o">.</span><span class="n">set_figure_params</span><span class="p">(</span><span class="n">dpi</span><span class="o">=</span><span class="mi">100</span><span class="p">,</span> <span class="n">dpi_save</span><span class="o">=</span><span class="mi">200</span><span class="p">)</span>  <span class="c1"># Increase DPI for better resolution figures</span>
+
+
+<div class="viewcode-block" id="batch_neighbors">
+<a class="viewcode-back" href="../../SpatialBiologyToolkit.html#SpatialBiologyToolkit.population_identification.batch_neighbors">[docs]</a>
+<span class="k">def</span> <span class="nf">batch_neighbors</span><span class="p">(</span>
+    <span class="n">adata</span><span class="p">,</span>
+    <span class="n">correction_method</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;bbknn&#39;</span><span class="p">,</span>
+    <span class="n">batch_correction_obs</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;Case&#39;</span><span class="p">,</span>
+    <span class="n">n_for_pca</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">save</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Perform batch correction and preprocessing on an AnnData object.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    adata : AnnData</span>
+<span class="sd">        Annotated data matrix.</span>
+<span class="sd">    correction_method : str, optional</span>
+<span class="sd">        Method for batch correction. Options are &#39;bbknn&#39;, &#39;harmony&#39;, &#39;both&#39;, or None.</span>
+<span class="sd">        Default is &#39;bbknn&#39;.</span>
+<span class="sd">    batch_correction_obs : str, optional</span>
+<span class="sd">        Observation key for batch correction.</span>
+<span class="sd">        Default is &#39;Case&#39;.</span>
+<span class="sd">    n_for_pca : int, optional</span>
+<span class="sd">        Number of principal components to use. If None, it defaults to one less than the number of markers.</span>
+<span class="sd">        Default is None.</span>
+<span class="sd">    save : bool, optional</span>
+<span class="sd">        Whether to save the results.</span>
+<span class="sd">        Default is True.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    None</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    - If `n_for_pca` is not specified, it is set to one less than the number of markers in `adata.var_names`.</span>
+<span class="sd">    - The function performs PCA followed by the specified batch correction method.</span>
+<span class="sd">    - The function logs progress and results using `adlog`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">n_for_pca</span><span class="p">:</span>
+        <span class="c1"># Define the number of PCA dimensions to work with - one less than number of markers.</span>
+        <span class="n">n_for_pca</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">adata</span><span class="o">.</span><span class="n">var_names</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span>
+    
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Calculating PCA with </span><span class="si">{</span><span class="n">n_for_pca</span><span class="si">}</span><span class="s1"> dimensions&#39;</span><span class="p">)</span>
+    <span class="n">sc</span><span class="o">.</span><span class="n">tl</span><span class="o">.</span><span class="n">pca</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">n_comps</span><span class="o">=</span><span class="n">n_for_pca</span><span class="p">)</span>
+    <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;PCA with </span><span class="si">{</span><span class="n">n_for_pca</span><span class="si">}</span><span class="s1"> dimensions&#39;</span><span class="p">,</span> <span class="n">sc</span><span class="p">)</span>
+    
+    <span class="c1"># Apply the specified batch correction method</span>
+    <span class="k">if</span> <span class="n">correction_method</span> <span class="o">==</span> <span class="s1">&#39;bbknn&#39;</span><span class="p">:</span>
+        <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="s1">&#39;Starting BBKNN calculations&#39;</span><span class="p">,</span> <span class="n">sc</span><span class="p">)</span>               
+        <span class="n">sc</span><span class="o">.</span><span class="n">external</span><span class="o">.</span><span class="n">pp</span><span class="o">.</span><span class="n">bbknn</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">batch_key</span><span class="o">=</span><span class="n">batch_correction_obs</span><span class="p">,</span> <span class="n">n_pcs</span><span class="o">=</span><span class="n">n_for_pca</span><span class="p">)</span>
+        <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;Finished BBKNN batch correction with obs: </span><span class="si">{</span><span class="n">batch_correction_obs</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">,</span> <span class="n">sc</span><span class="p">)</span>
+    
+    <span class="k">elif</span> <span class="n">correction_method</span> <span class="o">==</span> <span class="s1">&#39;harmony&#39;</span><span class="p">:</span>
+        <span class="kn">import</span> <span class="nn">scanpy.external</span> <span class="k">as</span> <span class="nn">sce</span>
+        <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="s1">&#39;Starting Harmony calculations&#39;</span><span class="p">,</span> <span class="n">sc</span><span class="p">)</span>        
+        <span class="n">sce</span><span class="o">.</span><span class="n">pp</span><span class="o">.</span><span class="n">harmony_integrate</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="n">batch_correction_obs</span><span class="p">,</span> <span class="n">basis</span><span class="o">=</span><span class="s1">&#39;X_pca&#39;</span><span class="p">,</span> <span class="n">adjusted_basis</span><span class="o">=</span><span class="s1">&#39;X_pca&#39;</span><span class="p">)</span>
+        <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;Finished Harmony batch correction with obs: </span><span class="si">{</span><span class="n">batch_correction_obs</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">,</span> <span class="n">sc</span><span class="p">)</span>
+        <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="s1">&#39;Starting calculating neighbors&#39;</span><span class="p">,</span> <span class="n">sc</span><span class="p">)</span>        
+        <span class="n">sc</span><span class="o">.</span><span class="n">pp</span><span class="o">.</span><span class="n">neighbors</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">use_rep</span><span class="o">=</span><span class="s1">&#39;X_pca&#39;</span><span class="p">)</span>
+        <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="s1">&#39;Finished calculating neighbors&#39;</span><span class="p">,</span> <span class="n">sc</span><span class="p">)</span>
+        
+    <span class="k">elif</span> <span class="n">correction_method</span> <span class="o">==</span> <span class="s1">&#39;both&#39;</span><span class="p">:</span>
+        <span class="kn">import</span> <span class="nn">scanpy.external</span> <span class="k">as</span> <span class="nn">sce</span>
+        <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="s1">&#39;Starting Harmony calculations&#39;</span><span class="p">,</span> <span class="n">sc</span><span class="p">)</span>        
+        <span class="n">sce</span><span class="o">.</span><span class="n">pp</span><span class="o">.</span><span class="n">harmony_integrate</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">key</span><span class="o">=</span><span class="n">batch_correction_obs</span><span class="p">,</span> <span class="n">basis</span><span class="o">=</span><span class="s1">&#39;X_pca&#39;</span><span class="p">,</span> <span class="n">adjusted_basis</span><span class="o">=</span><span class="s1">&#39;X_pca&#39;</span><span class="p">)</span>
+        <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;Finished Harmony batch correction with obs: </span><span class="si">{</span><span class="n">batch_correction_obs</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">,</span> <span class="n">sc</span><span class="p">)</span>    
+        <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="s1">&#39;Starting BBKNN calculations&#39;</span><span class="p">,</span> <span class="n">sc</span><span class="p">)</span>               
+        <span class="n">sc</span><span class="o">.</span><span class="n">external</span><span class="o">.</span><span class="n">pp</span><span class="o">.</span><span class="n">bbknn</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">batch_key</span><span class="o">=</span><span class="n">batch_correction_obs</span><span class="p">,</span> <span class="n">n_pcs</span><span class="o">=</span><span class="n">n_for_pca</span><span class="p">)</span>
+        <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;Finished BBKNN batch correction with obs: </span><span class="si">{</span><span class="n">batch_correction_obs</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">,</span> <span class="n">sc</span><span class="p">)</span>   
+    
+    <span class="k">else</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;No batch correction performed, using scanpy.pp.neighbors&#39;</span><span class="p">)</span>
+        <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="s1">&#39;Starting calculating neighbors&#39;</span><span class="p">,</span> <span class="n">sc</span><span class="p">)</span>        
+        <span class="n">sc</span><span class="o">.</span><span class="n">pp</span><span class="o">.</span><span class="n">neighbors</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">use_rep</span><span class="o">=</span><span class="s1">&#39;X_pca&#39;</span><span class="p">)</span>
+        <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="s1">&#39;Finished calculating neighbors&#39;</span><span class="p">,</span> <span class="n">sc</span><span class="p">)</span>
+        
+    <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="s1">&#39;Finished PCA and batch correction&#39;</span><span class="p">,</span> <span class="n">save</span><span class="o">=</span><span class="n">save</span><span class="p">)</span>   </div>
+
+
+        
+<div class="viewcode-block" id="leiden">
+<a class="viewcode-back" href="../../SpatialBiologyToolkit.html#SpatialBiologyToolkit.population_identification.leiden">[docs]</a>
+<span class="k">def</span> <span class="nf">leiden</span><span class="p">(</span>
+    <span class="n">adata</span><span class="p">,</span>
+    <span class="n">resolution</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.3</span><span class="p">,</span>
+    <span class="n">leiden_obs_name</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">restrict_to_existing_leiden</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">existing_leiden_groups</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Perform Leiden clustering on an AnnData object.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    adata : AnnData</span>
+<span class="sd">        Annotated data matrix.</span>
+<span class="sd">    resolution : float, optional</span>
+<span class="sd">        Resolution parameter for the Leiden algorithm.</span>
+<span class="sd">        Default is 0.3.</span>
+<span class="sd">    leiden_obs_name : str, optional</span>
+<span class="sd">        Name for the observation field to store the Leiden clustering results.</span>
+<span class="sd">        Default is &#39;leiden_&lt;resolution&gt;&#39;.</span>
+<span class="sd">    restrict_to_existing_leiden : str, optional</span>
+<span class="sd">        Restrict clustering to specific existing Leiden groups.</span>
+<span class="sd">        Default is None.</span>
+<span class="sd">    existing_leiden_groups : list, optional</span>
+<span class="sd">        Specific groups to restrict clustering to. If not a list, it will be converted to a list.</span>
+<span class="sd">        Default is None.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    None</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    - If `leiden_obs_name` is not specified, it defaults to &#39;leiden_&lt;resolution&gt;&#39;.</span>
+<span class="sd">    - If `existing_leiden_groups` is not a list, it will be converted to a list.</span>
+<span class="sd">    - If `restrict_to_existing_leiden` is specified, clustering is restricted to the specified groups.</span>
+<span class="sd">    - The function logs progress and results using `adlog`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">leiden_obs_name</span><span class="p">:</span>
+        <span class="n">leiden_obs_name</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;leiden_</span><span class="si">{</span><span class="n">resolution</span><span class="si">}</span><span class="s1">&#39;</span>
+        
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">existing_leiden_groups</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+        <span class="n">existing_leiden_groups</span> <span class="o">=</span> <span class="p">[</span><span class="n">existing_leiden_groups</span><span class="p">]</span>
+    
+    <span class="c1"># Check if the Leiden clustering already exists in the AnnData object</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">leiden_obs_name</span><span class="p">]</span>
+        <span class="n">response</span> <span class="o">=</span> <span class="nb">input</span><span class="p">(</span><span class="s1">&#39;That Leiden clustering already exists in the AnnData. Respond &quot;yes&quot; to continue and overwrite the old results: &#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">response</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="o">!=</span> <span class="s1">&#39;yes&#39;</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;Aborting&#39;</span><span class="p">)</span>
+            <span class="k">return</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;Existing Leiden obs </span><span class="si">{</span><span class="n">leiden_obs_name</span><span class="si">}</span><span class="s1"> to be overwritten&#39;</span><span class="p">,</span> <span class="n">sc</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">KeyError</span><span class="p">:</span>
+        <span class="k">pass</span>
+    
+    <span class="c1"># Setup restriction to specific groups</span>
+    <span class="n">restrict_to</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="n">restrict_to_existing_leiden</span><span class="p">:</span>
+        <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;Clustering restricted to groups </span><span class="si">{</span><span class="n">restrict_to_existing_leiden</span><span class="si">}</span><span class="s1"> from </span><span class="si">{</span><span class="n">existing_leiden_groups</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+        <span class="n">restrict_to</span> <span class="o">=</span> <span class="p">(</span><span class="n">restrict_to_existing_leiden</span><span class="p">,</span> <span class="n">existing_leiden_groups</span><span class="p">)</span>
+        
+    <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="s1">&#39;Starting Leiden calculations&#39;</span><span class="p">,</span> <span class="n">sc</span><span class="p">)</span>
+    
+    <span class="c1"># Perform the Leiden clustering</span>
+    <span class="n">sc</span><span class="o">.</span><span class="n">tl</span><span class="o">.</span><span class="n">leiden</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">resolution</span><span class="o">=</span><span class="n">resolution</span><span class="p">,</span> <span class="n">key_added</span><span class="o">=</span><span class="n">leiden_obs_name</span><span class="p">,</span> <span class="n">restrict_to</span><span class="o">=</span><span class="n">restrict_to</span><span class="p">)</span>
+        
+    <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;Finished Leiden. Key added: </span><span class="si">{</span><span class="n">leiden_obs_name</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">,</span> <span class="n">sc</span><span class="p">,</span> <span class="n">save</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span></div>
+
+
+
+
+<div class="viewcode-block" id="consensus">
+<a class="viewcode-back" href="../../SpatialBiologyToolkit.html#SpatialBiologyToolkit.population_identification.consensus">[docs]</a>
+<span class="k">def</span> <span class="nf">consensus</span><span class="p">(</span>
+    <span class="n">adata</span><span class="p">,</span>
+    <span class="n">n_clusters</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="p">[</span><span class="mi">3</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">10</span><span class="p">],</span>
+    <span class="n">n_runs</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">25</span><span class="p">,</span>
+    <span class="n">d_range</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">save</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Run consensus clustering to cluster cells in an AnnData object.</span>
+
+<span class="sd">    This function requires the user to perform dimensionality</span>
+<span class="sd">    reduction using PCA (`scanpy.tl.pca`) first.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    adata : AnnData</span>
+<span class="sd">        Annotated data matrix.</span>
+<span class="sd">    n_clusters : list, optional</span>
+<span class="sd">        Number of clusters. Default is [3, 5, 10].</span>
+<span class="sd">    n_runs : int, optional</span>
+<span class="sd">        Number of realizations to perform for the consensus. Default is 25.</span>
+<span class="sd">    d_range : list, optional</span>
+<span class="sd">        Number of PCs. Default is 25, or the number of PCs in the </span>
+<span class="sd">        AnnData object, whichever is lower. Can accept a list</span>
+<span class="sd">        (e.g. [15, 20, 25]).</span>
+<span class="sd">    save : bool, optional</span>
+<span class="sd">        Whether to save the results. Default is True.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    None</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    - If `n_clusters` is not a list, it will be converted to a list.</span>
+<span class="sd">    - The function logs progress and results using `adlog`.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">try</span><span class="p">:</span>
+        <span class="kn">import</span> <span class="nn">sc3s</span>
+    <span class="k">except</span> <span class="ne">ImportError</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s2">&quot;Install sc3s with &#39;pip install sc3s&#39;&quot;</span><span class="p">)</span>
+        <span class="k">return</span>
+
+    <span class="c1"># Ensure n_clusters is a list</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">n_clusters</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+        <span class="n">n_clusters</span> <span class="o">=</span> <span class="p">[</span><span class="n">n_clusters</span><span class="p">]</span>
+
+    <span class="c1"># Check if clusters already exist</span>
+    <span class="k">for</span> <span class="n">o</span> <span class="ow">in</span> <span class="p">[</span><span class="sa">f</span><span class="s1">&#39;sc3s_</span><span class="si">{</span><span class="n">x</span><span class="si">}</span><span class="s1">&#39;</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">n_clusters</span><span class="p">]:</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">o</span><span class="p">]</span>
+            <span class="n">response</span> <span class="o">=</span> <span class="nb">input</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;That clustering already exists in the AnnData. Respond &quot;yes&quot; to continue and overwrite the old results: &#39;</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">response</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="o">!=</span> <span class="s1">&#39;yes&#39;</span><span class="p">:</span>
+                <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;Aborting&#39;</span><span class="p">)</span>
+                <span class="k">return</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;Existing obs </span><span class="si">{</span><span class="n">o</span><span class="si">}</span><span class="s1"> to be overwritten&#39;</span><span class="p">,</span> <span class="n">sc</span><span class="p">)</span>    
+        <span class="k">except</span> <span class="ne">KeyError</span><span class="p">:</span>
+            <span class="k">pass</span>
+    
+    <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="s1">&#39;Starting SC3s consensus clustering&#39;</span><span class="p">,</span> <span class="n">sc3s</span><span class="p">)</span>
+    
+    <span class="n">start_obs</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="o">.</span><span class="n">columns</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+    
+    <span class="k">with</span> <span class="n">warnings</span><span class="o">.</span><span class="n">catch_warnings</span><span class="p">():</span>
+        <span class="n">warnings</span><span class="o">.</span><span class="n">filterwarnings</span><span class="p">(</span><span class="s2">&quot;ignore&quot;</span><span class="p">,</span> <span class="n">category</span><span class="o">=</span><span class="ne">FutureWarning</span><span class="p">)</span>
+        <span class="n">warnings</span><span class="o">.</span><span class="n">filterwarnings</span><span class="p">(</span><span class="s2">&quot;ignore&quot;</span><span class="p">,</span> <span class="n">category</span><span class="o">=</span><span class="ne">UserWarning</span><span class="p">)</span>
+        
+        <span class="n">sc3s</span><span class="o">.</span><span class="n">tl</span><span class="o">.</span><span class="n">consensus</span><span class="p">(</span>
+            <span class="n">adata</span><span class="p">,</span> 
+            <span class="n">n_clusters</span><span class="o">=</span><span class="n">n_clusters</span><span class="p">,</span>
+            <span class="n">n_runs</span><span class="o">=</span><span class="n">n_runs</span>
+        <span class="p">)</span>        
+    
+    <span class="c1"># Remove unnecessary key to allow saving</span>
+    <span class="k">del</span> <span class="n">adata</span><span class="o">.</span><span class="n">uns</span><span class="p">[</span><span class="s1">&#39;sc3s_trials&#39;</span><span class="p">]</span>
+    
+    <span class="n">new_obs</span> <span class="o">=</span> <span class="p">[</span><span class="n">x</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="o">.</span><span class="n">columns</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span> <span class="k">if</span> <span class="n">x</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">start_obs</span><span class="p">]</span>
+    <span class="n">new_obs_str</span> <span class="o">=</span> <span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">new_obs</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;New obs added: </span><span class="si">{</span><span class="n">new_obs_str</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+
+    <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;SC3 clustering. n_clusters: </span><span class="si">{</span><span class="n">n_clusters</span><span class="si">}</span><span class="s1">. n_runs: </span><span class="si">{</span><span class="n">n_runs</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">,</span> <span class="n">sc3s</span><span class="p">,</span> <span class="n">save</span><span class="o">=</span><span class="n">save</span><span class="p">)</span></div>
+
+ 
+
+    
+<div class="viewcode-block" id="population_summary">
+<a class="viewcode-back" href="../../SpatialBiologyToolkit.html#SpatialBiologyToolkit.population_identification.population_summary">[docs]</a>
+<span class="k">def</span> <span class="nf">population_summary</span><span class="p">(</span>
+    <span class="n">adata</span><span class="p">,</span>
+    <span class="n">groupby_obs</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">markers</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">categorical_obs</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="p">[],</span>
+    <span class="n">heatmap_vmax</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">graph_log_scale</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">umap_point_size</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">display_tables</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Produces graphs to summarize clustering performance.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    adata : AnnData</span>
+<span class="sd">        Annotated data matrix.</span>
+<span class="sd">    groupby_obs : str</span>
+<span class="sd">        Observation field to group by.</span>
+<span class="sd">    markers : list, optional</span>
+<span class="sd">        List of markers to use. If not specified, all markers are used.</span>
+<span class="sd">    categorical_obs : list or str, optional</span>
+<span class="sd">        List of categorical observations. Default is an empty list.</span>
+<span class="sd">    heatmap_vmax : float, optional</span>
+<span class="sd">        Maximum value for the heatmap.</span>
+<span class="sd">    graph_log_scale : bool, optional</span>
+<span class="sd">        Whether to use logarithmic scale for graphs. Default is True.</span>
+<span class="sd">    umap_point_size : float, optional</span>
+<span class="sd">        Size of points in UMAP plot.</span>
+<span class="sd">    display_tables : bool, optional</span>
+<span class="sd">        Whether to display tables. Default is False.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    None</span>
+
+<span class="sd">    Notes</span>
+<span class="sd">    -----</span>
+<span class="sd">    - If `markers` is not specified, all markers in `adata.var_names` are used.</span>
+<span class="sd">    - Logs and visualizations are generated using `scanpy` plotting functions.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># Ignore all future warnings</span>
+    <span class="n">simplefilter</span><span class="p">(</span><span class="n">action</span><span class="o">=</span><span class="s1">&#39;ignore&#39;</span><span class="p">,</span> <span class="n">category</span><span class="o">=</span><span class="ne">FutureWarning</span><span class="p">)</span>
+    <span class="n">simplefilter</span><span class="p">(</span><span class="n">action</span><span class="o">=</span><span class="s1">&#39;ignore&#39;</span><span class="p">,</span> <span class="n">category</span><span class="o">=</span><span class="ne">UserWarning</span><span class="p">)</span>
+
+    <span class="c1"># Ensure categorical_obs is a list and prepend &#39;ROI&#39;</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">categorical_obs</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+        <span class="n">categorical_obs</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;ROI&#39;</span><span class="p">]</span> <span class="o">+</span> <span class="n">categorical_obs</span>
+    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">categorical_obs</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="n">categorical_obs</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;ROI&#39;</span><span class="p">]</span> <span class="o">+</span> <span class="p">[</span><span class="n">categorical_obs</span><span class="p">]</span>
+    
+    <span class="c1"># Use all markers if not specified</span>
+    <span class="k">if</span> <span class="n">markers</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">markers</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">var_names</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+        
+    <span class="c1"># Plot UMAP with specified grouping</span>
+    <span class="n">sc</span><span class="o">.</span><span class="n">pl</span><span class="o">.</span><span class="n">umap</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="n">groupby_obs</span><span class="p">,</span> <span class="n">size</span><span class="o">=</span><span class="n">umap_point_size</span><span class="p">)</span>
+    
+    <span class="c1"># Run and plot dendrogram</span>
+    <span class="n">sc</span><span class="o">.</span><span class="n">tl</span><span class="o">.</span><span class="n">dendrogram</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">groupby_obs</span><span class="p">,</span> <span class="n">use_rep</span><span class="o">=</span><span class="s1">&#39;X_pca&#39;</span><span class="p">)</span>
+    <span class="n">sc</span><span class="o">.</span><span class="n">pl</span><span class="o">.</span><span class="n">matrixplot</span><span class="p">(</span>
+        <span class="n">adata</span><span class="p">,</span>
+        <span class="n">markers</span><span class="p">,</span>
+        <span class="n">groupby</span><span class="o">=</span><span class="n">groupby_obs</span><span class="p">,</span>
+        <span class="n">var_group_rotation</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span>
+        <span class="n">vmax</span><span class="o">=</span><span class="n">heatmap_vmax</span><span class="p">,</span>
+        <span class="n">dendrogram</span><span class="o">=</span><span class="kc">True</span>
+    <span class="p">)</span>
+    
+    <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">categorical_obs</span><span class="p">:</span>
+        <span class="n">grouped_graph</span><span class="p">(</span>
+            <span class="n">adata</span><span class="p">,</span>
+            <span class="n">group_by_obs</span><span class="o">=</span><span class="n">groupby_obs</span><span class="p">,</span>
+            <span class="n">x_axis</span><span class="o">=</span><span class="n">c</span><span class="p">,</span>
+            <span class="n">log_scale</span><span class="o">=</span><span class="n">graph_log_scale</span><span class="p">,</span>
+            <span class="n">fig_size</span><span class="o">=</span><span class="p">(</span><span class="mi">10</span><span class="p">,</span> <span class="mi">3</span><span class="p">),</span>
+            <span class="n">display_tables</span><span class="o">=</span><span class="n">display_tables</span>
+        <span class="p">)</span>
+        <span class="n">plt</span><span class="o">.</span><span class="n">show</span><span class="p">()</span></div>
+
+                       
+            
+<div class="viewcode-block" id="prune_leiden_using_dendrogram">
+<a class="viewcode-back" href="../../SpatialBiologyToolkit.html#SpatialBiologyToolkit.population_identification.prune_leiden_using_dendrogram">[docs]</a>
+<span class="k">def</span> <span class="nf">prune_leiden_using_dendrogram</span><span class="p">(</span>
+    <span class="n">adata</span><span class="p">:</span> <span class="n">ad</span><span class="o">.</span><span class="n">AnnData</span><span class="p">,</span>
+    <span class="n">leiden_obs</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">new_obs</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;leiden_merged&#39;</span><span class="p">,</span>
+    <span class="n">mode</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;max&#39;</span><span class="p">,</span>
+    <span class="n">max_leiden</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">minimum_pop_size</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Use the results of a dendrogram to reduce the number of Leiden populations by merging them into larger and more robust populations.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    adata : AnnData</span>
+<span class="sd">        AnnData object.</span>
+<span class="sd">    leiden_obs : str</span>
+<span class="sd">        Observation identifying the Leiden clusters to use.</span>
+<span class="sd">    new_obs : str, optional</span>
+<span class="sd">        New observation to be created in the AnnData. Default is &#39;leiden_merged&#39;.</span>
+<span class="sd">    mode : str, optional</span>
+<span class="sd">        Mode for merging clusters. Options are &#39;max&#39;, &#39;size&#39;, or &#39;percent&#39;. Default is &#39;max&#39;.</span>
+<span class="sd">    max_leiden : int, optional</span>
+<span class="sd">        Largest Leiden population number to keep when mode is &#39;max&#39;. Default is None.</span>
+<span class="sd">    minimum_pop_size : int, optional</span>
+<span class="sd">        Minimum population size to keep when mode is &#39;size&#39; or &#39;percent&#39;. Default is None.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    dict</span>
+<span class="sd">        Dictionary mapping old clusters to new clusters.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">Z</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">uns</span><span class="p">[</span><span class="sa">f</span><span class="s1">&#39;dendrogram_</span><span class="si">{</span><span class="n">leiden_obs</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">][</span><span class="s1">&#39;linkage&#39;</span><span class="p">]</span>
+    <span class="k">except</span> <span class="ne">KeyError</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;No dendrogram has been run, running with defaults&#39;</span><span class="p">)</span>
+        <span class="n">sc</span><span class="o">.</span><span class="n">tl</span><span class="o">.</span><span class="n">dendrogram</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">groupby</span><span class="o">=</span><span class="n">leiden_obs</span><span class="p">,</span> <span class="n">n_pcs</span><span class="o">=</span><span class="n">adata</span><span class="o">.</span><span class="n">varm</span><span class="p">[</span><span class="s1">&#39;PCs&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">1</span><span class="p">])</span>
+        <span class="n">Z</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">uns</span><span class="p">[</span><span class="sa">f</span><span class="s1">&#39;dendrogram_</span><span class="si">{</span><span class="n">leiden_obs</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">][</span><span class="s1">&#39;linkage&#39;</span><span class="p">]</span>
+
+    <span class="n">n</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">leiden_obs</span><span class="p">]</span><span class="o">.</span><span class="n">cat</span><span class="o">.</span><span class="n">categories</span><span class="p">)</span>
+    <span class="n">clusters</span> <span class="o">=</span> <span class="p">{</span><span class="n">i</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">i</span><span class="p">)</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">n</span><span class="p">)}</span>
+
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">z</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">Z</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">int</span><span class="p">)):</span>
+        <span class="n">cluster_num</span> <span class="o">=</span> <span class="n">n</span> <span class="o">+</span> <span class="n">i</span>
+        <span class="n">cluster_names</span> <span class="o">=</span> <span class="p">[</span><span class="n">clusters</span><span class="p">[</span><span class="n">z</span><span class="p">[</span><span class="mi">0</span><span class="p">]],</span> <span class="n">clusters</span><span class="p">[</span><span class="n">z</span><span class="p">[</span><span class="mi">1</span><span class="p">]]]</span>
+        <span class="n">clusters</span><span class="p">[</span><span class="n">cluster_num</span><span class="p">]</span> <span class="o">=</span> <span class="s1">&#39;,&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">cluster_names</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">mode</span> <span class="o">==</span> <span class="s1">&#39;max&#39;</span><span class="p">:</span>
+        <span class="n">clusters_rmv</span> <span class="o">=</span> <span class="p">[</span><span class="nb">str</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">max_leiden</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="nb">int</span><span class="p">(</span><span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">leiden_obs</span><span class="p">]</span><span class="o">.</span><span class="n">cat</span><span class="o">.</span><span class="n">categories</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)]</span>
+        <span class="n">percent_removed</span> <span class="o">=</span> <span class="nb">round</span><span class="p">(</span><span class="n">adata</span><span class="p">[</span><span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">leiden_obs</span><span class="p">]</span><span class="o">.</span><span class="n">isin</span><span class="p">(</span><span class="n">clusters_rmv</span><span class="p">)]</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="o">/</span> <span class="n">adata</span><span class="o">.</span><span class="n">shape</span><span class="p">[</span><span class="mi">0</span><span class="p">],</span> <span class="mi">3</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">percent_removed</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">100</span><span class="si">}</span><span class="s1">% of cells will be remapped by setting upper cluster at </span><span class="si">{</span><span class="n">max_leiden</span><span class="si">}</span><span class="s1">, which has a size of </span><span class="si">{</span><span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">leiden_obs</span><span class="p">]</span><span class="o">.</span><span class="n">value_counts</span><span class="p">()[</span><span class="n">max_leiden</span><span class="p">]</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="n">mode</span> <span class="o">==</span> <span class="s1">&#39;size&#39;</span><span class="p">:</span>
+        <span class="n">clusters_rmv</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">leiden_obs</span><span class="p">]</span><span class="o">.</span><span class="n">value_counts</span><span class="p">()[</span><span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">leiden_obs</span><span class="p">]</span><span class="o">.</span><span class="n">value_counts</span><span class="p">()</span> <span class="o">&lt;</span> <span class="n">minimum_pop_size</span><span class="p">]</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+    <span class="k">elif</span> <span class="n">mode</span> <span class="o">==</span> <span class="s1">&#39;percent&#39;</span><span class="p">:</span>
+        <span class="n">minimum_pop_size</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">leiden_obs</span><span class="p">]</span><span class="o">.</span><span class="n">value_counts</span><span class="p">()</span><span class="o">.</span><span class="n">sum</span><span class="p">()</span> <span class="o">*</span> <span class="n">minimum_pop_size</span> <span class="o">/</span> <span class="mi">100</span>
+        <span class="n">clusters_rmv</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">leiden_obs</span><span class="p">]</span><span class="o">.</span><span class="n">value_counts</span><span class="p">()[</span><span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">leiden_obs</span><span class="p">]</span><span class="o">.</span><span class="n">value_counts</span><span class="p">()</span> <span class="o">&lt;</span> <span class="n">minimum_pop_size</span><span class="p">]</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">mode</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+        <span class="n">clusters_rmv</span> <span class="o">=</span> <span class="n">mode</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;Mode not recognized&#39;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">new_obs</span><span class="p">]</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">leiden_obs</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="s1">&#39;str&#39;</span><span class="p">)</span>
+    <span class="n">remap_dict</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">cluster_list</span> <span class="o">=</span> <span class="p">[</span><span class="n">x</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">&#39;,&#39;</span><span class="p">)</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">clusters</span><span class="o">.</span><span class="n">values</span><span class="p">()]</span>
+
+    <span class="k">for</span> <span class="n">cr</span> <span class="ow">in</span> <span class="n">clusters_rmv</span><span class="p">:</span>
+        <span class="n">target_forks</span> <span class="o">=</span> <span class="p">[</span><span class="n">x</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">cluster_list</span> <span class="k">if</span> <span class="n">cr</span> <span class="ow">in</span> <span class="n">x</span><span class="p">][</span><span class="mi">1</span><span class="p">:]</span>
+        <span class="n">target_forks_keep</span> <span class="o">=</span> <span class="p">[</span><span class="n">x</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">target_forks</span> <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="o">~</span><span class="n">pd</span><span class="o">.</span><span class="n">Series</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">isin</span><span class="p">(</span><span class="n">clusters_rmv</span><span class="p">))]</span>
+        <span class="n">target_leiden</span> <span class="o">=</span> <span class="p">[</span><span class="n">x</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">target_forks_keep</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">x</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">clusters_rmv</span><span class="p">]</span>
+        <span class="n">remap_dict</span><span class="p">[</span><span class="n">cr</span><span class="p">]</span> <span class="o">=</span> <span class="n">target_leiden</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">new_obs</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">new_obs</span><span class="p">]</span><span class="o">.</span><span class="n">isin</span><span class="p">(</span><span class="n">clusters_rmv</span><span class="p">),</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">new_obs</span><span class="p">]</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">remap_dict</span><span class="p">),</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">new_obs</span><span class="p">])</span>
+    <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">new_obs</span><span class="p">]</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">new_obs</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="s1">&#39;category&#39;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">remap_dict</span></div>
+
+
+
+
+<div class="viewcode-block" id="transfer_populations">
+<a class="viewcode-back" href="../../SpatialBiologyToolkit.html#SpatialBiologyToolkit.population_identification.transfer_populations">[docs]</a>
+<span class="k">def</span> <span class="nf">transfer_populations</span><span class="p">(</span>
+    <span class="n">adata_source</span><span class="p">,</span>
+    <span class="n">adata_source_populations_obs</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">adata_target</span><span class="p">,</span>
+    <span class="n">adata_target_populations_obs</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">common_cell_index</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;Master_Index&#39;</span><span class="p">,</span>
+    <span class="n">pop_prefix</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Transfer populations from a source AnnData object to a target AnnData object based on a common cell index.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    adata_source : AnnData</span>
+<span class="sd">        Source AnnData object containing the populations to be transferred.</span>
+<span class="sd">    adata_source_populations_obs : str</span>
+<span class="sd">        Observation field in the source AnnData object that contains the population information.</span>
+<span class="sd">    adata_target : AnnData</span>
+<span class="sd">        Target AnnData object where the populations will be transferred to.</span>
+<span class="sd">    adata_target_populations_obs : str</span>
+<span class="sd">        Observation field in the target AnnData object where the population information will be stored.</span>
+<span class="sd">    common_cell_index : str, optional</span>
+<span class="sd">        Common cell index used to match cells between the source and target AnnData objects.</span>
+<span class="sd">        Default is &#39;Master_Index&#39;.</span>
+<span class="sd">    pop_prefix : str, optional</span>
+<span class="sd">        Prefix to add to the population names in the target AnnData object.</span>
+<span class="sd">        Default is an empty string.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    None</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># Create a mapping dictionary from the source populations</span>
+    <span class="n">remap_dict</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">adata_source</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">common_cell_index</span><span class="p">],</span> <span class="n">adata_source</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">adata_source_populations_obs</span><span class="p">]))</span>
+
+    <span class="c1"># Map the new population data to the target AnnData object</span>
+    <span class="n">new_col_data</span> <span class="o">=</span> <span class="n">adata_target</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">common_cell_index</span><span class="p">]</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">remap_dict</span><span class="p">)</span>
+
+    <span class="c1"># Add the prefix to the new population data</span>
+    <span class="n">new_col_data</span> <span class="o">=</span> <span class="n">pop_prefix</span> <span class="o">+</span> <span class="s1">&#39;_&#39;</span> <span class="o">+</span> <span class="n">new_col_data</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+
+    <span class="c1"># Transfer the population data to the target AnnData object</span>
+    <span class="n">adata_target</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">adata_target_populations_obs</span><span class="p">]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span>
+        <span class="n">new_col_data</span><span class="o">.</span><span class="n">isna</span><span class="p">(),</span>
+        <span class="n">adata_target</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">adata_target_populations_obs</span><span class="p">],</span>
+        <span class="n">new_col_data</span>
+    <span class="p">)</span></div>
+
+ 
+        
+
+<div class="viewcode-block" id="create_remapping">
+<a class="viewcode-back" href="../../SpatialBiologyToolkit.html#SpatialBiologyToolkit.population_identification.create_remapping">[docs]</a>
+<span class="k">def</span> <span class="nf">create_remapping</span><span class="p">(</span>
+    <span class="n">adata</span><span class="p">,</span>
+    <span class="n">obs_column</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">groups</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;population&#39;</span><span class="p">,</span> <span class="s1">&#39;population_broad&#39;</span><span class="p">,</span> <span class="s1">&#39;hierarchy&#39;</span><span class="p">],</span>
+    <span class="n">file</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Creates a mapping file for renaming populations.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    adata : AnnData</span>
+<span class="sd">        Annotated data matrix.</span>
+<span class="sd">    obs_column : str</span>
+<span class="sd">        Observation column containing the populations to be remapped.</span>
+<span class="sd">    groups : list, optional</span>
+<span class="sd">        List of group names for the mapping. Default is [&#39;population&#39;, &#39;population_broad&#39;, &#39;hierarchy&#39;].</span>
+<span class="sd">    file : str, optional</span>
+<span class="sd">        File name to save the mapping file. If not provided, a default name based on `obs_column` is used.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    None</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="c1"># Create a DataFrame with unique values from the observation column</span>
+    <span class="n">unique_values</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">obs_column</span><span class="p">]</span><span class="o">.</span><span class="n">unique</span><span class="p">()</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+    <span class="n">df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">(</span><span class="n">data</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">index</span><span class="o">=</span><span class="n">unique_values</span><span class="p">,</span> <span class="n">columns</span><span class="o">=</span><span class="n">groups</span><span class="p">)</span>
+
+    <span class="c1"># Rename the index to match the observation column</span>
+    <span class="n">df</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">rename</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="n">obs_column</span><span class="p">,</span> <span class="n">inplace</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+    <span class="c1"># Determine the file name if not provided</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">file</span><span class="p">:</span>
+        <span class="n">file</span> <span class="o">=</span> <span class="s1">&#39;remapping_&#39;</span> <span class="o">+</span> <span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;\W+&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">,</span> <span class="n">obs_column</span><span class="p">)</span> <span class="o">+</span> <span class="s1">&#39;.csv&#39;</span>
+    
+    <span class="c1"># Save the DataFrame to a CSV file</span>
+    <span class="n">df</span><span class="o">.</span><span class="n">to_csv</span><span class="p">(</span><span class="n">file</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Saved population map file: </span><span class="si">{</span><span class="n">file</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span></div>
+
+
+    
+
+<div class="viewcode-block" id="read_remapping">
+<a class="viewcode-back" href="../../SpatialBiologyToolkit.html#SpatialBiologyToolkit.population_identification.read_remapping">[docs]</a>
+<span class="k">def</span> <span class="nf">read_remapping</span><span class="p">(</span>
+    <span class="n">adata</span><span class="p">,</span>
+    <span class="n">obs_column</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">file</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Reads a mapping file for renaming populations and adds the details of the population to `adata.uns`.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    adata : AnnData</span>
+<span class="sd">        Annotated data matrix.</span>
+<span class="sd">    obs_column : str</span>
+<span class="sd">        Observation column containing the populations to be remapped.</span>
+<span class="sd">    file : str, optional</span>
+<span class="sd">        File name to read the mapping from. If not provided, a default name based on `obs_column` is used.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    pd.DataFrame</span>
+<span class="sd">        DataFrame containing the remapping information.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="kn">import</span> <span class="nn">re</span>
+    <span class="kn">import</span> <span class="nn">pandas</span> <span class="k">as</span> <span class="nn">pd</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">file</span><span class="p">:</span>
+        <span class="n">file</span> <span class="o">=</span> <span class="s1">&#39;remapping_&#39;</span> <span class="o">+</span> <span class="n">re</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;\W+&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">,</span> <span class="n">obs_column</span><span class="p">)</span> <span class="o">+</span> <span class="s1">&#39;.csv&#39;</span>
+        
+    <span class="n">df</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">read_csv</span><span class="p">(</span><span class="n">file</span><span class="p">,</span> <span class="n">index_col</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    
+    <span class="k">for</span> <span class="n">c</span> <span class="ow">in</span> <span class="n">df</span><span class="o">.</span><span class="n">columns</span><span class="o">.</span><span class="n">tolist</span><span class="p">():</span>
+        <span class="k">if</span> <span class="n">df</span><span class="p">[</span><span class="n">c</span><span class="p">]</span><span class="o">.</span><span class="n">isnull</span><span class="p">()</span><span class="o">.</span><span class="n">values</span><span class="o">.</span><span class="n">any</span><span class="p">():</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Column </span><span class="si">{</span><span class="n">c</span><span class="si">}</span><span class="s1"> contains null or empty values and will not be used&#39;</span><span class="p">)</span>
+            <span class="n">df</span><span class="o">.</span><span class="n">drop</span><span class="p">(</span><span class="n">columns</span><span class="o">=</span><span class="n">c</span><span class="p">,</span> <span class="n">inplace</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Found </span><span class="si">{</span><span class="n">c</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+    
+    <span class="c1"># Ensure all values are strings, as Leidens may look like numbers</span>
+    <span class="n">df</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+    <span class="n">df</span><span class="o">.</span><span class="n">index</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="nb">str</span><span class="p">)</span>
+    
+    <span class="n">df_dict</span> <span class="o">=</span> <span class="n">df</span><span class="o">.</span><span class="n">to_dict</span><span class="p">()</span>
+    
+    <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">df_dict</span><span class="o">.</span><span class="n">keys</span><span class="p">():</span>
+        <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">p</span><span class="p">]</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">obs_column</span><span class="p">]</span><span class="o">.</span><span class="n">map</span><span class="p">(</span><span class="n">df</span><span class="p">[</span><span class="n">p</span><span class="p">])</span>
+        <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">p</span><span class="p">]</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">p</span><span class="p">]</span><span class="o">.</span><span class="n">astype</span><span class="p">(</span><span class="s1">&#39;category&#39;</span><span class="p">)</span>
+        
+    <span class="c1"># Add the list of population observations to AnnData</span>
+    <span class="n">adata</span><span class="o">.</span><span class="n">uns</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="s1">&#39;population_obs&#39;</span><span class="p">:</span> <span class="nb">list</span><span class="p">(</span><span class="n">df_dict</span><span class="o">.</span><span class="n">keys</span><span class="p">())})</span>
+    
+    <span class="n">new_pops</span> <span class="o">=</span> <span class="s1">&#39;, &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">df_dict</span><span class="o">.</span><span class="n">keys</span><span class="p">()))</span>
+    <span class="n">entry</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;Populations remapped from obs: </span><span class="si">{</span><span class="n">obs_column</span><span class="si">}</span><span class="s1">. New populations: </span><span class="si">{</span><span class="n">new_pops</span><span class="si">}</span><span class="s1">&#39;</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">entry</span><span class="p">)</span>
+    
+    <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">entry</span><span class="p">,</span> <span class="n">save</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    
+    <span class="k">return</span> <span class="n">df</span></div>
+
+
+<span class="k">def</span> <span class="nf">_choose_colors</span><span class="p">(</span><span class="n">color_dict</span><span class="p">:</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">item</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">result_labels</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Allow the user to choose a color for a specific item.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    color_dict : dict</span>
+<span class="sd">        Dictionary containing the current colors.</span>
+<span class="sd">    item : str</span>
+<span class="sd">        The item for which the color is being chosen.</span>
+<span class="sd">    result_labels : dict</span>
+<span class="sd">        Dictionary containing label widgets to update the background color.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">color</span> <span class="o">=</span> <span class="n">colorchooser</span><span class="o">.</span><span class="n">askcolor</span><span class="p">(</span><span class="n">title</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;Choose color for </span><span class="si">{</span><span class="n">item</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">,</span> <span class="n">initialcolor</span><span class="o">=</span><span class="n">color_dict</span><span class="p">[</span><span class="n">item</span><span class="p">])[</span><span class="mi">1</span><span class="p">]</span>
+    <span class="n">color_dict</span><span class="p">[</span><span class="n">item</span><span class="p">]</span> <span class="o">=</span> <span class="n">color</span>
+    <span class="n">result_labels</span><span class="p">[</span><span class="n">item</span><span class="p">]</span><span class="o">.</span><span class="n">config</span><span class="p">(</span><span class="n">bg</span><span class="o">=</span><span class="n">color</span><span class="p">)</span>
+
+<span class="k">def</span> <span class="nf">_show_colors</span><span class="p">(</span><span class="n">color_dict</span><span class="p">:</span> <span class="nb">dict</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Display a window to show and choose colors for items.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    color_dict : dict</span>
+<span class="sd">        Dictionary containing the current colors.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    <span class="n">result</span> <span class="o">=</span> <span class="n">tk</span><span class="o">.</span><span class="n">Tk</span><span class="p">()</span>
+    <span class="n">result</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Selected colors&quot;</span><span class="p">)</span>
+    <span class="n">result_labels</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">label_frame</span> <span class="o">=</span> <span class="n">tk</span><span class="o">.</span><span class="n">Frame</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>  <span class="c1"># Create a frame to hold the labels</span>
+    <span class="n">button_frame</span> <span class="o">=</span> <span class="n">tk</span><span class="o">.</span><span class="n">Frame</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>  <span class="c1"># Create a frame to hold the buttons</span>
+    
+    <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">color_dict</span><span class="o">.</span><span class="n">keys</span><span class="p">():</span>
+        <span class="n">result_labels</span><span class="p">[</span><span class="n">item</span><span class="p">]</span> <span class="o">=</span> <span class="n">tk</span><span class="o">.</span><span class="n">Label</span><span class="p">(</span><span class="n">label_frame</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">item</span><span class="si">}</span><span class="s2">:&quot;</span><span class="p">,</span> <span class="n">bg</span><span class="o">=</span><span class="n">color_dict</span><span class="p">[</span><span class="n">item</span><span class="p">])</span>
+        <span class="n">result_labels</span><span class="p">[</span><span class="n">item</span><span class="p">]</span><span class="o">.</span><span class="n">pack</span><span class="p">(</span><span class="n">side</span><span class="o">=</span><span class="n">tk</span><span class="o">.</span><span class="n">TOP</span><span class="p">,</span> <span class="n">anchor</span><span class="o">=</span><span class="n">tk</span><span class="o">.</span><span class="n">W</span><span class="p">)</span>  <span class="c1"># Place labels in a vertical column aligned to the left</span>
+    
+    <span class="n">label_frame</span><span class="o">.</span><span class="n">pack</span><span class="p">(</span><span class="n">side</span><span class="o">=</span><span class="n">tk</span><span class="o">.</span><span class="n">LEFT</span><span class="p">)</span>  <span class="c1"># Pack the label frame on the left side</span>
+    
+    <span class="n">tk</span><span class="o">.</span><span class="n">Button</span><span class="p">(</span><span class="n">button_frame</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="s2">&quot;OK&quot;</span><span class="p">,</span> <span class="n">command</span><span class="o">=</span><span class="n">result</span><span class="o">.</span><span class="n">destroy</span><span class="p">,</span> <span class="n">bg</span><span class="o">=</span><span class="s2">&quot;white&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">pack</span><span class="p">(</span><span class="n">side</span><span class="o">=</span><span class="n">tk</span><span class="o">.</span><span class="n">TOP</span><span class="p">)</span>  <span class="c1"># Place the OK button in a vertical column on top</span>
+    <span class="k">for</span> <span class="n">item</span> <span class="ow">in</span> <span class="n">color_dict</span><span class="o">.</span><span class="n">keys</span><span class="p">():</span>
+        <span class="n">tk</span><span class="o">.</span><span class="n">Button</span><span class="p">(</span><span class="n">button_frame</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="n">item</span><span class="p">,</span> <span class="n">command</span><span class="o">=</span><span class="k">lambda</span> <span class="n">item</span><span class="o">=</span><span class="n">item</span><span class="p">:</span> <span class="n">_choose_colors</span><span class="p">(</span><span class="n">color_dict</span><span class="p">,</span> <span class="n">item</span><span class="p">,</span> <span class="n">result_labels</span><span class="p">))</span><span class="o">.</span><span class="n">pack</span><span class="p">(</span><span class="n">side</span><span class="o">=</span><span class="n">tk</span><span class="o">.</span><span class="n">TOP</span><span class="p">)</span>  <span class="c1"># Place buttons in a vertical column</span>
+    
+    <span class="n">button_frame</span><span class="o">.</span><span class="n">pack</span><span class="p">(</span><span class="n">side</span><span class="o">=</span><span class="n">tk</span><span class="o">.</span><span class="n">LEFT</span><span class="p">,</span> <span class="n">padx</span><span class="o">=</span><span class="mi">10</span><span class="p">)</span>  <span class="c1"># Pack the button frame on the left side with some padding</span>
+    
+    <span class="n">result</span><span class="o">.</span><span class="n">mainloop</span><span class="p">()</span>
+
+
+<div class="viewcode-block" id="recolor_population">
+<a class="viewcode-back" href="../../SpatialBiologyToolkit.html#SpatialBiologyToolkit.population_identification.recolor_population">[docs]</a>
+<span class="k">def</span> <span class="nf">recolor_population</span><span class="p">(</span>
+    <span class="n">adata</span><span class="p">,</span>
+    <span class="n">population_obs</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">save</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Allow the user to recolor populations in an AnnData object using a GUI.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    adata : AnnData</span>
+<span class="sd">        Annotated data matrix.</span>
+<span class="sd">    population_obs : str</span>
+<span class="sd">        Observation field containing the populations to be recolored.</span>
+<span class="sd">    save : bool, optional</span>
+<span class="sd">        Whether to save the AnnData object before and after recoloring. Default is True.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    None</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+    
+    <span class="c1"># Save a backup of AnnData</span>
+    <span class="k">if</span> <span class="n">save</span><span class="p">:</span>
+        <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">save</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+    
+    <span class="k">global</span> <span class="n">color_dict</span>
+
+    <span class="c1"># Try to get the existing color map, if not create default colors according to Scanpy</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">adata</span><span class="o">.</span><span class="n">uns</span><span class="p">[</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">population_obs</span><span class="si">}</span><span class="s1">_colors&#39;</span><span class="p">]</span>
+    <span class="k">except</span> <span class="ne">KeyError</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;Could not retrieve color map from AnnData, creating a default color map&#39;</span><span class="p">)</span>
+        <span class="n">sc</span><span class="o">.</span><span class="n">plotting</span><span class="o">.</span><span class="n">_utils</span><span class="o">.</span><span class="n">_set_default_colors_for_categorical_obs</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">population_obs</span><span class="p">)</span>
+    
+    <span class="n">pop_list</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">population_obs</span><span class="p">]</span><span class="o">.</span><span class="n">cat</span><span class="o">.</span><span class="n">categories</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+    <span class="n">color_list</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">uns</span><span class="p">[</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">population_obs</span><span class="si">}</span><span class="s1">_colors&#39;</span><span class="p">]</span>
+        
+    <span class="n">color_dict</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="nb">zip</span><span class="p">(</span><span class="n">pop_list</span><span class="p">,</span> <span class="n">color_list</span><span class="p">))</span>
+
+    <span class="n">root</span> <span class="o">=</span> <span class="n">tk</span><span class="o">.</span><span class="n">Tk</span><span class="p">()</span>
+    <span class="n">root</span><span class="o">.</span><span class="n">title</span><span class="p">(</span><span class="s2">&quot;Color chooser&quot;</span><span class="p">)</span>
+    <span class="n">tk</span><span class="o">.</span><span class="n">Button</span><span class="p">(</span><span class="n">root</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="s2">&quot;Choose colors&quot;</span><span class="p">,</span> <span class="n">command</span><span class="o">=</span><span class="k">lambda</span><span class="p">:</span> <span class="n">_show_colors</span><span class="p">(</span><span class="n">color_dict</span><span class="p">))</span><span class="o">.</span><span class="n">pack</span><span class="p">()</span>
+    <span class="n">root</span><span class="o">.</span><span class="n">mainloop</span><span class="p">()</span>
+    
+    <span class="n">color_list</span> <span class="o">=</span> <span class="p">[</span><span class="n">color_dict</span><span class="p">[</span><span class="n">x</span><span class="p">]</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">pop_list</span><span class="p">]</span>
+    
+    <span class="n">adata</span><span class="o">.</span><span class="n">uns</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">population_obs</span><span class="si">}</span><span class="s1">_colors&#39;</span><span class="p">:</span> <span class="n">color_list</span><span class="p">})</span>
+    <span class="n">adata</span><span class="o">.</span><span class="n">uns</span><span class="o">.</span><span class="n">update</span><span class="p">({</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">population_obs</span><span class="si">}</span><span class="s1">_colormap&#39;</span><span class="p">:</span> <span class="n">color_dict</span><span class="p">})</span>
+    
+    <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;New color map: </span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+    <span class="nb">print</span><span class="p">(</span><span class="n">pop_list</span><span class="p">)</span>
+    <span class="n">display</span><span class="p">(</span><span class="n">ListedColormap</span><span class="p">(</span><span class="n">adata</span><span class="o">.</span><span class="n">uns</span><span class="p">[</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">population_obs</span><span class="si">}</span><span class="s1">_colors&#39;</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="n">population_obs</span><span class="p">))</span>
+    
+    <span class="k">if</span> <span class="n">save</span><span class="p">:</span>
+        <span class="n">adlog</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">save</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, Michael Haley.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

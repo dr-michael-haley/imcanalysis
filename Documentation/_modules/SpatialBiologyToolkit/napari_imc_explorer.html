@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SpatialBiologyToolkit.napari_imc_explorer &mdash; SpatialBiologyToolkit 0.1 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../_static/pygments.css?v=80d5e7a1" />
+      <link rel="stylesheet" type="text/css" href="../../_static/css/theme.css?v=19f00094" />
+
+  
+  <!--[if lt IE 9]>
+    <script src="../../_static/js/html5shiv.min.js"></script>
+  <![endif]-->
+  
+        <script src="../../_static/jquery.js?v=5d32c60e"></script>
+        <script src="../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+        <script src="../../_static/documentation_options.js?v=2709fde1"></script>
+        <script src="../../_static/doctools.js?v=9a2dae69"></script>
+        <script src="../../_static/sphinx_highlight.js?v=dc90522c"></script>
+    <script src="../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../genindex.html" />
+    <link rel="search" title="Search" href="../../search.html" /> 
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../index.html" class="icon icon-home">
+            SpatialBiologyToolkit
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">Contents:</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../introduction.html">Introduction</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../SpatialBiologyToolkit.html">SpatialBiologyToolkit package</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../index.html">SpatialBiologyToolkit</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">SpatialBiologyToolkit.napari_imc_explorer</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for SpatialBiologyToolkit.napari_imc_explorer</h1><div class="highlight"><pre>
+<span></span><span class="c1"># Standard Library Imports</span>
+<span class="kn">import</span> <span class="nn">itertools</span>
+<span class="kn">import</span> <span class="nn">os</span>
+<span class="kn">from</span> <span class="nn">pathlib</span> <span class="kn">import</span> <span class="n">Path</span>
+
+<span class="c1"># Third-Party Imports</span>
+<span class="kn">import</span> <span class="nn">anndata</span> <span class="k">as</span> <span class="nn">ad</span>
+<span class="kn">from</span> <span class="nn">magicgui</span> <span class="kn">import</span> <span class="n">magicgui</span><span class="p">,</span> <span class="n">widgets</span>
+<span class="kn">import</span> <span class="nn">napari</span>
+<span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+<span class="kn">import</span> <span class="nn">pandas</span> <span class="k">as</span> <span class="nn">pd</span>
+<span class="kn">import</span> <span class="nn">skimage</span> <span class="k">as</span> <span class="nn">sk</span>
+<span class="kn">from</span> <span class="nn">skimage</span> <span class="kn">import</span> <span class="n">color</span><span class="p">,</span> <span class="n">io</span><span class="p">,</span> <span class="n">transform</span>
+<span class="kn">import</span> <span class="nn">vispy</span>
+<span class="kn">from</span> <span class="nn">matplotlib</span> <span class="kn">import</span> <span class="n">colormaps</span>
+
+
+<div class="viewcode-block" id="napari_imc_explorer">
+<a class="viewcode-back" href="../../SpatialBiologyToolkit.html#SpatialBiologyToolkit.napari_imc_explorer.napari_imc_explorer">[docs]</a>
+<span class="k">def</span> <span class="nf">napari_imc_explorer</span><span class="p">(</span>
+    <span class="n">masks_folder</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;Masks&#39;</span><span class="p">,</span>
+    <span class="n">image_folders</span><span class="p">:</span> <span class="nb">list</span> <span class="o">=</span> <span class="p">[</span><span class="s1">&#39;Images&#39;</span><span class="p">],</span>
+    <span class="n">HE_folder</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;HE&#39;</span><span class="p">,</span>
+    <span class="n">roi_obs</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;ROI&#39;</span><span class="p">,</span>
+    <span class="n">adata</span><span class="p">:</span> <span class="n">ad</span><span class="o">.</span><span class="n">AnnData</span> <span class="o">=</span> <span class="n">ad</span><span class="o">.</span><span class="n">AnnData</span><span class="p">(),</span>
+    <span class="n">check_masks</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">napari</span><span class="o">.</span><span class="n">Viewer</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">    Start an interactive Napari viewer for exploring IMC data.</span>
+
+<span class="sd">    Parameters</span>
+<span class="sd">    ----------</span>
+<span class="sd">    masks_folder : str</span>
+<span class="sd">        Directory containing a mask for each ROI, each file named after the ROI. Masks should be uint16 .tif files.</span>
+<span class="sd">    image_folders : list</span>
+<span class="sd">        Directories containing subdirectories, each named after ROIs in the AnnData. Images are named after channels (adata.var_names), uint16 .tiff files.</span>
+<span class="sd">    HE_folder : str</span>
+<span class="sd">        Directory containing a color (RGB) .tif file, named after each ROI.</span>
+<span class="sd">    roi_obs : str</span>
+<span class="sd">        Column in adata.obs indicating the ROI.</span>
+<span class="sd">    adata : AnnData</span>
+<span class="sd">        AnnData object as created from the pipeline.</span>
+<span class="sd">    check_masks : bool</span>
+<span class="sd">        If True, will check that all the masks match the number of cells in the AnnData object.</span>
+
+<span class="sd">    Returns</span>
+<span class="sd">    -------</span>
+<span class="sd">    napari.Viewer</span>
+<span class="sd">        The Napari viewer object.</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">image_folders</span><span class="p">,</span> <span class="nb">list</span><span class="p">):</span>
+        <span class="n">image_folders</span> <span class="o">=</span> <span class="p">[</span><span class="n">image_folders</span><span class="p">]</span>
+
+    <span class="k">def</span> <span class="nf">_check_all_masks</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">roi_obs</span><span class="o">=</span><span class="n">roi_obs</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Check that the number of cells in each mask matches the number of cells in each ROI.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">roi_list</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">roi_obs</span><span class="p">]</span><span class="o">.</span><span class="n">unique</span><span class="p">()</span>
+        <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Matching AnnData </span><span class="si">{</span><span class="n">roi_obs</span><span class="si">}</span><span class="s1"> to masks in </span><span class="si">{</span><span class="n">masks_folder</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+        <span class="nb">print</span><span class="p">(</span><span class="n">roi_list</span><span class="p">)</span>
+        
+        <span class="k">for</span> <span class="n">roi_name</span> <span class="ow">in</span> <span class="n">roi_list</span><span class="p">:</span>
+            <span class="n">mask</span> <span class="o">=</span> <span class="n">sk</span><span class="o">.</span><span class="n">io</span><span class="o">.</span><span class="n">imread</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">masks_folder</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">roi_name</span><span class="si">}</span><span class="s1">.tif&#39;</span><span class="p">))</span>
+            <span class="n">cell_list_from_mask</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">unique</span><span class="p">(</span><span class="n">mask</span><span class="o">.</span><span class="n">flatten</span><span class="p">())</span>
+            <span class="n">cell_list_from_anndata</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">roi_obs</span><span class="p">]</span> <span class="o">==</span> <span class="n">roi_name</span><span class="p">,</span> <span class="p">:]</span>
+            <span class="n">cell_list_from_anndata</span><span class="o">.</span><span class="n">reset_index</span><span class="p">(</span><span class="n">drop</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">inplace</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+            <span class="n">cell_list_from_anndata</span> <span class="o">=</span> <span class="n">cell_list_from_anndata</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">to_numpy</span><span class="p">()</span> <span class="o">+</span> <span class="mi">1</span>
+            <span class="k">assert</span> <span class="n">np</span><span class="o">.</span><span class="n">all</span><span class="p">(</span><span class="n">cell_list_from_mask</span> <span class="o">==</span> <span class="n">cell_list_from_anndata</span><span class="p">),</span> <span class="sa">f</span><span class="s1">&#39;Mask and cell table do not match for </span><span class="si">{</span><span class="n">roi_name</span><span class="si">}</span><span class="s1">&#39;</span>
+        
+        <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;All ROIs matched successfully&#39;</span><span class="p">)</span>
+        
+    <span class="k">def</span> <span class="nf">_find_tiff_files</span><span class="p">(</span><span class="n">directory</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Find all TIFF/TIF files in a specified directory.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">tiff_files</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">root</span><span class="p">,</span> <span class="n">dirs</span><span class="p">,</span> <span class="n">files</span> <span class="ow">in</span> <span class="n">os</span><span class="o">.</span><span class="n">walk</span><span class="p">(</span><span class="n">directory</span><span class="p">):</span>
+            <span class="k">for</span> <span class="n">file</span> <span class="ow">in</span> <span class="n">files</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">file</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span><span class="o">.</span><span class="n">endswith</span><span class="p">((</span><span class="s1">&#39;.tiff&#39;</span><span class="p">,</span> <span class="s1">&#39;.tif&#39;</span><span class="p">)):</span>
+                    <span class="n">tiff_files</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">root</span><span class="p">,</span> <span class="n">file</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">tiff_files</span>
+
+    <span class="k">def</span> <span class="nf">_list_folders_in_directory</span><span class="p">(</span><span class="n">directory</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        List all folders in a specified directory.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">name</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="n">os</span><span class="o">.</span><span class="n">listdir</span><span class="p">(</span><span class="n">directory</span><span class="p">)</span> <span class="k">if</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">isdir</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">directory</span><span class="p">,</span> <span class="n">name</span><span class="p">))]</span>
+
+    <span class="k">def</span> <span class="nf">_load_imc_image</span><span class="p">(</span><span class="n">file</span><span class="p">,</span> <span class="n">quantile</span><span class="o">=</span><span class="mf">0.999</span><span class="p">,</span> <span class="n">colormap</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">recolour_image</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">minimum_pixel_counts</span><span class="o">=</span><span class="mf">0.1</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Load a single IMC image, including removing some background and normalising to a percentile.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">image</span> <span class="o">=</span> <span class="n">sk</span><span class="o">.</span><span class="n">io</span><span class="o">.</span><span class="n">imread</span><span class="p">(</span><span class="n">file</span><span class="p">)</span>
+        <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">image</span> <span class="o">&gt;</span> <span class="n">minimum_pixel_counts</span><span class="p">,</span> <span class="n">image</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span>
+        <span class="n">max_quant</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">quantile</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">quantile</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">max_quant</span> <span class="o">&lt;</span> <span class="mi">5</span><span class="p">:</span>
+            <span class="n">max_quant</span> <span class="o">=</span> <span class="mi">3</span>
+        <span class="n">image</span> <span class="o">=</span> <span class="n">image</span> <span class="o">/</span> <span class="n">max_quant</span>
+        <span class="n">image</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">clip</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span>
+        <span class="n">image_name</span> <span class="o">=</span> <span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">splitext</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">basename</span><span class="p">(</span><span class="n">file</span><span class="p">))[</span><span class="mi">0</span><span class="p">]</span>
+        <span class="n">viewer</span><span class="o">.</span><span class="n">add_image</span><span class="p">(</span><span class="n">image</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">image_name</span><span class="p">,</span> <span class="n">blending</span><span class="o">=</span><span class="s1">&#39;additive&#39;</span><span class="p">,</span> <span class="n">colormap</span><span class="o">=</span><span class="n">colormap</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_add_roi_images_raw</span><span class="p">(</span><span class="n">roi_name</span><span class="p">,</span> <span class="n">quantile</span><span class="o">=</span><span class="mf">0.999</span><span class="p">,</span> <span class="n">colour_map</span><span class="o">=</span><span class="p">[</span><span class="s1">&#39;r&#39;</span><span class="p">,</span> <span class="s1">&#39;g&#39;</span><span class="p">,</span> <span class="s1">&#39;b&#39;</span><span class="p">,</span> <span class="s1">&#39;c&#39;</span><span class="p">,</span> <span class="s1">&#39;m&#39;</span><span class="p">,</span> <span class="s1">&#39;y&#39;</span><span class="p">],</span> <span class="n">minimum_pixel_counts</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="n">recolour_image</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Add all images from one ROI folder, cycling through 6 colours.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">mask</span> <span class="o">=</span> <span class="n">sk</span><span class="o">.</span><span class="n">io</span><span class="o">.</span><span class="n">imread</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">masks_folder</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">roi_name</span><span class="si">}</span><span class="s1">.tif&#39;</span><span class="p">))</span>
+        <span class="n">tiffs</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">folder</span> <span class="ow">in</span> <span class="n">image_folders</span><span class="p">:</span>
+            <span class="n">tiff_paths</span> <span class="o">=</span> <span class="n">_find_tiff_files</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">folder</span><span class="p">,</span> <span class="n">roi_name</span><span class="p">))</span>
+            <span class="n">tiffs</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">tiff_paths</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">file</span><span class="p">,</span> <span class="n">colour</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">tiffs</span><span class="p">,</span> <span class="n">itertools</span><span class="o">.</span><span class="n">cycle</span><span class="p">(</span><span class="n">colour_map</span><span class="p">)):</span>
+            <span class="n">_load_imc_image</span><span class="p">(</span><span class="n">file</span><span class="p">,</span> <span class="n">quantile</span><span class="o">=</span><span class="n">quantile</span><span class="p">,</span> <span class="n">colormap</span><span class="o">=</span><span class="n">vispy</span><span class="o">.</span><span class="n">color</span><span class="o">.</span><span class="n">Colormap</span><span class="p">([[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span> <span class="n">colour</span><span class="p">]),</span> <span class="n">recolour_image</span><span class="o">=</span><span class="n">recolour_image</span><span class="p">,</span> <span class="n">minimum_pixel_counts</span><span class="o">=</span><span class="n">minimum_pixel_counts</span><span class="p">)</span>
+            <span class="n">viewer</span><span class="o">.</span><span class="n">layers</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">visible</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="k">def</span> <span class="nf">_add_masks</span><span class="p">(</span><span class="n">roi_name</span><span class="p">,</span> <span class="n">adata</span><span class="p">,</span> <span class="n">pop_obs</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">quant</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">roi_obs</span><span class="o">=</span><span class="s1">&#39;ROI&#39;</span><span class="p">,</span> <span class="n">adata_colormap</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">colour_map</span><span class="o">=</span><span class="n">colormaps</span><span class="p">[</span><span class="s1">&#39;tab20&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">colors</span><span class="p">,</span> <span class="n">add_individual_pops</span><span class="o">=</span><span class="kc">False</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Add masks to the viewer, optionally with population or quantitative overlays.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">mask</span> <span class="o">=</span> <span class="n">sk</span><span class="o">.</span><span class="n">io</span><span class="o">.</span><span class="n">imread</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">masks_folder</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">roi_name</span><span class="si">}</span><span class="s1">.tif&#39;</span><span class="p">))</span>
+        <span class="k">if</span> <span class="s1">&#39;all_cells&#39;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">viewer</span><span class="o">.</span><span class="n">layers</span><span class="p">:</span>
+            <span class="n">viewer</span><span class="o">.</span><span class="n">add_labels</span><span class="p">(</span><span class="n">mask</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s1">&#39;all_cells&#39;</span><span class="p">)</span>
+            <span class="n">viewer</span><span class="o">.</span><span class="n">layers</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">contour</span> <span class="o">=</span> <span class="mi">1</span>
+            <span class="n">viewer</span><span class="o">.</span><span class="n">layers</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">visible</span> <span class="o">=</span> <span class="kc">False</span>
+
+        <span class="n">adata_roi_obs</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">roi_obs</span><span class="p">]</span> <span class="o">==</span> <span class="n">roi_name</span><span class="p">,</span> <span class="p">:]</span><span class="o">.</span><span class="n">copy</span><span class="p">()</span>
+        <span class="n">adata_roi_obs</span><span class="o">.</span><span class="n">reset_index</span><span class="p">(</span><span class="n">drop</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">inplace</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="n">pop_obs</span><span class="p">:</span>
+            <span class="n">populations</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">pop_obs</span><span class="p">]</span><span class="o">.</span><span class="n">cat</span><span class="o">.</span><span class="n">categories</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+            <span class="n">populations_num</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="nb">range</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">populations</span><span class="p">)))</span> <span class="o">+</span> <span class="mi">1</span>
+            <span class="k">if</span> <span class="n">adata_colormap</span> <span class="ow">and</span> <span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">pop_obs</span><span class="si">}</span><span class="s1">_colors&#39;</span> <span class="ow">in</span> <span class="n">adata</span><span class="o">.</span><span class="n">uns</span><span class="p">):</span>
+                <span class="n">colour_map</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">uns</span><span class="p">[</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">pop_obs</span><span class="si">}</span><span class="s1">_colors&#39;</span><span class="p">]</span>
+            <span class="n">pop_colormap</span> <span class="o">=</span> <span class="p">{(</span><span class="n">x</span><span class="o">+</span><span class="mi">1</span><span class="p">):</span> <span class="n">y</span> <span class="k">for</span> <span class="n">x</span><span class="p">,</span> <span class="n">y</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">colour_map</span><span class="p">)}</span>
+            <span class="n">all_pops_mask</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">zeros</span><span class="p">(</span><span class="n">mask</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="s1">&#39;uint16&#39;</span><span class="p">)</span>
+
+            <span class="k">for</span> <span class="n">pop</span><span class="p">,</span> <span class="n">pop_num</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">populations</span><span class="p">,</span> <span class="n">populations_num</span><span class="p">):</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="n">objects</span> <span class="o">=</span> <span class="n">adata_roi_obs</span><span class="o">.</span><span class="n">loc</span><span class="p">[</span><span class="n">adata_roi_obs</span><span class="p">[</span><span class="n">pop_obs</span><span class="p">]</span> <span class="o">==</span> <span class="n">pop</span><span class="p">,</span> <span class="p">:]</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">to_numpy</span><span class="p">()</span> <span class="o">+</span> <span class="mi">1</span>
+                    <span class="n">pop_mask</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">isin</span><span class="p">(</span><span class="n">mask</span><span class="p">,</span> <span class="n">objects</span><span class="p">)</span>
+                    <span class="n">all_pops_mask</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">where</span><span class="p">(</span><span class="n">pop_mask</span><span class="p">,</span> <span class="n">pop_num</span><span class="p">,</span> <span class="n">all_pops_mask</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="n">add_individual_pops</span><span class="p">:</span>
+                        <span class="n">viewer</span><span class="o">.</span><span class="n">add_labels</span><span class="p">(</span><span class="n">pop_mask</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">pop</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="p">{</span><span class="mi">1</span><span class="p">:</span> <span class="n">pop_colormap</span><span class="p">[</span><span class="n">pop_num</span><span class="p">]})</span>
+                        <span class="n">viewer</span><span class="o">.</span><span class="n">layers</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">contour</span> <span class="o">=</span> <span class="mi">1</span>
+                        <span class="n">viewer</span><span class="o">.</span><span class="n">layers</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">visible</span> <span class="o">=</span> <span class="kc">False</span>
+                <span class="k">except</span><span class="p">:</span>
+                    <span class="nb">print</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Error adding group </span><span class="si">{</span><span class="n">pop</span><span class="si">}</span><span class="s1"> from </span><span class="si">{</span><span class="n">pop_obs</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+            <span class="n">viewer</span><span class="o">.</span><span class="n">add_labels</span><span class="p">(</span><span class="n">all_pops_mask</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">pop_obs</span><span class="p">,</span> <span class="n">color</span><span class="o">=</span><span class="n">pop_colormap</span><span class="p">)</span>
+            <span class="n">viewer</span><span class="o">.</span><span class="n">layers</span><span class="p">[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span><span class="o">.</span><span class="n">contour</span> <span class="o">=</span> <span class="mi">1</span>
+        <span class="k">elif</span> <span class="n">quant</span><span class="p">:</span>
+            <span class="n">objects</span> <span class="o">=</span> <span class="n">adata_roi_obs</span><span class="o">.</span><span class="n">index</span><span class="o">.</span><span class="n">to_numpy</span><span class="p">()</span> <span class="o">+</span> <span class="mi">1</span>
+            <span class="k">if</span> <span class="n">quant</span> <span class="ow">in</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">:</span>
+                <span class="n">values</span> <span class="o">=</span> <span class="n">adata_roi_obs</span><span class="p">[</span><span class="n">quant</span><span class="p">]</span>
+            <span class="k">elif</span> <span class="n">quant</span> <span class="ow">in</span> <span class="n">adata</span><span class="o">.</span><span class="n">var_names</span><span class="p">:</span>
+                <span class="n">values</span> <span class="o">=</span> <span class="n">adata</span><span class="o">.</span><span class="n">X</span><span class="p">[</span><span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">roi_obs</span><span class="p">]</span> <span class="o">==</span> <span class="n">roi_name</span><span class="p">,</span> <span class="n">adata</span><span class="o">.</span><span class="n">var_names</span> <span class="o">==</span> <span class="n">quant</span><span class="p">]</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span>
+            <span class="n">parameter_map</span> <span class="o">=</span> <span class="n">sk</span><span class="o">.</span><span class="n">util</span><span class="o">.</span><span class="n">map_array</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">mask</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">objects</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">asarray</span><span class="p">(</span><span class="n">values</span><span class="p">))</span>
+            <span class="n">viewer</span><span class="o">.</span><span class="n">add_image</span><span class="p">(</span><span class="n">parameter_map</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="n">quant</span><span class="p">,</span> <span class="n">blending</span><span class="o">=</span><span class="s1">&#39;additive&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_add_HE</span><span class="p">(</span><span class="n">roi_name</span><span class="p">):</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;</span>
+<span class="sd">        Add H&amp;E image to the viewer.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">imc_image_size</span> <span class="o">=</span> <span class="n">sk</span><span class="o">.</span><span class="n">io</span><span class="o">.</span><span class="n">imread</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">masks_folder</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">roi_name</span><span class="si">}</span><span class="s1">.tif&#39;</span><span class="p">))</span><span class="o">.</span><span class="n">shape</span>
+        <span class="n">HE_image</span> <span class="o">=</span> <span class="n">io</span><span class="o">.</span><span class="n">imread</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">HE_folder</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">roi_name</span><span class="si">}</span><span class="s1">.tif&#39;</span><span class="p">))</span>
+        <span class="n">HE_image</span> <span class="o">=</span> <span class="n">transform</span><span class="o">.</span><span class="n">resize</span><span class="p">(</span><span class="n">HE_image</span><span class="p">,</span> <span class="n">imc_image_size</span><span class="p">,</span> <span class="n">anti_aliasing</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+        <span class="n">viewer</span><span class="o">.</span><span class="n">add_image</span><span class="p">(</span><span class="n">HE_image</span><span class="p">,</span> <span class="n">rgb</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s1">&#39;HE&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_hide_all_layers</span><span class="p">():</span>
+        <span class="k">for</span> <span class="n">layer</span> <span class="ow">in</span> <span class="n">viewer</span><span class="o">.</span><span class="n">layers</span><span class="p">:</span>
+            <span class="n">layer</span><span class="o">.</span><span class="n">visible</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="n">hide_all_layers_button</span> <span class="o">=</span> <span class="n">widgets</span><span class="o">.</span><span class="n">PushButton</span><span class="p">(</span><span class="n">text</span><span class="o">=</span><span class="s1">&#39;Hide all layers&#39;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s1">&#39;hide_all_layers_button&#39;</span><span class="p">)</span>
+    <span class="n">hide_all_layers_button</span><span class="o">.</span><span class="n">clicked</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">_hide_all_layers</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_delete_all_layers</span><span class="p">():</span>
+        <span class="n">viewer</span><span class="o">.</span><span class="n">layers</span><span class="o">.</span><span class="n">select_all</span><span class="p">()</span>
+        <span class="n">viewer</span><span class="o">.</span><span class="n">layers</span><span class="o">.</span><span class="n">remove_selected</span><span class="p">()</span>
+
+    <span class="n">delete_all_layers_button</span> <span class="o">=</span> <span class="n">widgets</span><span class="o">.</span><span class="n">PushButton</span><span class="p">(</span><span class="n">text</span><span class="o">=</span><span class="s1">&#39;Delete all layers&#39;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s1">&#39;delete_all_layers_button&#39;</span><span class="p">)</span>
+    <span class="n">delete_all_layers_button</span><span class="o">.</span><span class="n">clicked</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">_delete_all_layers</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_add_roi_images</span><span class="p">():</span>
+        <span class="n">selected_item</span> <span class="o">=</span> <span class="n">roi_selector</span><span class="o">.</span><span class="n">value</span>
+        <span class="n">_add_roi_images_raw</span><span class="p">(</span><span class="n">selected_item</span><span class="p">,</span> <span class="n">quantile</span><span class="o">=</span><span class="n">quant_select</span><span class="o">.</span><span class="n">value</span><span class="p">,</span> <span class="n">minimum_pixel_counts</span><span class="o">=</span><span class="n">minimum_pixel_counts_select</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+
+    <span class="n">roi_list</span> <span class="o">=</span> <span class="n">_list_folders_in_directory</span><span class="p">(</span><span class="s1">&#39;Images&#39;</span><span class="p">)</span>
+    <span class="n">roi_selector</span> <span class="o">=</span> <span class="n">widgets</span><span class="o">.</span><span class="n">ComboBox</span><span class="p">(</span><span class="n">label</span><span class="o">=</span><span class="s1">&#39;Select ROI:&#39;</span><span class="p">,</span> <span class="n">choices</span><span class="o">=</span><span class="n">roi_list</span><span class="p">)</span>
+
+    <span class="n">add_roi_images_button</span> <span class="o">=</span> <span class="n">widgets</span><span class="o">.</span><span class="n">PushButton</span><span class="p">(</span><span class="n">text</span><span class="o">=</span><span class="s1">&#39;Add ALL images for ROI&#39;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s1">&#39;add_roi_images_button&#39;</span><span class="p">)</span>
+    <span class="n">add_roi_images_button</span><span class="o">.</span><span class="n">clicked</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">_add_roi_images</span><span class="p">)</span>
+
+    <span class="n">add_roi_label</span> <span class="o">=</span> <span class="n">widgets</span><span class="o">.</span><span class="n">Label</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="s1">&#39;Select ROI:&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_add_mask_labels</span><span class="p">():</span>
+        <span class="n">selected_item</span> <span class="o">=</span> <span class="n">roi_selector</span><span class="o">.</span><span class="n">value</span>
+        <span class="n">_add_masks</span><span class="p">(</span><span class="n">selected_item</span><span class="p">,</span> <span class="n">adata</span><span class="p">,</span> <span class="n">pop_obs</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span>
+
+    <span class="n">add_masks_button</span> <span class="o">=</span> <span class="n">widgets</span><span class="o">.</span><span class="n">PushButton</span><span class="p">(</span><span class="n">text</span><span class="o">=</span><span class="s1">&#39;Add cell mask&#39;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s1">&#39;add_masks_button&#39;</span><span class="p">)</span>
+    <span class="n">add_masks_button</span><span class="o">.</span><span class="n">clicked</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">_add_mask_labels</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_add_HE_layer</span><span class="p">():</span>
+        <span class="n">selected_item</span> <span class="o">=</span> <span class="n">roi_selector</span><span class="o">.</span><span class="n">value</span>
+        <span class="n">_add_HE</span><span class="p">(</span><span class="n">selected_item</span><span class="p">)</span>
+
+    <span class="n">add_HE_button</span> <span class="o">=</span> <span class="n">widgets</span><span class="o">.</span><span class="n">PushButton</span><span class="p">(</span><span class="n">text</span><span class="o">=</span><span class="s1">&#39;Add H+E image&#39;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s1">&#39;add_HE_button&#39;</span><span class="p">)</span>
+    <span class="n">add_HE_button</span><span class="o">.</span><span class="n">clicked</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">_add_HE_layer</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_flip_HE_Y</span><span class="p">():</span>
+        <span class="n">viewer</span><span class="o">.</span><span class="n">layers</span><span class="p">[</span><span class="s1">&#39;HE&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">flipud</span><span class="p">(</span><span class="n">viewer</span><span class="o">.</span><span class="n">layers</span><span class="p">[</span><span class="s1">&#39;HE&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_flip_HE_X</span><span class="p">():</span>
+        <span class="n">viewer</span><span class="o">.</span><span class="n">layers</span><span class="p">[</span><span class="s1">&#39;HE&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">data</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">fliplr</span><span class="p">(</span><span class="n">viewer</span><span class="o">.</span><span class="n">layers</span><span class="p">[</span><span class="s1">&#39;HE&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">data</span><span class="p">)</span>
+
+    <span class="n">add_flip_HE_X_button</span> <span class="o">=</span> <span class="n">widgets</span><span class="o">.</span><span class="n">PushButton</span><span class="p">(</span><span class="n">text</span><span class="o">=</span><span class="s1">&#39;Flip H+E on X axis&#39;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s1">&#39;add_flip_HE_X_button&#39;</span><span class="p">)</span>
+    <span class="n">add_flip_HE_X_button</span><span class="o">.</span><span class="n">clicked</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">_flip_HE_X</span><span class="p">)</span>
+
+    <span class="n">add_flip_HE_Y_button</span> <span class="o">=</span> <span class="n">widgets</span><span class="o">.</span><span class="n">PushButton</span><span class="p">(</span><span class="n">text</span><span class="o">=</span><span class="s1">&#39;Flip H+E on Y axis&#39;</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s1">&#39;add_flip_HE_Y_button&#39;</span><span class="p">)</span>
+    <span class="n">add_flip_HE_Y_button</span><span class="o">.</span><span class="n">clicked</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">_flip_HE_Y</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">check_masks</span><span class="p">:</span>
+        <span class="n">_check_all_masks</span><span class="p">(</span><span class="n">adata</span><span class="p">,</span> <span class="n">roi_obs</span><span class="o">=</span><span class="n">roi_obs</span><span class="p">)</span>
+    
+    <span class="n">viewer</span> <span class="o">=</span> <span class="n">napari</span><span class="o">.</span><span class="n">Viewer</span><span class="p">()</span>
+    <span class="n">viewer</span><span class="o">.</span><span class="n">window</span><span class="o">.</span><span class="n">add_dock_widget</span><span class="p">([</span><span class="n">add_roi_label</span><span class="p">,</span> <span class="n">roi_selector</span><span class="p">,</span> <span class="n">hide_all_layers_button</span><span class="p">,</span> <span class="n">delete_all_layers_button</span><span class="p">,</span> <span class="n">add_roi_images_button</span><span class="p">,</span> <span class="n">add_masks_button</span><span class="p">,</span> <span class="n">add_HE_button</span><span class="p">,</span> <span class="n">add_flip_HE_Y_button</span><span class="p">,</span> <span class="n">add_flip_HE_X_button</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s1">&#39;Controls&#39;</span><span class="p">)</span>
+
+    <span class="n">image_folder_dict</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">image_ext_dict</span> <span class="o">=</span> <span class="p">{}</span>
+    <span class="n">im_list</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="n">image_folders</span><span class="p">:</span>
+        <span class="n">im_files</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">roi</span> <span class="ow">in</span> <span class="n">roi_list</span><span class="p">:</span>
+            <span class="n">im_files</span> <span class="o">=</span> <span class="n">_find_tiff_files</span><span class="p">(</span><span class="n">Path</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="n">roi</span><span class="p">))</span>
+            <span class="k">if</span> <span class="n">im_files</span><span class="p">:</span>
+                <span class="k">break</span>
+        <span class="n">im_list_new</span> <span class="o">=</span> <span class="p">[</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">basename</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">&#39;.&#39;</span><span class="p">)[:</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">im_files</span><span class="p">]</span>
+        <span class="n">im_list_new</span> <span class="o">=</span> <span class="p">[</span><span class="s2">&quot;.&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">im_list_new</span><span class="p">]</span>
+        <span class="n">im_extensions</span> <span class="o">=</span> <span class="p">[</span><span class="n">os</span><span class="o">.</span><span class="n">path</span><span class="o">.</span><span class="n">basename</span><span class="p">(</span><span class="n">x</span><span class="p">)</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">&#39;.&#39;</span><span class="p">)[</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">im_files</span><span class="p">]</span>
+        <span class="k">for</span> <span class="n">x</span><span class="p">,</span> <span class="n">ext</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">im_list_new</span><span class="p">,</span> <span class="n">im_extensions</span><span class="p">):</span>
+            <span class="n">image_ext_dict</span><span class="p">[</span><span class="n">x</span><span class="p">]</span> <span class="o">=</span> <span class="n">ext</span>
+        <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">im_list_new</span><span class="p">:</span>
+            <span class="n">image_folder_dict</span><span class="p">[</span><span class="n">x</span><span class="p">]</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
+        <span class="n">im_list</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">im_list_new</span><span class="p">)</span>
+    
+    <span class="nd">@magicgui</span><span class="p">(</span><span class="n">x</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span><span class="n">widget_type</span><span class="o">=</span><span class="s1">&#39;Select&#39;</span><span class="p">,</span> <span class="n">choices</span><span class="o">=</span><span class="n">im_list</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s1">&#39;Select images&#39;</span><span class="p">),</span> <span class="n">call_button</span><span class="o">=</span><span class="s1">&#39;Add images&#39;</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">_image_selector</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">list</span><span class="p">):</span>
+        <span class="n">_add_images_from_list</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_add_images_from_list</span><span class="p">(</span><span class="n">selected_images</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">image</span><span class="p">,</span> <span class="n">colour</span> <span class="ow">in</span> <span class="nb">zip</span><span class="p">(</span><span class="n">selected_images</span><span class="p">,</span> <span class="n">itertools</span><span class="o">.</span><span class="n">cycle</span><span class="p">([</span><span class="s1">&#39;r&#39;</span><span class="p">,</span> <span class="s1">&#39;g&#39;</span><span class="p">,</span> <span class="s1">&#39;b&#39;</span><span class="p">,</span> <span class="s1">&#39;c&#39;</span><span class="p">,</span> <span class="s1">&#39;m&#39;</span><span class="p">,</span> <span class="s1">&#39;y&#39;</span><span class="p">])):</span>
+            <span class="n">file</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="n">image_folder_dict</span><span class="p">[</span><span class="n">image</span><span class="p">],</span> <span class="n">roi_selector</span><span class="o">.</span><span class="n">value</span><span class="p">,</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">image</span><span class="si">}</span><span class="s1">.</span><span class="si">{</span><span class="n">image_ext_dict</span><span class="p">[</span><span class="n">image</span><span class="p">]</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+            <span class="nb">print</span><span class="p">(</span><span class="n">file</span><span class="p">)</span>
+            <span class="n">_load_imc_image</span><span class="p">(</span><span class="n">file</span><span class="p">,</span> <span class="n">quantile</span><span class="o">=</span><span class="n">quant_select</span><span class="o">.</span><span class="n">value</span><span class="p">,</span> <span class="n">minimum_pixel_counts</span><span class="o">=</span><span class="n">minimum_pixel_counts_select</span><span class="o">.</span><span class="n">value</span><span class="p">,</span> <span class="n">colormap</span><span class="o">=</span><span class="n">vispy</span><span class="o">.</span><span class="n">color</span><span class="o">.</span><span class="n">Colormap</span><span class="p">([[</span><span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span><span class="p">],</span> <span class="n">colour</span><span class="p">]))</span>
+
+    <span class="n">quant_select_label</span> <span class="o">=</span> <span class="n">widgets</span><span class="o">.</span><span class="n">Label</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="s1">&#39;Normalise intensity to quantile:&#39;</span><span class="p">)</span>
+    <span class="n">quant_select</span> <span class="o">=</span> <span class="n">widgets</span><span class="o">.</span><span class="n">FloatSpinBox</span><span class="p">(</span><span class="nb">min</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="nb">max</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">value</span><span class="o">=</span><span class="mf">0.999</span><span class="p">,</span> <span class="n">step</span><span class="o">=</span><span class="mf">0.001</span><span class="p">)</span>
+    <span class="n">minimum_pixel_counts_select_label</span> <span class="o">=</span> <span class="n">widgets</span><span class="o">.</span><span class="n">Label</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="s1">&#39;Minimum pixel value:&#39;</span><span class="p">)</span>
+    <span class="n">minimum_pixel_counts_select</span> <span class="o">=</span> <span class="n">widgets</span><span class="o">.</span><span class="n">FloatText</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="mf">0.1</span><span class="p">,</span> <span class="nb">min</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span>
+    
+    <span class="n">viewer</span><span class="o">.</span><span class="n">window</span><span class="o">.</span><span class="n">add_dock_widget</span><span class="p">([</span><span class="n">_image_selector</span><span class="p">,</span> <span class="n">quant_select_label</span><span class="p">,</span> <span class="n">quant_select</span><span class="p">,</span> <span class="n">minimum_pixel_counts_select_label</span><span class="p">,</span> <span class="n">minimum_pixel_counts_select</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s1">&#39;Add raw images&#39;</span><span class="p">)</span>
+
+    <span class="n">categorical_obs_columns</span> <span class="o">=</span> <span class="p">[</span><span class="n">col</span> <span class="k">for</span> <span class="n">col</span> <span class="ow">in</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="o">.</span><span class="n">columns</span> <span class="k">if</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">col</span><span class="p">]</span><span class="o">.</span><span class="n">dtype</span> <span class="o">==</span> <span class="s1">&#39;category&#39;</span><span class="p">]</span>
+    
+    <span class="nd">@magicgui</span><span class="p">(</span><span class="n">x</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span><span class="n">widget_type</span><span class="o">=</span><span class="s1">&#39;Select&#39;</span><span class="p">,</span> <span class="n">choices</span><span class="o">=</span><span class="n">categorical_obs_columns</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s1">&#39;Select categories&#39;</span><span class="p">),</span> <span class="n">call_button</span><span class="o">=</span><span class="s1">&#39;Add as masks&#39;</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">_obs_selector</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">list</span><span class="p">):</span>
+        <span class="n">_add_obs_masks</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_add_obs_masks</span><span class="p">(</span><span class="n">obs_list</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">obs</span> <span class="ow">in</span> <span class="n">obs_list</span><span class="p">:</span>
+            <span class="n">_add_masks</span><span class="p">(</span><span class="n">roi_name</span><span class="o">=</span><span class="n">roi_selector</span><span class="o">.</span><span class="n">value</span><span class="p">,</span> <span class="n">adata</span><span class="o">=</span><span class="n">adata</span><span class="p">,</span> <span class="n">pop_obs</span><span class="o">=</span><span class="n">obs</span><span class="p">,</span> <span class="n">roi_obs</span><span class="o">=</span><span class="s1">&#39;ROI&#39;</span><span class="p">,</span> <span class="n">adata_colormap</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">colour_map</span><span class="o">=</span><span class="n">colormaps</span><span class="p">[</span><span class="s1">&#39;tab20&#39;</span><span class="p">]</span><span class="o">.</span><span class="n">colors</span><span class="p">,</span> <span class="n">add_individual_pops</span><span class="o">=</span><span class="n">individual_pops_toggle</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+
+    <span class="n">individual_pops_toggle</span> <span class="o">=</span> <span class="n">widgets</span><span class="o">.</span><span class="n">CheckBox</span><span class="p">(</span><span class="n">value</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">text</span><span class="o">=</span><span class="s1">&#39;Add individual groups from .obs as masks&#39;</span><span class="p">)</span>
+
+    <span class="n">viewer</span><span class="o">.</span><span class="n">window</span><span class="o">.</span><span class="n">add_dock_widget</span><span class="p">([</span><span class="n">_obs_selector</span><span class="p">,</span> <span class="n">individual_pops_toggle</span><span class="p">],</span> <span class="n">name</span><span class="o">=</span><span class="s1">&#39;Categories as masks&#39;</span><span class="p">)</span>
+
+    <span class="n">numerical_obs_columns</span> <span class="o">=</span> <span class="p">[</span><span class="n">col</span> <span class="k">for</span> <span class="n">col</span> <span class="ow">in</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="o">.</span><span class="n">columns</span> <span class="k">if</span> <span class="n">adata</span><span class="o">.</span><span class="n">obs</span><span class="p">[</span><span class="n">col</span><span class="p">]</span><span class="o">.</span><span class="n">dtype</span> <span class="ow">in</span> <span class="p">[</span><span class="s1">&#39;float32&#39;</span><span class="p">,</span> <span class="s1">&#39;float64&#39;</span><span class="p">,</span> <span class="s1">&#39;int32&#39;</span><span class="p">]]</span>
+    
+    <span class="nd">@magicgui</span><span class="p">(</span><span class="n">x</span><span class="o">=</span><span class="nb">dict</span><span class="p">(</span><span class="n">widget_type</span><span class="o">=</span><span class="s1">&#39;Select&#39;</span><span class="p">,</span> <span class="n">choices</span><span class="o">=</span><span class="n">adata</span><span class="o">.</span><span class="n">var_names</span><span class="o">.</span><span class="n">tolist</span><span class="p">()</span> <span class="o">+</span> <span class="n">numerical_obs_columns</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s1">&#39;Select numeric&#39;</span><span class="p">),</span> <span class="n">call_button</span><span class="o">=</span><span class="s1">&#39;Add as overlays&#39;</span><span class="p">)</span>
+    <span class="k">def</span> <span class="nf">_quant_selector</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">list</span><span class="p">):</span>
+        <span class="n">_add_quant_masks</span><span class="p">(</span><span class="n">x</span><span class="p">)</span>
+
+    <span class="k">def</span> <span class="nf">_add_quant_masks</span><span class="p">(</span><span class="n">quant_list</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">quant</span> <span class="ow">in</span> <span class="n">quant_list</span><span class="p">:</span>
+            <span class="n">_add_masks</span><span class="p">(</span><span class="n">roi_name</span><span class="o">=</span><span class="n">roi_selector</span><span class="o">.</span><span class="n">value</span><span class="p">,</span> <span class="n">adata</span><span class="o">=</span><span class="n">adata</span><span class="p">,</span> <span class="n">pop_obs</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">quant</span><span class="o">=</span><span class="n">quant</span><span class="p">,</span> <span class="n">roi_obs</span><span class="o">=</span><span class="s1">&#39;ROI&#39;</span><span class="p">,</span> <span class="n">adata_colormap</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">add_individual_pops</span><span class="o">=</span><span class="n">individual_pops_toggle</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
+
+    <span class="n">viewer</span><span class="o">.</span><span class="n">window</span><span class="o">.</span><span class="n">add_dock_widget</span><span class="p">(</span><span class="n">_quant_selector</span><span class="p">,</span> <span class="n">name</span><span class="o">=</span><span class="s1">&#39;Numeric as masks&#39;</span><span class="p">)</span>
+
+    <span class="n">napari</span><span class="o">.</span><span class="n">run</span><span class="p">()</span>
+    <span class="k">return</span> <span class="n">viewer</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2024, Michael Haley.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

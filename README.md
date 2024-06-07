@@ -1,18 +1,31 @@
-# Contents
-## Mike_IMC_Pipeline - last updated Jan 2024
-This is the latest iteration of my Python pipeline for IMC analysis, which includes some basic details on how to get setup the Conda environment and get started. Start at notebook 1 and work through them. This is a work in progress, and should be treated as such.
+# SpatialBiologyToolkit
 
-## Mike_IMC_Denoise.ipynb
-This is a Jupyter notebook that implements the IMC Denoise approach (https://github.com/PENGLU-WashU/IMC_Denoise/, https://www.biorxiv.org/content/10.1101/2022.07.21.501021v1) to marry up with the Bodenmiller IMC pipeline.
+This is a collection of tools for analysing high-dimensional tissue data. It includes tools for analysing IMC data in the Scanpy ecosystem, but also several image-based analysis tools.
+Currently, most of the tools  are designed to work with IMC data, but most should be adaptable to other modalities.
 
-Running it will require  a computer with a good GPU / graphics card, and will also require it to be compatible with the packages that IMCDenoise uses (e.g. specific version of TensorFlow, Keras and Python, all of which are a bit out of date in the IMC Denoise repository on which I've based everything).
+## SpatialBiologyToolkit package
 
-Underdoing testing as we speak!
+All the tools are in the SpatialBiologyToolkit package
 
-## REDSEA.ipynb - last updated 4th Nov 2022
+### Installing
+- Clone/download repo locally
+- Create an environment using conda_environment.yml, which should install all the required packages. 
+- Install the package using:
+> pip install .
+- You can also install Jupyter (to view notebooks) using:
+> conda install jupyter
 
-This notebook integrates the REDSEA algorithm (https://www.frontiersin.org/articles/10.3389/fimmu.2021.652631/full) converted into Python by Artem Sokolov (https://github.com/labsyspharm/redseapy) into the Bodenmiller pipeline.
+### Tutorials
+Example tutorials can be found in the Tutorials folder. They should all work in an environment where SpatialBiologyToolkit package has been installed.
 
-This replaces the last CellProfiler step in the Bodenmiller pipeline that would normally extract the single cell expression of each of the markers and create a cell table .csv file. This notebook similarly extracts the single-cell information, but also does the REDSEA compensation for any cells in which the cells are in direct cell-to-cell contact. This is particularly useful for very dense tissues where segmentation is difficult.
+## IMC_Denoise
+This is a Jupyter notebook that implements the IMC Denoise approach (https://github.com/PENGLU-WashU/IMC_Denoise/) to marry up with the Bodenmiller IMC pipeline.
 
-This should run in the same environment as you use for other IMC analysis.
+> [!CAUTION]  
+> This code requires updating, as it currently uses an old version of IMC_Denoise, which has since been updated.
+
+## REDSEA
+This has been adapted from the code originally written by Artem Sokolov (https://github.com/labsyspharm/redseapy) to help better integration into the Bodenmiller pipeline
+
+> [!CAUTION]  
+> This code has not been thoroughly tested or maintained in some time (last updated 4th Nov 2022).
