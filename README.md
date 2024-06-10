@@ -15,18 +15,19 @@
 
 
 ## SpatialBiologyToolkit package
-
-All the tools are in the SpatialBiologyToolkit package
-
-Documentation can be viewed if download the repository locally, and by opening *'index.html' in Documentation*
+All the tools I have developed are available in this package, details for installing are below. Documentation can be viewed if download the repository locally, and by opening *'index.html' in Documentation*
 
 ### Installing
-- Clone/download repo locally
-- Create an environment using conda_environment.yml, which should install all the required packages. 
-- Install the package using:
-> pip install .
-- You can also install Jupyter (to view notebooks) using:
+- Install Anaconda or any other distribution of Python.
+- Clone/download the repo locally (see the <span style="color:green">**<>Code**</span> button).
+- Create an environment using *conda_environment.yml*, which should install all the required packages.
+> conda env create -f conda_environment.yml
+- Navigate to where you have downloaded the repo and install the package using:
+> pip install . 
+- If you haven't already, you can also install Jupyter (to view and run notebooks, in the *Tutorials* folder) using:
 > conda install jupyter
+- You can then start Jupyter from the Anaconda prompt using:
+> jupyter lab
 
 ### Tutorials
 Example tutorials can be found in the Tutorials folder. They should all work in an environment where SpatialBiologyToolkit package has been installed.
