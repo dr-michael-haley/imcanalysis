@@ -19,7 +19,7 @@ All the tools I have developed are available in this package, details for instal
 
 ### Installing
 - Install Anaconda or any other distribution of Python.
-- Clone/download the repo locally (see the <span style="color:green">**<>Code**</span> button).
+- Clone/download the repo locally (see the <font color="green">**<>Code**</font> button).
 - Create an environment using *conda_environment.yml*, which should install all the required packages.
 > conda env create -f conda_environment.yml
 - Navigate to where you have downloaded the repo and install the package using:
