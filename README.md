@@ -23,7 +23,8 @@ All the tools I have developed are available in this package, details for instal
 - Create an environment using *conda_environment.yml*, which should install all the required packages.
 > conda env create -f conda_environment.yml
 - Navigate to where you have downloaded the repo and install the package using:
-> pip install . 
+> pip install -e .
+- This will install the package in developer mode. If you would prefer a regular install, omit the *-e*
 - If you haven't already, you can also install Jupyter (to view and run notebooks, in the *Tutorials* folder) using:
 > conda install jupyter
 - You can then start Jupyter from the Anaconda prompt using:
