@@ -1117,3 +1117,13 @@ def reorder_within_categories_by_continuous(df_cat, df_cont, cont_col, cat_colum
         new_index += sorted_index.tolist()
         
     return df_cat.loc[new_index, :], df_cont.loc[new_index, :]
+    
+    
+def norm_by_row(df):
+    return df.div(df.sum(axis=1), axis=0)
+
+def norm_by_col(df):
+    return df.div(df.sum(axis=0), axis=1)
+
+def no_norm(df):
+    return df
