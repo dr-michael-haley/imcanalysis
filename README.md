@@ -1,21 +1,34 @@
-# SpatialBiologyToolkit
+<table>
+  <tr>
+    <td style="padding-right: 20px;">
+      <img src="Other/logo.png" alt="Logo" width="350" />
+    </td>
+    <td>
+      <h1>Spatial Biology Toolkit</h1>
+      <p>
+        This is a collection of tools for analysing high-dimensional tissue data. It includes tools for analysing IMC data in the Scanpy ecosystem, but also several image-based analysis tools.
+        Currently, most of the tools are designed to work with IMC data, but most should be adaptable to other modalities.
+      </p>
+    </td>
+  </tr>
+</table>
 
-This is a collection of tools for analysing high-dimensional tissue data. It includes tools for analysing IMC data in the Scanpy ecosystem, but also several image-based analysis tools.
-Currently, most of the tools  are designed to work with IMC data, but most should be adaptable to other modalities.
 
 ## SpatialBiologyToolkit package
-
-All the tools are in the SpatialBiologyToolkit package
-
-Documentation can be viewed if download the repository locally, and by opening *'index.html' in Documentation*
+All the tools I have developed are available in this package, details for installing are below. Documentation can be viewed if download the repository locally, and by opening *'index.html' in Documentation*
 
 ### Installing
-- Clone/download repo locally
-- Create an environment using conda_environment.yml, which should install all the required packages. 
-- Install the package using:
-> pip install .
-- You can also install Jupyter (to view notebooks) using:
+- Install Anaconda or any other distribution of Python.
+- Clone/download the repo locally (see the <font color="green">**<>Code**</font> button).
+- Create an environment using *conda_environment.yml*, which should install all the required packages.
+> conda env create -f conda_environment.yml
+- Navigate to where you have downloaded the repo and install the package using:
+> pip install -e .
+- This will install the package in developer mode. If you would prefer a regular install, omit the *-e*
+- If you haven't already, you can also install Jupyter (to view and run notebooks, in the *Tutorials* folder) using:
 > conda install jupyter
+- You can then start Jupyter from the Anaconda prompt using:
+> jupyter lab
 
 ### Tutorials
 Example tutorials can be found in the Tutorials folder. They should all work in an environment where SpatialBiologyToolkit package has been installed.
