@@ -12,6 +12,7 @@ from multiprocessing import Pool
 from os import listdir
 from os.path import abspath, exists, isfile, join
 from typing import List, Optional, Tuple, Union, Dict
+from collections import Counter
 
 # Third-Party Imports
 import anndata as ad
@@ -2153,3 +2154,79 @@ def plot_subregion_interactions(
         save_path=save_path_zscore,
         **heatmap_kwargs
     )
+    
+    
+def simpsons_diversity_index(image):
+    '''
+    TO DO - Docstring
+    '''
+    
+    # Flatten the image to a 1D array
+    pixels = image.flatten()
+    
+    # Count the frequency of each label
+    counts = Counter(pixels)
+    
+    # Total number of pixels
+    total_pixels = len(pixels)
+    
+    # Calculate the proportion of each label
+    proportions = [count / total_pixels for count in counts.values()]
+    
+    # Calculate the Simpson's Diversity Index
+    sdi = 1 - sum(p ** 2 for p in proportions)
+    
+    return sdi
+
+
+def lisaclust_catobs_img_overlap(adata, cat_obs, image_folder, roi_obs='ROI', masks_folder='Masks', masks_ext='tif', image_suffix='.tiff', scale_factor=0.05):
+    '''
+    TO DO - Docstring
+    '''   
+    
+    # Get list of images
+    images = os.listdir(image_folder)
+    
+    roi_list = []
+    img1_list = []
+    img2_list = []
+    prop_sig_list = []
+
+    #for img in tqdm(os.listdir(image_folder)[:8]):
+    for img in tqdm(os.listdir(image_folder)):
+        
+        try:
+        
+            roi_name = img.replace(image_suffix, '')
+
+            img_array = io.imread(Path(image_folder, img))
+
+            img_unique = [x for x in np.unique(img_array) if x !=0]
+
+            adata_roi_obs = adata.obs.loc[adata.obs[roi_obs]==roi_name, :]
+
+            cat_unique = adata_roi_obs[cat_obs].unique().tolist()
+
+            for i in img_unique:
+                for c in cat_unique:
+
+                    pop_mask, _, _ = obs_to_mask(adata, roi = roi_name, cat_obs = cat_obs, cat_obs_groups=c)
+
+                    clustering_results = spatial.lisa_clustering_image(image1 = pop_mask, 
+                                                                       image2 = np.where(img_array == i, 1, 0), 
+                                                                       scale_factor=scale_factor)
+
+                    prop_sig = clustering_results.sum() / np.sum(~np.isnan(clustering_results))
+
+                    roi_list.append(str(roi_name))
+                    img1_list.append(str(c))
+                    img2_list.append(str(i))
+                    prop_sig_list.append(np.float32(prop_sig))
+                    
+        except Exception as e:
+            print(e)
+            pass
+        
+    results = pd.DataFrame(zip(roi_list, img1_list, img2_list, prop_sig_list), columns=['ROI','Image1','Image2','PropSig'])
+    
+    return results

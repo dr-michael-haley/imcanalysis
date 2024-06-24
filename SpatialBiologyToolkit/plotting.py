@@ -4,6 +4,8 @@ from pathlib import Path
 
 import anndata as ad
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+import matplotlib.cm as cm
 import numpy as np
 import pandas as pd
 import scanpy as sc
@@ -978,3 +980,140 @@ def draw_voronoi_scatter(
 
     plt.axis('off')
     return areas
+
+
+def plot_stacked_graphs(dataframes, color_maps, plot_types, hide_axes=False, create_legends=True, order_by=0, ax_limits=None, y_labels=None, y_labels_rotations='vertical', height_ratios=None, figsize=(6, 2.5), graph_spacing=0.05):
+    """
+    Plot stacked graphs for given dataframes with various options.
+
+    Parameters:
+    - dataframes: List of DataFrames to be plotted
+    - color_maps: List of color mappings for each DataFrame (can be a dict for 'stacked_bar' or a colormap str for 'bar')
+    - plot_types: List of plot types for each DataFrame ('bar', 'stacked_bar')
+    - hide_axes: List of booleans indicating whether to hide axes for each DataFrame
+    - create_legends: List of booleans indicating whether to create a legend for each DataFrame
+    - order_by: Index of the DataFrame to use for ordering all the dataframes
+    - ax_limits: List of tuples specifying y-axis limits for each plot
+    - y_labels: List of y-axis labels for each plot
+    - y_labels_rotations: List of y-axis label rotations for each plot
+    - height_ratios: List of height ratios for the subplots
+    - figsize: Tuple representing the figure size
+    - graph_spacing: Float representing the spacing between graphs
+
+    Returns:
+    - matplotlib.figure.Figure object
+    """
+    
+    def process_list(input_list, default_value, num_plots):
+        if input_list is None:
+            return [default_value] * num_plots
+        elif isinstance(input_list, list) and len(input_list) == 1:
+            return input_list * num_plots
+        elif isinstance(input_list, list):
+            return input_list
+        else:
+            return [input_list] * num_plots
+
+    num_plots = len(dataframes)
+
+    color_maps = process_list(color_maps, 'viridis', num_plots)
+    plot_types = process_list(plot_types, 'bar', num_plots)
+    hide_axes = process_list(hide_axes, False, num_plots)
+    create_legends = process_list(create_legends, True, num_plots)
+    ax_limits = process_list(ax_limits, None, num_plots)
+    y_labels = process_list(y_labels, None, num_plots)
+    y_labels_rotations = process_list(y_labels_rotations, 'vertical', num_plots)
+    height_ratios = process_list(height_ratios, 1, num_plots)
+    
+    # Ensure all dataframes have matching indices
+    common_index = dataframes[order_by].index
+    for df in dataframes:
+        common_index = common_index.intersection(df.index)
+    
+    # Filter and order dataframes by the specified dataframe
+    ordered_dataframes = [df.loc[common_index, :] for df in dataframes]
+    
+    # Create the plot
+    fig = plt.figure(figsize=figsize)
+    gs = gridspec.GridSpec(num_plots, 1, height_ratios=height_ratios)
+    
+    for i, (df, color_map, plot_type, hide_axis, create_legend, ax_limit, y_label, y_label_rotation) in enumerate(zip(ordered_dataframes, color_maps, plot_types, hide_axes, create_legends, ax_limits, y_labels, y_labels_rotations)):
+        ax = plt.subplot(gs[i])
+        
+        # Plot based on the specified type
+        if plot_type == 'bar':
+            norm = plt.Normalize(df.dropna().values.min(), df.dropna().values.max())
+            sm = plt.cm.ScalarMappable(cmap=color_map, norm=norm)
+            for col in df.columns:
+                df[col].plot(kind='bar', width=1, ax=ax, color=sm.to_rgba(df[col]), legend=False)
+            
+            
+            cbar = fig.colorbar(sm, ax=ax, orientation='horizontal', pad=0.3)
+            cbar.set_label('Values')
+        elif plot_type == 'stacked_bar':
+            colors = [color_map.get(col, '#333333') for col in df.columns]
+            df.plot(kind='bar', stacked=True, ax=ax, color=colors, width=1)
+        
+        # Hide axes if specified
+        if hide_axis:
+            ax.tick_params(axis='y', length=0, labelleft=False)
+            ax.set_ylabel('')
+
+        if ax_limit:
+            ax.set_ylim(ax_limit)
+        else:
+            ax.autoscale(enable=True, axis='y', tight=True)
+            
+        if y_label:
+            if y_label_rotation[0].lower() == 'h':
+                ax.set_ylabel(y_label, rotation=y_label_rotation, ha='right', va='center')
+            else:
+                ax.set_ylabel(y_label)
+        
+        # Create legend if specified
+        if create_legend:
+            ax.legend(title='Categories', loc='upper left', bbox_to_anchor=(1, 1), fontsize='small', labelspacing=0.1)
+        else:
+            if ax.get_legend() is not None:
+                ax.get_legend().remove()
+                
+        ax.tick_params(axis='x', length=0, labelbottom=False)
+        ax.set_xlabel('')
+        ax.autoscale(enable=True, axis='x', tight=True)
+
+    plt.subplots_adjust(hspace=graph_spacing)
+    return fig
+
+def catobs_to_stacked(adata, cat_obs, groupby='Case', fillna=False, return_long=False):
+    
+    # Extract a long data frame
+    cat_df = adata.obs[~adata.obs[groupby].duplicated()][[groupby,cat_obs]].set_index(groupby,drop=True)
+    
+    if fillna:
+        cat_df = cat_df.fillna(fillna)
+    
+    # Expand into a dummies dataframe which we can use for plotting
+    dummy_df = pd.get_dummies(cat_df, columns=[cat_obs], prefix='', prefix_sep='')
+    
+    if return_long:
+        return cat_df, dummy_df,
+    else:
+        return dummy_df
+    
+def reorder_within_categories_by_continuous(df_cat, df_cont, cont_col, cat_columns=None, ascending=True):
+
+    new_index = []
+    
+    if not cat_columns:
+        cat_columns = df_cat.columns
+    
+    for c in cat_columns:
+        data = df_cat.loc[df_cat[c] != 0, c]
+
+        assert all(x == data.iloc[0] for x in data), "Not all values are the same within each category"
+
+        sorted_index = df_cont.loc[data.index, :].sort_values(cont_col, ascending=ascending).index
+
+        new_index += sorted_index.tolist()
+        
+    return df_cat.loc[new_index, :], df_cont.loc[new_index, :]
