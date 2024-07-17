@@ -29,6 +29,7 @@ from IPython.display import display
 from matplotlib.colors import ListedColormap, Normalize, TwoSlopeNorm
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
+import matplotlib.patches as patches
 from matplotlib.pyplot import get_cmap
 from scipy.spatial import Voronoi, distance
 from scipy.spatial.distance import pdist
@@ -47,6 +48,7 @@ from sklearn.neighbors import NearestNeighbors, radius_neighbors_graph
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm, notebook
 
+from .plotting import overlayed_heatmaps
 
 # Functions Definitions
 def _get_windows(job, n_neighbors: int) -> np.ndarray:
@@ -2138,7 +2140,7 @@ def plot_subregion_interactions(
     
     zscore_dfs = [interactions_results['zscore'][x] for x in subregion_list]
 
-    plot_advanced_heatmaps(
+    overlayed_heatmaps(
         count_dfs,
         cmaps=[cmap] * len(subregion_list),
         figsize=figsize,
@@ -2146,7 +2148,7 @@ def plot_subregion_interactions(
         **heatmap_kwargs
     )
 
-    plot_advanced_heatmaps(
+    overlayed_heatmaps(
         zscore_dfs,
         cmaps=[cmap] * len(subregion_list),
         figsize=figsize,
@@ -2154,6 +2156,353 @@ def plot_subregion_interactions(
         save_path=save_path_zscore,
         **heatmap_kwargs
     )
+
+def simpleplot_subregion_interactions(interactions_results, zscore_minmax=35, zscore_cmap='coolwarm'):
+    '''
+    TO DO - Docstring
+
+    This is a simple function to plot and sense-check the results of the interactions analyiss
+    '''
+    
+    envs = list(interactions_results['count'].keys())
+
+    for i in envs:
+    
+        print(i + "  - " + str(interactions_results['count'][i].shape))
+        
+        fig, axs = plt.subplots(1, 2, figsize=(16,5))
+        sns.heatmap(interactions_results['zscore'][i], vmax=zscore_minmax, vmin=-zscore_minmax, ax=axs[0], cmap=zscore_cmap)
+        sns.heatmap(interactions_results['count'][i], ax=axs[1])
+        plt.subplots_adjust(wspace=0.6)
+        plt.show()
+
+
+def differing_interactions_in_subregions(interactions_results, metric='zscore', num_lower_extremes=5, num_upper_extremes=5, figsize=(15, 10), ncols=2, xlim=None, bar_width=0.8, wspace=0.5, hspace=0.5, filter_list=None, include_diagonal=False, color_dict=None, line_thickness=1, add_vertical_line=False, add_horizontal_line=True, include_means=False, log_scale=False, remove_y_ticks=False, save=None, title_size='large'):
+    """
+    TO DO - Docstring
+
+    
+    Plots the highest and lowest values from each heatmap in a dictionary, showing unique interactions.
+
+    Parameters:
+    heatmap_dict (dict): Dictionary with keys as titles and values as pandas DataFrames representing heatmaps.
+    num_lower_extremes (int): Number of lowest values to plot from each heatmap.
+    num_upper_extremes (int): Number of highest values to plot from each heatmap.
+    figsize (tuple): Figure size for the plot.
+    ncols (int): Number of columns for the subplot arrangement.
+    xlim (tuple): Tuple specifying the min and max values for the x-axis.
+    bar_width (float): Width of the bars in the plot.
+    wspace (float): Width space between subplots.
+    hspace (float): Height space between subplots.
+    filter_list (list): List of items to filter the heatmap dataframes by.
+    include_diagonal (bool): Whether to include diagonal elements in the analysis.
+    color_dict (dict): Dictionary mapping columns/indices to colors.
+    line_thickness (int): Thickness of the black box around each rectangle.
+    add_vertical_line (bool): Whether to add a vertical dotted line at x=0.
+    add_horizontal_line (bool): Whether to add horizontal dotted lines separating the upper and lower extremes and above the mean bars.
+    include_means (bool): Whether to include mean bars for positive and negative values.
+    log_scale (bool): Whether to use a logarithmic scale for the x-axis.
+    remove_y_ticks (bool): Whether to remove all ticks and labels from the y-axis.
+    save (str): Path to save the figure.
+    """
+    
+    heatmap_dict = interactions_results[metric]
+    
+    heatmap_titles = list(heatmap_dict.keys())
+    heatmaps = list(heatmap_dict.values())
+    nrows = int(np.ceil(len(heatmaps) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
+    axes = axes.flatten()  # Flatten in case we have more than one row/column
+
+    for i, (title, heatmap) in enumerate(heatmap_dict.items()):
+        if filter_list is not None:
+            heatmap = heatmap.loc[[x for x in filter_list if x in heatmap.index], [x for x in filter_list if x in heatmap.columns]]
+
+        # Mask the upper triangle, include diagonal based on the include_diagonal parameter
+        mask = np.triu(np.ones(heatmap.shape, dtype=bool), k=1 if include_diagonal else 0)
+        masked_heatmap = heatmap.mask(mask)
+
+        # Convert the DataFrame to a NumPy array and get values - used for mean later
+        flat_heatmap = masked_heatmap.values.flatten()
+        flat_heatmap = flat_heatmap[~np.isnan(flat_heatmap)]
+        
+        # Transform data into longform and drop nan
+        data = masked_heatmap.reset_index(names='Row').melt(id_vars='Row', var_name='Column', value_name='Value').dropna().sort_values(by='Value')
+        data['Label'] = data['Row'].astype(str) + ", " + data['Column'].astype(str)
+
+        # Only use upper/lower extremes
+        data = pd.concat([data.head(num_lower_extremes), data.tail(num_upper_extremes)])
+        
+        if include_means:
+            # Calculate means and confidence intervals for positive and negative values
+            positive_values = flat_heatmap[flat_heatmap > 0]
+            negative_values = flat_heatmap[flat_heatmap < 0]
+
+            if len(positive_values) > 0:
+                mean_pos = positive_values.mean()
+                ci_pos = stats.t.interval(0.95, len(positive_values)-1, loc=mean_pos, scale=stats.sem(positive_values)) if len(positive_values) > 1 else (mean_pos, mean_pos)
+                mean_pos_data = pd.DataFrame({'Value': [mean_pos], 'Row': ['Mean'], 'Column': ['Positive'], 'Label': [r'$\bf{Mean \ Positive \pm 95\% \ CI}$']})
+                data = pd.concat([data, mean_pos_data], ignore_index=True)
+                data = data.reset_index(drop=True)
+
+            if len(negative_values) > 0:
+                mean_neg = negative_values.mean()
+                ci_neg = stats.t.interval(0.95, len(negative_values)-1, loc=mean_neg, scale=stats.sem(negative_values)) if len(negative_values) > 1 else (mean_neg, mean_neg)
+                mean_neg_data = pd.DataFrame({'Value': [mean_neg], 'Row': ['Mean'], 'Column': ['Negative'], 'Label': [r'$\bf{Mean \ Negative \pm 95\% \ CI}$']})
+                data = pd.concat([data, mean_neg_data], ignore_index=True)
+                data = data.reset_index(drop=True)
+
+        # Plot the extremes using seaborn
+        sns.barplot(x='Value', y='Label', data=data, ax=axes[i], width=bar_width)
+        
+        axes[i].set_title(title, fontdict={'fontsize': title_size})
+
+
+        # Set x-axis limits if specified
+        if xlim:
+            axes[i].set_xlim(xlim)
+
+        # Set x-axis to log scale if specified
+        if log_scale:
+            axes[i].set_xscale('log')
+
+        # Remove padding by setting y-axis limits
+        axes[i].set_ylim(-0.5, len(data) - 0.5)
+
+        # Remove y ticks and labels if specified
+        if remove_y_ticks:
+            axes[i].set_yticks([])
+            axes[i].set_ylabel('')
+            axes[i].set_yticklabels([])
+
+        # Add vertical dotted line at x=0 if specified
+        if add_vertical_line and not log_scale:
+            axes[i].axvline(x=0, color='black', linestyle='dotted')
+            
+        if add_horizontal_line:
+            if num_lower_extremes > 0:
+                axes[i].axhline(y=num_lower_extremes - 0.5, color='black', linestyle='dotted')
+            if include_means:
+                axes[i].axhline(y=len(data) - 2.5, color='black', linestyle='dotted')
+
+        # Modify each bar to be split horizontally into two colors
+        for bar, (value, row_label, col_label) in zip(axes[i].patches, zip(data['Value'], data['Row'], data['Column'])):
+            # Get the position and dimensions of the bar
+            x, y, width, height = bar.get_x(), bar.get_y(), bar.get_width(), bar.get_height()
+
+            if row_label == 'Mean' and col_label in ['Positive', 'Negative']:
+                # Add the new rectangle for the mean
+                edge_color = 'blue' if col_label == 'Positive' else 'red'
+                rect = patches.Rectangle((x, y), width, height, color='white', edgecolor=edge_color, hatch='/', linewidth=line_thickness)
+                axes[i].add_patch(rect)
+                if len(positive_values) > 1 and col_label == 'Positive':
+                    axes[i].errorbar(x=value, y=y + height / 2, xerr=[[value-ci_pos[0]], [ci_pos[1]-value]], fmt='none', color='blue', capsize=5)
+                if len(negative_values) > 1 and col_label == 'Negative':
+                    axes[i].errorbar(x=value, y=y + height / 2, xerr=[[value-ci_neg[0]], [ci_neg[1]-value]], fmt='none', color='red', capsize=5)
+                    
+                bbox = patches.Rectangle((x, y), width, height, linewidth=line_thickness, edgecolor=edge_color, facecolor='none')
+                axes[i].add_patch(bbox)
+            else:
+                # Remove the original bar
+                bar.remove()
+
+                # Create two new rectangles
+                color1 = color_dict.get(row_label, 'gray')
+                color2 = color_dict.get(col_label, 'gray')
+
+                rect1 = patches.Rectangle((x, y + height / 2), width, height / 2, color=color1, edgecolor='none')
+                rect2 = patches.Rectangle((x, y), width, height / 2, color=color2, edgecolor='none')
+
+                # Add the new rectangles to the axes
+                axes[i].add_patch(rect1)
+                axes[i].add_patch(rect2)
+
+                # Add a black box around the entire rectangle
+                bbox = patches.Rectangle((x, y), width, height, linewidth=line_thickness, edgecolor='black', facecolor='none')
+                axes[i].add_patch(bbox)
+
+    # Remove empty subplots
+    for j in range(len(axes)):
+        if j >= len(heatmap_dict):
+            fig.delaxes(axes[j])
+
+    plt.subplots_adjust(wspace=wspace, hspace=hspace)
+    plt.tight_layout()
+    
+    if save:
+        fig.savefig(save, bbox_inches='tight', dpi=300)
+    
+    plt.show()
+
+
+def _transponse_to_populations(data_dict):
+    '''
+    This will transform the interactions data to focus it on specific populations/interactions so we can see how they differ between subregions.
+    '''
+    
+    # Find the largest DataFrame based on the number of elements
+    largest_df_key = max(data_dict, key=lambda k: data_dict[k].shape[0] * data_dict[k].shape[1])
+    largest_df = data_dict[largest_df_key]
+    
+    # Get the indices and columns from the largest DataFrame
+    all_indices = largest_df.index
+    all_columns = largest_df.columns
+    
+    # Create a new dictionary to hold the transformed data
+    transformed_dict = {index: pd.DataFrame(index=data_dict.keys(), columns=all_columns) for index in all_indices}
+    
+    # Populate the new dictionary with the appropriate values
+    for title, df in data_dict.items():
+        for index in all_indices:
+            if index in df.index:
+                transformed_dict[index].loc[title] = df.loc[index].reindex(all_columns)
+            else:
+                # If the index is not in the current DataFrame, fill with NaN
+                transformed_dict[index].loc[title] = np.nan
+    
+    # Create the final dictionary to hold the series
+    series_dict = {}
+    
+    # Extracting series for each index and column
+    for index in all_indices:
+        for col in all_columns:
+            # Creating the series with original DataFrame titles as indices
+            series_dict[(index, col)] = pd.Series({title: transformed_dict[index].loc[title, col] for title in data_dict.keys()})
+    
+    return series_dict
+
+
+def specific_pops_interactions_in_subregions(interactions_results, metric='zscore', figsize=(15, 10), ncols=2, xlim=None, bar_width=0.7, wspace=0.5, hspace=0.5, color_dict=None, line_thickness=1, add_vertical_line=False, color_by='title', filter_first=None, filter_second=None, sort_values=False, include_average=False, plot_items=None, remove_y_ticks=False, title_size='large'):
+    """
+    Plots series data from a dictionary, with bars optionally split and colored by title or index.
+
+    Parameters:
+    series_dict (dict): Dictionary with keys as tuples representing the titles and values as pandas Series.
+    figsize (tuple): Figure size for the plot.
+    ncols (int): Number of columns for the subplot arrangement.
+    xlim (tuple): Tuple specifying the min and max values for the x-axis.
+    wspace (float): Width space between subplots.
+    hspace (float): Height space between subplots.
+    color_dict (dict): Dictionary mapping titles or indices to colors.
+    line_thickness (int): Thickness of the black box around each rectangle.
+    add_vertical_line (bool): Whether to add a vertical dotted line at x=0.
+    color_by (str): Whether to color bars 'by title' or 'by index'.
+    filter_first (list): List of items to filter the first value in the tuple titles.
+    filter_second (list): List of items to filter the second value in the tuple titles.
+    sort_values (bool): Whether to sort the values before plotting.
+    include_average (bool): Whether to include an average bar with a hatched pattern and confidence interval bars.
+    plot_items (list): List of items to be plotted from each series.
+    """
+    
+    series_dict = _transponse_to_populations(interactions_results[metric])
+    
+    
+    # Filter the series based on the first and second values in the tuple titles
+    filtered_series_dict = {k: v for k, v in series_dict.items() if 
+                            (filter_first is None or k[0] in filter_first) and 
+                            (filter_second is None or k[1] in filter_second)}
+
+    series_titles = list(filtered_series_dict.keys())
+    series_data = list(filtered_series_dict.values())
+    nrows = int(np.ceil(len(series_data) / ncols))
+    fig, axes = plt.subplots(nrows, ncols, figsize=figsize)
+    axes = axes.flatten()  # Flatten in case we have more than one row/column
+
+    for i, (title, series) in enumerate(filtered_series_dict.items()):
+        data = series.reset_index()
+        data.columns = ['Index', 'Value']
+
+        if plot_items is not None:
+            data = data[data['Index'].isin(plot_items)]
+
+        if sort_values:
+            data = data.sort_values(by='Value', ascending=False)
+
+        # Plot the data using seaborn
+        sns.barplot(x='Value', y='Index', data=data, ax=axes[i], width=bar_width, palette=[color_dict.get(idx, 'gray') for idx in data['Index']] if color_by == 'index' else ['gray']*len(data))
+        axes[i].set_title(f'{title[0]} to {title[1]}', fontdict={'fontsize': title_size})
+
+        # Set x-axis limits if specified
+        if xlim:
+            axes[i].set_xlim(xlim)
+
+        # Add vertical dotted line at x=0 if specified
+        if add_vertical_line:
+            axes[i].axvline(x=0, color='black', linestyle='dotted')
+            
+        if remove_y_ticks:
+            axes[i].set_yticks([])
+            axes[i].set_ylabel('')
+            axes[i].set_yticklabels([])
+
+
+        for bar in axes[i].patches:
+            # Get the position and dimensions of the bar
+            x, y, width, height = bar.get_x(), bar.get_y(), bar.get_width(), bar.get_height()
+
+            if color_by == 'title':
+                # Remove the original bar
+                bar.remove()
+
+                # Create two new rectangles
+                color1 = color_dict.get(title[0], 'gray')
+                color2 = color_dict.get(title[1], 'gray')
+
+                rect1 = patches.Rectangle((x, y + height / 2), width, height / 2, color=color1, edgecolor='none')
+                rect2 = patches.Rectangle((x, y), width, height / 2, color=color2, edgecolor='none')
+
+                # Add the new rectangles to the axes
+                axes[i].add_patch(rect1)
+                axes[i].add_patch(rect2)
+
+            # Add a black box around the entire rectangle
+            bbox = patches.Rectangle((x, y), width, height, linewidth=line_thickness, edgecolor='black', facecolor='none')
+            axes[i].add_patch(bbox)
+
+        if include_average:
+            mean_val = data['Value'].dropna().mean()
+            if len(data) > 1:
+                ci = stats.t.interval(0.95, len(data['Value'].dropna())-1, loc=mean_val, scale=stats.sem(data['Value'].dropna()))
+            else:
+                ci = (mean_val, mean_val)  # Default CI if not enough data
+            y_position = len(data)  # Position for the mean bar
+            axes[i].barh(y=y_position, width=mean_val, height=height, color='none', edgecolor='black', label='Mean ± 95% CI', linewidth=line_thickness)
+            if not np.isnan(ci).any():
+                axes[i].errorbar(x=mean_val, y=y_position, xerr=[[mean_val-ci[0]], [ci[1]-mean_val]], fmt='none', color='black', capsize=3, linewidth=1)
+
+            # Update y-ticks and labels to include the mean
+            current_ticks = axes[i].get_yticks()
+            current_labels = [item.get_text() for item in axes[i].get_yticklabels()]
+            new_ticks = np.append(current_ticks, y_position)
+            new_labels = np.append(current_labels, r'$\bf{Mean \pm 95\% \ CI}$')
+            axes[i].set_yticks(new_ticks)
+            axes[i].set_yticklabels(new_labels)
+
+    # Remove empty subplots
+    for j in range(len(filtered_series_dict), len(axes)):
+        fig.delaxes(axes[j])
+
+    plt.subplots_adjust(wspace=wspace, hspace=hspace)
+    plt.tight_layout()
+    plt.show()
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     
     
 def simpsons_diversity_index(image):

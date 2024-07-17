@@ -14,6 +14,7 @@ import seaborn as sb
 import skimage.io as io
 from matplotlib import cm
 from matplotlib.colors import Normalize, to_hex
+from matplotlib.lines import Line2D
 from scipy import stats
 from shapely.geometry import MultiPoint, Point, Polygon
 from skimage.util import map_array
@@ -1072,7 +1073,7 @@ def plot_stacked_graphs(dataframes, color_maps, plot_types, hide_axes=False, cre
         
         # Create legend if specified
         if create_legend:
-            ax.legend(title='Categories', loc='upper left', bbox_to_anchor=(1, 1), fontsize='small', labelspacing=0.1)
+            ax.legend(loc='upper left', bbox_to_anchor=(1, 1), fontsize='x-small', labelspacing=0.1)
         else:
             if ax.get_legend() is not None:
                 ax.get_legend().remove()
