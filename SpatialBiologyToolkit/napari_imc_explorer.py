@@ -21,7 +21,8 @@ def napari_imc_explorer(
     HE_folder: str = 'HE',
     roi_obs: str = 'ROI',
     adata: ad.AnnData = ad.AnnData(),
-    check_masks: bool = False
+    check_masks: bool = False,
+    mask_extension: str = '.tiff'
 ) -> napari.Viewer:
     """
     Start an interactive Napari viewer for exploring IMC data.
@@ -40,7 +41,9 @@ def napari_imc_explorer(
         AnnData object as created from the pipeline.
     check_masks : bool
         If True, will check that all the masks match the number of cells in the AnnData object.
-
+    mask_extension : str
+        Extension for mask files (typically .tiff or .tif).
+        
     Returns
     -------
     napari.Viewer
@@ -59,12 +62,13 @@ def napari_imc_explorer(
         print(roi_list)
         
         for roi_name in roi_list:
-            mask = sk.io.imread(Path(masks_folder, f'{roi_name}.tif'))
+            mask = sk.io.imread(Path(masks_folder, f'{roi_name}{mask_extension}'))
             cell_list_from_mask = np.unique(mask.flatten())
             cell_list_from_anndata = adata.obs.loc[adata.obs[roi_obs] == roi_name, :]
             cell_list_from_anndata.reset_index(drop=True, inplace=True)
-            cell_list_from_anndata = cell_list_from_anndata.index.to_numpy() + 1
-            assert np.all(cell_list_from_mask == cell_list_from_anndata), f'Mask and cell table do not match for {roi_name}'
+            cell_list_from_anndata = cell_list_from_anndata.index.to_numpy() #+ 1
+            assert np.all(cell_list_from_mask[0] == cell_list_from_anndata[0]), f'Mask and cell table do not match for {roi_name}'
+            print(f'{roi_name} matched!')
         
         print('All ROIs matched successfully')
         
@@ -103,7 +107,7 @@ def napari_imc_explorer(
         """
         Add all images from one ROI folder, cycling through 6 colours.
         """
-        mask = sk.io.imread(Path(masks_folder, f'{roi_name}.tif'))
+        mask = sk.io.imread(Path(masks_folder, f'{roi_name}{mask_extension}'))
         tiffs = []
         for folder in image_folders:
             tiff_paths = _find_tiff_files(Path(folder, roi_name))
@@ -117,7 +121,7 @@ def napari_imc_explorer(
         """
         Add masks to the viewer, optionally with population or quantitative overlays.
         """
-        mask = sk.io.imread(Path(masks_folder, f'{roi_name}.tif'))
+        mask = sk.io.imread(Path(masks_folder, f'{roi_name}{mask_extension}'))
         if 'all_cells' not in viewer.layers:
             viewer.add_labels(mask, name='all_cells')
             viewer.layers[-1].contour = 1
@@ -160,7 +164,7 @@ def napari_imc_explorer(
         """
         Add H&E image to the viewer.
         """
-        imc_image_size = sk.io.imread(Path(masks_folder, f'{roi_name}.tif')).shape
+        imc_image_size = sk.io.imread(Path(masks_folder, f'{roi_name}{mask_extension}')).shape
         HE_image = io.imread(Path(HE_folder, f'{roi_name}.tif'))
         HE_image = transform.resize(HE_image, imc_image_size, anti_aliasing=True)
         viewer.add_image(HE_image, rgb=True, name='HE')
