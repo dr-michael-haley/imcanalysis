@@ -49,7 +49,7 @@ from sklearn.neighbors import NearestNeighbors, radius_neighbors_graph
 from sklearn.preprocessing import StandardScaler
 from tqdm import tqdm, notebook
 
-from .plotting import overlayed_heatmaps
+from .plotting import overlayed_heatmaps, obs_to_mask
 
 # Functions Definitions
 def _get_windows(job, n_neighbors: int) -> np.ndarray:
@@ -2562,9 +2562,9 @@ def lisaclust_catobs_img_overlap(adata, cat_obs, image_folder, roi_obs='ROI', ma
 
                     pop_mask, _, _ = obs_to_mask(adata, roi = roi_name, cat_obs = cat_obs, cat_obs_groups=c)
 
-                    clustering_results = spatial.lisa_clustering_image(image1 = pop_mask, 
-                                                                       image2 = np.where(img_array == i, 1, 0), 
-                                                                       scale_factor=scale_factor)
+                    clustering_results = lisa_clustering_image(image1 = pop_mask, 
+                                                               image2 = np.where(img_array == i, 1, 0), 
+                                                               scale_factor=scale_factor)
 
                     prop_sig = clustering_results.sum() / np.sum(~np.isnan(clustering_results))
 
