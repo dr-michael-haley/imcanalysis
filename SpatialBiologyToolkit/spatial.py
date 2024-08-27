@@ -2548,7 +2548,7 @@ def lisaclust_catobs_img_overlap(adata, cat_obs, image_folder, roi_obs='ROI', ma
         
             roi_name = img.replace(image_suffix, '')
 
-            img_array = io.imread(Path(image_folder, img))
+            img_array = imread(Path(image_folder, img))
 
             img_unique = [x for x in np.unique(img_array) if x !=0]
 
