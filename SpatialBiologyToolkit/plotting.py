@@ -452,6 +452,9 @@ def overlayed_heatmaps(dfs: list[pd.DataFrame],
                        colorbar_plot_list: list[bool] = None, 
                        colorbar_params: dict = {'size': "2%", 'pad': 0.25, 'spacing': 0.25}, 
                        colorbar_labels: list[str] = None, 
+                       nan_color: str = 'lightgray',
+                       return_fig=False,
+                       show=True,
                        **heatmap_kwargs) -> None:
     """
     Overlay multiple heatmaps on the same plot.
@@ -482,6 +485,8 @@ def overlayed_heatmaps(dfs: list[pd.DataFrame],
         Dictionary to customize the size and placement of colour bars (size, pad, spacing).
     colorbar_labels : list of str, optional
         List of labels to associate with colorbars.
+    nan_color : str
+        Named matplotlib color to replace NaN values.
     **heatmap_kwargs
         Additional keyword arguments for sns.heatmap.
     """
@@ -515,7 +520,15 @@ def overlayed_heatmaps(dfs: list[pd.DataFrame],
             for i in range(df.shape[0]):
                 for j in range(df.shape[1]):
                     bottom = i + cell_height * (len(dfs) - idx - 1)
-                    rect = plt.Rectangle((j, bottom), 1, cell_height, color=mappable.to_rgba(df.iloc[i, j]))
+                    
+                    value = df.iloc[i, j]
+                    
+                    if np.isnan(value):
+                        color = nan_color
+                    else:
+                        color = mappable.to_rgba(value)
+                    
+                    rect = plt.Rectangle((j, bottom), 1, cell_height, color=color)
                     ax.add_patch(rect)
     elif mode == 'diagonal':
         df = dfs[1]
@@ -525,7 +538,15 @@ def overlayed_heatmaps(dfs: list[pd.DataFrame],
 
         for i in range(df.shape[0]):
             for j in range(df.shape[1]):
-                triangle = plt.Polygon([(j, i), (j + 1, i), (j, i + 1)], color=mappable.to_rgba(df.iloc[i, j]))
+                
+                value = df.iloc[i, j]
+                    
+                if np.isnan(value):
+                    color = nan_color
+                else:
+                    color = mappable.to_rgba(value)
+                
+                triangle = plt.Polygon([(j, i), (j + 1, i), (j, i + 1)], color=color)
                 ax.add_patch(triangle)
 
     for i in range(dfs[0].shape[0] + 1):
@@ -547,8 +568,13 @@ def overlayed_heatmaps(dfs: list[pd.DataFrame],
 
     if save_path:
         plt.savefig(save_path, bbox_inches='tight')
-
-    plt.show()
+    
+    if show:
+        plt.show()
+        
+    if return_fig:
+        return fig
+    
 
 
 def plot_colorbar(

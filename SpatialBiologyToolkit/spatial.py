@@ -2085,7 +2085,7 @@ def squidpy_subregion_interactions(
         sq.gr.spatial_neighbors(adata_sub, library_key=f'{subregion}_subregion', coord_type='generic', radius=radius)
         sq.gr.nhood_enrichment(adata_sub, cluster_key=population_obs, n_perms=n_permutations)
 
-        results[str(s)] = adata_sub.uns[f'{population_obs}_nhood_enrichment'].copy()
+        #results[str(s)] = adata_sub.uns[f'{population_obs}_nhood_enrichment'].copy()
 
         pops = pd.Categorical(adata_sub.obs[population_obs].cat.categories)
 
