@@ -17,10 +17,13 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 import seaborn as sb
+import scipy as sp
 from matplotlib import cm, colors, rcParams
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, Normalize
 import sc3s
+from statsmodels.stats.multitest import multipletests
+from IPython.display import display, HTML
 
 # Local Application Imports
 from .utils import adlog
@@ -353,7 +356,98 @@ def population_summary(
             display_tables=display_tables
         )
         plt.show()
-                       
+
+def grouped_graph(adata_plotting, 
+                  group_by_obs, 
+                  x_axis, 
+                  ROI_id='ROI', 
+                  display_tables=True, 
+                  fig_size=(5,5), 
+                  confidence_interval=68, 
+                  save=False, 
+                  log_scale=True, 
+                  order=False,
+                  scale_factor=False,
+                  crosstab_norm=False):
+    
+    '''
+    TO UDPATE
+    Old function for plotting graphs for populations
+    '''
+
+    # Create cells table    
+    
+    print(x_axis)
+    if not x_axis==ROI_id:
+        cells = pd.crosstab([adata_plotting.obs[group_by_obs], adata_plotting.obs[ROI_id]],adata_plotting.obs[x_axis],normalize=crosstab_norm)
+        cells.columns=cells.columns.astype('str')        
+        cells_long = cells.reset_index().melt(id_vars=[group_by_obs,ROI_id])
+    else:    
+        cells = pd.crosstab(adata_plotting.obs[group_by_obs],adata_plotting.obs[x_axis],normalize=crosstab_norm)
+        cells.columns=cells.columns.astype('str')   
+        cells_long = cells.reset_index().melt(id_vars=group_by_obs)
+
+    grouped_graph.cells = cells  
+    grouped_graph.cellslong = cells_long
+
+    if scale_factor:
+        cells_long['value'] = cells_long['value'] / scale_factor
+    
+    fig, ax = plt.subplots(figsize=fig_size)
+    
+    if order:
+        sb.barplot(data = cells_long, y = "value", x = x_axis, hue = group_by_obs, ci=confidence_interval, order=order, ax=ax)
+    else:
+        sb.barplot(data = cells_long, y = "value", x = x_axis, hue = group_by_obs, ci=confidence_interval, ax=ax)
+
+    ax.set_xticklabels(ax.get_xticklabels(),rotation = 90, fontsize = 10)
+    
+    if scale_factor:
+        ax.set_ylabel('Cells/mm2')
+    else:
+        ax.set_ylabel('Cells')        
+                  
+    if log_scale:
+        ax.set_yscale("log")
+        
+    ax.set_xlabel(x_axis)
+    ax.legend(bbox_to_anchor=(1.01, 1))
+
+    #fig = ax.get_figure()
+
+    if save:
+        fig.savefig(save, bbox_inches='tight',dpi=200)
+
+    col_names = adata_plotting.obs[group_by_obs].unique().tolist()
+
+    data_frame = cells.reset_index()
+
+    celltype = []
+    ttest = []
+    mw = []
+
+    for i in cells.columns.tolist():
+        celltype.append(i)
+        ttest.append(sp.stats.ttest_ind(cells.loc[col_names[0]][i], cells.loc[col_names[1]][i]).pvalue) 
+        mw.append(sp.stats.mannwhitneyu(cells.loc[col_names[0]][i], cells.loc[col_names[1]][i]).pvalue)
+
+    stats = pd.DataFrame(list(zip(celltype,ttest,mw)),columns = ['Cell Type','T test','Mann-Whitney'])
+
+    import statsmodels as sm
+
+    #Multiple comparissons correction
+    for stat_column in ['T test','Mann-Whitney']:
+        corrected_stats = multipletests(stats[stat_column],alpha=0.05,method='holm-sidak')
+        stats[(stat_column+' Reject null?')]=corrected_stats[0]
+        stats[(stat_column+' Corrected Pval')]=corrected_stats[1]
+
+    if display_tables:
+        print('Raw data:')
+        display(HTML(cells.to_html()))
+
+        print('Statistics:')
+        display(HTML(stats.to_html()))
+                               
             
 def prune_leiden_using_dendrogram(
     adata: ad.AnnData,

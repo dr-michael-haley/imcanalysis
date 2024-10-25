@@ -73,7 +73,8 @@ def adlog(
     module_name: Optional[str] = None,
     module_version: Optional[str] = None,
     save: bool = False,
-    temp_file: str = 'adata_temp.h5ad'
+    temp_file: str = 'adata_temp.h5ad',
+    log_path: str = 'adata_logging.csv'
 ) -> None:
     """
     This function saves a log in the AnnData object.
@@ -94,6 +95,8 @@ def adlog(
         If True, saves a temporary file (default is False).
     temp_file : str, optional
         Path for the temporary file (default is 'adata_temp.h5ad').
+    log_path : str, optional
+        Path to the log file.
     """
     try:
         login_user = getlogin()
@@ -107,9 +110,13 @@ def adlog(
     try:
         log = adata.uns['logging']
     except KeyError:
-        print('No log in AnnData, creating new log')
-        log = pd.DataFrame(columns=['Date', 'Time', 'Entry', 'Module', 'Version', 'User'])
-        adata.uns.update({'logging': log})
+        if not os.path.isfile(log_path):
+            print('No log in AnnData or saved locally, creating new log')
+            log = pd.DataFrame(columns=['Date', 'Time', 'Entry', 'Module', 'Version', 'User'])
+            adata.uns.update({'logging': log})
+        else:
+            log = pd.read_csv(log_path, index_col=0)
+            adata.uns.update({'logging': log})
 
     if isinstance(module, ModuleType):
         module_name = module.__name__
@@ -126,8 +133,10 @@ def adlog(
 
     if save:
         print(f'Saving temporary file: {temp_file}')
-        adata.write(temp_file)
         log.loc[len(log.index)] = [date_now, time_now, f'Saved AnnData backup: {temp_file}', None, None, login_user]
+        log.to_csv(log_path)
+        del adata.uns['logging'] # Saving dataframes in .uns is unreliable, depending on h5py version
+        adata.write(temp_file)
 
 
 def subset(

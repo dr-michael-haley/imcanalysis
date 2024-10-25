@@ -94,7 +94,9 @@ def cellpose_setup(
     regionsprops_metrics: list = ['area'],
     dictionary: str = 'dictionary.csv',
     normalisation: list = ["q0.999"],
-    store_package_versions: bool = True
+    store_package_versions: bool = True,
+    image_details_path: str = 'anndata_image_details.csv',
+    anndata_save_path: str = 'adata_freshimport.h5ad'
 ) -> ad.AnnData:
     """
     Takes a Steinpose directory structure and returns an AnnData object.
@@ -120,7 +122,11 @@ def cellpose_setup(
     normalisation : list
         List of normalisation methods.
     store_package_versions : bool
-        Whether to store the package versions.
+        Whether to store the package versions as a .csv.
+    image_details_path : str
+        Path to where the image details will be saved.
+    anndata_save_path : str
+        Path to where the AnnData object will be saved.
 
     Returns
     -------
@@ -225,16 +231,18 @@ def cellpose_setup(
         except Exception as e:
             print(f"\nAn error occurred loading the dictionary file: {e}")
         
-    print('\nExtra image level information stored in adata.uns.sample.\nThis includes size of images and other useful information.')
-    adata.uns['sample'] = images_df.copy()
+    print(f'\nExtra image level information saved to {image_details_path}.\nThis includes size of images and other useful information.')
+    images_df.to_csv(image_details_path)
     
     if store_package_versions:
-        adata.uns['packages'] = pip_freeze_to_dataframe()
+        pip_df = pip_freeze_to_dataframe()
+        pip_df.to_csv('steinpose_import_package_versions.csv')
     
     print('\nSuccessfully created AnnData object!')
     print(adata)
     
-    adlog(adata, 'AnnData object created', ad)
+    adlog(adata, f'AnnData object created', ad, save=True, temp_file=anndata_save_path)
+    print(f'\nAnnData object created and saved to {anndata_save_path}')
     
     return adata
 
