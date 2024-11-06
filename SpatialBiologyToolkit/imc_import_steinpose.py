@@ -153,7 +153,7 @@ def cellpose_setup(
     ):
         files = [x for x in os.listdir(folder) if extension in x]
         rois_from_filenames = [x.replace(extension, '') for x in files]
-        assert ROI_list == rois_from_filenames, f'Files in folder {folder} do not match with the images. Check your data structure'
+        assert sorted(ROI_list) == sorted(rois_from_filenames), f'Files in folder {folder} do not match with the images. Check your data structure'
         print(f'Files in {folder} match with images.csv file')
 
     print('All files matched successfully')
