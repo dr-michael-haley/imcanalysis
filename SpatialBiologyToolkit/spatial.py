@@ -674,8 +674,11 @@ def calculate_overlap_matrix(label_image1: np.ndarray,
 def lisa_clustering_image(image1: np.ndarray, image2: np.ndarray, scale_factor: float = 1.0) -> np.ndarray:
     """
     Perform LISA clustering on two images where each pixel represents a different feature,
-    and returns a binary clustering result in the shape of the original images. Optionally,
+    and return a binary clustering result in the shape of the original images. Optionally,
     images can be downscaled to reduce computation and memory requirements.
+
+    This updated version applies the spatial weights matrix to both features when computing
+    the local indicators, providing a more accurate assessment of local spatial autocorrelation.
 
     Parameters
     ----------
@@ -692,51 +695,93 @@ def lisa_clustering_image(image1: np.ndarray, image2: np.ndarray, scale_factor: 
     np.ndarray
         2D numpy array of clustering results where:
         
-        - 1 represents 'High' clustering status, indicating both conditions are met:
-            * the standardized value of the feature at the location is positive
-            * the weighted sum of the neighboring values for the second feature is positive
-        - 0 represents 'Low' clustering status, indicating either or both conditions are not met.
+        - 1 represents 'High' clustering status, indicating all the following conditions are met:
+            * The standardized value of the first feature at the location is positive.
+            * The weighted sum of the neighboring standardized values for the first feature is positive.
+            * The standardized value of the second feature at the location is positive.
+            * The weighted sum of the neighboring standardized values for the second feature is positive.
+        - 0 represents 'Low' clustering status, indicating that one or more of the conditions are not met.
 
     Raises
     ------
     ValueError
         If the input images do not have the same dimensions.
+        If the standard deviation of a feature is zero, preventing standardization.
+
+    Notes
+    -----
+    This function performs a LISA (Local Indicators of Spatial Association) analysis by
+    considering both the value at each location and its spatial lag (weighted average of neighboring values)
+    for both features. The spatial weights are calculated using inverse distance weighting.
+
+    The function identifies areas where both features exhibit high values locally and in their
+    neighborhood, which can be interpreted as 'hot spots' of spatial association between the features.
     """
     if image1.shape != image2.shape:
         raise ValueError("Both images must have the same dimensions.")
 
     # Downscale images if scale_factor is different from 1.0
     if scale_factor != 1.0:
-        image1 = rescale(image1, scale_factor, anti_aliasing=False)
-        image2 = rescale(image2, scale_factor, anti_aliasing=False)
+        image1 = rescale(image1, scale_factor, anti_aliasing=False, preserve_range=True)
+        image2 = rescale(image2, scale_factor, anti_aliasing=False, preserve_range=True)
     
+    # Ensure images are 2D arrays
+    if image1.ndim != 2 or image2.ndim != 2:
+        raise ValueError("Input images must be 2D arrays.")
+    
+    nrows, ncols = image1.shape
+
+    # Flatten images and prepare coordinate arrays
     feature1 = image1.flatten()
     feature2 = image2.flatten()
-    nrows, ncols = image1.shape
-    row, col = np.indices((nrows, ncols))
-    row = row.flatten()
-    col = col.flatten()
+    row_indices, col_indices = np.indices((nrows, ncols))
+    row_indices = row_indices.flatten()
+    col_indices = col_indices.flatten()
 
+    # Set negative values to zero
     feature1[feature1 < 0] = 0
     feature2[feature2 < 0] = 0
 
-    coord_matrix = np.column_stack((row, col))
-    Wij = distance.squareform(distance.pdist(coord_matrix))
-    Wij = 1 / Wij
-    np.fill_diagonal(Wij, 0)
-    Wij /= np.sum(Wij)
+    # Construct spatial weights matrix based on inverse distance
+    coords = np.column_stack((row_indices, col_indices))
+    distances = distance.pdist(coords)
+    distances[distances == 0] = np.finfo(float).eps  # Replace zero distances to avoid division by zero
+    Wij = distance.squareform(1 / distances)
     np.fill_diagonal(Wij, 0)
 
-    x = (feature1 - np.mean(feature1)) / (np.std(feature1) * np.sqrt((len(feature1) - 1) / len(feature1)))
-    y = (feature2 - np.mean(feature2)) / (np.std(feature2) * np.sqrt((len(feature2) - 1) / len(feature2)))
-    x[np.isnan(x)] = 0
-    y[np.isnan(y)] = 0
+    # Normalize weights
+    Wij /= Wij.sum(axis=1, keepdims=True)
 
+    # Standardize features
+    x_mean = np.mean(feature1)
+    y_mean = np.mean(feature2)
+    x_std = np.std(feature1)
+    y_std = np.std(feature2)
+    if x_std == 0 or y_std == 0:
+        raise ValueError("Standard deviation of a feature is zero; cannot standardize features.")
+    x = (feature1 - x_mean) / x_std
+    y = (feature2 - y_mean) / y_std
+
+    # Handle NaN values
+    x = np.nan_to_num(x)
+    y = np.nan_to_num(y)
+
+    # Compute spatially weighted features (spatial lags)
+    x_weighted = Wij.dot(x)
+    y_weighted = Wij.dot(y)
+
+    # Determine positive standardized values and positive spatial lags
     x_positive = x > 0
-    y_weighted_sum_positive = np.dot(Wij, y) > 0
+    x_weighted_positive = x_weighted > 0
+    y_positive = y > 0
+    y_weighted_positive = y_weighted > 0
 
-    lisa_clust = np.array([1 if xp and yp else 0 for xp, yp in zip(x_positive, y_weighted_sum_positive)])
-    
+    # Clustering logic: 'High' clustering if all conditions are met
+    lisa_clust = np.array([
+        1 if xp and xwp and yp and ywp else 0
+        for xp, xwp, yp, ywp in zip(x_positive, x_weighted_positive, y_positive, y_weighted_positive)
+    ])
+
     return lisa_clust.reshape(nrows, ncols)
 
 

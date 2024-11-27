@@ -38,3 +38,4 @@ dependencies:
         - ehrapy
         - tensorflow
         - bbknn
+        - readimc

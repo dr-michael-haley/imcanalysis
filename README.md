@@ -33,8 +33,10 @@ All the tools I have developed are available in this package, details for instal
 ### Tutorials
 Example tutorials can be found in the Tutorials folder. They should all work in an environment where SpatialBiologyToolkit package has been installed.
 
-## IMC_Denoise
-This is a Jupyter notebook that implements the IMC Denoise approach (https://github.com/PENGLU-WashU/IMC_Denoise/) to marry up with the Bodenmiller IMC pipeline.
+## IMC_Denoise - UPDATED Nov 2024
+~This is a Jupyter notebook that implements the IMC Denoise approach (https://github.com/PENGLU-WashU/IMC_Denoise/) to marry up with the Bodenmiller IMC pipeline~
+
+This approach to denoising has been superceded by running denoising on the CSF, see `Tutorials/IMC v3`
 
 > [!CAUTION]  
 > This code requires updating, as it currently uses an old version of IMC_Denoise, which has since been updated.

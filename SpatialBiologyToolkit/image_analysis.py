@@ -5,6 +5,7 @@ import math
 from xml.etree.ElementTree import Element, SubElement, tostring
 from xml.dom import minidom
 import logging
+import warnings
 
 # Third-party imports
 import anndata as ad
@@ -21,6 +22,9 @@ from skimage.util import map_array
 from skimage.measure import find_contours
 from skimage.transform import resize
 import matplotlib.colors as mcolors
+import tifffile
+
+from readimc import MCDFile
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
