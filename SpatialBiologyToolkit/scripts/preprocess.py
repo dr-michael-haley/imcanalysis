@@ -1,58 +1,30 @@
-"""
-Module for image processing tasks such as extracting TIFFs from MCD files, unstacking TIFFs,
-QC heatmaps, reassembling stacks, and more.
-
-This module provides functions to manipulate images, including:
-- Extracting TIFF files from MCD files.
-- Unpacking TIFF stacks into individual channel images.
-- Performing quality control heatmaps and PCA.
-- Combining images.
-- Reassembling TIFF stacks.
-
-Dependencies:
-- tifffile
-- pandas
-- seaborn
-- matplotlib
-- numpy
-- scipy
-- tqdm
-- distutils
-- readimc
-
-Functions:
-- _get_actual_num_acquisition
-- read_mcd
-- export_to_tiffstack
-- export_mcd_folder
-- unstack_tiffs
-- qc_heatmap
-- combine_images
-- qc_check_side_by_side
-- reassemble_stacks
-"""
-
+# Standard library imports
 import os
 import re
 import warnings
-import distutils.dir_util
-from glob import glob
-from os.path import join, isfile
-from os import listdir
-from pathlib import Path
-from shutil import copytree
 import json
+import hashlib
+from pathlib import Path
+from shutil import copytree, rmtree
+import logging
 
+# Third-party library imports
 import numpy as np
 import pandas as pd
-import seaborn as sb
-import tifffile as tp
+import seaborn as sns
+import tifffile as tiff
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from readimc import MCDFile
 from scipy.stats import zscore
 from tqdm import tqdm
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 
+# Import shared utilities and configurations
+from .config_and_utils import *
+
+################ Functions
 
 def load_single_img(filename):
     """
@@ -74,13 +46,13 @@ def load_single_img(filename):
         If the file does not end with .tiff or .tif.
         If the loaded image is not 2D.
     """
-    filename = str(filename)
-    if filename.endswith('.tiff') or filename.endswith('.tif'):
-        img_in = tp.imread(filename).astype('float32')
+    filename = Path(filename)
+    if filename.suffix.lower() in ['.tiff', '.tif']:
+        img_in = tiff.imread(filename).astype('float32')
     else:
-        raise ValueError('Raw file should end with .tiff or .tif!')
+        raise ValueError(f'File {filename} should end with .tiff or .tif!')
     if img_in.ndim != 2:
-        raise ValueError('Single image should be 2D!')
+        raise ValueError(f'Image {filename} should be 2D!')
     return img_in
 
 
@@ -91,7 +63,7 @@ def load_imgs_from_directory(load_directory, channel_name, quiet=False):
     Parameters
     ----------
     load_directory : str or Path
-        Directory containing the images.
+        Directory containing the images, with subdirectories for each ROI.
     channel_name : str
         Name of the channel to load images for.
     quiet : bool, optional
@@ -103,8 +75,8 @@ def load_imgs_from_directory(load_directory, channel_name, quiet=False):
         List of loaded images.
     img_file_list : list of str
         List of image file names.
-    img_folders : list of str
-        List of image folder paths.
+    img_folders : list of Path
+        List of image folder paths (ROIs).
 
     Raises
     ------
@@ -112,36 +84,40 @@ def load_imgs_from_directory(load_directory, channel_name, quiet=False):
         If no images are found for the specified channel.
     """
     img_collect = []
-    img_folders = glob(join(str(load_directory), "*", ""))
     img_file_list = []
+    img_folders = []
+
+    load_directory = Path(load_directory)
 
     if not quiet:
-        print('Loading image data from directories...\n')
+        logging.info('Loading image data from directories...\n')
 
-    for sub_img_folder in img_folders:
-        img_list = [
-            f for f in listdir(sub_img_folder)
-            if isfile(join(sub_img_folder, f)) and (f.endswith(".tiff") or f.endswith(".tif"))
-        ]
-        for img_file in img_list:
-            if channel_name.lower() in img_file.lower():
-                img_read = load_single_img(join(sub_img_folder, img_file))
-
-                if not quiet:
-                    print(join(sub_img_folder, img_file))
-
-                img_file_list.append(img_file)
-                img_collect.append(img_read)
-                break
+    for sub_img_folder in load_directory.iterdir():
+        if sub_img_folder.is_dir():
+            found_image = False
+            for img_file in sub_img_folder.iterdir():
+                if img_file.is_file() and img_file.suffix.lower() in ['.tiff', '.tif']:
+                    if channel_name.lower() in img_file.name.lower():
+                        img_read = load_single_img(img_file)
+                        if not quiet:
+                            logging.info(f"Loaded image: {img_file}")
+                        img_file_list.append(img_file.name)
+                        img_collect.append(img_read)
+                        img_folders.append(sub_img_folder)
+                        found_image = True
+                        break  # Break after finding the first matching image
+            if not found_image and not quiet:
+                logging.info(f"No image found for channel '{channel_name}' in folder '{sub_img_folder}'.")
 
     if not quiet:
-        print('\nImage data loading completed!')
+        logging.info('\nImage data loading completed!')
 
     if not img_collect:
         raise ValueError(f'No images found for channel "{channel_name}". Please check the channel name!')
 
     return img_collect, img_file_list, img_folders
-    
+
+
 def _get_actual_num_acquisition(acquisitions=None, path=None):
     """
     Returns the number of acquisitions in an MCD file where the number of channels is larger than zero.
@@ -159,6 +135,11 @@ def _get_actual_num_acquisition(acquisitions=None, path=None):
     -------
     int
         The number of valid acquisitions in the MCD file.
+
+    Raises
+    ------
+    ValueError
+        If neither acquisitions nor path are provided.
     """
     if acquisitions is None:
         if path is not None:
@@ -218,6 +199,12 @@ def read_mcd(
         The channel names from the MCD file.
     meta : pandas.DataFrame
         Metadata (e.g., name and size) for the acquisition.
+
+    Raises
+    ------
+    ValueError
+        If the acquisition_id is invalid.
+        If the file is not an MCD file.
     """
     if isinstance(planes_to_load, int):
         planes_to_load = [planes_to_load]
@@ -234,7 +221,7 @@ def read_mcd(
             )
             if acquisition_id >= num_acquisitions:
                 raise ValueError(
-                    f"acquisition_id {acquisition_id} is larger than the number of acquisitions {num_acquisitions}. Probably missing ROI."
+                    f"acquisition_id {acquisition_id} is larger than the number of acquisitions {num_acquisitions}. Possibly missing acquisition."
                 )
             else:
                 # Get the specified acquisition
@@ -259,12 +246,12 @@ def read_mcd(
     else:
         raise ValueError("File is not an MCD file.")
 
-    # Fill empty target names with metal names or 'unlabelled'
+    # Fill empty target names with metal names or 'unlabeled'
     unlabel_count = 1
     for i, n in enumerate(names):
         if n == "":
             if channels[i] == "":
-                names[i] = f"unlabelled_{unlabel_count}"
+                names[i] = f"unlabeled_{unlabel_count}"
                 unlabel_count += 1
             else:
                 if fill_empty_metals:
@@ -289,9 +276,10 @@ def export_to_tiffstack(
     export_meta=True,
     export_errors=True,
     start_at=None,
+    minimum_dimension=200,
 ):
     """
-    Converts an MCD file to TIFF file stacks.
+    Converts an MCD file to TIFF file stacks and metadata.
 
     Parameters
     ----------
@@ -307,6 +295,8 @@ def export_to_tiffstack(
         If True, exports the errors file if any errors are encountered. Defaults to True.
     start_at : int, optional
         Acquisition index to start at. If None, starts at 0. Defaults to None.
+    minimum_dimension : int, optional
+        Only extract ROIs greater than the specified size in height and width. Defaults to 200.
 
     Returns
     -------
@@ -339,22 +329,29 @@ def export_to_tiffstack(
             # Read data for the acquisition
             data, channels, _, names, meta = read_mcd(path, acquisition_id=i)
 
-            # Save image stack using tifffile
-            tiff_filename = export_dir / f"{path.stem}_acq_{i}.tiff"
-            tp.imwrite(
-                tiff_filename, data, photometric="minisblack", metadata={"axes": "CYX"}
-            )
+            if (meta["height_um"][0] > minimum_dimension) and (meta["width_um"][0] > minimum_dimension):
 
-            # Add metadata to list
-            meta_list.append(meta.copy())
+                # Save image stack using tifffile
+                tiff_filename = export_dir / f"{path.stem}_acq_{i}.tiff"
+                tiff.imwrite(
+                    tiff_filename, data, photometric="minisblack", metadata={"axes": "CYX"}
+                )
 
-            # Export panel file
-            if export_panel:
-                panel = pd.DataFrame(
-                    {"channel_name": channels, "channel_label": names}
-                ).set_index("channel_name", drop=True)
-                panel_filename = export_dir / f"{path.stem}_acq_{i}.csv"
-                panel.to_csv(panel_filename)
+                # Add metadata to list
+                meta_list.append(meta.copy())
+
+                # Export panel file
+                if export_panel:
+                    panel = pd.DataFrame(
+                        {"channel_name": channels, "channel_label": names}
+                    ).set_index("channel_name", drop=True)
+                    panel_filename = export_dir / f"{path.stem}_acq_{i}.csv"
+                    panel.to_csv(panel_filename)
+            else:
+                logging.info(f'ROI was too small, skipping: {meta["description"][0]}')
+                error_acq.append(i)
+                error_roiname.append(str(meta['description'][0]))
+                error_list.append('ROI skipped as too small')
 
         except Exception as e:
             # Catch errors
@@ -364,7 +361,7 @@ def export_to_tiffstack(
             else:
                 error_roiname.append('')
             error_list.append(str(e))
-            print(f"Error in acquisition number {i}: {e}")
+            logging.error(f"Error in acquisition number {i}: {e}")
 
     # Save metadata
     if export_meta and meta_list:
@@ -380,11 +377,114 @@ def export_to_tiffstack(
         )
         errors_filename = export_dir / f"{path.stem}_errors.csv"
         errors_df.to_csv(errors_filename)
-        print(f"{len(error_acq)} errors encountered")
+        logging.error(f"{len(error_acq)} errors encountered when unpacking {str(path.stem)}\n")
+
+
+def _load_panel_files(directory):
+    """
+    Load all .csv files from a directory (including subdirectories)
+    that do not have 'error' or 'meta' in their filenames.
+
+    Parameters
+    ----------
+    directory : str or Path
+        The directory to search for .csv files.
+
+    Returns
+    -------
+    list of Path
+        List of paths to the .csv files.
+    """
+    directory = Path(directory)
+    csv_files = [f for f in directory.rglob('*.csv') if 'error' not in f.name.lower() and 'meta' not in f.name.lower()]
+    return csv_files
+
+
+def _compare_dataframes(dataframes):
+    """
+    Compare all dataframes and identify unique ones.
+
+    Parameters
+    ----------
+    dataframes : list of pandas.DataFrame
+        List of DataFrames to compare.
+
+    Returns
+    -------
+    dict
+        Dictionary of unique dataframes with their hash values as keys.
+    """
+    unique_dataframes = {}
+    for df in dataframes:
+        hash_val = hashlib.sha256(pd.util.hash_pandas_object(df, index=True).values).hexdigest()
+        if hash_val not in unique_dataframes:
+            unique_dataframes[hash_val] = df
+    return unique_dataframes
+
+
+def _compare_lists_by_characters(list1, list2):
+    """
+    Compare two lists of strings to check pairwise if the strings in each position
+    use the exact same characters.
+
+    Parameters
+    ----------
+    list1 : list of str
+        The first list of strings.
+    list2 : list of str
+        The second list of strings.
+
+    Returns
+    -------
+    list of bool
+        A list indicating for each pair whether the strings use the same characters.
+    """
+    def compare_strings(s1, s2):
+        if s1 is None or s2 is None:  # Handle None values
+            return False
+        return sorted(str(s1)) == sorted(str(s2))
+
+    return [compare_strings(s1, s2) for s1, s2 in zip(list1, list2)]
+
+
+def _panel_identify_used_channels(df, col_to_add):
+    """
+    Adds a boolean column to a DataFrame indicating whether each channel contains data.
+
+    A channel is considered to contain data if:
+    - The 'channel_label' is not NaN.
+    - The 'channel_label' is not simply a rearrangement of the characters in 'channel_name'.
+
+    Parameters
+    ----------
+    df : pandas.DataFrame
+        DataFrame containing at least 'channel_name' and 'channel_label' columns.
+    col_to_add : str
+        Name of the new column to add to the DataFrame.
+
+    Returns
+    -------
+    pandas.DataFrame
+        The DataFrame with the new column added.
+    """
+    # By default, any channel with a label should have data. Blank labels should indicate no data.
+    df[col_to_add] = df['channel_label'].notna()
+
+    # Set to False any channel where the channel label and name are identical (even if rearranged), indicating a blank channel
+    same_characters = _compare_lists_by_characters(df['channel_name'], df['channel_label'])
+    df.loc[same_characters, col_to_add] = False
+
+    return df
 
 
 def export_mcd_folder(
-    path='MCD_files', export_path='tiff_stacks', export_panel=True, export_meta=True, export_errors=True
+    path='MCD_files',
+    export_path='tiff_stacks',
+    merged_metadata_output_folder='metadata',
+    export_panel=True,
+    export_meta=True,
+    export_errors=True,
+    minimum_dimension=200,
 ):
     """
     Extracts every MCD file in a given directory into TIFF stacks, panel files, and a metadata table.
@@ -395,12 +495,16 @@ def export_mcd_folder(
         Path to the directory containing MCD files. Defaults to 'MCD_files'.
     export_path : str or Path
         Path to the folder where to export the TIFF files. Defaults to 'tiff_stacks'.
+    merged_metadata_output_folder : str or Path, optional
+        Folder where merged metadata and panel files will be saved. Defaults to 'metadata'.
     export_panel : bool, optional
         If True, exports the panel files. Defaults to True.
     export_meta : bool, optional
         If True, exports the metadata files. Defaults to True.
     export_errors : bool, optional
         If True, exports the errors files if any errors are encountered. Defaults to True.
+    minimum_dimension : int, optional
+        Only extract ROIs greater than a specified size in height and width. Defaults to 200.
 
     Returns
     -------
@@ -410,27 +514,117 @@ def export_mcd_folder(
 
     # Get a list of paths to MCD files in the directory
     mcd_paths = list(path.glob("*.mcd"))
-    
+
     # Check export path exists
     export_path = Path(export_path)
     export_path.mkdir(parents=True, exist_ok=True)
 
+    if merged_metadata_output_folder:
+        merged_metadata_output_folder = Path(merged_metadata_output_folder)
+        merged_metadata_output_folder.mkdir(parents=True, exist_ok=True)
+
     for mcd_file in mcd_paths:
-        print(f"Exporting {mcd_file.stem}...")
+        logging.info(f"Exporting {mcd_file.stem}...")
         export_to_tiffstack(
             path=mcd_file,
             export_path=export_path,
             export_panel=export_panel,
             export_meta=export_meta,
             export_errors=export_errors,
+            minimum_dimension=minimum_dimension
         )
+
+    # Merge metadata
+    if export_meta:
+        # Concatenate all the metadata from the MCD files
+        meta_data = []
+        for x in export_path.iterdir():
+            if x.is_dir():
+                meta_file = x / f"{x.name}_meta.csv"
+                if meta_file.exists():
+                    m = pd.read_csv(meta_file)
+                    m['mcd'] = x.name
+                    meta_data.append(m.copy())
+                else:
+                    warnings.warn(f"Meta file {meta_file} not found.")
+        if meta_data:
+            meta_data = pd.concat(meta_data)
+            # Column which will later be used to exclude ROIs, e.g., if they are tests or had errors
+            meta_data['import_data'] = True
+
+            # Add data folder columns
+            meta_data['unstacked_data_folder'] = meta_data['mcd'] + "_acq_" + meta_data['id'].astype(str)
+            meta_data['tiff_stacks'] = meta_data['mcd'] + "/" + meta_data['mcd'] + "_acq_" + meta_data['id'].astype(str) + ".tiff"
+
+            logging.info(f'Merged metadata for MCDs and ROIs saved to metadata.csv in {merged_metadata_output_folder} output folder')
+            meta_data.to_csv(merged_metadata_output_folder / 'metadata.csv', index=None)
+
+            # Create a blank dictionary if one doesn't already exist
+            dictionary_file_path = merged_metadata_output_folder / 'dictionary.csv'
+            if not dictionary_file_path.exists():
+                logging.info('No dictionary file found, creating a blank file.')
+                dictionary_file = meta_data.loc[:, ['unstacked_data_folder', 'description']].copy()
+                dictionary_file.set_index('unstacked_data_folder', drop=True, inplace=True)
+                dictionary_file.index.rename('ROI_raw', inplace=True)
+                dictionary_file['Example_1'] = 'Example_info'
+                dictionary_file['Example_2'] = 1
+                dictionary_file['Example_3'] = True
+                dictionary_file.to_csv(dictionary_file_path)
+            else:
+                logging.info('Existing dictionary file found, not modifying.')
+        else:
+            logging.info('No metadata found to merge.')
+
+    # Merge panels
+    if export_panel:
+        # Load all panel files as dataframes, then get the unique ones
+        panelfiles = _load_panel_files(export_path)
+        panel_dfs = [pd.read_csv(file) for file in panelfiles]
+        unique_panels = _compare_dataframes(panel_dfs)
+
+        # Add extra useful columns to the panel file(s) for use later
+        for p in unique_panels.values():
+            p = _panel_identify_used_channels(p, 'use_denoised')
+
+            # Clean labels
+            p['channel_label'] = [re.sub(r'\W+', '', str(x)) for x in p['channel_label']]
+
+            # By default, don't use any raw
+            p['use_raw'] = False
+
+        # Save the panel(s)
+        if len(unique_panels) == 1:
+            logging.info("All panels are identical. Saving as 'panel.csv'.")
+            unique_dataframe = next(iter(unique_panels.values()))
+            unique_dataframe.to_csv(merged_metadata_output_folder / 'panel.csv', index=False)
+        else:
+            logging.warning(f"WARNING: Found {len(unique_panels)} unique panels. Saving them as 'panel_1.csv', 'panel_2.csv', etc.")
+            for i, (hash_val, df) in enumerate(unique_panels.items(), start=1):
+                df.to_csv(merged_metadata_output_folder / f'panel_{i}.csv', index=False)
+
+    # Merge all errors
+    if export_errors:
+        error_data = []
+        for x in export_path.iterdir():
+            if x.is_dir():
+                error_file = x / f"{x.name}_errors.csv"
+                if error_file.exists():
+                    m = pd.read_csv(error_file)
+                    m['mcd'] = x.name
+                    error_data.append(m.copy())
+        if error_data:
+            error_data = pd.concat(error_data)
+            logging.error(f'Merged list of import errors for MCDs and ROIs saved to errors.csv in {merged_metadata_output_folder} output folder')
+            error_data.to_csv(merged_metadata_output_folder / 'errors.csv', index=None)
 
 
 def unstack_tiffs(
     input_folder='tiff_stacks',
     unstacked_output_folder='tiffs',
     use_panel_files=True,
-    use_metadata_file=True
+    use_metadata_file=True,
+    save_image_data=False,
+    return_dataframes=False,
 ):
     """
     Unpack TIFF stacks into individual channel images with sensible names.
@@ -444,15 +638,22 @@ def unstack_tiffs(
     use_panel_files : bool, optional
         If True, use panel files created for each ROI. Defaults to True.
     use_metadata_file : bool, optional
-        If True, adds metadata for ROIs extracted from MCD files.
+        If True, adds metadata for ROIs extracted from MCD files. Defaults to True.
+    save_image_data : bool, optional
+        If True, saves image data to CSV. Defaults to False.
+    return_dataframes : bool, optional
+        If True, returns DataFrames. Defaults to False.
+
     Returns
     -------
-    channel_df : pandas.DataFrame
+    channel_df : pandas.DataFrame or None
         DataFrame containing channel information.
-    all_data_channels : list of str
+    channels_list : list of str or None
         List of all data channel labels.
-    image_data : pandas.DataFrame
+    image_data : pandas.DataFrame or None
         DataFrame containing information for all images.
+    meta_data : pandas.DataFrame or None
+        DataFrame containing metadata.
     """
     # Initialize variables to collect data
     image_data_list = []
@@ -466,10 +667,10 @@ def unstack_tiffs(
     # Get a list of all the .tiff files in the input directory
     tiff_files = list(input_folder.rglob('*.tiff'))
 
-    print('Unpacking ROIs...')
+    logging.info('Unpacking ROIs...')
     for roi_count, tiff_file in enumerate(tqdm(tiff_files)):
         # Read the image stack
-        image_stack = tp.imread(str(tiff_file))
+        image_stack = tiff.imread(str(tiff_file))
 
         # Create output directory for the ROI
         tiff_folder_name = tiff_file.stem
@@ -484,14 +685,17 @@ def unstack_tiffs(
 
             if panel_file_path.exists():
                 panel_df = pd.read_csv(panel_file_path, low_memory=False)
-                
-                #Remove awkward characters from channel names
+
+                # Remove awkward characters from channel names
                 panel_df['channel_label'] = [re.sub(r'\W+', '', str(x)) for x in panel_df['channel_label']]
-                
+
                 panel_df['fullstack_path'] = str(tiff_file)
                 panel_df['panel_filename'] = panel_filename
                 panel_df['folder'] = tiff_folder_name
                 panel_df['filename'] = ''
+
+                # Identify non-blank channels
+                panel_df = _panel_identify_used_channels(panel_df, 'data_channel')
 
                 # Ensure the panel_df has the same number of entries as the number of channels
                 if len(panel_df) != image_stack.shape[0]:
@@ -514,28 +718,32 @@ def unstack_tiffs(
                     f"{channel_name}_{channel_label}.tiff"
                 )
                 save_path = output_dir / filename
-                tp.imwrite(save_path, image_stack[channel_count])
+                tiff.imwrite(save_path, image_stack[channel_count])
                 # Add filename to panel_df
                 panel_df.at[channel_count, 'filename'] = filename
+
             else:
                 file_name = f"{str(channel_count).zfill(2)}_{str(roi_count).zfill(2)}.tiff"
                 save_path = output_dir / file_name
-                tp.imwrite(save_path, image_stack[channel_count])
+                tiff.imwrite(save_path, image_stack[channel_count])
 
+    # Merge metadata
     if use_metadata_file:
-        # Concatenate all the metadatas from the MCD files
-        
+        # Concatenate all the metadata from the MCD files
         meta_data = []
-        
-        for x in os.listdir(input_folder):
-            m = pd.read_csv(join(input_folder, x, x+'_meta.csv'))
-            m['mcd']=str(x)
-            meta_data.append(m.copy())
-
-        meta_data=pd.concat(meta_data)
-        
-        print(f'Metadata for MCD and ROIs saved to meta_data.csv in {unstacked_output_folder} output folder')
-        meta_data.to_csv(join(unstacked_output_folder, 'meta_data.csv'), index=None)
+        for x in input_folder.iterdir():
+            if x.is_dir():
+                meta_file = x / f"{x.name}_meta.csv"
+                if meta_file.exists():
+                    m = pd.read_csv(meta_file)
+                    m['mcd'] = x.name
+                    meta_data.append(m.copy())
+        if meta_data:
+            meta_data = pd.concat(meta_data)
+            logging.info(f'Metadata for MCD and ROIs saved to metadata.csv in {unstacked_output_folder} output folder')
+            meta_data.to_csv(output_folder / 'metadata.csv', index=None)
+        else:
+            meta_data = None
     else:
         meta_data = None
 
@@ -543,32 +751,35 @@ def unstack_tiffs(
         # Concatenate all image data into a single DataFrame
         image_data = pd.concat(image_data_list, ignore_index=True, sort=False)
         # Save image data to CSV
-        image_data.to_csv(join(unstacked_output_folder, 'image_data.csv'), index=False)
+        if save_image_data:
+            image_data.to_csv(output_folder / 'image_data.csv', index=False)
 
         # Create channel DataFrame from unique combinations of 'channel_name' and 'channel_label'
         channel_df = image_data[['channel_name', 'channel_label']].drop_duplicates()
         channel_df['channel'] = channel_df['channel_name'] + "_" + channel_df['channel_label']
-        channel_df.to_csv(join(unstacked_output_folder, 'channels_list.csv'), index=False)
+        channel_df.to_csv(output_folder / 'channels_list.csv', index=False)
 
-        channels_list = channel_df.dropna()['channel'].tolist()
+        # Add a column that indicates used channels
+        channel_df = _panel_identify_used_channels(channel_df, 'contains_data')
+        channels_list = channel_df.loc[channel_df['contains_data'], 'channel'].tolist()
+        empty_channels_list = channel_df.loc[~channel_df['contains_data'], 'channel'].tolist()
 
-        blank_channels = image_data[image_data['channel_label'].isna()]['channel_name'].unique()
-        n_blank = len(blank_channels)
+        n_blank = len(empty_channels_list)
         if n_blank > 0:
-            print(f'The following {n_blank} empty channels were detected:\n')
-            print(blank_channels)
+            logging.info(f'The following {n_blank} empty channels were detected: {str(empty_channels_list)}')
 
         n_channels = len(channels_list)
-        print(f'\nThe following {n_channels} channels were detected:\n')
-        print(channels_list)
+        logging.info(f'The following {n_channels} channels were detected: {str(channels_list)}')
 
     else:
         image_data = None
         channels_list = None
         channel_df = None
 
-    return channel_df, channels_list, image_data, meta_data
-
+    if return_dataframes:
+        return channel_df, channels_list, image_data, meta_data
+    else:
+        return None, None, None, None
 
 
 def qc_heatmap(
@@ -600,9 +811,9 @@ def qc_heatmap(
     normalize : str, optional
         Normalization method ('max' or 'zscore'). Defaults to None.
     figsize : tuple, optional
-        Figure size for the heatmap. Defaults to (20, 10).
+        Figure size for the heatmap. Defaults to (10, 10).
     dpi : int, optional
-        DPI for the saved figures. Defaults to 200.
+        DPI for the saved figures. Defaults to 75.
     save_dir : str or Path, optional
         Directory to save the QC images. Defaults to 'qc_images'.
     do_pca : bool, optional
@@ -616,12 +827,6 @@ def qc_heatmap(
     -------
     None
     """
-    from sklearn.decomposition import PCA
-    from sklearn.preprocessing import StandardScaler
-    import seaborn as sns
-    import matplotlib.pyplot as plt
-    from pathlib import Path
-
     # Validate and prepare the list of channels to process
     if channels is None:
         channels = []
@@ -640,7 +845,7 @@ def qc_heatmap(
     img_std_list = []
     img_quantile_list = []
 
-    print('Extracting data from images...\n')
+    logging.info('Extracting data from images')
 
     # Iterate over each channel
     for channel in tqdm(channels, desc='Processing channels'):
@@ -649,13 +854,13 @@ def qc_heatmap(
             img_collect, img_file_list, img_folders = load_imgs_from_directory(directory, channel, quiet=True)
         except ValueError as e:
             # If no images are found for the channel, skip it
-            print(f"Skipping channel '{channel}': {e}")
+            logging.info(f"Skipping channel '{channel}': {e}")
             continue
 
         # Iterate over each image and its corresponding folder
         for img, img_folder in zip(img_collect, img_folders):
             # Extract the ROI name from the folder path
-            roi_name = Path(img_folder).name
+            roi_name = img_folder.name
 
             # Calculate image statistics
             img_max = np.max(img)
@@ -681,7 +886,7 @@ def qc_heatmap(
         'quantile': img_quantile_list
     })
 
-    print('Plotting results...\n')
+    logging.info('Plotting results')
 
     # Define the metrics to analyze
     metrics = ['max', 'mean', 'std', 'quantile']
@@ -756,7 +961,6 @@ def qc_heatmap(
                 plt.show()
 
 
-
 def combine_images(
     raw_directory="tiffs",
     processed_output_dir="processed",
@@ -782,12 +986,12 @@ def combine_images(
     combined_dir.mkdir(parents=True, exist_ok=True)
 
     # Copy raw images into the combined directory
-    print(f'Copying original files from: {raw_directory}...')
-    distutils.dir_util.copy_tree(str(raw_directory), str(combined_dir))
+    logging.info(f'Copying original files from: {raw_directory}...')
+    copytree(raw_directory, combined_dir, dirs_exist_ok=True)
 
     # Copy processed images over, overwriting duplicates
-    print(f'Adding in processed files from: {processed_output_dir}...')
-    distutils.dir_util.copy_tree(str(processed_output_dir), str(combined_dir))
+    logging.info(f'Adding in processed files from: {processed_output_dir}...')
+    copytree(processed_output_dir, combined_dir, dirs_exist_ok=True)
 
 
 def qc_check_side_by_side(
@@ -811,7 +1015,7 @@ def qc_check_side_by_side(
     colourmap : str, optional
         Colormap to use for images. Defaults to 'jet'.
     dpi : int, optional
-        DPI for the saved figures. Defaults to 200.
+        DPI for the saved figures. Defaults to 75.
     save : bool, optional
         If True, save the generated figures. Defaults to True.
     save_dir : str or Path, optional
@@ -824,7 +1028,6 @@ def qc_check_side_by_side(
         Directory containing processed images. Defaults to 'processed'.
     quiet : bool, optional
         If True, suppress print statements associated with loading images. Defaults to True.
-
 
     Returns
     -------
@@ -869,21 +1072,19 @@ def qc_check_side_by_side(
 
             if save:
                 fig.savefig(save_dir / f'{channel_name}.png')
-                print(f'QC images saved for {channel_name}')
-                
+                logging.info(f'QC images saved for {channel_name}')
+
             if hide_images:
                 plt.close(fig)
 
             completed_channels.append(channel_name)
 
         except Exception as e:
-            print(f"Error in channel {channel_name}: {e}")
+            logging.error(f"Error in channel {channel_name}: {e}")
             error_channels.append(f"{channel_name}: {e}")
 
-    print("\nSuccessfully processed channels:")
-    print(completed_channels)
-    print("\nChannels with errors:")
-    print(error_channels)
+    logging.info(f"Successfully processed channels: {str(completed_channels)}")
+    logging.info(f"Channels with errors: {str(error_channels)}")
 
 
 def reassemble_stacks(
@@ -917,12 +1118,12 @@ def reassemble_stacks(
     output_folder = Path(restacked_output_folder)
     output_folder.mkdir(parents=True, exist_ok=True)
 
-    img_folders = glob(join(str(restack_input_folder), "*", ""))
+    img_folders = [f for f in restack_input_folder.iterdir() if f.is_dir()]
 
-    print('Saving reassembled stacks...')
+    logging.info('Saving reassembled stacks...')
     for folder in tqdm(img_folders):
-        tiff_files = list(Path(folder).rglob('*.tiff'))
-        file_names = [Path(f).stem for f in tiff_files]
+        tiff_files = list(folder.rglob('*.tiff'))
+        file_names = [f.stem for f in tiff_files]
         file_df = pd.DataFrame({'File name': file_names, 'Path': tiff_files}).set_index('File name')
 
         if re_order:
@@ -930,19 +1131,23 @@ def reassemble_stacks(
         elif ascending_sort_names:
             file_df = file_df.sort_index(ascending=True)
 
-        image_stack = [tp.imread(str(file)).astype('float32') for file in file_df['Path']]
+        image_stack = [tiff.imread(str(file)).astype('float32') for file in file_df['Path']]
         image_stack = np.array(image_stack)
 
-        save_path = output_folder / f"{Path(folder).name}.tiff"
-        tp.imsave(save_path, image_stack.astype('float32'))
+        save_path = output_folder / f"{folder.name}.tiff"
+        tiff.imsave(save_path, image_stack.astype('float32'))
 
         if save_panel:
-            panel_path = output_folder / f"{Path(folder).name}.csv"
+            panel_path = output_folder / f"{folder.name}.csv"
             file_df.to_csv(panel_path)
+
+'''
+No longer used!
 
 def create_denoise_config(
     config_filename='denoise_config.json',
     raw_directory='tiffs',
+    metadata_directory='metadata',
     processed_output_dir='processed',
     method='deep_snf',
     channels=None,
@@ -950,13 +1155,15 @@ def create_denoise_config(
 ):
     """
     Create a configuration file for the denoise_batch function.
-    
+
     Parameters
     ----------
     config_filename : str, optional
         Name of the configuration file to create. Defaults to 'denoise_config.json'.
     raw_directory : str, optional
         Path to the directory containing raw images. Defaults to 'tiffs'.
+    metadata_directory : str, optional
+        Path to the directory containing metadata. Defaults to 'metadata'.
     processed_output_dir : str, optional
         Path to the directory where processed images will be saved. Defaults to 'processed'.
     method : str, optional
@@ -965,41 +1172,44 @@ def create_denoise_config(
         List of channel names to process. Defaults to None.
     parameters : dict, optional
         Dictionary of method-specific parameters. Defaults to None.
-    
+
     Returns
     -------
     None
     """
     if channels is None:
         channels = []
-    
+
     if parameters is None:
         # Default parameters for deep_snf method
-        parameters = {
-            "patch_step_size": 60,
-            "train_epochs": 100,
-            "train_initial_lr": 0.001,
-            "train_batch_size": 128,
-            "pixel_mask_percent": 0.2,
-            "val_set_percent": 0.15,
-            "loss_function": "I_divergence",
-            "loss_name": None,
-            "weights_save_directory": None,
-            "is_load_weights": False,
-            "lambda_HF": 3e-6,
-            "n_neighbours": 4,
-            "n_iter": 3,
-            "window_size": 3,
-            "network_size": "normal"
-        }
-        if method == 'dimr':
+        if method == 'deep_snf':
+            parameters = {
+                "patch_step_size": 60,
+                "train_epochs": 100,
+                "train_initial_lr": 0.001,
+                "train_batch_size": 128,
+                "pixel_mask_percent": 0.2,
+                "val_set_percent": 0.15,
+                "loss_function": "I_divergence",
+                "loss_name": None,
+                "weights_save_directory": None,
+                "is_load_weights": False,
+                "lambda_HF": 3e-6,
+                "n_neighbours": 4,
+                "n_iter": 3,
+                "window_size": 3,
+                "network_size": "normal"
+            }
+        elif method == 'dimr':
             # Default parameters for dimr method
             parameters = {
                 "n_neighbours": 4,
                 "n_iter": 3,
                 "window_size": 3
             }
-    
+        else:
+            raise ValueError(f"Unknown method '{method}'.")
+
     config = {
         "raw_directory": raw_directory,
         "processed_output_dir": processed_output_dir,
@@ -1007,9 +1217,54 @@ def create_denoise_config(
         "channels": channels,
         "parameters": parameters
     }
-    
+
     # Write the configuration to a JSON file
     with open(config_filename, 'w') as f:
         json.dump(config, f, indent=4)
-    
-    print(f"Configuration file '{config_filename}' created successfully.")
+
+    logging.info(f"Configuration file '{config_filename}' created successfully.")
+
+    # Read the metadata to check
+    if metadata_directory:
+        metadata_file = Path(metadata_directory) / 'metadata.csv'
+        if metadata_file.exists():
+            metadata_df = pd.read_csv(metadata_file)
+
+            # Identify ROIs which are too small for denoising
+            metadata_df['too_small'] = np.where(
+                (metadata_df['height_um'] < parameters.get("patch_step_size", 60)) |
+                (metadata_df['width_um'] < parameters.get("patch_step_size", 60)),
+                True,
+                False
+            )
+
+            # Remove ROIs that are too small
+            for _, r in metadata_df.iterrows():
+                if r['too_small']:
+                    roi_folder = Path(raw_directory) / r['unstacked_data_folder']
+                    if roi_folder.exists():
+                        rmtree(roi_folder)
+                        logging.warning(f"WARNING: ROI {r['description']} was smaller than patch_step_size ({parameters.get('patch_step_size', 60)}), and so was deleted from {str(raw_directory)}.")
+        else:
+            logging.warning(f"Metadata file '{metadata_file}' not found.")
+'''
+################ Script
+
+if __name__ == "__main__":
+    # Set up logging
+    pipeline_stage = 'Preprocess'
+    config = process_config_with_overrides()
+    setup_logging(config.get('logging', {}), pipeline_stage)
+
+    # Get parameters from config
+    general_config = GeneralConfig(**config.get('general', {}))
+    preprocess_config = PreprocessConfig(**config.get('preprocess', {}))
+
+    # Export .tiff stacks from MCD files
+    export_mcd_folder(path=general_config.mcd_files_folder,
+                      export_path=general_config.tiff_stacks_folder,
+                      minimum_dimension=preprocess_config.minimum_roi_dimensions)
+
+    # Unstack .tiffs into individual channel images
+    unstack_tiffs(input_folder=general_config.tiff_stacks_folder,
+                  unstacked_output_folder=general_config.raw_images_folder)

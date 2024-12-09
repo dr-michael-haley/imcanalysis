@@ -1,3 +1,5 @@
+# denoising.py
+
 """
 Module for denoising images using DeepSNF and DIMR methods.
 
@@ -19,63 +21,32 @@ Functions:
 - gpu_test
 """
 
+# Standard library imports
 import os
-import json
 import logging
-from glob import glob
-from os import listdir
-from os.path import isfile, join
-from pathlib import Path
-
 import numpy as np
+import pandas as pd
+from pathlib import Path
+from shutil import rmtree
+from glob import glob
+
+# Third-party library imports
 import tifffile as tp
 
-from IMC_Denoise.DeepSNiF_utils.DeepSNiF_DataGenerator import DeepSNiF_DataGenerator as DeepSNF_DataGenerator
+# Import shared utilities and configurations
+from .config_and_utils import *
+
+# Import IMC_Denoise methods
+from IMC_Denoise.DeepSNiF_utils.DeepSNiF_DataGenerator import DeepSNiF_DataGenerator
 from IMC_Denoise.IMC_Denoise_main.DIMR import DIMR
-from IMC_Denoise.IMC_Denoise_main.DeepSNiF import DeepSNiF as DeepSNF
+from IMC_Denoise.IMC_Denoise_main.DeepSNiF import DeepSNiF
 
-
-def setup_logging(log_file='denoising.log'):
-    """
-    Set up logging configuration.
-
-    Parameters
-    ----------
-    log_file : str, optional
-        The filename for the log file. Defaults to 'denoising.log'.
-
-    Returns
-    -------
-    None
-    """
-    logging.basicConfig(
-        filename=log_file,
-        filemode='a',
-        level=logging.INFO,
-        format='%(asctime)s [%(levelname)s] %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
-
+# Additional imports
+import tensorflow as tf
 
 def load_single_img(filename):
     """
     Load a single image from a file.
-
-    Parameters
-    ----------
-    filename : str or Path
-        The image file name, must end with .tiff or .tif.
-
-    Returns
-    -------
-    numpy.ndarray
-        Loaded image data as a 2D NumPy array.
-
-    Raises
-    ------
-    ValueError
-        If the file does not end with .tiff or .tif.
-        If the loaded image is not 2D.
     """
     filename = str(filename)
     if filename.endswith('.tiff') or filename.endswith('.tif'):
@@ -89,36 +60,12 @@ def load_single_img(filename):
         raise ValueError('Single image should be 2D!')
     return img_in
 
-
 def load_imgs_from_directory(load_directory, channel_name, quiet=False):
     """
     Load images for a specific channel from a directory.
-
-    Parameters
-    ----------
-    load_directory : str or Path
-        Directory containing the images.
-    channel_name : str
-        Name of the channel to load images for.
-    quiet : bool, optional
-        If True, suppress print statements. Defaults to False.
-
-    Returns
-    -------
-    img_collect : list of numpy.ndarray
-        List of loaded images.
-    img_file_list : list of str
-        List of image file names.
-    img_folders : list of str
-        List of image folder paths.
-
-    Raises
-    ------
-    ValueError
-        If no images are found for the specified channel.
     """
     img_collect = []
-    img_folders = glob(join(str(load_directory), "*", ""))
+    img_folders = glob(os.path.join(str(load_directory), "*", ""))
     img_file_list = []
 
     if not quiet:
@@ -127,12 +74,12 @@ def load_imgs_from_directory(load_directory, channel_name, quiet=False):
 
     for sub_img_folder in img_folders:
         img_list = [
-            f for f in listdir(sub_img_folder)
-            if isfile(join(sub_img_folder, f)) and (f.endswith(".tiff") or f.endswith(".tif"))
+            f for f in os.listdir(sub_img_folder)
+            if os.path.isfile(os.path.join(sub_img_folder, f)) and (f.endswith(".tiff") or f.endswith(".tif"))
         ]
         for img_file in img_list:
             if channel_name.lower() in img_file.lower():
-                img_path = join(sub_img_folder, img_file)
+                img_path = os.path.join(sub_img_folder, img_file)
                 img_read = load_single_img(img_path)
 
                 if not quiet:
@@ -143,95 +90,41 @@ def load_imgs_from_directory(load_directory, channel_name, quiet=False):
                 img_collect.append(img_read)
                 break  # Only one image per channel per folder
 
-    if not quiet:
-        print('\nImage data loading completed!')
-        logging.info('Image data loading completed.')
-
     if not img_collect:
         logging.error(f'No images found for channel "{channel_name}".')
         raise ValueError(f'No images found for channel "{channel_name}". Please check the channel name!')
 
+    if not quiet:
+        print('\nImage data loading completed!')
+        logging.info('Image data loading completed.')
+
     return img_collect, img_file_list, img_folders
 
-
 def denoise_batch(
-    raw_directory="tiffs",
-    processed_output_dir="processed",
-    method="deep_snf",
-    channels=None,
-    **kwargs
+    general_config: GeneralConfig,
+    denoise_config: DenoisingConfig
 ):
     """
-    Denoise images in batch using the specified method.
-
-    Parameters
-    ----------
-    raw_directory : str or Path, optional
-        Input folder containing raw images. Defaults to "tiffs".
-    processed_output_dir : str or Path, optional
-        Output folder to save processed images. Defaults to "processed".
-    method : str, optional
-        Denoising method to use. Options are 'deep_snf' or 'dimr'. Defaults to 'deep_snf'.
-    channels : list of str, optional
-        List of specific channels to process. Defaults to None.
-
-    Additional keyword arguments
-    ----------------------------
-    For 'deep_snf' method:
-        patch_step_size : int, optional
-            Step size for patch extraction. Defaults to 60.
-        train_epochs : int, optional
-            Number of training epochs. Defaults to 50.
-        train_initial_lr : float, optional
-            Initial learning rate. Defaults to 1e-3.
-        train_batch_size : int, optional
-            Training batch size. Defaults to 128.
-        pixel_mask_percent : float, optional
-            Percentage of masked pixels in each patch. Defaults to 0.2.
-        val_set_percent : float, optional
-            Percentage of validation set. Defaults to 0.15.
-        loss_function : str, optional
-            Loss function to use. Defaults to 'I_divergence'.
-        loss_name : str, optional
-            File name to save training and validation losses. Defaults to None.
-        weights_save_directory : str or Path, optional
-            Directory to save weights and loss files. Defaults to None.
-        is_load_weights : bool, optional
-            If True, use existing weights without training. Defaults to False.
-        lambda_HF : float, optional
-            High-frequency regularization parameter. Defaults to 3e-6.
-        n_neighbours : int, optional
-            Number of neighbors for DIMR. Defaults to 4.
-        n_iter : int, optional
-            Number of iterations for DIMR. Defaults to 3.
-        window_size : int, optional
-            Sliding window size for DIMR. Defaults to 3.
-
-    For 'dimr' method:
-        n_neighbours : int, optional
-            Number of neighbors for DIMR. Defaults to 4.
-        n_iter : int, optional
-            Number of iterations for DIMR. Defaults to 3.
-        window_size : int, optional
-            Sliding window size for DIMR. Defaults to 3.
-
-    Returns
-    -------
-    None
-
-    Notes
-    -----
-    This function processes images in batch mode using either the DeepSNF or DIMR method.
-    It saves the denoised images to the specified output directory.
+    Denoise images in batch using the specified method from the DenoisingConfig.
     """
     logging.info('Starting denoise_batch function.')
-    logging.info(f'Parameters: raw_directory={raw_directory}, processed_output_dir={processed_output_dir}, method={method}, channels={channels}')
+    logging.info(f'DenoisingConfig parameters: {denoise_config}')
+    logging.info(f'GeneralConfig parameters: {general_config}')
+
+    # Extract paths from general_config
+    raw_directory = general_config.raw_images_folder
+    processed_output_dir = general_config.denoised_images_folder
+    metadata_directory = general_config.metadata_folder
+
+    method = denoise_config.method
+    channels = denoise_config.channels
 
     # Ensure channels is a list
-    if channels is None:
-        channels = []
-    elif isinstance(channels, str):
-        channels = [channels]
+    if not channels:
+        logging.info('No channels provided to process, loading from panel.csv.')
+        panel = pd.read_csv(os.path.join(metadata_directory, 'panel.csv'))
+        channels = panel.loc[panel['use_denoised'], 'channel_label'].tolist()
+
 
     # Create output directory
     processed_output_dir = Path(processed_output_dir)
@@ -241,10 +134,6 @@ def denoise_batch(
     # Error tracking lists
     error_channels = []
     completed_channels = []
-
-    if not channels:
-        logging.error('No channels provided to process.')
-        raise ValueError("No channels provided to process.")
 
     print(f'\nPerforming denoising using method "{method}" on the following channels:\n{channels}\n')
     logging.info(f'Performing denoising using method "{method}" on channels: {channels}')
@@ -257,24 +146,24 @@ def denoise_batch(
             logging.info(f'Loaded {len(img_collect)} images for channel {channel_name}')
 
             if method == 'deep_snf':
-                # DeepSNF parameters
-                patch_step_size = kwargs.get('patch_step_size', 60)
-                train_epochs = kwargs.get('train_epochs', 100)
-                train_initial_lr = kwargs.get('train_initial_lr', 1e-3)
-                train_batch_size = kwargs.get('train_batch_size', 128)
-                pixel_mask_percent = kwargs.get('pixel_mask_percent', 0.2)
-                val_set_percent = kwargs.get('val_set_percent', 0.15)
-                loss_function = kwargs.get('loss_function', 'I_divergence')
-                loss_name = kwargs.get('loss_name', None)
-                weights_save_directory = kwargs.get('weights_save_directory', None)
-                is_load_weights = kwargs.get('is_load_weights', False)
-                lambda_HF = kwargs.get('lambda_HF', 3e-6)
-                n_neighbours = kwargs.get('n_neighbours', 4)
-                n_iter = kwargs.get('n_iter', 3)
-                window_size = kwargs.get('window_size', 3)
-                network_size = kwargs.get('network_size', 'normal')
+                # DeepSNF parameters from denoise_config
+                patch_step_size = denoise_config.patch_step_size
+                train_epochs = denoise_config.train_epochs
+                train_initial_lr = denoise_config.train_initial_lr
+                train_batch_size = denoise_config.train_batch_size
+                pixel_mask_percent = denoise_config.pixel_mask_percent
+                val_set_percent = denoise_config.val_set_percent
+                loss_function = denoise_config.loss_function
+                loss_name = denoise_config.loss_name
+                weights_save_directory = denoise_config.weights_save_directory
+                is_load_weights = denoise_config.is_load_weights
+                lambda_HF = denoise_config.lambda_HF
+                n_neighbours = denoise_config.n_neighbours
+                n_iter = denoise_config.n_iter
+                window_size = denoise_config.window_size
+                network_size = denoise_config.network_size
 
-                logging.info(f'DeepSNF parameters: patch_step_size={patch_step_size}, train_epochs={train_epochs}, train_initial_lr={train_initial_lr}, train_batch_size={train_batch_size}, pixel_mask_percent={pixel_mask_percent}, val_set_percent={val_set_percent}, loss_function={loss_function}, is_load_weights={is_load_weights}, lambda_HF={lambda_HF}, n_neighbours={n_neighbours}, n_iter={n_iter}, window_size={window_size}, network_size={network_size}')
+                logging.info(f'DeepSNF parameters: {denoise_config}')
 
                 # Training settings
                 row_step = patch_step_size
@@ -283,7 +172,7 @@ def denoise_batch(
                 # Generate patches and train model if not loading weights
                 if not is_load_weights:
                     logging.info('Generating patches for training.')
-                    data_generator = DeepSNF_DataGenerator(
+                    data_generator = DeepSNiF_DataGenerator(
                         channel_name=channel_name,
                         n_neighbours=n_neighbours,
                         n_iter=n_iter,
@@ -301,7 +190,7 @@ def denoise_batch(
                 weights_name = f"weights_{channel_name}.keras"
                 logging.info(f'Weights file name set to: {weights_name}')
 
-                deepsnf = DeepSNF(
+                deepsnf = DeepSNiF(
                     train_epoches=train_epochs,
                     train_learning_rate=train_initial_lr,
                     train_batch_size=train_batch_size,
@@ -350,10 +239,10 @@ def denoise_batch(
                     logging.info(f'Saved denoised image to: {save_path}')
 
             elif method == 'dimr':
-                # DIMR parameters
-                n_neighbours = kwargs.get('n_neighbours', 4)
-                n_iter = kwargs.get('n_iter', 3)
-                window_size = kwargs.get('window_size', 3)
+                # DIMR parameters from denoise_config
+                n_neighbours = denoise_config.n_neighbours
+                n_iter = denoise_config.n_iter
+                window_size = denoise_config.window_size
                 logging.info(f'DIMR parameters: n_neighbours={n_neighbours}, n_iter={n_iter}, window_size={window_size}')
 
                 # Create DIMR object
@@ -400,16 +289,10 @@ def denoise_batch(
     if error_channels:
         logging.warning(f'Channels with errors: {error_channels}')
 
-
-
 def gpu_test():
     """
     Test if GPU acceleration is enabled for TensorFlow.
-
-    Prints the list of available GPUs or an error message if no GPU is found.
     """
-    import tensorflow as tf
-
     if tf.test.is_built_with_cuda():
         print('GPU acceleration enabled.\n')
         print(tf.config.list_physical_devices('GPU'))
@@ -419,39 +302,55 @@ def gpu_test():
         print('GPU not found! Check TensorFlow and CUDA setup.')
         logging.error('GPU not found! Check TensorFlow and CUDA setup.')
 
+def remove_small_rois(general_config: GeneralConfig, denoise_config: DenoisingConfig):
+    """
+    Remove ROIs that are too small based on the patch_step_size.
+    """
+    metadata_directory = general_config.metadata_folder
+    raw_directory = general_config.raw_images_folder
+    patch_step_size = denoise_config.patch_step_size
+
+    metadata_file = Path(metadata_directory) / 'metadata.csv'
+    if metadata_file.exists():
+        metadata_df = pd.read_csv(metadata_file)
+
+        # Identify ROIs which are too small for denoising
+        metadata_df['too_small'] = np.where(
+            (metadata_df['height_um'] < patch_step_size) |
+            (metadata_df['width_um'] < patch_step_size),
+            True,
+            False
+        )
+
+        # Remove ROIs that are too small
+        for _, r in metadata_df.iterrows():
+            if r['too_small']:
+                roi_folder = Path(raw_directory) / r['unstacked_data_folder']
+                if roi_folder.exists():
+                    rmtree(roi_folder)
+                    logging.warning(f"ROI {r['description']} was smaller than patch_step_size ({patch_step_size}), and was deleted from {str(raw_directory)}.")
+    else:
+        logging.warning(f"Metadata file '{metadata_file}' not found.")
 
 if __name__ == "__main__":
-    # Set up logging
-    setup_logging()
+    # Define the pipeline stage
+    pipeline_stage = 'Denoising'
 
-    # Load configuration from a local JSON file
-    config_file = 'denoise_config.json'
+    # Load configuration
+    config_data = process_config_with_overrides()
 
-    if not os.path.isfile(config_file):
-        logging.error(f"Configuration file '{config_file}' not found.")
-        raise FileNotFoundError(f"Configuration file '{config_file}' not found.")
+    # Setup logging
+    setup_logging(config_data.get('logging', {}), pipeline_stage)
 
-    with open(config_file, 'r') as f:
-        config = json.load(f)
-        logging.info(f'Loaded configuration from {config_file}')
-        
+    # Get parameters from config
+    general_config = GeneralConfig(**config_data.get('general', {}))
+    denoise_config = DenoisingConfig(**config_data.get('denoising', {}))
+
+    # Remove small ROIs based on metadata
+    remove_small_rois(general_config, denoise_config)
+
     # Check if GPU is enabled
     gpu_test()
 
-    # Extract parameters from the config
-    raw_directory = config.get('raw_directory', 'tiffs')
-    processed_output_dir = config.get('processed_output_dir', 'processed')
-    method = config.get('method', 'deep_snf')
-    channels = config.get('channels', [])
-
-    # Extract method-specific parameters
-    kwargs = config.get('parameters', {})
-
     # Call the denoise_batch function with parameters from the config
-    denoise_batch(
-        raw_directory=raw_directory,
-        processed_output_dir=processed_output_dir,
-        method=method,
-        channels=channels,
-        **kwargs
-    )
+    denoise_batch(general_config, denoise_config)
