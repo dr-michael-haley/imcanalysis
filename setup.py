@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 setup(
     name='SpatialBiologyToolkit',
     version='0.1',
-    packages=['SpatialBiologyToolkit'],
+    packages=find_packages(),
     install_requires=[
         'anndata',
         'colorcet',
