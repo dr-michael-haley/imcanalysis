@@ -1379,22 +1379,22 @@ def run_spoox(adata: Union[ad.AnnData, str],
             os.system(command)            
                       
         
-        if groupby:
+    if groupby:
 
-            print('Calculating group averages...')
+        print('Calculating group averages...')
 
-            command = f"python spatialstats\\average_by_condition.py -i stats.txt -p {spoox_output_dir} -o {spoox_output_summary_dir} -cl cluster -j conditions.json"
+        command = f"python spatialstats\\average_by_condition.py -i stats.txt -p {spoox_output_dir} -o {spoox_output_summary_dir} -cl cluster -j conditions.json"
 
-            os.system(command)
-            
-            
-        if summary:
-        
-            print('Summarising data...')
+        os.system(command)
 
-            command = f'python spatialstats\\summary.py -p {spoox_output_dir}'
 
-            os.system(command)
+    if summary:
+
+        print('Summarising data...')
+
+        command = f'python spatialstats\\summary.py -p {spoox_output_dir}'
+
+        os.system(command)
 
 
 def _validate_inputs(data, cols_of_interest):
