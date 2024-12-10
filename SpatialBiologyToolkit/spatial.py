@@ -1311,6 +1311,7 @@ def run_spoox(adata: Union[ad.AnnData, str],
     # This may not be neded, just 'label'
     #spatial_stats.cellID = spatial_stats.cellID.astype('int') + 1
 
+    spatial_stats.cellID = spatial_stats.cellID.astype(str)
     spatial_stats.cellID = 'ID_' + spatial_stats.cellID
 
     # Add a label column that will match cell numbers to their labels in the mask files (hopefully!)

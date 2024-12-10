@@ -21,8 +21,9 @@ def napari_imc_explorer(
     masks_folder: str = 'Masks',
     image_folders: list = ['Images'],
     roi_obs: str = 'ROI',
+    cell_id_in_mask_obs: str = 'ObjectNumber',
     adata: ad.AnnData = ad.AnnData(),
-    check_masks: bool = False,
+    check_masks: bool = True,
     mask_extension: str = None 
 ) -> napari.Viewer:
     """
@@ -36,6 +37,8 @@ def napari_imc_explorer(
         Directories containing subdirectories, each named after ROIs in the AnnData. Images are named after channels (`adata.var_names`), uint16 image files.
     roi_obs : str
         Column in `adata.obs` indicating the ROI.
+    cell_id_in_mask_obs : str
+        Column in `adata.obs` indicating the ID's in the mask file for each cell.
     adata : AnnData
         AnnData object as created from the pipeline.
     check_masks : bool
@@ -65,6 +68,11 @@ def napari_imc_explorer(
             mask_extension = ext
             print(f"Mask extension automatically set to '{mask_extension}'.")
 
+    # Check if mask object id exists, in which case we use that to match cells in AnnData to id's in mask
+    if cell_id_in_mask_obs not in adata.obs.columns:
+        print(f"Could not find {cell_id_in_mask_obs} in AnnData obs, so resorting to using index.")
+        cell_id_in_mask_obs = None
+
     def _check_all_masks(adata, roi_obs=roi_obs):
         """
         Check that the number of cells in each mask matches the number of cells in each ROI.
@@ -76,14 +84,21 @@ def napari_imc_explorer(
         for roi_name in roi_list:
             # Load the mask image
             mask = sk.io.imread(Path(masks_folder, f'{roi_name}{mask_extension}'))
+
             # Get unique cell IDs from the mask
-            cell_list_from_mask = np.unique(mask.flatten())
-            # Get cell IDs from adata for the current ROI
-            cell_list_from_anndata = adata.obs.loc[adata.obs[roi_obs] == roi_name, :]
-            cell_list_from_anndata.reset_index(drop=True, inplace=True)
-            cell_list_from_anndata = cell_list_from_anndata.index.to_numpy()
+            cell_list_from_mask = np.trim_zeros(np.unique(mask.flatten()))
+
+            # Retrieve cell ids from column, or use index
+            if cell_id_in_mask_obs:
+                cell_list_from_anndata = adata.obs.loc[adata.obs[roi_obs] == roi_name, cell_id_in_mask_obs]
+                cell_list_from_anndata = cell_list_from_anndata.to_numpy()
+            else:
+                cell_list_from_anndata = adata.obs.loc[adata.obs[roi_obs] == roi_name, :]
+                cell_list_from_anndata.reset_index(drop=True, inplace=True)
+                cell_list_from_anndata = cell_list_from_anndata.index.to_numpy()
+
             # Check that the mask and anndata cell IDs match
-            assert np.all(cell_list_from_mask[0] == cell_list_from_anndata[0]), f'Mask and cell table do not match for {roi_name}'
+            assert np.all(cell_list_from_mask == cell_list_from_anndata), f'Mask and cell table do not match for {roi_name}'
             print(f'{roi_name} matched!')
         
         print('All ROIs matched successfully')
@@ -187,7 +202,11 @@ def napari_imc_explorer(
             # Create a mask for each population
             for pop, pop_num in zip(populations, populations_num):
                 try:
-                    objects = adata_roi_obs.loc[adata_roi_obs[pop_obs] == pop, :].index.to_numpy() + 1
+                    if cell_id_in_mask_obs:
+                        objects = adata_roi_obs.loc[adata_roi_obs[pop_obs] == pop, cell_id_in_mask_obs].to_numpy()
+                    else:
+                        objects = adata_roi_obs.loc[adata_roi_obs[pop_obs] == pop, :].index.to_numpy() + 1
+
                     pop_mask = np.isin(mask, objects)
                     all_pops_mask = np.where(pop_mask, pop_num, all_pops_mask)
                     if add_individual_pops:
@@ -200,7 +219,11 @@ def napari_imc_explorer(
             viewer.layers[-1].contour = 1
         elif quant:
             # Add quantitative data as an overlay
-            objects = adata_roi_obs.index.to_numpy() + 1
+            if cell_id_in_mask_obs:
+                objects = adata_roi_obs.loc[:, cell_id_in_mask_obs].to_numpy()
+            else:
+                objects = adata_roi_obs.index.to_numpy() + 1
+
             if quant in adata.obs:
                 values = adata_roi_obs[quant]
             elif quant in adata.var_names:
@@ -238,7 +261,7 @@ def napari_imc_explorer(
         _add_roi_images_raw(selected_item, quantile=quant_select.value, minimum_pixel_counts=minimum_pixel_counts_select.value)
 
     # List of available ROIs
-    roi_list = _list_folders_in_directory('Images')
+    roi_list = _list_folders_in_directory(image_folders[0])
     # Selector widget for ROIs
     roi_selector = widgets.ComboBox(label='Select ROI:', choices=roi_list)
 
