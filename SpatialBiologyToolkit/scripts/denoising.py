@@ -122,10 +122,11 @@ def denoise_batch(
     # Ensure channels is a list
     if not channels:
         logging.info('No channels provided to process, loading from panel.csv.')
+
         panel = pd.read_csv(os.path.join(metadata_directory, 'panel.csv'))
         panel['tiff_name'] = panel['channel_name'] + "_" + panel['channel_label']
-        channels = panel.loc[panel['use_denoised'], 'tiff_name'].tolist()
 
+        channels = panel.loc[panel[('to_denoise' if 'to_denoise' in panel.columns else 'use_denoised')], 'tiff_name'].tolist()
 
     # Create output directory
     processed_output_dir = Path(processed_output_dir)
