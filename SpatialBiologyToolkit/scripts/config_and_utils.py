@@ -51,7 +51,7 @@ class DenoisingConfig:
     colourmap: str = "jet"
     dpi: int = 100
     qc_image_dir: str = 'denoising'
-
+    skip_already_denoised: bool = True
 
 @dataclass
 class CreateMasksConfig:
@@ -135,9 +135,6 @@ def get_filename(path: Path, name: str) -> str:
         raise ValueError(f"More than one file or image in {str(path)} matches {name}")
     else:
         return files[0]
-
-    import yaml
-    from typing import Dict, Any
 
 def update_config_file(config_file: str, updates: Dict[str, Any]) -> None:
         """
