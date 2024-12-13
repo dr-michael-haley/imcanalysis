@@ -134,7 +134,7 @@ def denoise_batch(
     if denoise_config.skip_already_denoised:
         # Get a list of all denoised images from first ROI
         denoised_images = os.listdir(os.path.join(processed_output_dir, os.listdir(processed_output_dir)[0]))
-        already_denoised_channels = [x.split('_', maxsplit=3)[-1].replace('.tiff','') for x in denoised_images]
+        already_denoised_channels = [x.split('_', maxsplit=2)[-1].replace('.tiff','') for x in denoised_images]
         skipped_channels = [x for x in channels if x in already_denoised_channels]
         logging.info(f'Denoising skipped on channels already denoised: {skipped_channels}')
         channels = [x for x in channels if x not in skipped_channels]
