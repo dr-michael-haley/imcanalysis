@@ -585,6 +585,7 @@ def export_mcd_folder(
         # Add extra useful columns to the panel file(s) for use later
         for p in unique_panels.values():
             p = _panel_identify_used_channels(p, 'use_denoised')
+            p['to_denoise'] = p['use_denoised']
 
             # Clean labels
             p['channel_label'] = [re.sub(r'\W+', '', str(x)) for x in p['channel_label']]

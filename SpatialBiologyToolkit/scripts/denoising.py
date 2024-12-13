@@ -29,6 +29,8 @@ import pandas as pd
 from pathlib import Path
 from shutil import rmtree
 from glob import glob
+import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # Third-party library imports
 import tifffile as tp
@@ -113,23 +115,15 @@ def denoise_batch(
 
     # Extract paths from general_config
     raw_directory = general_config.raw_images_folder
-    processed_output_dir = general_config.denoised_images_folder
-    metadata_directory = general_config.metadata_folder
 
     method = denoise_config.method
     channels = denoise_config.channels
 
-    # Ensure channels is a list
-    if not channels:
-        logging.info('No channels provided to process, loading from panel.csv.')
-
-        panel = pd.read_csv(os.path.join(metadata_directory, 'panel.csv'))
-        panel['tiff_name'] = panel['channel_name'] + "_" + panel['channel_label']
-
-        channels = panel.loc[panel[('to_denoise' if 'to_denoise' in panel.columns else 'use_denoised')], 'tiff_name'].tolist()
+    if channels == []:
+        channels = load_channels_from_panel(general_config)
 
     # Create output directory
-    processed_output_dir = Path(processed_output_dir)
+    processed_output_dir = Path(general_config.denoised_images_folder)
     processed_output_dir.mkdir(parents=True, exist_ok=True)
     logging.info(f'Processed output directory set to: {processed_output_dir}')
 
@@ -237,7 +231,7 @@ def denoise_batch(
 
                     # Save the denoised image
                     save_path = output_dir / img_file_name
-                    tp.imsave(save_path, img_denoised.astype('float32'))
+                    tp.imwrite(save_path, img_denoised.astype('float32'))
                     logging.info(f'Saved denoised image to: {save_path}')
 
             elif method == 'dimr':
@@ -334,6 +328,62 @@ def remove_small_rois(general_config: GeneralConfig, denoise_config: DenoisingCo
     else:
         logging.warning(f"Metadata file '{metadata_file}' not found.")
 
+
+def qc_check_side_by_side(general_config: GeneralConfig,
+                          denoise_config: DenoisingConfig):
+    channels = denoise_config.channels
+
+    if channels == []:
+        channels = load_channels_from_panel(general_config)
+
+    # Create folders
+    save_dir = Path(os.path.join(general_config.qc_folder, denoise_config.qc_image_dir))
+    save_dir.mkdir(exist_ok=True)
+
+    for channel_name in channels:
+
+        try:
+
+            raw_Img_collect, raw_Img_file_list, raw_img_folders = load_imgs_from_directory(general_config.raw_images_folder, channel_name,
+                                                                                           quiet=True)
+            pro_Img_collect, pro_Img_file_list, pro_img_folders = load_imgs_from_directory(general_config.denoised_images_folder,
+                                                                                           channel_name, quiet=True)
+
+            fig, axs = plt.subplots(len(raw_Img_collect), 2, figsize=(10, 5 * len(raw_Img_collect)), dpi=denoise_config.dpi)
+
+            count = 0
+            for r_img, p_img, r_img_name in zip(raw_Img_collect, pro_Img_collect, raw_Img_file_list):
+                im1 = axs.flat[count].imshow(r_img, vmin=0, vmax=0.5 * np.max(r_img), cmap=denoise_config.colourmap)
+                divider = make_axes_locatable(axs.flat[count])
+                cax = divider.append_axes('right', size='5%', pad=0.05)
+                fig.colorbar(im1, cax=cax, orientation='vertical')
+                axs.flat[count].set_ylabel(str(r_img_name))
+                count = count + 1
+
+                im2 = axs.flat[count].imshow(p_img, vmin=0, vmax=0.5 * np.max(p_img), cmap=denoise_config.colourmap)
+                divider = make_axes_locatable(axs.flat[count])
+                cax = divider.append_axes('right', size='5%', pad=0.05)
+                fig.colorbar(im2, cax=cax, orientation='vertical')
+                count = count + 1
+
+            fig.savefig(os.path.join(save_dir, channel_name + '.png'))
+            plt.close()
+            logging.info(f'Denoising QC saved: {channel_name}')
+
+        except Exception as e:
+            logging.error(f'Denoising QC error: {channel_name}')
+            print(f"Error in channel {channel_name}: {Exception}: {e}")
+
+
+def load_channels_from_panel(general_config: GeneralConfig,):
+    panel = pd.read_csv(os.path.join(general_config.metadata_folder, 'panel.csv'))
+    panel['tiff_name'] = panel['channel_name'] + "_" + panel['channel_label']
+
+    channels = panel.loc[
+        panel[('to_denoise' if 'to_denoise' in panel.columns else 'use_denoised')], 'tiff_name'].tolist()
+
+    return channels
+
 if __name__ == "__main__":
     # Define the pipeline stage
     pipeline_stage = 'Denoising'
@@ -348,11 +398,18 @@ if __name__ == "__main__":
     general_config = GeneralConfig(**config_data.get('general', {}))
     denoise_config = DenoisingConfig(**config_data.get('denoising', {}))
 
-    # Remove small ROIs based on metadata
-    remove_small_rois(general_config, denoise_config)
+    if denoise_config.run_denoising:
 
-    # Check if GPU is enabled
-    gpu_test()
+        # Remove small ROIs based on metadata
+        remove_small_rois(general_config, denoise_config)
 
-    # Call the denoise_batch function with parameters from the config
-    denoise_batch(general_config, denoise_config)
+        # Check if GPU is enabled
+        gpu_test()
+
+        # Call the denoise_batch function with parameters from the config
+        denoise_batch(general_config, denoise_config)
+
+    if denoise_config.run_QC:
+
+        # Save side-by-side comparisson of raw and denoised images
+        qc_check_side_by_side(general_config, denoise_config)

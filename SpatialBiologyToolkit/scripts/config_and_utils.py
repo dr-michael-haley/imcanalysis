@@ -23,6 +23,7 @@ class PreprocessConfig:
 
 @dataclass
 class DenoisingConfig:
+    run_denoising: bool = True
     raw_directory: str = 'tiffs'
     metadata_directory: str = 'metadata'
     processed_output_dir: str = 'processed'
@@ -45,6 +46,12 @@ class DenoisingConfig:
     is_load_weights: bool = False
     lambda_HF: float = 3e-6
     network_size: str = "normal"
+    # Parameters for QC images
+    run_QC: bool = True
+    colourmap: str = "jet"
+    dpi: int = 100
+    qc_image_dir: str = 'denoising'
+
 
 @dataclass
 class CreateMasksConfig:
