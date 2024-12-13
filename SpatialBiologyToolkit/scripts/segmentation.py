@@ -1,7 +1,6 @@
 # segmentation.py
 
 # Standard library imports
-import logging
 import math
 import re
 from pathlib import Path
@@ -32,6 +31,7 @@ def extract_single_cell(masks_folder='masks',
     # Load panel file and clean labels
     panel = pd.read_csv(Path(metadata_folder) / 'panel.csv')
     panel['channel_label'] = [re.sub(r'\W+', '', str(x)) for x in panel['channel_label']]
+    panel['filename'] = panel['channel_name'] + "_" + panel['channel_label']
 
     # Formula for circularity
     circ = lambda r: (4 * math.pi * r.area) / (r.perimeter * r.perimeter) if r.perimeter > 0 else 0
@@ -76,24 +76,27 @@ def extract_single_cell(masks_folder='masks',
 
         # Get list of channel labels to use either denoised or raw images to extract from
         channels_denoised = panel.loc[panel['use_denoised'], 'channel_label'].tolist()
+        channels_denoised_filenames = panel.loc[panel['use_denoised'], 'filename'].tolist()
+
         channels_raw = panel.loc[panel['use_raw'], 'channel_label'].tolist()
+        channels_raw_filenames = panel.loc[panel['use_raw'], 'filename'].tolist()
 
         logging.info(
             f'{roi}: Extracting mean cell intensities from {len(channels_denoised)} denoised images, and {len(channels_raw)} raw images')
 
         # Combine image folder with specific ROI folder
-        for channel_list, images_folder in zip([channels_denoised, channels_raw],
-                                               [denoised_images_folder, raw_images_folder]):
+        for channel_list, channel_filenames, images_folder in zip([channels_denoised, channels_denoised_filenames, channels_raw],
+                                               [denoised_images_folder, channels_raw_filenames, raw_images_folder]):
 
             image_path = images_folder / roi
             if not image_path.exists():
                 logging.warning(f"No images found for ROI {roi} in {images_folder}")
                 continue
 
-            for channel in channel_list:
+            for channel, filename in zip(channel_list, channel_filenames):
                 try:
                     # Get the best matching image from the directory
-                    image_filename = get_filename(image_path, channel)
+                    image_filename = get_filename(image_path, filename)
 
                     # Load the image
                     image = io.imread(image_path / image_filename)
