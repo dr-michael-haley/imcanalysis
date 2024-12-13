@@ -85,8 +85,9 @@ def extract_single_cell(masks_folder='masks',
             f'{roi}: Extracting mean cell intensities from {len(channels_denoised)} denoised images, and {len(channels_raw)} raw images')
 
         # Combine image folder with specific ROI folder
-        for channel_list, channel_filenames, images_folder in zip([channels_denoised, channels_denoised_filenames, channels_raw],
-                                               [denoised_images_folder, channels_raw_filenames, raw_images_folder]):
+        for channel_list, channel_filenames, images_folder in zip([channels_denoised, channels_raw],
+                                                                  [denoised_images_folder, raw_images_folder],
+                                                                  [channels_denoised_filenames, channels_raw_filenames]):
 
             image_path = images_folder / roi
             if not image_path.exists():
