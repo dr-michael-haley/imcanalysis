@@ -4,6 +4,7 @@ from pathlib import Path
 
 # Third-party library imports
 import numpy as np
+import pandas as pd
 from skimage import io
 from skimage.measure import regionprops
 from skimage.segmentation import find_boundaries, expand_labels
@@ -24,54 +25,92 @@ def overlay_mask_and_save(
         outline_alpha=0.8,
 ):
     """
-    Overlays multiple label arrays with different colors on a grayscale image.
+    Overlays multiple label arrays with different colors on a grayscale image and saves the result.
+    Parameters
+    ----------
+    image : np.ndarray
+        The original grayscale image.
+    output_path : Path or str
+        Where to save the resulting overlay image.
+    masks_and_colors : list of (np.ndarray, str)
+        A list of (label_array, color_name) pairs.
+    vmin : float
+        Minimum intensity for normalization.
+    vmax_quantile : float
+        Quantile to determine max intensity cutoff.
+    outline_alpha : float
+        Transparency for the mask outlines.
     """
+    # Determine normalization factor
     vmax = np.quantile(image, vmax_quantile)
     normalized_image = np.clip((image - vmin) / (vmax - vmin), 0, 1)
 
+    # Plot the base image
     plt.figure(figsize=(10, 10))
     plt.imshow(normalized_image, cmap="gray", interpolation="none")
 
+    # Overlay each mask's boundaries
     for label_array, color in masks_and_colors:
         boundaries = find_boundaries(label_array, mode="outer")
         cmap = ListedColormap([[0, 0, 0, 0], plt.cm.colors.to_rgba(color)])
         plt.imshow(boundaries, cmap=cmap, alpha=outline_alpha, interpolation="none")
 
     plt.axis("off")
+    # Save the figure as a high-resolution PNG
     plt.savefig(output_path, bbox_inches="tight", pad_inches=0, dpi=400)
     plt.close()
 
-def create_masks(image_folder='processed',
-                 output_dir='masks',
-                 qc_dir='QC',
-                 specific_rois=None,
-                 dna_image_name='DNA1',
-                 diameter=10.0,
-                 upscale_ratio=1.7,
-                 expand_masks=2,
-                 perform_qc=True,
-                 min_size=None,
-                 max_size=None):
+def create_masks(general_config: GeneralConfig, mask_config: CreateMasksConfig):
     """
-    Creates masks of cells in the specified folder using Cellpose models.
+    Creates cell segmentation masks using Cellpose models, optionally performing deblur and upscale steps.
+
+    Steps:
+    1. Load images from denoised_images_folder (or raw images, if desired in future).
+    2. Optionally run a deblur model if run_deblur=True.
+    3. Optionally run an upscale model if run_upscale=True.
+    4. Run the chosen Cellpose model on the resulting image.
+    5. Generate final masks, filter by size, and save results.
+    6. (Optional) Generate QC overlay images showing kept and excluded objects.
+
+    Parameters
+    ----------
+    general_config : GeneralConfig
+        Contains general pipeline paths and settings.
+    mask_config : CreateMasksConfig
+        Contains parameters specific to mask creation, including model usage and QC options.
     """
     logging.info("Starting mask creation.")
 
-    if isinstance(diameter, int):
-        diameter = float(diameter)
-
-    image_folder = Path(image_folder)
-    output_dir = Path(output_dir)
+    # Extract paths and ensure directories exist
+    image_folder = Path(general_config.denoised_images_folder)
+    output_dir = Path(general_config.masks_folder)
+    qc_dir = Path(general_config.qc_folder)
     output_dir.mkdir(exist_ok=True, parents=True)
-    qc_dir = Path(qc_dir)
     qc_dir.mkdir(exist_ok=True, parents=True)
 
+    # Determine which ROIs to process
+    specific_rois = mask_config.specific_rois
     if not specific_rois:
+        # If no specific ROIs given, process all directories in image_folder
         specific_rois = [entry.name for entry in image_folder.iterdir() if entry.is_dir()]
 
-    deblur = denoise.DenoiseModel(model_type='deblur_nuclei', gpu=True)
-    upscale = denoise.DenoiseModel(model_type='upsample_nuclei', gpu=True)
-    cyto3 = models.CellposeModel(model_type='nuclei', gpu=True)
+    # Convert diameter to float (just in case)
+    diameter = float(mask_config.cellpose_cell_diameter)
+
+    # Initialize models
+    # Deblur and upscale models only run if their flags are True
+    # cp_model runs regardless, as this step is required
+    if mask_config.run_deblur:
+        deblur_model = denoise.DenoiseModel(model_type='deblur_nuclei', gpu=True)
+    else:
+        deblur_model = None
+
+    if mask_config.run_upscale:
+        upscale_model = denoise.DenoiseModel(model_type='upsample_nuclei', gpu=True)
+    else:
+        upscale_model = None
+
+    cp_model = models.CellposeModel(model_type=mask_config.cell_pose_model, gpu=True)
 
     roi_data = []
 
@@ -80,22 +119,38 @@ def create_masks(image_folder='processed',
 
         try:
             roi_path = image_folder / roi
-            DNA_image_file = get_filename(roi_path, dna_image_name)
+            # Load the specified DNA image
+            DNA_image_file = get_filename(roi_path, mask_config.dna_image_name)
             img = io.imread(roi_path / DNA_image_file)
 
-            img_deblur = deblur.eval(img, channels=None, diameter=diameter, batch_size=16)
-            img_upscale = upscale.eval(img_deblur, channels=None, diameter=diameter, batch_size=16)
-            masks_upscaled, _, _ = cyto3.eval(img_upscale,
-                                              diameter=diameter * upscale_ratio,
-                                              channels=None,
-                                              batch_size=16,
-                                              normalize={'normalize':True, 'percentile':[0,97]},
-                                              cellprob_threshold=-1)
-            mask = resize(masks_upscaled, img.shape, order=0, preserve_range=True, anti_aliasing=False)
+            # Start with the original image
+            current_image = img
 
-            if expand_masks:
-                mask = expand_labels(mask, distance=expand_masks)
+            # If run_deblur is True, deblur the image
+            if mask_config.run_deblur:
+                current_image = deblur_model.eval(current_image, channels=None, diameter=diameter, batch_size=16)
 
+            # If run_upscale is True, upscale the (deblurred or original) image
+            if mask_config.run_upscale:
+                current_image = upscale_model.eval(current_image, channels=None, diameter=diameter, batch_size=16)
+
+            # Run the Cellpose model on the current image (deblurred/upscaled as per config)
+            mask, _, _ = cp_model.eval(current_image,
+                                                 diameter=diameter * mask_config.upscale_ratio,
+                                                 channels=None,
+                                                 batch_size=16,
+                                                 normalize={'normalize': mask_config.image_normalise, 'percentile': mask_config.image_normalise_percentile},
+                                                 cellprob_threshold=mask_config.cellprob_threshold)
+
+            # Resize the mask back to the original image shape if changed by upscale
+            if mask_config.run_upscale:
+                mask = resize(mask, img.shape, order=0, preserve_range=True, anti_aliasing=False)
+
+            # Optionally expand masks
+            if mask_config.expand_masks:
+                mask = expand_labels(mask, distance=mask_config.expand_masks)
+
+            # Filter objects by size
             final_mask = np.zeros_like(mask, dtype=np.uint16)
             excluded_mask = np.zeros_like(mask, dtype=np.uint16)
             region_props = regionprops(mask)
@@ -104,16 +159,20 @@ def create_masks(image_folder='processed',
 
             for region in region_props:
                 area = region.area
-                if (min_size is None or area >= min_size) and (max_size is None or area <= max_size):
+                # Check if area is within acceptable range
+                if ((mask_config.min_cell_area is None or area >= mask_config.min_cell_area) and
+                        (mask_config.max_cell_area is None or area <= mask_config.max_cell_area)):
                     kept_objects += 1
                     final_mask[mask == region.label] = region.label
                 else:
                     excluded_mask[mask == region.label] = region.label
 
+            # Save the final mask
             mask_path = output_dir / f"{roi}.tiff"
             io.imsave(mask_path, final_mask)
 
-            if perform_qc:
+            # Optionally create QC overlays
+            if mask_config.perform_qc:
                 qc_overlay_dir = qc_dir / 'Segmentation_overlay'
                 qc_overlay_dir.mkdir(exist_ok=True, parents=True)
                 overlay_mask_and_save(
@@ -122,6 +181,7 @@ def create_masks(image_folder='processed',
                     masks_and_colors=[(final_mask, 'green'), (excluded_mask, 'red')]
                 )
 
+            # Compute and record stats about the segmentation
             pixels_per_mm2 = 1e6
             mask_area_mm2 = final_mask.shape[0] * final_mask.shape[1] / pixels_per_mm2
             objects_per_mm2 = kept_objects / mask_area_mm2
@@ -138,37 +198,27 @@ def create_masks(image_folder='processed',
             logging.error(f"Error processing ROI: {roi}. Exception: {str(e)}", exc_info=True)
             continue
 
+    # Save a summary CSV file with stats for all ROIs
     roi_df = pd.DataFrame(roi_data)
     roi_df_path = qc_dir / 'Segmentation_QC.csv'
     roi_df.to_csv(roi_df_path, index=False)
     logging.info(f"Saved ROI analysis to {roi_df_path}")
     logging.info("Mask creation completed.")
 
+
 if __name__ == "__main__":
-    # Define the pipeline stage
+    # Define the pipeline stage for logging
     pipeline_stage = 'CreateMasks'
 
-    # Load configuration
+    # Load configuration and apply any command line overrides
     config = process_config_with_overrides()
 
-    # Setup logging
+    # Setup logging using the configuration
     setup_logging(config.get('logging', {}), pipeline_stage)
 
-    # Get parameters from config
+    # Extract general and masking configurations
     general_config = GeneralConfig(**config.get('general', {}))
     mask_config = CreateMasksConfig(**config.get('createmasks', {}))
 
-    # Create masks using CellPose
-    create_masks(
-        image_folder=general_config.denoised_images_folder,
-        output_dir=general_config.masks_folder,
-        qc_dir=general_config.qc_folder,
-        specific_rois=mask_config.specific_rois,
-        dna_image_name=mask_config.dna_image_name,
-        diameter=mask_config.cellpose_cell_diameter,
-        upscale_ratio=mask_config.upscale_ratio,
-        expand_masks=mask_config.expand_masks,
-        perform_qc=mask_config.perform_qc,
-        min_size=mask_config.min_cell_area,
-        max_size=mask_config.max_cell_area
-    )
+    # Create the segmentation masks
+    create_masks(general_config, mask_config)

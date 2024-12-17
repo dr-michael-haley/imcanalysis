@@ -4,7 +4,7 @@ import logging
 import argparse
 from pathlib import Path
 from typing import Dict, Any, List, Optional
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 
 @dataclass
 class GeneralConfig:
@@ -63,6 +63,12 @@ class CreateMasksConfig:
     perform_qc: bool = True
     min_cell_area: Optional[int] = 15
     max_cell_area: Optional[int] = 200
+    cell_pose_model: str = 'nuclei'
+    cellprob_threshold: float = -1.0
+    run_deblur: bool = True
+    run_upscale: bool = True
+    image_normalise: bool = True
+    image_normalise_percentile: List[float] = field(default_factory=lambda: [0.0, 97.0])
 
 @dataclass
 class SegmentationConfig:
@@ -90,14 +96,78 @@ class LoggingConfig:
     to_console: bool = True
 
 
+DEFAULT_CONFIG_CLASSES = {
+    'general': GeneralConfig,
+    'preprocess': PreprocessConfig,
+    'denoising': DenoisingConfig,
+    'createmasks': CreateMasksConfig,
+    'segmentation': SegmentationConfig,
+    'basic_process': BasicProcessConfig,
+    'logging': LoggingConfig,
+}
+
+def generate_default_config_dict() -> Dict[str, Any]:
+    """
+    Generate a dictionary of default configuration values from the dataclasses.
+    """
+    defaults = {}
+    for section, cls in DEFAULT_CONFIG_CLASSES.items():
+        defaults[section] = asdict(cls())
+    return defaults
+
+def deep_merge_defaults(config: Dict[str, Any], defaults: Dict[str, Any]) -> bool:
+    """
+    Recursively merge default values into config. If a key from defaults is not present in config,
+    it is added. If a key is present but is a dictionary, we recurse.
+
+    Returns True if changes were made to the config, False otherwise.
+    """
+    changed = False
+    for key, default_value in defaults.items():
+        if key not in config:
+            # Key missing, add it
+            config[key] = default_value
+            changed = True
+        else:
+            # If both are dicts, recurse
+            if isinstance(default_value, dict) and isinstance(config[key], dict):
+                if deep_merge_defaults(config[key], default_value):
+                    changed = True
+            # If default_value is not a dict but config[key] is missing keys, this case is handled above
+            # If config[key] is already set and not a dict, we do not overwrite existing keys
+            # because we assume user config is correct. If we want to always overwrite with defaults
+            # if user config is missing fields, we rely on the dictionary recursion above.
+    return changed
+
 def load_config(config_file: str = 'config.yaml') -> Dict[str, Any]:
     """
-    Load configuration from a YAML file.
+    Load configuration from a YAML file, ensure all fields from the dataclasses are present.
+    If the file does not exist, create it with all default values.
+    If fields are missing, add them and update the file.
+
+    Returns the fully populated config dictionary.
     """
+    defaults = generate_default_config_dict()
+
     if not os.path.isfile(config_file):
-        raise FileNotFoundError(f"Configuration file '{config_file}' not found.")
+        # File not found, create it with defaults
+        with open(config_file, 'w') as f:
+            yaml.safe_dump(defaults, f, default_flow_style=False)
+        logging.info(f'Configuration file "{config_file}" not found. Created and saved with default values.')
+        return defaults
+
+    # If file exists, load it
     with open(config_file, 'r') as f:
-        config = yaml.safe_load(f)
+        config = yaml.safe_load(f) or {}
+
+    # Merge defaults into config if any keys missing
+    changed = deep_merge_defaults(config, defaults)
+
+    if changed:
+        with open(config_file, 'w') as f:
+            yaml.safe_dump(config, f, default_flow_style=False)
+        logging.info(f'Configuration file "{config_file}" updated with default values for missing keys.')
+
     return config
 
 def setup_logging(logging_config, pipeline_stage):
@@ -137,51 +207,20 @@ def get_filename(path: Path, name: str) -> str:
         return files[0]
 
 def update_config_file(config_file: str, updates: Dict[str, Any]) -> None:
-        """
-        Update the YAML configuration file with the given updates.
-
-        Parameters
-        ----------
-        config_file : str
-            Path to the YAML configuration file.
-        updates : dict
-            Dictionary of updates to apply. Keys and values in `updates`
-            will overwrite or add to those in the current config.
-
-        Example usage..
-        new_updates = {
-            'denoising': {
-                'method': 'dimr',  # Change from 'deep_snf' to 'dimr'
-                'channels': ['Channel1', 'Channel3']  # Update channel list
-            }
-        }
-
-        update_config_file("config.yaml", new_updates)
-        """
-        # Load the existing config
-        with open(config_file, 'r') as f:
-            config = yaml.safe_load(f)
-            if config is None:
-                config = {}  # If file is empty or null
-
-        # Merge updates into the config
-        # For a shallow update, a simple dictionary update is sufficient.
-        # If nested keys need updating, consider writing a custom deep-merge function.
-        config.update(updates)
-
-        # Write the updated config back to the file
-        with open(config_file, 'w') as f:
-            yaml.safe_dump(config, f, default_flow_style=False)
-
-        # Optionally, log the update
-        # Assuming you have a logging setup
-        import logging
-        logging.info(f'Configuration file "{config_file}" updated with: {updates}')
-
-def load_config(config_file: str) -> Dict:
-    # Example load_config function—already exists in your code
+    """
+    Update the YAML configuration file with the given updates.
+    """
     with open(config_file, 'r') as f:
-        return yaml.safe_load(f) or {}
+        config = yaml.safe_load(f)
+        if config is None:
+            config = {}
+
+    config.update(updates)
+
+    with open(config_file, 'w') as f:
+        yaml.safe_dump(config, f, default_flow_style=False)
+
+    logging.info(f'Configuration file "{config_file}" updated with: {updates}')
 
 def apply_override(config: Dict, key_path: str, value: str) -> None:
     keys = key_path.split('.')
@@ -196,7 +235,7 @@ def apply_override(config: Dict, key_path: str, value: str) -> None:
     d[keys[-1]] = value
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="Run the denoising step of the pipeline with overrides.")
+    parser = argparse.ArgumentParser(description="Run the pipeline with overrides.")
     parser.add_argument('--config', type=str, default='config.yaml', help='Path to the config (default: config.yaml)')
     parser.add_argument('--override', action='append', help='Overrides in key=value format. Use dot-notation for keys.')
     return parser.parse_args()
@@ -204,7 +243,7 @@ def parse_arguments():
 def process_config_with_overrides():
     args = parse_arguments()
 
-    # Load config
+    # Load config with default merging
     config = load_config(args.config)
 
     # Apply overrides
@@ -215,5 +254,14 @@ def process_config_with_overrides():
                 continue
             key_path, value = ov.split('=', 1)
             apply_override(config, key_path.strip(), value.strip())
+
+        # If overrides potentially added new keys not in defaults, we could re-run
+        # deep_merge_defaults if desired. But since we only wanted to ensure old configs
+        # get updated, this may not be necessary.
+
+        # Save config after overrides?
+        with open(args.config, 'w') as f:
+            yaml.safe_dump(config, f, default_flow_style=False)
+        logging.info(f'Configuration file "{args.config}" updated with overrides.')
 
     return config
