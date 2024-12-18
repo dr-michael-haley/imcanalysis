@@ -186,7 +186,7 @@ def segment_single_roi(
 
         if not for_parameter_scan:
             # Save QC image if not parameter scanning
-            qc_overlay_dir = Path(mask_config.qc_folder) / 'Segmentation_overlay'
+            qc_overlay_dir = qc_dir / 'Segmentation_overlay'
             qc_overlay_dir.mkdir(exist_ok=True, parents=True)
             qc_image_path = qc_overlay_dir / f"{roi}.png"
             plt.imsave(qc_image_path, qc_image_array)
