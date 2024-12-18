@@ -146,7 +146,7 @@ def segment_single_roi(
         # Create full QC overlay from current_image (full preprocessed image) and final_mask
         qc_image_array = create_overlay_image(
             image=current_image,
-            boundary_dilation=mask_config.qc_boundary_dilation
+            boundary_dilation=mask_config.qc_boundary_dilation,
             masks_and_colors=[(final_mask, 'green'), (excluded_mask, 'red')],
             vmin=0,
             vmax_quantile=0.97,
