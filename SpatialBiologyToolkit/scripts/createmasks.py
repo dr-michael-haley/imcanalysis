@@ -333,6 +333,7 @@ def parameter_scan_two_params(general_config: GeneralConfig, mask_config: Create
         qc_images = []  # store arrays for each parameter set (full-sized arrays)
 
         for i, pset in enumerate(param_sets):
+            logging.info(f'Itteration {str(i)}: {str(pset)}')
             result = segment_single_roi(
                 roi,
                 image_folder,
