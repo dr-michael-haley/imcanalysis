@@ -10,6 +10,7 @@ from skimage.morphology import binary_dilation
 from cellpose import models, denoise
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
+from scipy.ndimage import gaussian_filter
 
 from .config_and_utils import (
     process_config_with_overrides,
@@ -57,6 +58,33 @@ def create_overlay_image(
     plt.close(fig)
     return img_array
 
+def interesting_patch(mask, bsize=130):
+    """
+    ADAPTED FROM CELLPOSE
+
+    Get patch of size bsize x bsize from the mask that contains the densest concentration of cells.
+
+    Parameters
+    ----------
+    mask : ndarray
+        The segmentation mask where cells are labeled.
+    bsize : int
+        The size of the patch (bsize x bsize).
+
+    Returns
+    -------
+    tuple: (yinds, xinds)
+        Arrays of y and x indices defining the patch region.
+    """
+    Ly, Lx = mask.shape
+    m = np.float32(mask > 0)
+    m = gaussian_filter(m, bsize / 2)
+    y, x = np.unravel_index(np.argmax(m), m.shape)
+    ycent = max(bsize // 2, min(y, Ly - bsize // 2))
+    xcent = max(bsize // 2, min(x, Lx - bsize // 2))
+    yinds = np.arange(ycent - bsize // 2, ycent + bsize // 2, 1, int)
+    xinds = np.arange(xcent - bsize // 2, xcent + bsize // 2, 1, int)
+    return (yinds, xinds)
 
 def segment_single_roi(
     roi: str,
@@ -119,6 +147,10 @@ def segment_single_roi(
         cellprob_threshold=cellprob_threshold,
         flow_threshold=flow_threshold
     )
+
+    # If we upscaled, reduce mask back to original (img) dimensions
+    if run_upscale:
+        mask = resize(mask, img.shape, order=0, preserve_range=True, anti_aliasing=False)
 
     if mask_config.expand_masks:
         mask = expand_labels(mask, distance=mask_config.expand_masks)
@@ -290,8 +322,8 @@ def parameter_scan_two_params(general_config: GeneralConfig, mask_config: Create
         logging.info(f"Parameter scanning on ROI: {roi}")
         results_for_roi = []
         qc_images = []  # store arrays for each parameter set (full-sized arrays)
+
         for i, pset in enumerate(param_sets):
-            # Run parameter scanning in for_parameter_scan=True mode
             result = segment_single_roi(
                 roi,
                 image_folder,
@@ -304,16 +336,25 @@ def parameter_scan_two_params(general_config: GeneralConfig, mask_config: Create
             results_for_roi.append(result)
 
             full_qc_array = result['QC Image Array']
+
+            if i == 0 and mask_config.window_size:
+                # Determine the interesting patch based on the final_mask of the first result
+                final_mask = result['Final Mask']
+                yinds, xinds = interesting_patch(final_mask, bsize=mask_config.window_size)
+            else:
+                yinds, xinds = None, None
+
             if full_qc_array is not None:
-                # If window_size is set, crop the QC array for display
-                if mask_config.window_size and global_window_params[roi] is not None:
-                    start_x, start_y = global_window_params[roi]
-                    w = mask_config.window_size
-                    # Crop the QC image array
-                    cropped = full_qc_array[start_x:start_x+w, start_y:start_y+w, :]
+                # If window_size set and we got patch coords from the first parameter set
+                if mask_config.window_size and i == 0:
+                    # For the first parameter set, we just computed yinds, xinds, store them for reuse
+                    patch_coords = (yinds, xinds)
+                if mask_config.window_size:
+                    # Use the patch coords determined from the first parameter set
+                    yinds, xinds = patch_coords
+                    cropped = full_qc_array[yinds[:, None], xinds]  # index with arrays
                     qc_images.append(cropped)
                 else:
-                    # No window cropping
                     qc_images.append(full_qc_array)
 
         # Save results for this ROI
