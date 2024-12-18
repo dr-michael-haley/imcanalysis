@@ -43,7 +43,9 @@ def create_overlay_image(
 
     for label_array, color in masks_and_colors:
         boundaries = find_boundaries(label_array, mode="outer")
-        boundaries = binary_dilation(boundaries, iterations=boundary_dilation)
+        for _ in range(boundary_dilation):  # do multiple dilations to get thicker outline
+            boundaries = binary_dilation(boundaries)
+
         cmap = ListedColormap([[0, 0, 0, 0], plt.cm.colors.to_rgba(color)])
         ax.imshow(boundaries, cmap=cmap, alpha=outline_alpha, interpolation="none")
 
