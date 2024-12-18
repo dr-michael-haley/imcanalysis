@@ -335,7 +335,7 @@ def parameter_scan_two_params(general_config: GeneralConfig, mask_config: Create
                 # If window_size is specified, crop the QC array here using patch_coords
                 if mask_config.window_size and patch_coords is not None:
                     yinds, xinds = patch_coords
-                    cropped = full_qc_array[yinds[:, None], xinds]
+                    cropped = full_qc_array[yinds[:, None], xinds, :]
                     qc_images.append(cropped)
                 else:
                     qc_images.append(full_qc_array)
