@@ -78,7 +78,7 @@ class CreateMasksConfig:
     param_b: Optional[str] = 'flow_threshold'
     param_b_values: Optional[List[Any]] = field(default_factory=lambda: [0.2, 0.3, 0.4, 0.5, 0.6])
 
-    window_size: Optional[int] = None
+    window_size: Optional[int] = 250
     num_rois_to_scan: int = 3
     scan_rois: Optional[List[str]] = None
 

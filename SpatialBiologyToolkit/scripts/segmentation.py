@@ -19,8 +19,7 @@ def extract_single_cell(masks_folder='masks',
                         denoised_images_folder='processed',
                         raw_images_folder='tiffs',
                         metadata_folder='metadata',
-                        save_directory='cell_tables',
-                        extra_mask_analyses=True):
+                        save_directory='cell_tables'):
     """
     Analyze images to extract single-cell data and save the results in separate CSV files for each ROI.
     """

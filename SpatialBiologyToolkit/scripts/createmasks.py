@@ -6,12 +6,10 @@ import random
 from skimage import io as skio
 from skimage.measure import regionprops
 from skimage.segmentation import find_boundaries, expand_labels
-from skimage.transform import resize
 from cellpose import models, denoise
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 
-# Import shared utilities and configurations
 from .config_and_utils import (
     process_config_with_overrides,
     setup_logging,
@@ -30,38 +28,17 @@ def create_overlay_image(
 ) -> np.ndarray:
     """
     Create an overlay of segmentation masks on a grayscale image and return it as an RGB array.
-
-    Parameters
-    ----------
-    image : np.ndarray
-        The base grayscale image to overlay on.
-    masks_and_colors : list of (np.ndarray, str), optional
-        A list of (label_array, color_name) pairs for the mask overlays.
-    vmin : float, optional
-        Minimum intensity for normalization.
-    vmax_quantile : float, optional
-        Quantile for determining maximum intensity normalization.
-    outline_alpha : float, optional
-        Alpha (transparency) for the mask outlines.
-
-    Returns
-    -------
-    np.ndarray
-        A (H, W, 3) uint8 RGB image array with the overlay.
     """
     if masks_and_colors is None:
         masks_and_colors = []
 
-    # Normalize the base image
     vmax = np.quantile(image, vmax_quantile)
     normalized_image = np.clip((image - vmin) / (vmax - vmin), 0, 1)
 
-    # Create a figure and draw the base image
     fig, ax = plt.subplots(figsize=(10, 10))
     ax.imshow(normalized_image, cmap="gray", interpolation="none")
     ax.axis("off")
 
-    # Overlay each mask boundary
     for label_array, color in masks_and_colors:
         boundaries = find_boundaries(label_array, mode="outer")
         cmap = ListedColormap([[0, 0, 0, 0], plt.cm.colors.to_rgba(color)])
@@ -70,11 +47,9 @@ def create_overlay_image(
     fig.tight_layout()
     fig.canvas.draw()
 
-    # Convert figure to RGB array
     w, h = fig.canvas.get_width_height()
     img_array = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8).reshape(h, w, 3)
     plt.close(fig)
-
     return img_array
 
 
@@ -90,28 +65,14 @@ def segment_single_roi(
     """
     Segment a single ROI with given parameters, returning segmentation stats and QC image array.
 
-    Parameters
-    ----------
-    roi : str
-        ROI name.
-    image_folder : Path
-        Folder containing the ROI images.
-    qc_dir : Path
-        QC directory for saving images if for_parameter_scan=False.
-    general_config : GeneralConfig
-        General configuration parameters.
-    mask_config : CreateMasksConfig
-        Mask creation configuration.
-    parameter_set : dict, optional
-        Parameter overrides for this particular run.
-    for_parameter_scan : bool, optional
-        If True, only return QC image array in the result (no saving to disk).
-        If False, also save QC image to disk.
+    The full image is always processed for segmentation and stats. No window cropping is done here.
+
+    If run_parameter_scan=True and window_size is specified, the window crop is applied later
+    in the parameter scan function, not here.
 
     Returns
     -------
-    dict
-        Dictionary with segmentation metrics, parameters, final masks, and QC image (as array).
+    dict with segmentation metrics, parameters, final masks, and QC image array (full image).
     """
     logging.info(f"Processing ROI: {roi}")
 
@@ -124,33 +85,26 @@ def segment_single_roi(
     image_normalise = parameter_set.get('image_normalise', mask_config.image_normalise) if parameter_set else mask_config.image_normalise
     image_normalise_percentile = parameter_set.get('image_normalise_percentile', mask_config.image_normalise_percentile) if parameter_set else mask_config.image_normalise_percentile
 
-    # Load image
+    # Load the full image
     roi_path = image_folder / roi
     DNA_image_file = get_filename(roi_path, mask_config.dna_image_name)
     img = skio.imread(roi_path / DNA_image_file)
 
-    # Crop a window if specified
-    if mask_config.window_size:
-        w = mask_config.window_size
-        start_x = parameter_set.get('window_start_x', 0)
-        start_y = parameter_set.get('window_start_y', 0)
-        img = img[start_x:start_x+w, start_y:start_y+w]
-
     diameter = float(mask_config.cellpose_cell_diameter)
 
-    # Initialize models as needed
+    # Initialize models if needed
     deblur_model = denoise.DenoiseModel(model_type='deblur_nuclei', gpu=True) if run_deblur else None
     upscale_model = denoise.DenoiseModel(model_type='upsample_nuclei', gpu=True) if run_upscale else None
     cp_model = models.CellposeModel(model_type=cell_pose_model, gpu=True)
 
-    # Preprocessing
+    # Preprocessing on the full image
     current_image = img
     if run_deblur:
         current_image = deblur_model.eval(current_image, channels=None, diameter=diameter, batch_size=16)
     if run_upscale:
         current_image = upscale_model.eval(current_image, channels=None, diameter=diameter, batch_size=16)
 
-    # Cellpose segmentation
+    # Run Cellpose on the full preprocessed image
     mask, _, _ = cp_model.eval(
         current_image,
         diameter=diameter * mask_config.upscale_ratio,
@@ -161,15 +115,9 @@ def segment_single_roi(
         flow_threshold=flow_threshold
     )
 
-    if run_upscale:
-        # Resize back to original shape
-        mask = resize(mask, img.shape, order=0, preserve_range=True, anti_aliasing=False)
-
     if mask_config.expand_masks:
         mask = expand_labels(mask, distance=mask_config.expand_masks)
 
-    # Filter objects by size
-    from skimage.measure import regionprops
     region_props = regionprops(mask)
     total_objects = len(region_props)
     final_mask = np.zeros_like(mask, dtype=np.uint16)
@@ -185,17 +133,16 @@ def segment_single_roi(
         else:
             excluded_mask[mask == region.label] = region.label
 
-    # Compute stats
     pixels_per_mm2 = 1e6
     mask_area_mm2 = final_mask.shape[0] * final_mask.shape[1] / pixels_per_mm2
     objects_per_mm2 = kept_objects / mask_area_mm2 if mask_area_mm2 > 0 else 0
 
-    # Create QC image array
     qc_image_array = None
     qc_image_path_str = None
     if mask_config.perform_qc:
+        # Create full QC overlay from current_image (full preprocessed image) and final_mask
         qc_image_array = create_overlay_image(
-            image=img,
+            image=current_image,
             masks_and_colors=[(final_mask, 'green'), (excluded_mask, 'red')],
             vmin=0,
             vmax_quantile=0.97,
@@ -226,7 +173,7 @@ def segment_single_roi(
         'Final Mask': final_mask,
         'Excluded Mask': excluded_mask,
         'QC Image Path': qc_image_path_str,
-        'QC Image Array': qc_image_array
+        'QC Image Array': qc_image_array  # full-size QC image array
     }
 
     return result
@@ -234,7 +181,7 @@ def segment_single_roi(
 
 def process_roi_list(general_config: GeneralConfig, mask_config: CreateMasksConfig):
     """
-    Process a list of ROIs in the normal mode (no parameter scan), saving masks and QC images as before.
+    Normal mode: process ROIs using the current mask_config and general_config, saving masks and QC images.
     """
     logging.info("Starting mask creation (process_roi_list).")
     image_folder = Path(general_config.denoised_images_folder)
@@ -243,7 +190,7 @@ def process_roi_list(general_config: GeneralConfig, mask_config: CreateMasksConf
     output_dir.mkdir(exist_ok=True, parents=True)
     qc_dir.mkdir(exist_ok=True, parents=True)
 
-    # Determine which ROIs to process
+    # Determine ROIs
     specific_rois = mask_config.specific_rois
     if not specific_rois:
         specific_rois = [entry.name for entry in image_folder.iterdir() if entry.is_dir()]
@@ -251,17 +198,26 @@ def process_roi_list(general_config: GeneralConfig, mask_config: CreateMasksConf
     roi_data = []
     for roi in specific_rois:
         try:
-            result = segment_single_roi(roi, image_folder, qc_dir, general_config, mask_config, parameter_set=None, for_parameter_scan=False)
+            result = segment_single_roi(
+                roi,
+                image_folder,
+                qc_dir,
+                general_config,
+                mask_config,
+                parameter_set=None,
+                for_parameter_scan=False
+            )
             roi_data.append(result)
+
             # Save final mask
             final_mask = result['Final Mask']
             mask_path = output_dir / f"{roi}.tiff"
             skio.imsave(mask_path, final_mask)
+
         except Exception as e:
             logging.error(f"Error processing ROI: {roi}. Exception: {str(e)}", exc_info=True)
             continue
 
-    # Save aggregated results
     roi_df = pd.DataFrame(roi_data)
     roi_df_path = qc_dir / 'Segmentation_QC.csv'
     roi_df.to_csv(roi_df_path, index=False)
@@ -271,22 +227,23 @@ def process_roi_list(general_config: GeneralConfig, mask_config: CreateMasksConf
 
 def parameter_scan_two_params(general_config: GeneralConfig, mask_config: CreateMasksConfig):
     """
-    Perform a parameter scan using two parameters (param_a, param_b) and their value lists.
-    This creates a grid of parameter combinations and lays out QC images in a meaningful 2D grid.
+    Parameter scan mode: run multiple parameter sets defined by two parameters (param_a, param_b),
+    each with a list of values. Create a grid of QC images showing a windowed portion of the QC image
+    arrays for visual comparison.
 
     Steps:
     1. Determine ROIs to scan.
-    2. Construct parameter sets by taking Cartesian product of param_a_values and param_b_values.
-    3. For each ROI and each parameter combination, segment and get QC image arrays.
-    4. Assemble QC arrays into a grid and save, along with CSV results.
+    2. Build parameter sets from param_a_values x param_b_values.
+    3. Segment full image each time (no window cropping in segmentation).
+    4. After obtaining QC arrays, if window_size is set, crop the QC arrays for display.
+    5. Arrange QC images in a grid and save results.
     """
     logging.info("Starting parameter scan with two parameters.")
-
     image_folder = Path(general_config.denoised_images_folder)
     qc_dir = Path(general_config.qc_folder)
     qc_dir.mkdir(exist_ok=True, parents=True)
 
-    # Determine ROIs for scanning
+    # Determine ROIs
     all_rois = [entry.name for entry in image_folder.iterdir() if entry.is_dir()]
     if mask_config.scan_rois:
         scan_rois = mask_config.scan_rois
@@ -304,12 +261,13 @@ def parameter_scan_two_params(general_config: GeneralConfig, mask_config: Create
         for b_val in param_b_values:
             param_sets.append({param_a: a_val, param_b: b_val})
 
-    all_results = {}
+    all_results = []
 
-    # Pre-determine window if window_size is set
+    # If window_size is used only for visualization, we choose a window once per ROI for display purposes only
     global_window_params = {}
     for roi in scan_rois:
         if mask_config.window_size:
+            # Load full image to determine possible window coords
             roi_path = image_folder / roi
             DNA_image_file = get_filename(roi_path, mask_config.dna_image_name)
             img = skio.imread(roi_path / DNA_image_file)
@@ -318,32 +276,39 @@ def parameter_scan_two_params(general_config: GeneralConfig, mask_config: Create
             max_y = img.shape[1] - w
             start_x = random.randint(0, max_x)
             start_y = random.randint(0, max_y)
-            global_window_params[roi] = {'window_start_x': start_x, 'window_start_y': start_y}
+            global_window_params[roi] = (start_x, start_y)
         else:
-            global_window_params[roi] = {}
+            global_window_params[roi] = None
 
-    # Parameter scanning
     for roi in scan_rois:
         logging.info(f"Parameter scanning on ROI: {roi}")
         results_for_roi = []
-        qc_images = []
-
-        for pset in param_sets:
-            full_pset = dict(pset)
-            full_pset.update(global_window_params[roi])
-
+        qc_images = []  # store arrays for each parameter set (full-sized arrays)
+        for i, pset in enumerate(param_sets):
+            # Run parameter scanning in for_parameter_scan=True mode
             result = segment_single_roi(
                 roi,
                 image_folder,
                 qc_dir,
                 general_config,
                 mask_config,
-                parameter_set=full_pset,
+                parameter_set=pset,
                 for_parameter_scan=True
             )
             results_for_roi.append(result)
-            if result['QC Image Array'] is not None:
-                qc_images.append(result['QC Image Array'])
+
+            full_qc_array = result['QC Image Array']
+            if full_qc_array is not None:
+                # If window_size is set, crop the QC array for display
+                if mask_config.window_size and global_window_params[roi] is not None:
+                    start_x, start_y = global_window_params[roi]
+                    w = mask_config.window_size
+                    # Crop the QC image array
+                    cropped = full_qc_array[start_x:start_x+w, start_y:start_y+w, :]
+                    qc_images.append(cropped)
+                else:
+                    # No window cropping
+                    qc_images.append(full_qc_array)
 
         # Save results for this ROI
         df = pd.DataFrame(results_for_roi)
@@ -351,7 +316,7 @@ def parameter_scan_two_params(general_config: GeneralConfig, mask_config: Create
         df.to_csv(param_scan_csv, index=False)
         logging.info(f"Saved parameter scan results for ROI {roi} to {param_scan_csv}")
 
-        # Create QC image grid
+        # Create QC image grid (rows=param_a_values, cols=param_b_values)
         M = len(param_a_values)
         N = len(param_b_values)
         if qc_images:
@@ -378,14 +343,10 @@ def parameter_scan_two_params(general_config: GeneralConfig, mask_config: Create
             plt.close(fig)
             logging.info(f"Saved parameter scan QC grid for ROI {roi} to {qc_grid_path}")
 
-        all_results[roi] = results_for_roi
+        all_results.extend(results_for_roi)
 
-    # Combine all ROIs' results
-    combined_results = []
-    for roi, rdata in all_results.items():
-        combined_results.extend(rdata)
-
-    combined_df = pd.DataFrame(combined_results)
+    # Combined results
+    combined_df = pd.DataFrame(all_results)
     combined_csv = qc_dir / 'Parameter_Scan_All.csv'
     combined_df.to_csv(combined_csv, index=False)
     logging.info(f"Saved combined parameter scan results to {combined_csv}")
@@ -399,9 +360,10 @@ if __name__ == "__main__":
     general_config = GeneralConfig(**config.get('general', {}))
     mask_config = CreateMasksConfig(**config.get('createmasks', {}))
 
-    # Previously: if param_a and param_b fields were not empty, run parameter scan, else normal.
-    # Now we rely on 'run_parameter_scan' boolean.
-    if (mask_config.run_parameter_scan):
+    # Check run_parameter_scan and parameters
+    if (mask_config.run_parameter_scan and
+        mask_config.param_a and mask_config.param_a_values and
+        mask_config.param_b and mask_config.param_b_values):
         parameter_scan_two_params(general_config, mask_config)
     else:
         process_roi_list(general_config, mask_config)
