@@ -65,10 +65,22 @@ class CreateMasksConfig:
     max_cell_area: Optional[int] = 200
     cell_pose_model: str = 'nuclei'
     cellprob_threshold: float = -1.0
+    flow_threshold: float = 0.4
     run_deblur: bool = True
     run_upscale: bool = True
     image_normalise: bool = True
     image_normalise_percentile: List[float] = field(default_factory=lambda: [0.0, 97.0])
+
+    # Parameter scanning fields:
+    run_parameter_scan: bool = False
+    param_a: Optional[str] = 'cellprob_threshold'
+    param_a_values: Optional[List[Any]] = field(default_factory=lambda: [-5.0, -4.0, -3.0, -2.0, -1.0, 0.0])
+    param_b: Optional[str] = 'flow_threshold'
+    param_b_values: Optional[List[Any]] = field(default_factory=lambda: [0.2, 0.3, 0.4, 0.5, 0.6])
+
+    window_size: Optional[int] = None
+    num_rois_to_scan: int = 3
+    scan_rois: Optional[List[str]] = None
 
 @dataclass
 class SegmentationConfig:
