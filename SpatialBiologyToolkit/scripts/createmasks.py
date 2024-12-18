@@ -7,6 +7,7 @@ from skimage import io as skio
 from skimage.measure import regionprops
 from skimage.segmentation import find_boundaries, expand_labels
 from skimage.morphology import binary_dilation
+from skimage.transform import resize
 from cellpose import models, denoise
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
