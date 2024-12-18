@@ -1,9 +1,12 @@
+# These have to be first, if not GPU acceleration won't work on some systems
 import torch
 from cellpose import models, denoise
 
 import numpy as np
 import pandas as pd
 import random
+import logging
+from pathlib import Path
 from skimage import io as skio
 from skimage.measure import regionprops
 from skimage.segmentation import find_boundaries, expand_labels
@@ -13,7 +16,14 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 from scipy.ndimage import gaussian_filter
 
-from .config_and_utils import *
+from .config_and_utils import (
+    process_config_with_overrides,
+    setup_logging,
+    GeneralConfig,
+    CreateMasksConfig,
+    get_filename
+)
+
 
 def create_overlay_image(
         image: np.ndarray,
@@ -38,7 +48,8 @@ def create_overlay_image(
 
     for label_array, color in masks_and_colors:
         boundaries = find_boundaries(label_array, mode="outer")
-        for _ in range(boundary_dilation):  # do multiple dilations to get thicker outline
+        # Increase boundary thickness if needed
+        for _ in range(boundary_dilation):
             boundaries = binary_dilation(boundaries)
 
         cmap = ListedColormap([[0, 0, 0, 0], plt.cm.colors.to_rgba(color)])
@@ -52,23 +63,12 @@ def create_overlay_image(
     plt.close(fig)
     return img_array
 
+
 def interesting_patch(mask, bsize=130):
     """
     ADAPTED FROM CELLPOSE
 
     Get patch of size bsize x bsize from the mask that contains the densest concentration of cells.
-
-    Parameters
-    ----------
-    mask : ndarray
-        The segmentation mask where cells are labeled.
-    bsize : int
-        The size of the patch (bsize x bsize).
-
-    Returns
-    -------
-    tuple: (yinds, xinds)
-        Arrays of y and x indices defining the patch region.
     """
     Ly, Lx = mask.shape
     m = np.float32(mask > 0)
@@ -80,6 +80,7 @@ def interesting_patch(mask, bsize=130):
     xinds = np.arange(xcent - bsize // 2, xcent + bsize // 2, 1, int)
     return (yinds, xinds)
 
+
 def segment_single_roi(
     roi: str,
     image_folder: Path,
@@ -88,20 +89,19 @@ def segment_single_roi(
     parameter_set: dict = None,
     for_parameter_scan: bool = False,
     deblur_model=None,
-    upscale_model =None,
+    upscale_model=None,
     cp_model=None
 ) -> dict:
     """
     Segment a single ROI with given parameters, returning segmentation stats and QC image array.
 
-    The full image is always processed for segmentation and stats. No window cropping is done here.
-
-    If run_parameter_scan=True and window_size is specified, the window crop is applied later
-    in the parameter scan function, not here.
+    The entire image is always processed at full size. No window cropping occurs here.
+    Window cropping (if desired) happens later in the parameter scan for display only.
 
     Returns
     -------
-    dict with segmentation metrics, parameters, final masks, and QC image array (full image).
+    dict:
+        Dictionary with segmentation metrics, parameters, final masks, and QC image array (full image).
     """
     logging.info(f"Processing ROI: {roi}")
 
@@ -114,29 +114,27 @@ def segment_single_roi(
     image_normalise = parameter_set.get('image_normalise', mask_config.image_normalise) if parameter_set else mask_config.image_normalise
     image_normalise_percentile = parameter_set.get('image_normalise_percentile', mask_config.image_normalise_percentile) if parameter_set else mask_config.image_normalise_percentile
 
-    # Load the full image
     roi_path = image_folder / roi
     DNA_image_file = get_filename(roi_path, mask_config.dna_image_name)
     img = skio.imread(roi_path / DNA_image_file)
-
     diameter = float(mask_config.cellpose_cell_diameter)
 
-    # Initialize models if not supplied
-    if not deblur_model and run_deblur:
-        deblur_model = denoise.DenoiseModel(model_type='deblur_nuclei', gpu=True)# if run_deblur else None
-    if not upscale_model and run_upscale:
-        upscale_model = denoise.DenoiseModel(model_type='upsample_nuclei', gpu=True)#' if run_upscale else None
-    if not cp_model:
+    # Use provided models if they exist, otherwise create them here
+    if run_deblur and deblur_model is None:
+        deblur_model = denoise.DenoiseModel(model_type='deblur_nuclei', gpu=True)
+    if run_upscale and upscale_model is None:
+        upscale_model = denoise.DenoiseModel(model_type='upsample_nuclei', gpu=True)
+    if cp_model is None:
         cp_model = models.CellposeModel(model_type=cell_pose_model, gpu=True)
 
     # Preprocessing on the full image
-    current_image = img
+    current_image = img.copy()
     if run_deblur:
         current_image = deblur_model.eval(current_image, channels=None, diameter=diameter, batch_size=16)
     if run_upscale:
         current_image = upscale_model.eval(current_image, channels=None, diameter=diameter, batch_size=16)
 
-    # Run Cellpose on the full preprocessed image
+    # Run Cellpose
     mask, _, _ = cp_model.eval(
         current_image,
         diameter=diameter * mask_config.upscale_ratio,
@@ -147,7 +145,7 @@ def segment_single_roi(
         flow_threshold=flow_threshold
     )
 
-    # If we upscaled, reduce mask back to original (img) dimensions
+    # If we upscaled, reduce mask back to original image size
     if run_upscale:
         mask = resize(mask, img.shape, order=0, preserve_range=True, anti_aliasing=False)
 
@@ -176,7 +174,7 @@ def segment_single_roi(
     qc_image_array = None
     qc_image_path_str = None
     if mask_config.perform_qc:
-        # Create full QC overlay from current_image (full preprocessed image) and final_mask
+        # Create full QC overlay from current_image
         qc_image_array = create_overlay_image(
             image=current_image,
             boundary_dilation=mask_config.qc_boundary_dilation,
@@ -188,7 +186,7 @@ def segment_single_roi(
 
         if not for_parameter_scan:
             # Save QC image if not parameter scanning
-            qc_overlay_dir = qc_dir / 'Segmentation_overlay'
+            qc_overlay_dir = Path(mask_config.qc_folder) / 'Segmentation_overlay'
             qc_overlay_dir.mkdir(exist_ok=True, parents=True)
             qc_image_path = qc_overlay_dir / f"{roi}.png"
             plt.imsave(qc_image_path, qc_image_array)
@@ -236,10 +234,10 @@ def process_roi_list(general_config: GeneralConfig, mask_config: CreateMasksConf
     for roi in specific_rois:
         try:
             result = segment_single_roi(
-                roi = roi,
-                image_folder = image_folder,
-                qc_dir = qc_dir,
-                mask_config = mask_config,
+                roi=roi,
+                image_folder=image_folder,
+                qc_dir=qc_dir,
+                mask_config=mask_config,
                 parameter_set=None,
                 for_parameter_scan=False,
                 deblur_model=deblur_model,
@@ -273,9 +271,10 @@ def parameter_scan_two_params(general_config: GeneralConfig, mask_config: Create
     Steps:
     1. Determine ROIs to scan.
     2. Build parameter sets from param_a_values x param_b_values.
-    3. Segment full image each time (no window cropping in segmentation).
-    4. After obtaining QC arrays, if window_size is set, crop the QC arrays for display.
-    5. Arrange QC images in a grid and save results.
+    3. Segment full image each time.
+    4. Identify a patch of high cell density from the first parameter set.
+    5. Crop QC images from all parameter sets using that patch if window_size is set.
+    6. Arrange QC images in a parameter grid and save results.
     """
     logging.info("Starting parameter scan with two parameters.")
     image_folder = Path(general_config.denoised_images_folder)
@@ -302,35 +301,20 @@ def parameter_scan_two_params(general_config: GeneralConfig, mask_config: Create
 
     all_results = []
 
-    # If window_size is used only for visualization, we choose a window once per ROI for display purposes only
-    global_window_params = {}
-    for roi in scan_rois:
-        if mask_config.window_size:
-            # Load full image to determine possible window coords
-            roi_path = image_folder / roi
-            DNA_image_file = get_filename(roi_path, mask_config.dna_image_name)
-            img = skio.imread(roi_path / DNA_image_file)
-            w = mask_config.window_size
-            max_x = img.shape[0] - w
-            max_y = img.shape[1] - w
-            start_x = random.randint(0, max_x)
-            start_y = random.randint(0, max_y)
-            global_window_params[roi] = (start_x, start_y)
-        else:
-            global_window_params[roi] = None
-
     for roi in scan_rois:
         logging.info(f"Parameter scanning on ROI: {roi}")
         results_for_roi = []
         qc_images = []  # store arrays for each parameter set (full-sized arrays)
 
+        patch_coords = None
+
         for i, pset in enumerate(param_sets):
-            logging.info(f'Itteration {str(i)}: {str(pset)}')
+            logging.info(f'Iteration {str(i)}: {str(pset)}')
             result = segment_single_roi(
-                roi = roi,
-                image_folder = image_folder,
-                qc_dir = qc_dir,
-                mask_config = mask_config,
+                roi=roi,
+                image_folder=image_folder,
+                qc_dir=qc_dir,
+                mask_config=mask_config,
                 parameter_set=pset,
                 for_parameter_scan=True,
                 deblur_model=deblur_model,
@@ -342,21 +326,16 @@ def parameter_scan_two_params(general_config: GeneralConfig, mask_config: Create
             full_qc_array = result['QC Image Array']
 
             if i == 0 and mask_config.window_size:
-                # Determine the interesting patch based on the final_mask of the first result
+                # Determine interesting patch from the final_mask of the first result
                 final_mask = result['Final Mask']
                 yinds, xinds = interesting_patch(final_mask, bsize=mask_config.window_size)
-            else:
-                yinds, xinds = None, None
+                patch_coords = (yinds, xinds)
 
             if full_qc_array is not None:
-                # If window_size set and we got patch coords from the first parameter set
-                if mask_config.window_size and i == 0:
-                    # For the first parameter set, we just computed yinds, xinds, store them for reuse
-                    patch_coords = (yinds, xinds)
-                if mask_config.window_size:
-                    # Use the patch coords determined from the first parameter set
+                # If window_size is specified, crop the QC array here using patch_coords
+                if mask_config.window_size and patch_coords is not None:
                     yinds, xinds = patch_coords
-                    cropped = full_qc_array[yinds[:, None], xinds]  # index with arrays
+                    cropped = full_qc_array[yinds[:, None], xinds]
                     qc_images.append(cropped)
                 else:
                     qc_images.append(full_qc_array)
@@ -408,13 +387,13 @@ if __name__ == "__main__":
     config = process_config_with_overrides()
     setup_logging(config.get('logging', {}), pipeline_stage)
 
-    # Is GPU available?
+    # Check GPU availability
     logging.info(f'GPU available?: {str(torch.cuda.is_available())}')
 
     general_config = GeneralConfig(**config.get('general', {}))
     mask_config = CreateMasksConfig(**config.get('createmasks', {}))
 
-    # Initialize models
+    # Initialize models once
     if mask_config.run_deblur:
         deblur_model = denoise.DenoiseModel(model_type='deblur_nuclei', gpu=True)
     else:
@@ -427,7 +406,7 @@ if __name__ == "__main__":
 
     cp_model = models.CellposeModel(model_type=mask_config.cell_pose_model, gpu=True)
 
-    # Check run_parameter_scan and parameters
+    # Decide mode based on run_parameter_scan and param fields
     if (mask_config.run_parameter_scan and
         mask_config.param_a and mask_config.param_a_values and
         mask_config.param_b and mask_config.param_b_values):
