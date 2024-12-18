@@ -91,10 +91,12 @@ def segment_single_roi(
     roi: str,
     image_folder: Path,
     qc_dir: Path,
-    general_config: GeneralConfig,
     mask_config: CreateMasksConfig,
     parameter_set: dict = None,
-    for_parameter_scan: bool = False
+    for_parameter_scan: bool = False,
+    deblur_model=None,
+    upscale_model =None,
+    cp_model=None
 ) -> dict:
     """
     Segment a single ROI with given parameters, returning segmentation stats and QC image array.
@@ -126,10 +128,13 @@ def segment_single_roi(
 
     diameter = float(mask_config.cellpose_cell_diameter)
 
-    # Initialize models if needed
-    deblur_model = denoise.DenoiseModel(model_type='deblur_nuclei', gpu=True) if run_deblur else None
-    upscale_model = denoise.DenoiseModel(model_type='upsample_nuclei', gpu=True) if run_upscale else None
-    cp_model = models.CellposeModel(model_type=cell_pose_model, gpu=True)
+    # Initialize models if not supplied
+    if not deblur_model and run_deblur:
+        deblur_model = denoise.DenoiseModel(model_type='deblur_nuclei', gpu=True)# if run_deblur else None
+    if not upscale_model and run_upscale:
+        upscale_model = denoise.DenoiseModel(model_type='upsample_nuclei', gpu=True)#' if run_upscale else None
+    if not cp_model:
+        cp_model = models.CellposeModel(model_type=cell_pose_model, gpu=True)
 
     # Preprocessing on the full image
     current_image = img
@@ -218,7 +223,7 @@ def segment_single_roi(
     return result
 
 
-def process_roi_list(general_config: GeneralConfig, mask_config: CreateMasksConfig):
+def process_roi_list(general_config: GeneralConfig, mask_config: CreateMasksConfig, deblur_model, upscale_model, cp_model):
     """
     Normal mode: process ROIs using the current mask_config and general_config, saving masks and QC images.
     """
@@ -244,7 +249,10 @@ def process_roi_list(general_config: GeneralConfig, mask_config: CreateMasksConf
                 general_config,
                 mask_config,
                 parameter_set=None,
-                for_parameter_scan=False
+                for_parameter_scan=False,
+                deblur_model=deblur_model,
+                upscale_model=upscale_model,
+                cp_model=cp_model
             )
             roi_data.append(result)
 
@@ -264,7 +272,7 @@ def process_roi_list(general_config: GeneralConfig, mask_config: CreateMasksConf
     logging.info("Mask creation completed.")
 
 
-def parameter_scan_two_params(general_config: GeneralConfig, mask_config: CreateMasksConfig):
+def parameter_scan_two_params(general_config: GeneralConfig, mask_config: CreateMasksConfig, deblur_model, upscale_model, cp_model):
     """
     Parameter scan mode: run multiple parameter sets defined by two parameters (param_a, param_b),
     each with a list of values. Create a grid of QC images showing a windowed portion of the QC image
@@ -332,7 +340,10 @@ def parameter_scan_two_params(general_config: GeneralConfig, mask_config: Create
                 general_config,
                 mask_config,
                 parameter_set=pset,
-                for_parameter_scan=True
+                for_parameter_scan=True,
+                deblur_model=deblur_model,
+                upscale_model=upscale_model,
+                cp_model=cp_model
             )
             results_for_roi.append(result)
 
@@ -408,10 +419,23 @@ if __name__ == "__main__":
     general_config = GeneralConfig(**config.get('general', {}))
     mask_config = CreateMasksConfig(**config.get('createmasks', {}))
 
+    # Initialize models
+    if mask_config.run_deblur:
+        deblur_model = denoise.DenoiseModel(model_type='deblur_nuclei', gpu=True)
+    else:
+        deblur_model = None
+
+    if mask_config.run_upscale:
+        upscale_model = denoise.DenoiseModel(model_type='upsample_nuclei', gpu=True)
+    else:
+        upscale_model = None
+
+    cp_model = models.CellposeModel(model_type=mask_config.cell_pose_model, gpu=True)
+
     # Check run_parameter_scan and parameters
     if (mask_config.run_parameter_scan and
         mask_config.param_a and mask_config.param_a_values and
         mask_config.param_b and mask_config.param_b_values):
-        parameter_scan_two_params(general_config, mask_config)
+        parameter_scan_two_params(general_config, mask_config, deblur_model, upscale_model, cp_model)
     else:
-        process_roi_list(general_config, mask_config)
+        process_roi_list(general_config, mask_config, deblur_model, upscale_model, cp_model)
