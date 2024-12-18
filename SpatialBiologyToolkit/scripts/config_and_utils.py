@@ -61,6 +61,7 @@ class CreateMasksConfig:
     upscale_ratio: float = 1.7
     expand_masks: int = 1
     perform_qc: bool = True
+    qc_boundary_dilation: int = 0
     min_cell_area: Optional[int] = 15
     max_cell_area: Optional[int] = 200
     cell_pose_model: str = 'nuclei'
@@ -70,6 +71,7 @@ class CreateMasksConfig:
     run_upscale: bool = True
     image_normalise: bool = True
     image_normalise_percentile: List[float] = field(default_factory=lambda: [0.0, 97.0])
+    dpi_qc_images: int = 300
 
     # Parameter scanning fields:
     run_parameter_scan: bool = False

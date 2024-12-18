@@ -6,6 +6,7 @@ import random
 from skimage import io as skio
 from skimage.measure import regionprops
 from skimage.segmentation import find_boundaries, expand_labels
+from skimage.morphology import binary_dilation
 from cellpose import models, denoise
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
@@ -21,6 +22,7 @@ from .config_and_utils import (
 
 def create_overlay_image(
         image: np.ndarray,
+        boundary_dilation: int = 0,
         masks_and_colors: list = None,
         vmin: float = 0,
         vmax_quantile: float = 0.97,
@@ -41,6 +43,7 @@ def create_overlay_image(
 
     for label_array, color in masks_and_colors:
         boundaries = find_boundaries(label_array, mode="outer")
+        boundaries = binary_dilation(boundaries, iterations=boundary_dilation)
         cmap = ListedColormap([[0, 0, 0, 0], plt.cm.colors.to_rgba(color)])
         ax.imshow(boundaries, cmap=cmap, alpha=outline_alpha, interpolation="none")
 
@@ -143,6 +146,7 @@ def segment_single_roi(
         # Create full QC overlay from current_image (full preprocessed image) and final_mask
         qc_image_array = create_overlay_image(
             image=current_image,
+            boundary_dilation=mask_config.qc_boundary_dilation
             masks_and_colors=[(final_mask, 'green'), (excluded_mask, 'red')],
             vmin=0,
             vmax_quantile=0.97,
@@ -339,7 +343,7 @@ def parameter_scan_two_params(general_config: GeneralConfig, mask_config: Create
 
             fig.tight_layout()
             qc_grid_path = qc_dir / f'Parameter_Scan_{roi}_grid.png'
-            fig.savefig(qc_grid_path)
+            fig.savefig(qc_grid_path, dpi=mask_config.dpi_qc_images)
             plt.close(fig)
             logging.info(f"Saved parameter scan QC grid for ROI {roi} to {qc_grid_path}")
 
