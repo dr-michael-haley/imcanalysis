@@ -243,11 +243,10 @@ def process_roi_list(general_config: GeneralConfig, mask_config: CreateMasksConf
     for roi in specific_rois:
         try:
             result = segment_single_roi(
-                roi,
-                image_folder,
-                qc_dir,
-                general_config,
-                mask_config,
+                roi = roi,
+                image_folder = image_folder,
+                qc_dir = qc_dir,
+                mask_config = mask_config,
                 parameter_set=None,
                 for_parameter_scan=False,
                 deblur_model=deblur_model,
@@ -335,11 +334,10 @@ def parameter_scan_two_params(general_config: GeneralConfig, mask_config: Create
         for i, pset in enumerate(param_sets):
             logging.info(f'Itteration {str(i)}: {str(pset)}')
             result = segment_single_roi(
-                roi,
-                image_folder,
-                qc_dir,
-                general_config,
-                mask_config,
+                roi = roi,
+                image_folder = image_folder,
+                qc_dir = qc_dir,
+                mask_config = mask_config,
                 parameter_set=pset,
                 for_parameter_scan=True,
                 deblur_model=deblur_model,
