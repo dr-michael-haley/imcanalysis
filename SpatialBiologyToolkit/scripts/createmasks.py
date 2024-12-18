@@ -1,3 +1,6 @@
+import torch
+from cellpose import models, denoise
+
 import numpy as np
 import pandas as pd
 import random
@@ -11,9 +14,6 @@ from matplotlib.colors import ListedColormap
 from scipy.ndimage import gaussian_filter
 
 from .config_and_utils import *
-
-from cellpose import models, denoise
-
 
 def create_overlay_image(
         image: np.ndarray,
@@ -407,6 +407,9 @@ if __name__ == "__main__":
     pipeline_stage = 'CreateMasks'
     config = process_config_with_overrides()
     setup_logging(config.get('logging', {}), pipeline_stage)
+
+    # Is GPU available?
+    logging.info(f'GPU available?: {str(torch.cuda.is_available())}')
 
     general_config = GeneralConfig(**config.get('general', {}))
     mask_config = CreateMasksConfig(**config.get('createmasks', {}))
