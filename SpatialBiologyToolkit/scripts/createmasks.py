@@ -389,7 +389,7 @@ def parameter_scan_two_params(general_config: GeneralConfig, mask_config: Create
     logging.info(f"Saved combined parameter scan results to {combined_csv}")
 
     # Save bargraph of results for number of cells captured
-    param_to_column = {'diameter': 'Cell Pose Cell Diameter',
+    param_to_column = {'cellpose_cell_diameter': 'Cell Pose Cell Diameter',
                      'cell_pose_model': 'Cell Pose Model',
                      'cellprob_threshold': 'CellProb Threshold',
                      'run_deblur': 'Run Deblur',
