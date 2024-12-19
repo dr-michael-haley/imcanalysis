@@ -204,6 +204,7 @@ def segment_single_roi(
         'Cells per mm2': objects_per_mm2,
         'Run Deblur': run_deblur,
         'Run Upscale': run_upscale,
+        'Cell Pose Cell Diameter': diameter,
         'Cell Pose Model': cell_pose_model,
         'CellProb Threshold': cellprob_threshold,
         'Flow Threshold': flow_threshold,
@@ -388,11 +389,19 @@ def parameter_scan_two_params(general_config: GeneralConfig, mask_config: Create
     logging.info(f"Saved combined parameter scan results to {combined_csv}")
 
     # Save bargraph of results for number of cells captured
+    param_to_column = {'diameter': 'Cell Pose Cell Diameter',
+                     'cell_pose_model': 'Cell Pose Model',
+                     'cellprob_threshold': 'CellProb Threshold',
+                     'flow_threshold': 'Flow Threshold',
+                     'image_normalise': 'Image Normalize',
+                     'image_normalise_percentile_lower': 'Image Normalize Percentile Lower',
+                     'image_normalise_percentile_upper': 'Image Normalize Percentile Upper'}
+
     for m in ['Cells per mm2', 'Excluded cells']:
         ax = sb.barplot(data=combined_df,
                         y=m,
-                        x=param_a,
-                        hue=param_b,
+                        x=param_to_column[param_a],
+                        hue=param_to_column[param_b],
                         palette='tab20')
 
         sb.move_legend(ax, "upper left", bbox_to_anchor=(1, 1))
