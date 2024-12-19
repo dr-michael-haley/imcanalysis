@@ -65,12 +65,13 @@ class CreateMasksConfig:
     min_cell_area: Optional[int] = 15
     max_cell_area: Optional[int] = 200
     cell_pose_model: str = 'nuclei'
-    cellprob_threshold: float = -1.0
+    cellprob_threshold: float = 0.0
     flow_threshold: float = 0.4
     run_deblur: bool = True
     run_upscale: bool = True
     image_normalise: bool = True
-    image_normalise_percentile: List[float] = field(default_factory=lambda: [0.0, 97.0])
+    image_normalise_percentile_lower: float = 0.0
+    image_normalise_percentile_upper: float =  98.0
     dpi_qc_images: int = 300
 
     # Parameter scanning fields:

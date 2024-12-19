@@ -112,7 +112,8 @@ def segment_single_roi(
     cellprob_threshold = parameter_set.get('cellprob_threshold', mask_config.cellprob_threshold) if parameter_set else mask_config.cellprob_threshold
     flow_threshold = parameter_set.get('flow_threshold', mask_config.flow_threshold) if parameter_set else mask_config.flow_threshold
     image_normalise = parameter_set.get('image_normalise', mask_config.image_normalise) if parameter_set else mask_config.image_normalise
-    image_normalise_percentile = parameter_set.get('image_normalise_percentile', mask_config.image_normalise_percentile) if parameter_set else mask_config.image_normalise_percentile
+    image_normalise_percentile_lower = parameter_set.get('image_normalise_percentile_lower', mask_config.image_normalise_percentile_lower) if parameter_set else mask_config.image_normalise_percentile_lower
+    image_normalise_percentile_upper = parameter_set.get('image_normalise_percentile_upper', mask_config.image_normalise_percentile_upper) if parameter_set else mask_config.image_normalise_percentile_upper
 
     roi_path = image_folder / roi
     DNA_image_file = get_filename(roi_path, mask_config.dna_image_name)
@@ -140,7 +141,7 @@ def segment_single_roi(
         diameter=diameter * mask_config.upscale_ratio,
         channels=None,
         batch_size=16,
-        normalize={'normalize': image_normalise, 'percentile': image_normalise_percentile},
+        normalize={'normalize': image_normalise, 'percentile': [image_normalise_percentile_lower, image_normalise_percentile_upper]},
         cellprob_threshold=cellprob_threshold,
         flow_threshold=flow_threshold
     )
@@ -204,7 +205,8 @@ def segment_single_roi(
         'CellProb Threshold': cellprob_threshold,
         'Flow Threshold': flow_threshold,
         'Image Normalize': image_normalise,
-        'Image Normalize Percentile': image_normalise_percentile,
+        'Image Normalize Percentile Lower': image_normalise_percentile_lower,
+        'Image Normalize Percentile Upper': image_normalise_percentile_upper,
         'Final Mask': final_mask,
         'Excluded Mask': excluded_mask,
         'QC Image Path': qc_image_path_str,
