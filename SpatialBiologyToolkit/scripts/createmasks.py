@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 import random
 import logging
+import os
 from pathlib import Path
 from skimage import io as skio
 from skimage.measure import regionprops
@@ -15,13 +16,15 @@ from skimage.transform import resize
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 from scipy.ndimage import gaussian_filter
+import seaborn as sb
 
 from .config_and_utils import (
     process_config_with_overrides,
     setup_logging,
     GeneralConfig,
     CreateMasksConfig,
-    get_filename
+    get_filename,
+    cleanstring
 )
 
 
@@ -279,8 +282,14 @@ def parameter_scan_two_params(general_config: GeneralConfig, mask_config: Create
     6. Arrange QC images in a parameter grid and save results.
     """
     logging.info("Starting parameter scan with two parameters.")
+
+    param_a = mask_config.param_a
+    param_a_values = mask_config.param_a_values or []
+    param_b = mask_config.param_b
+    param_b_values = mask_config.param_b_values or []
+
     image_folder = Path(general_config.denoised_images_folder)
-    qc_dir = Path(general_config.qc_folder)
+    qc_dir = Path(os.path.join(general_config.qc_folder, f'ParameterScan_{cleanstring(param_a)}_{cleanstring(param_b)}'))
     qc_dir.mkdir(exist_ok=True, parents=True)
 
     # Determine ROIs
@@ -289,11 +298,6 @@ def parameter_scan_two_params(general_config: GeneralConfig, mask_config: Create
         scan_rois = mask_config.scan_rois
     else:
         scan_rois = random.sample(all_rois, mask_config.num_rois_to_scan)
-
-    param_a = mask_config.param_a
-    param_a_values = mask_config.param_a_values or []
-    param_b = mask_config.param_b
-    param_b_values = mask_config.param_b_values or []
 
     # Construct parameter grid
     param_sets = []
@@ -382,6 +386,20 @@ def parameter_scan_two_params(general_config: GeneralConfig, mask_config: Create
     combined_csv = qc_dir / 'Parameter_Scan_All.csv'
     combined_df.to_csv(combined_csv, index=False)
     logging.info(f"Saved combined parameter scan results to {combined_csv}")
+
+    # Save bargraph of results for number of cells captured
+    for m in ['Cells per mm2', 'Excluded cells']:
+        ax = sb.barplot(data=combined_df,
+                        y=m,
+                        x=param_a,
+                        hue=param_b,
+                        palette='tab20')
+
+        sb.move_legend(ax, "upper left", bbox_to_anchor=(1, 1))
+
+        fig = ax.get_figure()
+        fig.savefig(qc_dir / f"Parameterscan_{m}.png", bbox_inches='tight', dpi=300)
+        plt.close()
 
 
 if __name__ == "__main__":

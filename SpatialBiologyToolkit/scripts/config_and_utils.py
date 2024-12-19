@@ -280,3 +280,22 @@ def process_config_with_overrides():
         logging.info(f'Configuration file "{args.config}" updated with overrides.')
 
     return config
+
+def cleanstring(data: Any) -> str:
+    """
+    Helper function that returns a clean string.
+
+    Parameters
+    ----------
+    data : Any
+        Input data to be cleaned.
+
+    Returns
+    -------
+    str
+        Cleaned string.
+    """
+    import re
+    data = str(data)
+    data = re.sub(r'\W+', '', data)
+    return data
