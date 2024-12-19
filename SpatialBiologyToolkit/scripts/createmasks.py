@@ -117,11 +117,11 @@ def segment_single_roi(
     image_normalise = parameter_set.get('image_normalise', mask_config.image_normalise) if parameter_set else mask_config.image_normalise
     image_normalise_percentile_lower = parameter_set.get('image_normalise_percentile_lower', mask_config.image_normalise_percentile_lower) if parameter_set else mask_config.image_normalise_percentile_lower
     image_normalise_percentile_upper = parameter_set.get('image_normalise_percentile_upper', mask_config.image_normalise_percentile_upper) if parameter_set else mask_config.image_normalise_percentile_upper
+    diameter = float(parameter_set.get('cellpose_cell_diameter', mask_config.cellpose_cell_diameter) if parameter_set else mask_config.cellpose_cell_diameter)
 
     roi_path = image_folder / roi
     DNA_image_file = get_filename(roi_path, mask_config.dna_image_name)
     img = skio.imread(roi_path / DNA_image_file)
-    diameter = float(mask_config.cellpose_cell_diameter)
 
     # Use provided models if they exist, otherwise create them here
     if run_deblur and deblur_model is None:
@@ -392,6 +392,8 @@ def parameter_scan_two_params(general_config: GeneralConfig, mask_config: Create
     param_to_column = {'diameter': 'Cell Pose Cell Diameter',
                      'cell_pose_model': 'Cell Pose Model',
                      'cellprob_threshold': 'CellProb Threshold',
+                     'run_deblur': 'Run Deblur',
+                     'run_upscale': 'Run Upscale',
                      'flow_threshold': 'Flow Threshold',
                      'image_normalise': 'Image Normalize',
                      'image_normalise_percentile_lower': 'Image Normalize Percentile Lower',
