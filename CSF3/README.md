@@ -3,6 +3,7 @@
 ## Overview
 These scripts were designed to do all the pre-processing for IMC data on the CSF3. The scripts are designed to be run in sequence via a single job file. All the scripts use a common YAML configuration file to specify  directories, pipeline behaviors, segmentation parameters, etc.
 
+
 ### Pipeline scripts
 - `preprocesing.py`: Extracts the .TIFF images from the MCD files
 - `denoising.py`: Uses IMC Denoise to denoise each channel
@@ -10,8 +11,10 @@ These scripts were designed to do all the pre-processing for IMC data on the CSF
 - `segmentation.py`: Uses the masks to segment all the denoised images, create cell tables with the raw data, which is then use to create an AnnData object.
 - `basic_process.py`: Performs basic pre-processing of the data, including batch correcting, calculating UMAPs, and initial leiden clustering.
 
+
 ### Accessory scripts
 - `generate_config.py`: Creates a config.yaml file with the default parameters that can then be modified
+
 
 ## Installation and setup
 1. Login to CSF3 command line.
@@ -27,42 +30,48 @@ These scripts were designed to do all the pre-processing for IMC data on the CSF
 
 ## Settings in Config file
 
+
 ### General Configuration (general)
+
 **Purpose**:
 Specifies directories for input, output, and intermediate data. Adjust these paths to match your project's file structure.
 
+
 **Parameters:**
 - mcd_files_folder (str, default: 'MCD_files'): Directory containing MCD files (raw acquisition data).
-- metadata_folder (str, default: 'metadata'): Directory with metadata files describing ROIs, imaging parameters, and other reference info.
+- metadata_folder (str, default: 'metadata'): Directory where metadata files describing ROIs, imaging parameters, and other reference info will be stored.
 - qc_folder (str, default: 'QC'): Where quality control (QC) outputs, such as overlay images and summary CSVs, are saved.
 - masks_folder (str, default: 'masks'): Directory for saving final segmentation masks.
 - celltable_folder (str, default: 'cell_tables'): Location where single-cell data tables (CSV files) are stored after segmentation.
-- tiff_stacks_folder (str, default: 'tiff_stacks'): Directory for multi-channel TIFF stacks if using them.
-- raw_images_folder (str, default: 'tiffs'): Directory containing raw input TIFF images.
-- denoised_images_folder (str, default: 'processed'): Directory for denoised/processed images used as input to segmentation.
+- tiff_stacks_folder (str, default: 'tiff_stacks'): Directory for multi-channel TIFF stacks to be extracted at preprocessing step.
+- raw_images_folder (str, default: 'tiffs'): Directory where raw TIFF images will be stored.
+- denoised_images_folder (str, default: 'processed'): Directory for denoised/processed images will be stored, and used as input to segmentation.
 
 ### Preprocessing Configuration (preprocess)
+
 **Purpose**:
 Controls minimal preprocessing steps, such as validating ROI sizes before processing.
 
 **Parameters**:
-- minimum_roi_dimensions (int, default: 200): Minimum dimension required for ROIs (in pixels). ROIs smaller than this may be skipped or flagged.
+- minimum_roi_dimensions (int, default: 200): Minimum dimension required for ROIs (in pixels). ROIs smaller than this (usually test regions) are skipped and flagged.
 
 ### Denoising Configuration (denoising)
+
 **Purpose**:
 Handles the image denoising pipeline. You can turn denoising on/off, select methods, channels, and QC parameters.
 
+Most of these parameters are covered in the IMC_Denoise documentation! https://github.com/PENGLU-WashU/IMC_Denoise/tree/main
+
+
 **Parameters**:
-- run_denoising (bool, default: True): Enable or disable the denoising step.
-- raw_directory (str, default: 'tiffs'): Input directory for raw images before denoising.
-- metadata_directory (str, default: 'metadata'): Directory holding metadata relevant to denoising steps.
-- processed_output_dir (str, default: 'processed'): Output directory for denoised images.
+- run_denoising (bool, default: True): Enable or disable the denoising step. This is included in case you wanted to run the QC steps without re-running any denoising.
 - method (str, default: 'deep_snf'): Denoising method. Options: 'deep_snf' or 'dimr'. Adjusts which denoising algorithm is applied.
-- channels (List[str], default: []): Specify which channels to denoise. Empty means all or as defined elsewhere.
+- channels (List[str], default: []): Specify which channels to denoise. Empty means all or as defined in the `panel.csv` created in the metadata directory.
 - n_neighbours (int, default: 4), n_iter (int, default: 3), window_size (int, default: 3): General parameters for both denoising methods, controlling complexity and extent of denoising operations.
 
 *For deep_snf method-specific parameters*:
 
+```python
 - patch_step_size (int, default: 100): The patch size step used when training/denoising with DeepSNF.
 - train_epochs (int, default: 75), train_initial_lr (float, default: 0.001): Number of training epochs and initial learning rate for DeepSNF model training.
 - train_batch_size (int, default: 200): Batch size for DeepSNF training.
@@ -74,9 +83,10 @@ Handles the image denoising pipeline. You can turn denoising on/off, select meth
 - is_load_weights (bool, default: False): If True, load existing weights instead of training from scratch.
 - lambda_HF (float, default: 3e-6): Regularization parameter for high-frequency details.
 - network_size (str, default: 'normal'): Network size preset.
+```
 
 *QC parameters for denoising*:
-
+`
 - run_QC (bool, default: True): Whether to produce QC images post-denoising.
 - colourmap (str, default: 'jet'): Colormap for QC images.
 - dpi (int, default: 100): Resolution of QC images.
@@ -84,6 +94,7 @@ Handles the image denoising pipeline. You can turn denoising on/off, select meth
 - skip_already_denoised (bool, default: True): Skip re-denoising if output files already exist.
 
 ### Create Masks Configuration (createmasks)
+
 **Purpose**:
 Controls cell segmentation with Cellpose, including preprocessing, thresholds, parameter scanning, and QC overlay generation.
 
@@ -116,6 +127,7 @@ Controls cell segmentation with Cellpose, including preprocessing, thresholds, p
 - scan_rois (Optional[List[str]]): If provided, run parameter scan on these specific ROIs.
 
 ### Segmentation Configuration (segmentation)
+
 **Purpose:**
 Controls downstream data processing after segmentation, such as storing results in AnnData or adjusting marker normalization.
 
@@ -127,6 +139,7 @@ Controls downstream data processing after segmentation, such as storing results 
 - anndata_save_path (str, default: 'anndata.h5ad'): Path to store the final single-cell data as an AnnData file.
 
 ### Basic Process Configuration (basic_process)
+
 **Purpose:**
 Controls additional processing steps like batch correction and clustering (e.g., PCA, UMAP, Leiden clustering).
 
