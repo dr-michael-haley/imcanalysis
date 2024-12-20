@@ -310,7 +310,6 @@ if __name__ == "__main__":
         raw_images_folder=general_config.raw_images_folder,
         metadata_folder=general_config.metadata_folder,
         save_directory=general_config.celltable_folder,
-        extra_mask_analyses=seg_config.extra_mask_analyses
     )
 
     # Concatenate individual ROIs into a cell table

@@ -92,7 +92,6 @@ class SegmentationConfig:
     store_raw_marker_data: bool = False
     remove_channels_list: List[str] = field(default_factory=lambda: ['DNA1', 'DNA3'])
     anndata_save_path: str = 'anndata.h5ad'
-    extra_mask_analyses: bool = True
 
 @dataclass
 class BasicProcessConfig:
