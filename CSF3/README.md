@@ -3,14 +3,60 @@
 ## Overview
 These scripts were designed to do all the pre-processing for IMC data on the CSF3. The scripts are designed to be run in sequence via a single job file. All the scripts use a common YAML configuration file to specify  directories, pipeline behaviors, segmentation parameters, etc.
 
+## Pipeline scripts
 
-### Pipeline scripts
-- `preprocesing.py`: Extracts the .TIFF images from the MCD files
-- `denoising.py`: Uses IMC Denoise to denoise each channel
-- `createmasks.py`: Uses CellPose3 to create segmentation makes based upon the DNA channel, including creating QC images. Can also do a parameter scan to fine tune the CellPose3 parameters.
-- `segmentation.py`: Uses the masks to segment all the denoised images, create cell tables with the raw data, which is then use to create an AnnData object.
-- `basic_process.py`: Performs basic pre-processing of the data, including batch correcting, calculating UMAPs, and initial leiden clustering.
+### `preprocesing.py`
 
+**Purpose:** Extracts the .TIFF images from the MCD files
+
+**Inputs:** MCD files
+
+**Outputs:**
+- `.tiff files` - Raw tiff files for each ROI and channel, named sequentially as they were imaged
+- `metadata/metadata.csv` - Metadata about the ROIs (e.g names) from the MCD file
+- `metadata/panel.csv` - Channels detected in MCD file.
+- `metadata/dictionary.csv`  - Blank dictionary file for adding sample level metadata
+- 
+**User input required:**
+- Edit `panel.csv` to specify channels that will be denoised, and whether raw or denoised images should be used in segmentation
+- Edit `dictionary.csv` to add sample-level metadata for the ROIs, e.g. case or treatments. This information will be incorporated into the AnnData.
+
+### `denoising.py`
+
+**Purpose:** Uses IMC Denoise to denoise each channel
+
+**Inputs:** Raw tiff files (`tiffs`), `panel.csv` for channel information
+
+**Outputs:** Denoised tiff files (`processed`)
+
+### `createmasks.py`
+
+**Purpose:** Uses CellPose3 to create segmentation makes based upon the DNA channel, including creating QC images. Can also do a parameter scan to fine tune the CellPose3 parameters.
+
+**Inputs:** Denoised .tiff files (`processed`), `panel.csv` for channel information
+
+**Outputs:** 
+- `masks` - Masks for each ROI
+- `QC/Segmentation_overlay` - QC with sucessfully segmented cells in green, and excluded cells too small/big in red.
+
+### `segmentation.py`
+
+**Purpose:** Uses the masks to segment all the denoised images, create cell tables with the raw data, which is then use to create an AnnData object.
+
+**Inputs:** Denoised .tiff files (`processed`), `masks`, `dictionary.csv` for importing sample-level metadata
+
+**Outputs:** 
+- `celltable.csv` - Master cell table with all cell information in
+- `cell_tables` - Cell tables for each ROI
+- `anndata.h5ad` - Imported and normalised data, saved as AnnData.
+
+### `basic_process.py`
+
+**Purpose:** Performs basic pre-processing of the data, including batch correcting, calculating UMAPs, and initial leiden clustering.
+
+**Inputs:** `anndata.h5ad`
+
+**Outputs:** `anndata_processed.h5ad`
 
 ### Accessory scripts
 - `generate_config.py`: Creates a config.yaml file with the default parameters that can then be modified
@@ -71,7 +117,6 @@ Most of these parameters are covered in the IMC_Denoise documentation! https://g
 
 *For deep_snf method-specific parameters*:
 
-```python
 - patch_step_size (int, default: 100): The patch size step used when training/denoising with DeepSNF.
 - train_epochs (int, default: 75), train_initial_lr (float, default: 0.001): Number of training epochs and initial learning rate for DeepSNF model training.
 - train_batch_size (int, default: 200): Batch size for DeepSNF training.
@@ -83,10 +128,9 @@ Most of these parameters are covered in the IMC_Denoise documentation! https://g
 - is_load_weights (bool, default: False): If True, load existing weights instead of training from scratch.
 - lambda_HF (float, default: 3e-6): Regularization parameter for high-frequency details.
 - network_size (str, default: 'normal'): Network size preset.
-```
 
 *QC parameters for denoising*:
-`
+
 - run_QC (bool, default: True): Whether to produce QC images post-denoising.
 - colourmap (str, default: 'jet'): Colormap for QC images.
 - dpi (int, default: 100): Resolution of QC images.
@@ -101,27 +145,27 @@ Controls cell segmentation with Cellpose, including preprocessing, thresholds, p
 **Parameters**:
 - specific_rois (Optional[List[str]]): List of ROIs to segment. If None, all available ROIs are processed.
 - dna_image_name (str, default: 'DNA1'): Name of the DNA channel image to segment.
-- cellpose_cell_diameter (float, default: 10.0): Approximate cell diameter in pixels for Cellpose.
+- cellpose_cell_diameter (float, default: 10.0): Approximate cell diameter in pixels for Cellpose. **This is important to try and tweak for accurate segmentation**
 - upscale_ratio (float, default: 1.7): Upscaling ratio if run_upscale is True.
-- expand_masks (int, default: 1): Distance to expand segmentation masks.
+- expand_masks (int, default: 1): Distance to expand segmentation masks. **This is important to try and tweak for accurate segmentation, and will depend on cell density**
 - perform_qc (bool, default: True): Produce QC overlay images for segmentation results.
 - qc_boundary_dilation (int, default: 0): Thickness of mask outlines in QC images. Increase to make outlines appear thicker.
 - min_cell_area (Optional[int], default: 15), max_cell_area (Optional[int], default: 200): Minimum and maximum acceptable cell size (in pixels). Objects outside this range are excluded.
 - cell_pose_model (str, default: 'nuclei'): Cellpose model type (e.g., 'nuclei', 'cyto', etc.).
-- cellprob_threshold (float, default: 0.0): Threshold for cell probability in Cellpose.
-- flow_threshold (float, default: 0.4): Threshold for flow error in Cellpose, controlling segmentation quality.
+- cellprob_threshold (float, default: 0.0): Threshold for cell probability in Cellpose. **This is important to try and tweak for accurate segmentation**
+- flow_threshold (float, default: 0.4): Threshold for flow error in Cellpose, controlling segmentation quality. **This is important to try and tweak for accurate segmentation**
 - run_deblur (bool, default: True): If True, apply deblur preprocessing before segmentation.
 - run_upscale (bool, default: True): If True, apply upscaling preprocessing before segmentation.
 - image_normalise (bool, default: True): If True, normalize image intensity before Cellpose.
-- image_normalise_percentile_lower (float, default: 0.0), image_normalise_percentile_upper (float, default: 98.0): Percentiles for intensity normalization range.
+- image_normalise_percentile_lower (float, default: 0.0), image_normalise_percentile_upper (float, default: 99.9): Percentiles for intensity normalization range.
 - dpi_qc_images (int, default: 300): DPI for saved QC images, higher values produce higher resolution overlays.
 
 *Parameter scanning fields*:
 - run_parameter_scan (bool, default: False): If True, the pipeline runs a parameter scan rather than normal segmentation.
 - param_a (Optional[str], default: 'cellprob_threshold'): The first parameter to vary (X-axis of parameter grid).
-- param_a_values (List[Any], default: [-5.0, -4.0, -3.0, -2.0, -1.0, 0.0]): Values to test for param_a.
+- param_a_values (List[Any], default: [-4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0]): Values to test for param_a.
 - param_b (Optional[str], default: 'flow_threshold'): The second parameter to vary (Y-axis of parameter grid).
-- param_b_values (List[Any], default: [0.2, 0.3, 0.4, 0.5, 0.6]): Values to test for param_b.
+- param_b_values (List[Any], default: [0.3, 0.4, 0.5, 0.6, 0.7, 0.8]): Values to test for param_b.
 - window_size (Optional[int], default: 250): Size of the windowed sub-region (patch) to show in QC grids for parameter scan. This only affects displayed QC images, not the segmentation or stats on the full image.
 - num_rois_to_scan (int, default: 3): If no scan_rois specified, randomly choose this many ROIs for parameter scanning.
 - scan_rois (Optional[List[str]]): If provided, run parameter scan on these specific ROIs.
