@@ -89,4 +89,3 @@ dependencies:
       - werkzeug==2.0.3
       - wrapt==1.16.0
       - zipp==3.6.0
-prefix: /mnt/iusers01/fatpou01/bmh01/mfbx6mh8/miniconda3/envs/IMC_Denoise

@@ -189,4 +189,3 @@ dependencies:
       - torch==2.5.1
       - triton==3.1.0
       - typing-extensions==4.12.2
-prefix: /mnt/iusers01/fatpou01/bmh01/mfbx6mh8/miniconda3/envs/segmentation
