@@ -1,4 +1,7 @@
-# Preprocessing scripts for CSF3
+# Preprocessing scripts for IMC data on CSF3 :test_tube: :electric_plug:
+ 
+> [!CAUTION]
+> This is all a work in progress! I will do my best to fix and bugs, but this is a fairly complex pipeline with a lot of moving parts.
 
 ## Overview
 These scripts were designed to do all the pre-processing for IMC data on the CSF3. The scripts are designed to be run in sequence via a single job file. All the scripts use a common YAML configuration file to specify  directories, pipeline behaviors, segmentation parameters, etc.
