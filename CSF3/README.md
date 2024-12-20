@@ -73,8 +73,10 @@ These scripts were designed to do all the pre-processing for IMC data on the CSF
 
 **Inputs:** `anndata.h5ad`
 
-**Outputs:** `anndata_processed.h5ad`
+**Outputs:** `anndata_processed.h5ad`. This can then be used for downstream analyses in my other notebooks.
 
+> [!TIP]
+> The outputs of these scripts will (hopefully) dovetail into my other IMC notebooks for doing downstream spatial analyses
 
 ## Accessory scripts :ledger:
 - `generate_config.py`: Creates a config.yaml file with the default parameters that can then be modified
@@ -208,7 +210,7 @@ Controls downstream data processing after segmentation, such as storing results 
 - anndata_save_path (str, default: 'anndata.h5ad'): Path to store the final single-cell data as an AnnData file.
 
 
-## Basic Process Configuration (basic_process)
+## Basic Process Configuration (`basic_process`)
 
 **Purpose:**
 Controls additional processing steps like batch correction and clustering (e.g., PCA, UMAP, Leiden clustering).
