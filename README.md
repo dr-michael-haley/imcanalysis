@@ -34,7 +34,7 @@ All the tools I have developed are available in this package, details for instal
 Example tutorials can be found in the Tutorials folder. They should all work in an environment where SpatialBiologyToolkit package has been installed.
 
 # Preprocessing scripts for IMC data on University of Manchester CSF3 :test_tube: :electric_plug: :bee:
-I have added scripts for running preprocessing of IMC data on CSF3, or similar command line cloud computing platform: [Installation and usage guide](#CSF3)
+I have added scripts for running preprocessing of IMC data on CSF3, or similar command line cloud computing platform, see CSF3 folder in repo.
 
 ## IMC_Denoise - UPDATED Nov 2024
 ~This is a Jupyter notebook that implements the IMC Denoise approach (https://github.com/PENGLU-WashU/IMC_Denoise/) to marry up with the Bodenmiller IMC pipeline~
