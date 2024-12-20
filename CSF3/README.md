@@ -3,9 +3,9 @@
 ## Overview
 These scripts were designed to do all the pre-processing for IMC data on the CSF3. The scripts are designed to be run in sequence via a single job file. All the scripts use a common YAML configuration file to specify  directories, pipeline behaviors, segmentation parameters, etc.
 
-## Pipeline scripts
+# Pipeline scripts
 
-### `preprocesing.py`
+## `preprocesing.py`
 
 **Purpose:** Extracts the .TIFF images from the MCD files
 
@@ -16,20 +16,23 @@ These scripts were designed to do all the pre-processing for IMC data on the CSF
 - `metadata/metadata.csv` - Metadata about the ROIs (e.g names) from the MCD file
 - `metadata/panel.csv` - Channels detected in MCD file.
 - `metadata/dictionary.csv`  - Blank dictionary file for adding sample level metadata
-- 
+- `metadata/errors.csv`  - Any errors encountered when extracting raw data, occassionally some ROIs get corrupted
+
 **User input required:**
 - Edit `panel.csv` to specify channels that will be denoised, and whether raw or denoised images should be used in segmentation
 - Edit `dictionary.csv` to add sample-level metadata for the ROIs, e.g. case or treatments. This information will be incorporated into the AnnData.
 
-### `denoising.py`
+## `denoising.py`
 
 **Purpose:** Uses IMC Denoise to denoise each channel
 
 **Inputs:** Raw tiff files (`tiffs`), `panel.csv` for channel information
 
-**Outputs:** Denoised tiff files (`processed`)
+**Outputs:** 
+- Denoised tiff files (`processed`)
+- `QC/denoising` - Side-by-side comparisson of raw and denoised channels.
 
-### `createmasks.py`
+## `createmasks.py`
 
 **Purpose:** Uses CellPose3 to create segmentation makes based upon the DNA channel, including creating QC images. Can also do a parameter scan to fine tune the CellPose3 parameters.
 
@@ -39,7 +42,7 @@ These scripts were designed to do all the pre-processing for IMC data on the CSF
 - `masks` - Masks for each ROI
 - `QC/Segmentation_overlay` - QC with sucessfully segmented cells in green, and excluded cells too small/big in red.
 
-### `segmentation.py`
+## `segmentation.py`
 
 **Purpose:** Uses the masks to segment all the denoised images, create cell tables with the raw data, which is then use to create an AnnData object.
 
@@ -49,8 +52,9 @@ These scripts were designed to do all the pre-processing for IMC data on the CSF
 - `celltable.csv` - Master cell table with all cell information in
 - `cell_tables` - Cell tables for each ROI
 - `anndata.h5ad` - Imported and normalised data, saved as AnnData.
+- `QC/Segmentation_QC.csv` - QC for segmentation.
 
-### `basic_process.py`
+## `basic_process.py`
 
 **Purpose:** Performs basic pre-processing of the data, including batch correcting, calculating UMAPs, and initial leiden clustering.
 
@@ -58,11 +62,11 @@ These scripts were designed to do all the pre-processing for IMC data on the CSF
 
 **Outputs:** `anndata_processed.h5ad`
 
-### Accessory scripts
+## Accessory scripts
 - `generate_config.py`: Creates a config.yaml file with the default parameters that can then be modified
 
 
-## Installation and setup
+# Installation and setup
 1. Login to CSF3 command line.
 2. Clone this repo into your home directory, you can use my access key: `git clone https://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@github.com/dr-michael-haley/imcanalysis.git`
 3. Install conda or miniconda (if you don't already have it setup).
@@ -74,14 +78,12 @@ These scripts were designed to do all the pre-processing for IMC data on the CSF
 9. Setup a job file - I've uploaded an example here (`job.txt`). By deafult all the stages are run, but I usually just comment out the steps as I've confirmed that they have run succesfully. You will also notice we use the v100 GPUs - these are free at point of access if you ask Research IT to give you access.
 10. Submit the job
 
-## Settings in Config file
+# Settings in Config file
 
-
-### General Configuration (general)
+## General Configuration (general)
 
 **Purpose**:
 Specifies directories for input, output, and intermediate data. Adjust these paths to match your project's file structure.
-
 
 **Parameters:**
 - mcd_files_folder (str, default: 'MCD_files'): Directory containing MCD files (raw acquisition data).
@@ -93,7 +95,7 @@ Specifies directories for input, output, and intermediate data. Adjust these pat
 - raw_images_folder (str, default: 'tiffs'): Directory where raw TIFF images will be stored.
 - denoised_images_folder (str, default: 'processed'): Directory for denoised/processed images will be stored, and used as input to segmentation.
 
-### Preprocessing Configuration (preprocess)
+## Preprocessing Configuration (preprocess)
 
 **Purpose**:
 Controls minimal preprocessing steps, such as validating ROI sizes before processing.
@@ -101,13 +103,12 @@ Controls minimal preprocessing steps, such as validating ROI sizes before proces
 **Parameters**:
 - minimum_roi_dimensions (int, default: 200): Minimum dimension required for ROIs (in pixels). ROIs smaller than this (usually test regions) are skipped and flagged.
 
-### Denoising Configuration (denoising)
+## Denoising Configuration (denoising)
 
 **Purpose**:
 Handles the image denoising pipeline. You can turn denoising on/off, select methods, channels, and QC parameters.
 
 Most of these parameters are covered in the IMC_Denoise documentation! https://github.com/PENGLU-WashU/IMC_Denoise/tree/main
-
 
 **Parameters**:
 - run_denoising (bool, default: True): Enable or disable the denoising step. This is included in case you wanted to run the QC steps without re-running any denoising.
@@ -137,7 +138,7 @@ Most of these parameters are covered in the IMC_Denoise documentation! https://g
 - qc_image_dir (str, default: 'denoising'): Directory to store QC images.
 - skip_already_denoised (bool, default: True): Skip re-denoising if output files already exist.
 
-### Create Masks Configuration (createmasks)
+## Create Masks Configuration (createmasks)
 
 **Purpose**:
 Controls cell segmentation with Cellpose, including preprocessing, thresholds, parameter scanning, and QC overlay generation.
@@ -170,7 +171,7 @@ Controls cell segmentation with Cellpose, including preprocessing, thresholds, p
 - num_rois_to_scan (int, default: 3): If no scan_rois specified, randomly choose this many ROIs for parameter scanning.
 - scan_rois (Optional[List[str]]): If provided, run parameter scan on these specific ROIs.
 
-### Segmentation Configuration (segmentation)
+## Segmentation Configuration (segmentation)
 
 **Purpose:**
 Controls downstream data processing after segmentation, such as storing results in AnnData or adjusting marker normalization.
@@ -182,7 +183,7 @@ Controls downstream data processing after segmentation, such as storing results 
 - remove_channels_list (List[str], default: ['DNA1', 'DNA3']): Channels to remove before data analysis, often non-informative DNA stains.
 - anndata_save_path (str, default: 'anndata.h5ad'): Path to store the final single-cell data as an AnnData file.
 
-### Basic Process Configuration (basic_process)
+## Basic Process Configuration (basic_process)
 
 **Purpose:**
 Controls additional processing steps like batch correction and clustering (e.g., PCA, UMAP, Leiden clustering).
