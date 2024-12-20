@@ -33,13 +33,13 @@ Specifies directories for input, output, and intermediate data. Adjust these pat
 
 **Parameters:**
 > mcd_files_folder (str, default: 'MCD_files'): Directory containing MCD files (raw acquisition data).
-metadata_folder (str, default: 'metadata'): Directory with metadata files describing ROIs, imaging parameters, and other reference info.
-qc_folder (str, default: 'QC'): Where quality control (QC) outputs, such as overlay images and summary CSVs, are saved.
-masks_folder (str, default: 'masks'): Directory for saving final segmentation masks.
-celltable_folder (str, default: 'cell_tables'): Location where single-cell data tables (CSV files) are stored after segmentation.
-tiff_stacks_folder (str, default: 'tiff_stacks'): Directory for multi-channel TIFF stacks if using them.
-raw_images_folder (str, default: 'tiffs'): Directory containing raw input TIFF images.
-denoised_images_folder (str, default: 'processed'): Directory for denoised/processed images used as input to segmentation.
+> metadata_folder (str, default: 'metadata'): Directory with metadata files describing ROIs, imaging parameters, and other reference info.
+> qc_folder (str, default: 'QC'): Where quality control (QC) outputs, such as overlay images and summary CSVs, are saved.
+> masks_folder (str, default: 'masks'): Directory for saving final segmentation masks.
+> celltable_folder (str, default: 'cell_tables'): Location where single-cell data tables (CSV files) are stored after segmentation.
+> tiff_stacks_folder (str, default: 'tiff_stacks'): Directory for multi-channel TIFF stacks if using them.
+> raw_images_folder (str, default: 'tiffs'): Directory containing raw input TIFF images.
+> denoised_images_folder (str, default: 'processed'): Directory for denoised/processed images used as input to segmentation.
 
 ### Preprocessing Configuration (preprocess)
 **Purpose**:
