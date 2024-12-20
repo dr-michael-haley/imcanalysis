@@ -1,6 +1,6 @@
 # Preprocessing scripts for CSF3
 
-## <font color='green'>Overview</font>
+## <font color="green"> Overview</font>
 These scripts were designed to do all the pre-processing for IMC data on the CSF3. The scripts are designed to be run in sequence via a single job file. All the scripts use a common YAML configuration file to specify  directories, pipeline behaviors, segmentation parameters, etc.
 
 ### Pipeline scripts
