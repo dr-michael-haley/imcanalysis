@@ -1,21 +1,24 @@
-# Preprocessing scripts for IMC data on CSF3 :test_tube: :electric_plug:
+# Preprocessing scripts for IMC data on University of Manchester CSF3 :test_tube: :electric_plug: :bee:
  
 > [!CAUTION]
 > This is all a work in progress! I will do my best to fix and bugs, but this is a fairly complex pipeline with a lot of moving parts.
+
+> [!IMPORTANT]
+> You will need an account on CSF3 with access to GPUs - these are availble on free accounts (free-at-point-of-access'), but you need to contact Research IT to get access. You will also need a fair amount of disk space free.
 
 ## Overview
 These scripts were designed to do all the pre-processing for IMC data on the CSF3. The scripts are designed to be run in sequence via a single job file. All the scripts use a common YAML configuration file to specify  directories, pipeline behaviors, segmentation parameters, etc.
 
 # Pipeline scripts
 
-## `preprocesing.py`
+## `preprocesing.py` :receipt:
 
 **Purpose:** Extracts the .TIFF images from the MCD files
 
-**Inputs:** MCD files
+**Inputs:** MCD files (`MCD_files`)
 
 **Outputs:**
-- `.tiff files` - Raw tiff files for each ROI and channel, named sequentially as they were imaged
+- `.tiff files (tiffs)` - Raw tiff files for each ROI and channel, named sequentially as they were imaged
 - `metadata/metadata.csv` - Metadata about the ROIs (e.g names) from the MCD file
 - `metadata/panel.csv` - Channels detected in MCD file.
 - `metadata/dictionary.csv`  - Blank dictionary file for adding sample level metadata
@@ -25,7 +28,7 @@ These scripts were designed to do all the pre-processing for IMC data on the CSF
 - Edit `panel.csv` to specify channels that will be denoised, and whether raw or denoised images should be used in segmentation
 - Edit `dictionary.csv` to add sample-level metadata for the ROIs, e.g. case or treatments. This information will be incorporated into the AnnData.
 
-## `denoising.py`
+## `denoising.py` :receipt:
 
 **Purpose:** Uses IMC Denoise to denoise each channel
 
@@ -35,9 +38,9 @@ These scripts were designed to do all the pre-processing for IMC data on the CSF
 - Denoised tiff files (`processed`)
 - `QC/denoising` - Side-by-side comparisson of raw and denoised channels.
 
-## `createmasks.py`
+## `createmasks.py` :receipt:
 
-**Purpose:** Uses CellPose3 to create segmentation makes based upon the DNA channel, including creating QC images. Can also do a parameter scan to fine tune the CellPose3 parameters.
+**Purpose:** Uses CellPose3 to create segmentation masks based upon the DNA channel, including creating QC images. Can also do a parameter scan to fine tune the CellPose3 parameters. Nuclei are identified, followed by an expansion of a specified number of pixels (1 pixel = 1 micron in IMC data), usually 1 for a conservative approximation of cytoplasm that usually allows good cell phenotyping without excessive spillover of neighbouring cells (https://www.nature.com/articles/s41467-021-26214-x)
 
 **Inputs:** Denoised .tiff files (`processed`), `panel.csv` for channel information
 
@@ -45,7 +48,7 @@ These scripts were designed to do all the pre-processing for IMC data on the CSF
 - `masks` - Masks for each ROI
 - `QC/Segmentation_overlay` - QC with sucessfully segmented cells in green, and excluded cells too small/big in red.
 
-## `segmentation.py`
+## `segmentation.py` :receipt:
 
 **Purpose:** Uses the masks to segment all the denoised images, create cell tables with the raw data, which is then use to create an AnnData object.
 
@@ -57,7 +60,7 @@ These scripts were designed to do all the pre-processing for IMC data on the CSF
 - `anndata.h5ad` - Imported and normalised data, saved as AnnData.
 - `QC/Segmentation_QC.csv` - QC for segmentation.
 
-## `basic_process.py`
+## `basic_process.py` :receipt:
 
 **Purpose:** Performs basic pre-processing of the data, including batch correcting, calculating UMAPs, and initial leiden clustering.
 
@@ -65,11 +68,11 @@ These scripts were designed to do all the pre-processing for IMC data on the CSF
 
 **Outputs:** `anndata_processed.h5ad`
 
-## Accessory scripts
+## Accessory scripts :ledger:
 - `generate_config.py`: Creates a config.yaml file with the default parameters that can then be modified
 
 
-# Installation and setup
+# Installation and setup on CSF3	:computer:
 1. Login to CSF3 command line.
 2. Clone this repo into your home directory, you can use my access key: `git clone https://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@github.com/dr-michael-haley/imcanalysis.git`
 3. Install conda or miniconda (if you don't already have it setup).
@@ -81,12 +84,13 @@ These scripts were designed to do all the pre-processing for IMC data on the CSF
 9. Setup a job file - I've uploaded an example here (`job.txt`). By deafult all the stages are run, but I usually just comment out the steps as I've confirmed that they have run succesfully. You will also notice we use the v100 GPUs - these are free at point of access if you ask Research IT to give you access.
 10. Submit the job
 
-# Settings in Config file
+# Settings in Config file (`config.yaml`) :books:
+All settings are stored here under various headings associated with the different parts of the pipeline. If you're unsure about YAML formatting, check online.
 
 ## General Configuration (general)
 
 **Purpose**:
-Specifies directories for input, output, and intermediate data. Adjust these paths to match your project's file structure.
+Specifies directories for input, output, and intermediate data. Adjust these paths to match your project's file structure, though I'd suggest just using the defaults.
 
 **Parameters:**
 - mcd_files_folder (str, default: 'MCD_files'): Directory containing MCD files (raw acquisition data).
@@ -111,7 +115,8 @@ Controls minimal preprocessing steps, such as validating ROI sizes before proces
 **Purpose**:
 Handles the image denoising pipeline. You can turn denoising on/off, select methods, channels, and QC parameters.
 
-Most of these parameters are covered in the IMC_Denoise documentation! https://github.com/PENGLU-WashU/IMC_Denoise/tree/main
+> [!IMPORTANT]
+> Most of these parameters are covered in the IMC_Denoise documentation (https://github.com/PENGLU-WashU/IMC_Denoise/tree/main)
 
 **Parameters**:
 - run_denoising (bool, default: True): Enable or disable the denoising step. This is included in case you wanted to run the QC steps without re-running any denoising.
@@ -142,16 +147,18 @@ Most of these parameters are covered in the IMC_Denoise documentation! https://g
 - skip_already_denoised (bool, default: True): Skip re-denoising if output files already exist.
 
 ## Create Masks Configuration (createmasks)
+> [!IMPORTANT]
+> Many of these parameters are covered in the CellPose3 documentation (https://cellpose.readthedocs.io/en/latest/settings.html)
 
 **Purpose**:
-Controls cell segmentation with Cellpose, including preprocessing, thresholds, parameter scanning, and QC overlay generation.
+Controls nucelar segmentation with Cellpose, including preprocessing, thresholds, parameter scanning, and QC overlay generation. n
 
 **Parameters**:
 - specific_rois (Optional[List[str]]): List of ROIs to segment. If None, all available ROIs are processed.
 - dna_image_name (str, default: 'DNA1'): Name of the DNA channel image to segment.
 - cellpose_cell_diameter (float, default: 10.0): Approximate cell diameter in pixels for Cellpose. **This is important to try and tweak for accurate segmentation**
 - upscale_ratio (float, default: 1.7): Upscaling ratio if run_upscale is True.
-- expand_masks (int, default: 1): Distance to expand segmentation masks. **This is important to try and tweak for accurate segmentation, and will depend on cell density**
+- expand_masks (int, default: 1): Distance to expand nuclear segmentation masks created by CellPose. Default of 1 pixel (um) is advised as a conservative approach that usually allows good phenotyping without excessive spill over from neighbouring cells (see https://www.nature.com/articles/s41467-021-26214-x). **This is important to try and tweak for accurate segmentation, and will depend on cell density**
 - perform_qc (bool, default: True): Produce QC overlay images for segmentation results.
 - qc_boundary_dilation (int, default: 0): Thickness of mask outlines in QC images. Increase to make outlines appear thicker.
 - min_cell_area (Optional[int], default: 15), max_cell_area (Optional[int], default: 200): Minimum and maximum acceptable cell size (in pixels). Objects outside this range are excluded.
@@ -181,9 +188,9 @@ Controls downstream data processing after segmentation, such as storing results 
 
 **Parameters:**
 - celltable_output (str, default: 'celltable.csv'): Name of the CSV file to store aggregated single-cell data from segmentation.
-- marker_normalisation (List[str], default: ["q0.999"]): List of normalization methods for markers (e.g., quantile normalization).
+- marker_normalisation (List[str], default: ["q0.999"]): List of normalization methods for markers (e.g., quantile normalization). The default is "q0.999", which normalises to the 99.9th percentile of intensity within each marker. This prevents normalising to outlier cells. All values are therefore normalised from 0 to 1.
 - store_raw_marker_data (bool, default: False): If True, store raw marker intensities as well as normalized data.
-- remove_channels_list (List[str], default: ['DNA1', 'DNA3']): Channels to remove before data analysis, often non-informative DNA stains.
+- remove_channels_list (List[str], default: ['DNA1', 'DNA3']): Channels to remove before data analysis, often non-informative DNA stains, but could also be 
 - anndata_save_path (str, default: 'anndata.h5ad'): Path to store the final single-cell data as an AnnData file.
 
 ## Basic Process Configuration (basic_process)
@@ -193,8 +200,8 @@ Controls additional processing steps like batch correction and clustering (e.g.,
 
 **Parameters:**
 - input_adata_path (str, default: 'anndata.h5ad'): Input AnnData file path from previous steps.
-- output_adata_path (str, default: 'anndata_processed.h5ad'): Output AnnData file after processing (e.g., batch correction).
-- batch_correction_method (Optional[str]): Which batch correction method to use (e.g., 'bbknn', 'harmony').
+- output_adata_path (str, default: 'anndata_processed.h5ad'): Output AnnData file after processing (e.g., batch correction, or none).
+- batch_correction_method (Optional[str]): Which batch correction method to use (e.g., 'bbknn', 'harmony', or none).
 - batch_correction_obs (Optional[str]): Key in .obs to use for batch correction grouping.
 - n_for_pca (Optional[int]): Number of principal components to compute. If None, defaults set by pipeline.
 - leiden_resolutions_list (List[float], default: [0.3, 1.0]): List of resolutions for Leiden clustering, generating multiple clusterings.
