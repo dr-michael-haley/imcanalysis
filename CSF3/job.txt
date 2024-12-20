@@ -1,0 +1,18 @@
+#! /bin/bash --login
+#$ -cwd
+
+#$ -N imc_analysis
+#$ -l v100
+
+echo "IMC job is using $NGPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $NSLOTS CPU core(s)"
+
+conda activate segmentation
+python -m SpatialBiologyToolkit.scripts.preprocess
+
+conda activate IMC_Denoise
+python -m SpatialBiologyToolkit.scripts.denoising
+
+conda activate segmentation
+python -m SpatialBiologyToolkit.scripts.createmasks
+python -m SpatialBiologyToolkit.scripts.segmentation
+python -m SpatialBiologyToolkit.scripts.basic_process
