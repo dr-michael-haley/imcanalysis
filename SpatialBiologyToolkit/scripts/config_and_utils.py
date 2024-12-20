@@ -24,9 +24,6 @@ class PreprocessConfig:
 @dataclass
 class DenoisingConfig:
     run_denoising: bool = True
-    raw_directory: str = 'tiffs'
-    metadata_directory: str = 'metadata'
-    processed_output_dir: str = 'processed'
     method: str = 'deep_snf'  # Options: 'deep_snf', 'dimr'
     channels: List[str] = field(default_factory=list)
     # Parameters for both methods
@@ -71,16 +68,15 @@ class CreateMasksConfig:
     run_upscale: bool = True
     image_normalise: bool = True
     image_normalise_percentile_lower: float = 0.0
-    image_normalise_percentile_upper: float =  98.0
+    image_normalise_percentile_upper: float =  99.9
     dpi_qc_images: int = 300
 
     # Parameter scanning fields:
     run_parameter_scan: bool = False
     param_a: Optional[str] = 'cellprob_threshold'
-    param_a_values: Optional[List[Any]] = field(default_factory=lambda: [-5.0, -4.0, -3.0, -2.0, -1.0, 0.0])
+    param_a_values: Optional[List[Any]] = field(default_factory=lambda: [-4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0])
     param_b: Optional[str] = 'flow_threshold'
-    param_b_values: Optional[List[Any]] = field(default_factory=lambda: [0.2, 0.3, 0.4, 0.5, 0.6])
-
+    param_b_values: Optional[List[Any]] = field(default_factory=lambda: [0.3, 0.4, 0.5, 0.6, 0.7, 0.8])
     window_size: Optional[int] = 250
     num_rois_to_scan: int = 3
     scan_rois: Optional[List[str]] = None
