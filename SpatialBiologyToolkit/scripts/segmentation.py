@@ -258,10 +258,25 @@ def create_anndata(celltable,
     # Add spatial coordinates
     adata.obsm['spatial'] = celltable[['X_loc', 'Y_loc']].to_numpy()
 
+    # Helper function to infer and convert boolean-like columns
+    def convert_to_boolean(df):
+        for col in df.select_dtypes(include=['object']).columns:
+            # Check if all unique values are boolean-like
+            unique_vals = df[col].dropna().unique()
+            if all(val in {"true", "false", "yes", "no", "1", "0"} for val in unique_vals.astype(str).str.lower()):
+                # Map to actual booleans
+                df[col] = df[col].astype(str).str.lower().map(
+                    {"true": True, "yes": True, "1": True, "false": False, "no": False, "0": False}
+                )
+        return df
+
     # Process dictionary for additional metadata
     dictionary_path = metadata_folder / 'dictionary.csv'
     if dictionary_path.exists():
         dictionary_file = pd.read_csv(dictionary_path, index_col='ROI')
+
+        # Automatically convert boolean-like columns
+        dictionary_file = convert_to_boolean(dictionary_file)
 
         # Get list of columns/metadata from the dictionary file
         cols = [x for x in dictionary_file.columns if 'Example' not in x and 'description' not in x]
@@ -276,17 +291,8 @@ def create_anndata(celltable,
                 # Map the data from the dictionary to the adata.obs
                 mapped_data = adata.obs['ROI'].map(dictionary_file[c].to_dict())
 
-                # Check and match data type
-                if dictionary_file[c].dtype.name == "category":
-                    # Convert to categorical, preserving the same categories
-                    adata.obs[c] = pd.Categorical(mapped_data, categories=dictionary_file[c].cat.categories)
-                else:
-                    # Convert to the original dtype
-                    adata.obs[c] = mapped_data.astype(dictionary_file[c].dtype)
-
-                # Optional: Handle non-string types explicitly if necessary
-                if adata.obs[c].dtype != "object":
-                    adata.obs[c] = adata.obs[c].astype(str)
+                # Convert to the appropriate type
+                adata.obs[c] = mapped_data.astype(dictionary_file[c].dtype)
 
         else:
             logging.info(
