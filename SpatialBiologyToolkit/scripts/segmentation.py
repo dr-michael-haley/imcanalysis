@@ -267,13 +267,31 @@ def create_anndata(celltable,
         cols = [x for x in dictionary_file.columns if 'Example' not in x and 'description' not in x]
 
         if len(cols) > 0:
-            logging.info(f'Dictionary file found with following columns: {str(cols)}')
+            logging.info(f'Dictionary file found with the following columns: {str(cols)}')
+
+            # Ensure `adata.obs` is not a view
+            adata.obs = adata.obs.copy()
 
             for c in cols:
-                adata.obs[c] = adata.obs['ROI'].map(dictionary_file[c].to_dict())
+                # Map the data from the dictionary to the adata.obs
+                mapped_data = adata.obs['ROI'].map(dictionary_file[c].to_dict())
+
+                # Check and match data type
+                if dictionary_file[c].dtype.name == "category":
+                    # Convert to categorical, preserving the same categories
+                    adata.obs[c] = pd.Categorical(mapped_data, categories=dictionary_file[c].cat.categories)
+                else:
+                    # Convert to the original dtype
+                    adata.obs[c] = mapped_data.astype(dictionary_file[c].dtype)
+
+                # Optional: Handle non-string types explicitly if necessary
+                if adata.obs[c].dtype != "object":
+                    adata.obs[c] = adata.obs[c].astype(str)
+
         else:
             logging.info(
-                f'Dictionary file found but was empty. Edit dictionary.csv in metadata folder to add extra sample-level metadata!')
+                'Dictionary file found but was empty. Edit dictionary.csv in the metadata folder to add extra sample-level metadata!'
+            )
     else:
         logging.info('No dictionary file found.')
 
