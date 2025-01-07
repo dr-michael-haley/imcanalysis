@@ -262,7 +262,7 @@ def create_anndata(celltable,
     def convert_to_boolean(df):
         for col in df.select_dtypes(include=['object']).columns:
             # Check if all unique values are boolean-like
-            unique_vals = df[col].dropna().unique()
+            unique_vals = pd.Series(df[col].dropna().unique())  # Convert to Pandas Series
             if all(val in {"true", "false", "yes", "no", "1", "0"} for val in unique_vals.astype(str).str.lower()):
                 # Map to actual booleans
                 df[col] = df[col].astype(str).str.lower().map(
@@ -348,7 +348,7 @@ if __name__ == "__main__":
         )
     else:
         logging.info(f'SKIPPING creating master cell table...')
-
+    
     # Create an AnnData object
     if seg_config['create_anndata']:
 
@@ -367,8 +367,8 @@ if __name__ == "__main__":
         # Save AnnData
         adata.write(seg_config.anndata_save_path)
         logging.info(f'Saved AnnData: {seg_config.anndata_save_path}')
-
+        
     else:
         logging.info(f'SKIPPING creating/saving AnnData...')
-
+        
     logging.info('Segmentation pipeline finished')
