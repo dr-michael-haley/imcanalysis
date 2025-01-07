@@ -199,6 +199,16 @@ def normalise_markers(markers: pd.DataFrame, method_list: list) -> pd.DataFrame:
 
     return markers
 
+# Helper function to identify boolean columns saved as objects, and convert them to true boolean columns
+def convert_to_boolean(df):
+    for col in df.select_dtypes(include=['object']).columns:
+        # Check if all unique values are boolean-like
+        unique_vals = pd.Series(df[col].dropna().unique().astype('string'))  # Convert to Pandas Series
+        if all(val in {"true", "false", "yes", "no", "1", "0"} for val.lower() in unique_vals):
+            # Convert to boolean
+            df[col] = df[col].astype("boolean")
+    return df
+
 def create_anndata(celltable,
                    metadata_folder='metadata',
                    normalisation: list = ["q0.999"],
@@ -258,18 +268,6 @@ def create_anndata(celltable,
     # Add spatial coordinates
     adata.obsm['spatial'] = celltable[['X_loc', 'Y_loc']].to_numpy()
 
-    # Helper function to infer and convert boolean-like columns
-    def convert_to_boolean(df):
-        for col in df.select_dtypes(include=['object']).columns:
-            # Check if all unique values are boolean-like
-            unique_vals = pd.Series(df[col].dropna().unique())  # Convert to Pandas Series
-            if all(val in {"true", "false", "yes", "no", "1", "0"} for val in unique_vals.astype(str).str.lower()):
-                # Map to actual booleans
-                df[col] = df[col].astype(str).str.lower().map(
-                    {"true": True, "yes": True, "1": True, "false": False, "no": False, "0": False}
-                )
-        return df
-
     # Process dictionary for additional metadata
     dictionary_path = metadata_folder / 'dictionary.csv'
     if dictionary_path.exists():
@@ -293,6 +291,9 @@ def create_anndata(celltable,
 
                 # Convert to the appropriate type
                 adata.obs[c] = mapped_data.astype(dictionary_file[c].dtype)
+
+        # Make sure boolean columns properly converted
+        adata.obs = convert_to_boolean(adata.obs)
 
         else:
             logging.info(
