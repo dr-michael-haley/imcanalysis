@@ -204,7 +204,8 @@ def convert_to_boolean(df):
     for col in df.select_dtypes(include=['object']).columns:
         # Check if all unique values are boolean-like
         unique_vals = pd.Series(df[col].dropna().unique().astype('string'))  # Convert to Pandas Series
-        if all(val in {"true", "false", "yes", "no", "1", "0"} for val.lower() in unique_vals):
+        unique_vals = [x.lower() for x in unique_vals] # Lower case
+        if all(val in {"true", "false", "yes", "no", "1", "0"} for val in unique_vals):
             # Convert to boolean
             df[col] = df[col].astype("boolean")
     return df
