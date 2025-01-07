@@ -293,8 +293,8 @@ def create_anndata(celltable,
                 # Convert to the appropriate type
                 adata.obs[c] = mapped_data.astype(dictionary_file[c].dtype)
 
-        # Make sure boolean columns properly converted
-        adata.obs = convert_to_boolean(adata.obs)
+            # Make sure boolean columns properly converted
+            adata.obs = convert_to_boolean(adata.obs)
 
         else:
             logging.info(

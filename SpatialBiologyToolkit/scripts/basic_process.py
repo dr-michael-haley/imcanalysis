@@ -122,5 +122,5 @@ if __name__ == "__main__":
             logging.info(f'Finished Leiden clustering for resolution {r}.')
 
     # Save the processed AnnData object
-    adata.write_h5ad(process_config.output_adata_path, convert_strings_to_categoricals=False)
+    adata.write_h5ad(process_config.output_adata_path)
     logging.info(f'Saved processed AnnData to {process_config.output_adata_path}.')
