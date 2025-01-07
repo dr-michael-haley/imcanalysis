@@ -328,7 +328,7 @@ if __name__ == "__main__":
     seg_config = SegmentationConfig(**config.get('segmentation', {}))
 
     # Extract single-cell info for each ROI
-    if seg_config['create_roi_cell_tables']:
+    if seg_config.create_roi_cell_tables:
         extract_single_cell(
             masks_folder=general_config.masks_folder,
             denoised_images_folder=general_config.denoised_images_folder,
@@ -340,7 +340,7 @@ if __name__ == "__main__":
         logging.info(f'SKIPPING creating cell tables for ROIs...')
 
     # Concatenate individual ROIs into a cell table
-    if seg_config['create_master_cell_table']:
+    if seg_config.create_master_cell_table:
         celltable = create_celltable(
             input_directory=general_config.celltable_folder,
             metadata_folder=general_config.metadata_folder,
@@ -350,7 +350,7 @@ if __name__ == "__main__":
         logging.info(f'SKIPPING creating master cell table...')
     
     # Create an AnnData object
-    if seg_config['create_anndata']:
+    if seg_config.create_anndata:
 
         if 'celltable' not in locals():
             celltable = pd.read_csv(seg_config.celltable_output)
