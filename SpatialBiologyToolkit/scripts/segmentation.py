@@ -328,30 +328,47 @@ if __name__ == "__main__":
     seg_config = SegmentationConfig(**config.get('segmentation', {}))
 
     # Extract single-cell info for each ROI
-    extract_single_cell(
-        masks_folder=general_config.masks_folder,
-        denoised_images_folder=general_config.denoised_images_folder,
-        raw_images_folder=general_config.raw_images_folder,
-        metadata_folder=general_config.metadata_folder,
-        save_directory=general_config.celltable_folder,
-    )
+    if seg_config['create_roi_cell_tables']:
+        extract_single_cell(
+            masks_folder=general_config.masks_folder,
+            denoised_images_folder=general_config.denoised_images_folder,
+            raw_images_folder=general_config.raw_images_folder,
+            metadata_folder=general_config.metadata_folder,
+            save_directory=general_config.celltable_folder,
+        )
+    else:
+        logging.info(f'SKIPPING creating cell tables for ROIs...')
 
     # Concatenate individual ROIs into a cell table
-    celltable = create_celltable(
-        input_directory=general_config.celltable_folder,
-        metadata_folder=general_config.metadata_folder,
-        output_file=seg_config.celltable_output
-    )
+    if seg_config['create_master_cell_table']:
+        celltable = create_celltable(
+            input_directory=general_config.celltable_folder,
+            metadata_folder=general_config.metadata_folder,
+            output_file=seg_config.celltable_output
+        )
+    else:
+        logging.info(f'SKIPPING creating master cell table...')
 
     # Create an AnnData object
-    adata = create_anndata(
-        celltable,
-        metadata_folder=general_config.metadata_folder,
-        normalisation=seg_config.marker_normalisation,
-        store_raw=seg_config.store_raw_marker_data,
-        remove_channels=seg_config.remove_channels_list
-    )
+    if seg_config['create_anndata']:
 
-    # Save AnnData
-    adata.write(seg_config.anndata_save_path)
-    logging.info(f'Saved AnnData: {seg_config.anndata_save_path}')
+        if 'celltable' not in locals():
+            celltable = pd.read_csv(seg_config.celltable_output)
+            logging.info(f'Loading master cell table: {str()}')
+
+        adata = create_anndata(
+            celltable,
+            metadata_folder=general_config.metadata_folder,
+            normalisation=seg_config.marker_normalisation,
+            store_raw=seg_config.store_raw_marker_data,
+            remove_channels=seg_config.remove_channels_list
+        )
+
+        # Save AnnData
+        adata.write(seg_config.anndata_save_path)
+        logging.info(f'Saved AnnData: {seg_config.anndata_save_path}')
+
+    else:
+        logging.info(f'SKIPPING creating/saving AnnData...')
+
+    logging.info('Segmentation pipeline finished')

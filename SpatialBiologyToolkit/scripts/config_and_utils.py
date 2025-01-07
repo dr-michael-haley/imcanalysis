@@ -88,6 +88,9 @@ class SegmentationConfig:
     store_raw_marker_data: bool = False
     remove_channels_list: List[str] = field(default_factory=lambda: ['DNA1', 'DNA3'])
     anndata_save_path: str = 'anndata.h5ad'
+    create_roi_cell_tables: bool = True
+    create_master_cell_table: bool = True
+    create_anndata: bool = True
 
 @dataclass
 class BasicProcessConfig:
