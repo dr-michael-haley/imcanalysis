@@ -365,7 +365,7 @@ if __name__ == "__main__":
         )
 
         # Save AnnData
-        adata.write_h5ad(seg_config.anndata_save_path, convert_strings_to_categoricals=False)
+        adata.write_h5ad(seg_config.anndata_save_path)
         logging.info(f'Saved AnnData: {seg_config.anndata_save_path}')
         
     else:
