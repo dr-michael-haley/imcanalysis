@@ -1,7 +1,7 @@
 # Preprocessing scripts for IMC data on University of Manchester CSF3 :test_tube: :electric_plug: :bee:
  
 > [!CAUTION]
-> This is all a work in progress! I will do my best to fix and bugs, but this is a fairly complex pipeline with a lot of moving parts.
+> This is all a work in progress! I will do my best to fix and bugs, but this is a fairly complex pipeline with a lot of moving parts. Getting IMC_Denoise to work is especially frustrating, requiring alternating conda and pip installs which means we can't install from a .yml file
 
 > [!IMPORTANT]
 > You will need an account on CSF3 with access to GPUs - these are availble on free accounts (free-at-point-of-access'), but you need to contact Research IT to get access. You will also need a fair amount of disk space free.
@@ -85,14 +85,28 @@ These scripts were designed to do all the pre-processing for IMC data on the CSF
 # Installation and setup on CSF3	:computer:
 1. Login to CSF3 command line.
 2. Clone this repo into your home directory, you can use my access key: `git clone https://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@github.com/dr-michael-haley/imcanalysis.git`
-3. Install conda or miniconda (if you don't already have it setup).
-4. Create conda environments using the two YML files in this diretory (`IMC_Denoise.yml`, `segmentation.yml`). We need two because of compatability issues between packages.
-5. Navigate to where you have downloaded the repo (`imcanalysis`) and install the SpatatialBiologyToolkit package into *BOTH* environments using the following command: `pip install --no-deps -e .` . This will skip the requirements, but allow easy update of the scripts with a `git pull`
-6. Navigate to your `scratch` directory (or wherever you have a lot of space available), and upload the MCD files into a folder called `MCD_files`
-7. Activate either `segmentation` or `IMC_Denoise` environments and create a blank `config.yaml` using the following command: `python -m SpatialBiologyToolkit.scripts.generate_config`.
-8. Modify the `config.yaml` file appropriately. I will cover the various settings for this below, but this is the file in which all the configurations are stored, and the defaults are a good start.
-9. Setup a job file - I've uploaded an example here (`job.txt`). By deafult all the stages are run, but I usually just comment out the steps as I've confirmed that they have run succesfully. You will also notice we use the v100 GPUs - these are free at point of access if you ask Research IT to give you access.
-10. Submit the job
+3. Install miniconda (if you don't already have it setup, anaconda should also work, but I've not tested it).
+4. Create the conda environments called `segmentation` using the YML file in this diretory (`conda env create -f segmentation.yml`)
+5. Create the environment for IMC Denoise. This is a very fiddly package to get working, and we can't just use a .yml file to create the environment. Instead, we have to create it manually using the following commands:
+```
+conda create -n 'IMC_Denoise' python=3.6.13
+conda activate IMC_Denoise
+conda install -c anaconda brotlipy=0.7.0 pandas=1.1.5 matplotlib==3.3.4 scipy==1.4.1 scikit-learn==0.24.2 tifffile pyyaml
+pip install tensorflow==2.2.0 keras==2.3.1
+conda install -c anaconda cudnn=7.6.5 cudatoolkit=10.1.243
+```
+6. We also need to install the IMC_Denoise package into this same environment:
+```
+git clone https://github.com/PENGLU-WashU/IMC_Denoise.git
+cd IMC_Denoise
+pip install -e .
+```
+8. Navigate to where you have downloaded the repo (`imcanalysis`) and install the SpatatialBiologyToolkit package into *BOTH* environments using the following command: `pip install --no-deps -e .` . This will skip the requirements, but allow easy update of the scripts with a `git pull`
+9. Navigate to your `scratch` directory (or wherever you have a lot of space available), and upload the MCD files into a folder called `MCD_files`
+10. Activate either `segmentation` or `IMC_Denoise` environments and create a blank `config.yaml` using the following command: `python -m SpatialBiologyToolkit.scripts.generate_config`.
+11. Modify the `config.yaml` file appropriately. I will cover the various settings for this below, but this is the file in which all the configurations are stored, and the defaults are a good start.
+12. Setup a job file - I've uploaded an example here (`job.txt`). By deafult all the stages are run, but I usually just comment out the steps as I've confirmed that they have run succesfully. You will also notice we use the v100 GPUs - these are free at point of access if you ask Research IT to give you access.
+13. Submit the job
 
 
 # Settings in Config file (`config.yaml`) :books:
