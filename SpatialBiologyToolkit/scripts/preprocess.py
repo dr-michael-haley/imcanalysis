@@ -565,7 +565,7 @@ def export_mcd_folder(
                 logging.info('No dictionary file found, creating a blank file.')
                 dictionary_file = meta_data.loc[:, ['unstacked_data_folder', 'description']].copy()
                 dictionary_file.set_index('unstacked_data_folder', drop=True, inplace=True)
-                dictionary_file.index.rename('ROI_raw', inplace=True)
+                dictionary_file.index.rename('ROI', inplace=True)
                 dictionary_file['Example_1'] = 'Example_info'
                 dictionary_file['Example_2'] = 1
                 dictionary_file['Example_3'] = True
