@@ -174,6 +174,7 @@ def denoise_batch(
                 n_iter = denoise_config.n_iter
                 window_size = denoise_config.window_size
                 network_size = denoise_config.network_size
+                ratio_thresh = denoise_config.ratio_thresh
 
                 logging.info(f'DeepSNF parameters: {denoise_config}')
 
@@ -190,7 +191,8 @@ def denoise_batch(
                         n_iter=n_iter,
                         window_size=window_size,
                         col_step=col_step,
-                        row_step=row_step
+                        row_step=row_step,
+                        ratio_thresh=ratio_thresh
                     )
 
                     generated_patches = data_generator.generate_patches_from_directory(

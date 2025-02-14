@@ -35,6 +35,7 @@ class DenoisingConfig:
     train_epochs: int = 75
     train_initial_lr: float = 0.001
     train_batch_size: int = 200
+    ratio_thresh: float = 0.8 # Added
     pixel_mask_percent: float = 0.2
     val_set_percent: float = 0.15
     loss_function: str = "I_divergence"
