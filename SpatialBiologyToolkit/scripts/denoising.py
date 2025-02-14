@@ -354,7 +354,7 @@ def qc_check_side_by_side(general_config: GeneralConfig,
 
     # Create folders
     save_dir = Path(os.path.join(general_config.qc_folder, denoise_config.qc_image_dir))
-    save_dir.mkdir(exist_ok=True)
+    save_dir.mkdir(parents=True, exist_ok=True)
 
     for channel_name in channels:
 
