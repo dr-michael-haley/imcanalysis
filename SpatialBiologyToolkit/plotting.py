@@ -31,7 +31,7 @@ import seaborn as sns
 from matplotlib.cm import ScalarMappable
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
-from .image_analysis import save_labelled_image, save_labelled_image_as_svg
+from .image_analysis import save_labelled_image, save_labelled_image_as_svg, map_pixel_values_to_colors
 from .utils import (_cleanstring, _save, _check_input_type, _to_list, subset,
                     adlog, print_full, compare_lists)
 
@@ -664,7 +664,8 @@ def obs_to_mask(
     background_color: str = None,
     hide_axes: bool = False,
     hide_ticks: bool = True,
-    svg_smoothing_factor: int = 0
+    svg_smoothing_factor: int = 0,
+    label_obs: str = None
 ) -> tuple:
     """
     Map values from an AnnData object to a mask and generate a color map, with options to save the resulting image.
@@ -709,6 +710,8 @@ def obs_to_mask(
         If True, hides the ticks and labels on the axes in the saved image (default is True).
     svg_smoothing_factor : int, optional
         Smoothing factor for SVG output (default is 0).
+    label_obs : string, optional
+        Identifier for cell labels in mask
 
     Returns
     -------
@@ -743,11 +746,17 @@ def obs_to_mask(
         # If dict is supplied, use directly
         if isinstance(cat_colour_map, dict):
             cat_cmap = cat_colour_map
-        # If a string, then get matplotlib cmap. Anything else, use the list/array directly.
+        #If a list, then create a dictionary
+        elif isinstance(cat_colour_map,list):
+            assert len(cats) < len(cat_colour_map), 'Colourmap list isnt long enough for number of populations'
+            cat_cmap = {x:v for (x,v) in zip(cats, cat_colour_map)}
+        # If a string, then get matplotlib cmap.
+        elif isinstance(cat_colour_map,str):
+            cat_colour_map = cm.get_cmap(cat_colour_map).colors
+            assert len(cats) < len(cat_colour_map), 'Matplot ib colournap isnt long enough for number of populations'
+            cat_cmap = {x:v for (x,v) in zip(cats, cat_colour_map)}
         else:
-            if isinstance(cat_colour_map, str):
-                cat_colour_map = cm.get_cmap(cat_colour_map).colors
-            cat_cmap = {cat: to_hex(cat_colour_map[i % len(cat_colour_map)]) for i, cat in enumerate(cats)}
+            raise 'Categorical colour map (cat_colour_map) must be a dictionary, list of colours, or name of a matplotlib colormap'
         
         # Filter specific observations, if specified
         if cat_obs_groups:
@@ -763,19 +772,25 @@ def obs_to_mask(
         pixel_colormap = {}
         
         for cat, num in zip(cats, cat_num):
-            try:
-                objects = adata_roi_obs.loc[adata_roi_obs[cat_obs] == cat, :].index.to_numpy() + 1
+            #try:
+                if not label_obs:
+                    objects = adata_roi_obs.loc[adata_roi_obs[cat_obs] == cat, :].index.to_numpy() + 1
+                else:
+                    objects = adata_roi_obs.loc[adata_roi_obs[cat_obs] == cat, label_obs]
                 cat_mask = np.isin(mask, objects)
                 mapped_mask = np.where(cat_mask, num, mapped_mask)
                 cat_dict[num] = str(cat)
                 pixel_colormap[num] = cat_cmap[cat]
-            except:
-                print(f'Error adding group {cat} from {cat_obs}')
+            #except:
+            #    print(f'Error adding group {cat} from {cat_obs}')
 
     # If a quantitative value is supplied
     if quant_obs:
         # Label IDs
-        objects = adata_roi_obs.index.to_numpy() + 1
+        if not label_obs:
+            objects = adata_roi_obs.index.to_numpy() + 1
+        else:
+            objects = adata_roi_obs[label_obs]
 
         # Get values from adata.obs or adata.var_names
         if quant_obs in adata.obs:
@@ -799,6 +814,11 @@ def obs_to_mask(
     if not save_path:
         return mapped_mask, pixel_colormap, cat_dict
     else:
+
+        # Create folder for saving
+        save_path_obj = Path(save_path)
+        save_path_obj.parent.mkdir(parents=True, exist_ok=True)
+
         if save_path.split('.')[-1] == 'svg':
             save_labelled_image_as_svg(mapped_mask, pixel_colormap, save_path, exclude_zero=True, smoothing_factor=svg_smoothing_factor, background_color=background_color)
         else:

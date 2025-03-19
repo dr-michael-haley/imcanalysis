@@ -47,7 +47,7 @@ from skimage.util import img_as_ubyte
 from sklearn.cluster import DBSCAN, MiniBatchKMeans
 from sklearn.neighbors import NearestNeighbors, radius_neighbors_graph
 from sklearn.preprocessing import StandardScaler
-from tqdm import tqdm, notebook
+from tqdm.notebook import tqdm
 
 from .plotting import overlayed_heatmaps, obs_to_mask
 
@@ -758,7 +758,7 @@ def lisa_clustering_image(image1: np.ndarray, image2: np.ndarray, scale_factor: 
     x_std = np.std(feature1)
     y_std = np.std(feature2)
     if x_std == 0 or y_std == 0:
-        raise ValueError("Standard deviation of a feature is zero; cannot standardize features.")
+        raise ValueError(f"Standard deviation of a feature is zero; cannot standardize features:\nimg1_mean = {str(x_mean)}.\nimg2_mean = {str(y_mean)}.\nimg1_std = {str(x_std)}.\nimg2_std = {str(y_std)}.")
     x = (feature1 - x_mean) / x_std
     y = (feature2 - y_mean) / y_std
 
@@ -2586,6 +2586,8 @@ def lisaclust_catobs_img_overlap(adata, cat_obs, image_folder, roi_obs='ROI', ma
     roi_list = []
     img1_list = []
     img2_list = []
+    img1_abundance_list = []
+    img2_abundance_list = []
     prop_sig_list = []
 
     #for img in tqdm(os.listdir(image_folder)[:8]):
@@ -2607,22 +2609,31 @@ def lisaclust_catobs_img_overlap(adata, cat_obs, image_folder, roi_obs='ROI', ma
                 for c in cat_unique:
 
                     pop_mask, _, _ = obs_to_mask(adata, roi = roi_name, cat_obs = cat_obs, cat_obs_groups=c)
+                    img_mask = np.where(img_array == i, 1, 0)
 
-                    clustering_results = lisa_clustering_image(image1 = pop_mask, 
-                                                               image2 = np.where(img_array == i, 1, 0), 
-                                                               scale_factor=scale_factor)
+                    # Std will be 0 if either cell type or obs are not present
+                    if (pop_mask.flatten().std() != 0) and (img_mask.flatten().std() != 0):
 
-                    prop_sig = clustering_results.sum() / np.sum(~np.isnan(clustering_results))
+                        clustering_results = lisa_clustering_image(image1 = pop_mask,
+                                                                   image2 = img_mask,
+                                                                   scale_factor=scale_factor)
 
-                    roi_list.append(str(roi_name))
-                    img1_list.append(str(c))
-                    img2_list.append(str(i))
-                    prop_sig_list.append(np.float32(prop_sig))
-                    
+                        prop_sig = clustering_results.sum() / np.sum(~np.isnan(clustering_results))
+
+                        roi_list.append(str(roi_name))
+                        img1_list.append(str(c))
+                        img2_list.append(str(i))
+                        prop_sig_list.append(np.float32(prop_sig))
+
+                        img1_abundance_list.append(pop_mask.sum() / np.sum(~np.isnan(clustering_results)))
+                        img2_abundance_list.append(img_mask.sum() / np.sum(~np.isnan(clustering_results)))
+                    else:
+                        print(f'Skipping: {roi_name}, {i}, {c}')
+
         except Exception as e:
             print(e)
             pass
         
-    results = pd.DataFrame(zip(roi_list, img1_list, img2_list, prop_sig_list), columns=['ROI','Image1','Image2','PropSig'])
+    results = pd.DataFrame(zip(roi_list, img1_list, img2_list, img1_abundance_list, img2_abundance_list, prop_sig_list), columns=['ROI','Image1','Image2','Image1_prop','Image2_prop','PropSig'])
     
     return results
