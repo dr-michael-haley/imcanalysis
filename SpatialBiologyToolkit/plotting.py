@@ -4,6 +4,7 @@ from pathlib import Path
 
 import anndata as ad
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 import matplotlib.gridspec as gridspec
 import matplotlib.cm as cm
 import numpy as np
@@ -582,65 +583,168 @@ def plot_colorbar(
     vmin: float = None,
     vmax: float = None,
     cmap: str = 'viridis',
-    save: str = None,
+    orientation: str = 'horizontal',
+    figsize: tuple = None,
+    dpi: int = 100,
     aspect: int = 10,
     fontsize: int = None,
-    hide_ticks: bool = False
+    hide_ticks: bool = False,
+    label: str = '',
+    tick_interval: float = None,
+    tick_values: list = None,
+    save: str = None
 ) -> plt.Figure:
     """
-    Plot a colorbar based on the provided array and customization parameters.
+    A unified colorbar plotting function that can:
+      - Create a colorbar from a provided array (old style), or
+      - Create a "legend-only" style colorbar from vmin/vmax (no array),
+    while allowing custom ticks, orientation, label, etc.
 
     Parameters
     ----------
     array : np.ndarray, optional
-        Input array to generate the colorbar. If the array is 1-dimensional, 
-        it will be repeated to form a 2-dimensional array. If not provided, 
-        a default array of shape (100, 100) filled with `vmax` will be used.
+        If provided, we'll plot an image of this array and attach a colorbar
+        (like your original function 'plot_colorbar').
+        - If 1D, it is repeated to form a 2D array of shape (N,100).
+        - If None, we skip the image approach and directly create a colorbar
+          from vmin..vmax using a ScalarMappable (like a legend).
     vmin : float, optional
-        Minimum data value that corresponds to the lower limit of the color scale. 
-        Defaults to None, in which case the minimum value in `array` is used.
+        Minimum data value for the color scale. If array is provided and vmin is None,
+        we default to array's min. If array is None and vmin is None, default is 0.
     vmax : float, optional
-        Maximum data value that corresponds to the upper limit of the color scale. 
-        Defaults to None, in which case the maximum value in `array` is used.
+        Maximum data value for the color scale. If array is provided and vmax is None,
+        we default to array's max. If array is None and vmax is None, default is 1.
     cmap : str, optional
-        Colormap used for the colorbar. Defaults to 'viridis'.
-    save : str, optional
-        File path to save the colorbar image. If provided, the colorbar will be saved 
-        to this file path, and the function will not return any value. Defaults to None.
+        Colormap name (or may be a Colormap object) used for the colorbar. (Default 'viridis')
+    orientation : str, optional
+        'horizontal' or 'vertical' colorbar. (Default 'horizontal')
+    figsize : tuple, optional
+        Figure size in inches. If None, a default is chosen based on orientation.
+    dpi : int, optional
+        Figure DPI (default 100).
     aspect : int, optional
-        Aspect ratio of the colorbar. Defaults to 10.
+        Aspect ratio for the colorbar when using the image approach. (Default 10)
     fontsize : int, optional
-        Font size for the colorbar tick labels. Defaults to None, in which case the 
-        default font size is used.
+        Font size for colorbar tick labels. If None, uses default.
     hide_ticks : bool, optional
-        If True, the colorbar ticks will be hidden. Defaults to False.
+        If True, hide the colorbar ticks entirely. (Default False)
+    label : str, optional
+        If non-empty, will set this string as the colorbar label. (Default '')
+    tick_interval : float, optional
+        If provided, we create ticks at multiples of this interval from vmin..vmax.
+        Ignored if tick_values is given.
+    tick_values : list, optional
+        If provided, explicitly set colorbar ticks to these positions. (Overrides tick_interval)
+    save : str, optional
+        File path to save the colorbar image (e.g., 'mycolorbar.png'). If provided,
+        we save and do not return a figure. If None, return the figure object.
 
     Returns
     -------
-    matplotlib.figure.Figure
-        The generated figure containing the colorbar, if `save` is not provided.
+    matplotlib.figure.Figure or None
+        Returns the figure object if 'save' is not provided. Otherwise, returns None
+        after saving to the specified file.
     """
-    if array is None:
-        array = np.full((100, 100), vmax, dtype=float)
-    elif array.ndim == 1:
-        array = np.repeat(array[:, np.newaxis], 100, axis=1)
-    
-    fig, ax = plt.subplots(figsize=(2, 2))
-    pos = ax.imshow(array, vmin=vmin, vmax=vmax, cmap=cmap)
-    cbar = fig.colorbar(pos, ax=ax, aspect=aspect)
-    
-    if fontsize:
-        ticklabs = cbar.ax.get_yticklabels()
-        cbar.ax.set_yticklabels(ticklabs, fontsize=fontsize)
-    
+    # --------------------------------------------------------------------------------
+    # Step 1: Determine vmin, vmax if array is given (or if not given)
+    # --------------------------------------------------------------------------------
+    if array is not None:
+        # If array is 1D, expand it to 2D
+        if array.ndim == 1:
+            array = np.repeat(array[:, np.newaxis], 100, axis=1)
+
+        # If vmin/vmax not given, get from the array
+        if vmin is None:
+            vmin = np.nanmin(array)
+        if vmax is None:
+            vmax = np.nanmax(array)
+    else:
+        # No array => we rely on user-provided vmin/vmax or default to (0..1)
+        if vmin is None:
+            vmin = 0.
+        if vmax is None:
+            vmax = 1.
+
+    # --------------------------------------------------------------------------------
+    # Step 2: Create the figure
+    # Default figsize if none given
+    # --------------------------------------------------------------------------------
+    if figsize is None:
+        if orientation == 'horizontal':
+            figsize = (4, 1)
+        else:
+            figsize = (1, 4)
+
+    fig = plt.figure(figsize=figsize, dpi=dpi)
+
+    # --------------------------------------------------------------------------------
+    # Step 3: Two modes:
+    #   (A) array-based image with colorbar
+    #   (B) direct "legend-only" colorbar from vmin..vmax
+    # --------------------------------------------------------------------------------
+    if array is not None:
+        # (A) Array approach
+        ax = fig.add_subplot(111)
+        pos = ax.imshow(array, vmin=vmin, vmax=vmax, cmap=cmap, aspect='auto')
+        cbar = fig.colorbar(pos, ax=ax, orientation=orientation, aspect=aspect)
+
+        # Hide the image axis
+        ax.set_axis_off()
+
+    else:
+        # (B) Legend-only approach
+        # We'll manually add an Axes for the colorbar that fills most of the figure
+        if orientation == 'horizontal':
+            # left=0.05, bottom=0.2, width=0.9, height=0.6
+            cax = fig.add_axes([0.05, 0.3, 0.9, 0.4])
+        else:
+            # left=0.2, bottom=0.05, width=0.6, height=0.9
+            cax = fig.add_axes([0.25, 0.05, 0.5, 0.9])
+
+        norm = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+        # Convert str colormap to actual object if needed
+        if isinstance(cmap, str):
+            cmap_obj = plt.get_cmap(cmap)
+        else:
+            cmap_obj = cmap
+
+        sm = mpl.cm.ScalarMappable(norm=norm, cmap=cmap_obj)
+        sm.set_array([])  # dummy
+
+        cbar = fig.colorbar(sm, cax=cax, orientation=orientation)
+
+    # --------------------------------------------------------------------------------
+    # Step 4: Ticks + label + font size, etc.
+    # --------------------------------------------------------------------------------
+    # 4a) Possibly define explicit tick positions
+    if tick_values is not None:
+        cbar.set_ticks(tick_values)
+    elif tick_interval is not None:
+        # generate ticks from vmin..vmax
+        ticks = np.arange(vmin, vmax + tick_interval*0.5, tick_interval)
+        # clamp
+        ticks = ticks[(ticks >= vmin) & (ticks <= vmax)]
+        cbar.set_ticks(ticks)
+
+    # 4b) Label
+    if label:
+        cbar.set_label(label)
+
+    # 4c) Hide ticks
     if hide_ticks:
-        cbar.ax.set_yticks([])
-    
-    ax.remove()
-    
+        cbar.ax.set_yticks([]) if orientation == 'vertical' else cbar.ax.set_xticks([])
+
+    # 4d) Fontsize
+    if fontsize:
+        cbar.ax.tick_params(labelsize=fontsize)
+
+    # --------------------------------------------------------------------------------
+    # Step 5: Save or return
+    # --------------------------------------------------------------------------------
     if save:
-        fig.savefig(save, bbox_inches='tight', dpi=300)
-        plt.close()
+        fig.savefig(save, bbox_inches='tight')
+        plt.close(fig)
+        return None
     else:
         return fig
 
@@ -1174,3 +1278,773 @@ def norm_by_col(df):
 
 def no_norm(df):
     return df
+
+
+import numpy as np
+import pandas as pd
+from pathlib import Path
+
+from skimage import io, segmentation, morphology
+import matplotlib.cm as mpl_cm
+
+##################################################
+# Pseudocode imports for your existing utility functions.
+# Adjust as needed for your actual code environment.
+##################################################
+# from spatialbiotools.utils import (
+#     map_array,
+#     map_pixel_values_to_colors,
+#     save_labelled_image,
+#     save_labelled_image_as_svgf
+# )
+
+import numpy as np
+import pandas as pd
+from pathlib import Path
+import matplotlib.pyplot as plt
+import matplotlib.cm as mpl_cm
+from skimage import io, segmentation, morphology
+
+# If you have your own utility functions, import them or define inline.
+# E.g.:
+# from SpatialBiologyToolkit.utils import (
+#     map_array,
+#     map_pixel_values_to_colors,
+#     save_labelled_image,
+#     save_labelled_image_as_svg,
+# )
+
+def obs_to_mask_3(
+    adata,
+    roi: str,
+    roi_obs: str = 'ROI',
+    check_cell_numbers: bool = False,
+    # Inner fill (cat/quant) params
+    cat_obs: str = None,
+    cat_colour_map='tab20',
+    cat_obs_groups=None,
+    quant_obs: str = None,
+    quant_colour_map: str = 'viridis',
+    quant_exclude_background: bool = True,
+    adata_colormap: bool = True,
+    # Mask file location
+    masks_folder: str = 'Masks',
+    masks_ext: str = 'tif',
+    # Numeric scaling for quant_obs
+    min_val: float = None,
+    max_val: float = None,
+    quantile: float = None,
+    # Output
+    save_path: str = None,
+    background_color: str = None,
+    hide_axes: bool = False,
+    hide_ticks: bool = True,
+    svg_smoothing_factor: int = 0,
+    dpi: int = 300,
+    # Label handling
+    label_obs: str = None,
+    # Separator ring
+    separator_color=None,
+    separator_thickness: int = 1,
+    separator_mode='inner',
+    separator_connectivity=1,
+    # Outline from second categorical
+    outline_cat_obs: str = None,
+    outline_cat_colour_map='tab20',
+    outline_thickness: int = 1,
+    outline_mode='inner',
+    outline_connectivity=1,
+    # NEW: The order in which layers are plotted
+    layers_order=None
+) -> tuple:
+    """
+    Map values from an AnnData object to a mask and generate a color map, with options
+    to save the result. The labeling is done in up to three layers:
+
+      1) "Inner" fill from cat_obs or quant_obs (optional).
+      2) "Separator" ring of uniform color around each cell (optional).
+      3) "Outline" from a second categorical observation (optional).
+
+    By default, these layers apply in the order ['inner','separator','outline'], but you
+    can pass a custom `layers_order` to control which layer overwrites the others. For example,
+    `layers_order=['separator','inner','outline']` means the fill would overwrite the separator
+    if they overlap, etc.
+
+    Parameters
+    ----------
+    adata : AnnData
+        Annotated data matrix.
+    roi : str
+        Region of interest identifier.
+    roi_obs : str, optional
+        Column in adata.obs that contains ROI info (default: 'ROI').
+
+    cat_obs : str, optional
+        Categorical observation for the "inner" fill layer.
+    cat_colour_map : str | list | dict, optional
+        Colormap for `cat_obs` (default: 'tab20').
+    cat_obs_groups : list | str, optional
+        Subset of categories to show. If None, all categories are used.
+    quant_obs : str, optional
+        Quantitative observation for the "inner" fill layer.
+    quant_colour_map : str, optional
+        Colormap for numeric data (default: 'viridis').
+    adata_colormap : bool, optional
+        If True, will use a colormap from adata.uns if available (default: True).
+
+    masks_folder : str, optional
+        Directory for mask files (default: 'Masks').
+    masks_ext : str, optional
+        File extension for mask files (default: 'tif').
+
+    min_val : float, optional
+        Lower bound for numeric color scaling.
+    max_val : float, optional
+        Upper bound for numeric color scaling.
+    quantile : float, optional
+        Quantile for numeric color scaling's upper bound.
+
+    save_path : str, optional
+        Where to save the final image (PNG or SVG). If None, just return arrays.
+    background_color : str, optional
+        If None, the background is transparent. Else specify e.g. 'white' or '#FF0000'.
+    hide_axes : bool, optional
+        If True, remove the entire axis from the figure (default: False).
+    hide_ticks : bool, optional
+        If True, remove tick marks & labels (default: True).
+    svg_smoothing_factor : int, optional
+        For `save_labelled_image_as_svg` if used (default: 0).
+    dpi : int, optional
+        Dots per inch for saving the image (default: 300).
+
+    label_obs : str, optional
+        Column in adata.obs for cell labels in the mask. If None, we assume cell # = index+1.
+
+    separator_color : str | tuple | None
+        If set, draw a uniform boundary around all cells. If None, skip this layer.
+    separator_thickness : int
+        Thickness (in pixels) of that boundary (default: 1).
+    separator_mode : str
+        Mode for `skimage.segmentation.find_boundaries` ('inner','outer','thick','subpixel').
+    separator_connectivity : int
+        Connectivity for boundary-finding (1 or 2).
+
+    outline_cat_obs : str, optional
+        A second categorical observation for the final boundary layer.
+    outline_cat_colour_map : str | list | dict, optional
+        Colormap for that second categorical boundary (default: 'tab20').
+    outline_thickness : int
+        Thickness (in pixels) for that boundary (default: 1).
+    outline_mode : str
+        Mode for boundary-finding, as above.
+    outline_connectivity : int
+        Connectivity for boundary-finding, as above.
+
+    layers_order : list of str, optional
+        The order in which to apply layers. Possible layer names: 'inner', 'separator', 'outline'.
+        Default is ['inner','separator','outline'] if not specified.
+
+    Returns
+    -------
+    (mapped_mask, pixel_colormap, cat_dict)
+        mapped_mask : np.ndarray (2D)
+            Each pixel has an integer ID representing the assigned category or boundary.
+        pixel_colormap : dict
+            A mapping of integer ID -> (R,G,B) color.
+        cat_dict : dict or None
+            For the 'inner' cat_obs, a dict from numeric ID -> category name. If no cat_obs is used, this is None.
+
+    Notes
+    -----
+    - The last layer applied will overwrite any pixels from previous layers if they overlap.
+    - If you want a different layering effect, reorder `layers_order`.
+    """
+
+    # Default layer order if user didn't provide any
+    if layers_order is None:
+        layers_order = ['inner', 'separator', 'outline']
+
+    # ------------------------------------------------------------
+    # 1) Load the base segmentation mask and check cell counts
+    # ------------------------------------------------------------
+    mask_path = Path(masks_folder) / f"{roi}.{masks_ext}"
+    base_mask = io.imread(mask_path)
+    if base_mask.ndim != 2:
+        raise ValueError(f"Expected 2D mask, got shape {base_mask.shape} for ROI '{roi}'.")
+
+    # Filter adata.obs to just this ROI
+    adata_roi_obs = adata.obs.loc[adata.obs[roi_obs] == roi].copy()
+    adata_roi_obs.reset_index(drop=True, inplace=True)
+
+    if check_cell_numbers:
+        # Check cell counts
+        cells_in_adata = len(adata_roi_obs)
+        cells_in_mask = len(np.unique(base_mask)) - 1  # assume 0 is background
+        if cells_in_adata != cells_in_mask:
+            raise ValueError(
+                f"Mask has {cells_in_mask} cells, AnnData has {cells_in_adata} for ROI='{roi}'."
+            )
+
+    # The final label image to fill in
+    mapped_mask = np.zeros_like(base_mask, dtype=np.uint16)
+
+    # We'll store an integer->color mapping
+    pixel_colormap = {}
+    cat_dict = None  # store category info if using cat_obs
+
+    # ------------------------------------------------------------
+    # HELPER: build a cat colormap from user input or adata.uns
+    # ------------------------------------------------------------
+    def _build_cat_cmap(cmap_in, cat_obs_in, use_adata_cmap=True):
+        if use_adata_cmap and f"{cat_obs_in}_colormap" in adata.uns:
+            return adata.uns[f"{cat_obs_in}_colormap"]
+
+        if isinstance(cmap_in, dict):
+            return cmap_in
+        elif isinstance(cmap_in, list):
+            cats_all = adata.obs[cat_obs_in].cat.categories
+            return {c: color for c, color in zip(cats_all, cmap_in)}
+        elif isinstance(cmap_in, str):
+            col = mpl_cm.get_cmap(cmap_in).colors
+            cats_all = adata.obs[cat_obs_in].cat.categories
+            return {c: cval for c, cval in zip(cats_all, col)}
+        else:
+            raise ValueError(
+                "cat_colour_map must be a dict, list, or valid matplotlib colormap name."
+            )
+
+    # ------------------------------------------------------------
+    # FUNCTION 1: do the "inner" fill
+    # ------------------------------------------------------------
+    def apply_inner_fill():
+        """
+        Fills the 'inner' layer with either:
+          - a categorical observation (cat_obs), or
+          - a quantitative observation (quant_obs).
+
+        If using quant_obs, we now:
+          1) Respect label_obs for assigning numeric values.
+          2) If quant_exclude_background=True, we do NOT color the zero-labeled
+             background or any previously assigned colors.
+        """
+        nonlocal mapped_mask, pixel_colormap, cat_dict, cat_obs_groups, label_obs
+
+        # ---------------------------
+        # 1) Categorical observation
+        # ---------------------------
+        if cat_obs:
+            cats_all = adata.obs[cat_obs].cat.categories.tolist()
+
+            # Possibly subset categories
+            if cat_obs_groups:
+                if not isinstance(cat_obs_groups, list):
+                    cat_obs_groups = [cat_obs_groups]
+                cats_all = [c for c in cats_all if c in cat_obs_groups]
+
+            # Build colormap
+            cat_cmap = _build_cat_cmap(cat_colour_map, cat_obs, adata_colormap)
+
+            cat_dict = {}
+            for i, cat_val in enumerate(cats_all, start=1):
+                # If label_obs is specified, those are the actual label IDs in the mask
+                if label_obs:
+                    cell_ids = adata_roi_obs.loc[adata_roi_obs[cat_obs] == cat_val, label_obs].values
+                else:
+                    # Otherwise, the mask label = index+1
+                    cell_ids = (adata_roi_obs.loc[adata_roi_obs[cat_obs] == cat_val].index + 1).to_numpy()
+
+                # Where does the mask match these cell IDs?
+                cat_mask = np.isin(base_mask, cell_ids)
+                mapped_mask[cat_mask] = i
+
+                cat_dict[i] = str(cat_val)
+                pixel_colormap[i] = cat_cmap.get(cat_val, (0.5, 0.5, 0.5))  # fallback color
+
+        # --------------------------
+        # 2) Quantitative observation
+        # --------------------------
+        elif quant_obs:
+
+            if label_obs:
+                # If label_obs is given, these are the actual label IDs in the mask
+                objects = adata_roi_obs[label_obs].values
+            else:
+                # Otherwise, we assume mask label = index+1
+                objects = np.arange(1, cells_in_adata + 1)
+
+            # Check if quant_obs is in obs or var_names
+            if quant_obs in adata_roi_obs.columns:
+                values = adata_roi_obs[quant_obs].values
+            elif quant_obs in adata.var_names:
+                subX = adata[adata.obs[roi_obs] == roi, adata.var_names == quant_obs].X
+                values = subX.toarray().flatten()
+            else:
+                raise ValueError(f"Can't find '{quant_obs}' in adata.obs or var_names.")
+
+            # map_array: each pixel labeled "objects[i]" gets the intensity "values[i]"
+            quant_mask = map_array(base_mask, objects, values)
+
+            if quant_exclude_background:
+                # Overwrite only the non-zero areas,
+                # so background remains whatever was already mapped
+                nonzero_locs = (base_mask != 0)
+                mapped_mask[nonzero_locs] = quant_mask[nonzero_locs]
+            else:
+                # Overwrite everything, including background = 0
+                mapped_mask = quant_mask
+
+            # Build colormap from numeric data
+            colormap = map_pixel_values_to_colors(
+                mapped_mask,
+                cmap_name=quant_colour_map,
+                min_val=min_val,
+                max_val=max_val,
+                quantile=quantile
+            )
+
+            if quant_exclude_background and 0 in colormap:
+                # Remove 0 from the colormap so background is not assigned any color
+                del colormap[0]
+
+            # Merge into our master pixel_colormap
+            pixel_colormap.update(colormap)
+
+        else:
+            # If neither cat_obs nor quant_obs is given, do nothing
+            pass
+
+    # ------------------------------------------------------------
+    # FUNCTION 2: draw a "separator" ring (uniform color)
+    # ------------------------------------------------------------
+    def apply_separator():
+        nonlocal mapped_mask, pixel_colormap, cat_dict, cat_obs_groups, label_obs
+
+        if separator_color is None:
+            return
+        separator_id = np.max(mapped_mask) + 1
+
+        # Combine all non-zero cells
+        #any_cell = mapped_mask > 0
+        any_cell = base_mask > 0
+
+        boundary = segmentation.find_boundaries(
+            any_cell, connectivity=separator_connectivity, mode=separator_mode
+        )
+        if separator_thickness > 1:
+            boundary = morphology.binary_dilation(boundary, morphology.disk(separator_thickness))
+
+        mapped_mask[boundary] = separator_id
+        pixel_colormap[separator_id] = separator_color
+
+    # ------------------------------------------------------------
+    # FUNCTION 3: draw an "outline" from a second categorical obs
+    # ------------------------------------------------------------
+    def apply_outline():
+        nonlocal mapped_mask, pixel_colormap, outline_cat_obs, label_obs
+
+        if outline_cat_obs is None:
+            return
+
+        outline_cats_all = adata.obs[outline_cat_obs].cat.categories.tolist()
+        outline_cmap_dict = _build_cat_cmap(outline_cat_colour_map, outline_cat_obs, adata_colormap)
+
+        start_id = np.max(mapped_mask) + 1
+
+        for idx, cat_val in enumerate(outline_cats_all, start=int(start_id)):
+            if label_obs:
+                cell_ids = adata_roi_obs.loc[
+                    adata_roi_obs[outline_cat_obs] == cat_val,
+                    label_obs
+                ].values
+            else:
+                cell_ids = (
+                    adata_roi_obs.loc[adata_roi_obs[outline_cat_obs] == cat_val].index + 1
+                ).to_numpy()
+
+            cat_mask = np.isin(base_mask, cell_ids)
+
+            cat_boundary = segmentation.find_boundaries(
+                cat_mask, connectivity=outline_connectivity, mode=outline_mode
+            )
+
+            if outline_thickness > 1:
+                cat_boundary = morphology.binary_dilation(
+                    cat_boundary, morphology.disk(outline_thickness)
+                )
+
+            mapped_mask[cat_boundary] = idx
+            pixel_colormap[idx] = outline_cmap_dict.get(cat_val, (0, 0, 0))
+
+    # ------------------------------------------------------------
+    # 2) Run the steps in the user-specified order
+    # ------------------------------------------------------------
+    layer_functions = {
+        'inner': apply_inner_fill,
+        'separator': apply_separator,
+        'outline': apply_outline
+    }
+
+    for layer in layers_order:
+        func = layer_functions.get(layer)
+        if func is not None:
+            func()  # call the subfunction
+        else:
+            raise ValueError(
+                f"Invalid layer '{layer}' in layers_order. Must be one of {list(layer_functions.keys())}."
+            )
+
+    # ------------------------------------------------------------
+    # 3) Possibly save the final image
+    # ------------------------------------------------------------
+    if not save_path:
+        return mapped_mask, pixel_colormap, cat_dict
+
+    # from SpatialBiologyToolkit.utils import save_labelled_image, save_labelled_image_as_svg
+    save_path_obj = Path(save_path)
+    save_path_obj.parent.mkdir(parents=True, exist_ok=True)
+
+    ext = save_path_obj.suffix.lower()
+    if ext == '.svg':
+        save_labelled_image_as_svg(
+            mapped_mask,
+            pixel_colormap,
+            str(save_path_obj),
+            exclude_zero=True,
+            smoothing_factor=svg_smoothing_factor,
+            background_color=background_color,
+            dpi=dpi
+        )
+    else:
+        save_labelled_image(
+            mapped_mask,
+            pixel_colormap,
+            str(save_path_obj),
+            background_color=background_color,
+            hide_axes=hide_axes,
+            hide_ticks=hide_ticks,
+            dpi=dpi
+        )
+
+    return mapped_mask, pixel_colormap, cat_dict
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib.cm as mpl_cm
+from skimage import io, segmentation, morphology
+from pathlib import Path
+
+# from SpatialBiologyToolkit.utils import (
+#     map_array,
+#     map_pixel_values_to_colors,
+#     save_labelled_image,
+#     save_labelled_image_as_svg,
+# )
+
+def obs_to_mask_2(
+    adata,
+    roi: str,
+    roi_obs: str = 'ROI',
+    check_cell_numbers: bool = False,
+    # Inner fill (cat/quant) params
+    cat_obs: str = None,
+    cat_colour_map='tab20',
+    cat_obs_groups=None,
+    quant_obs: str = None,
+    quant_colour_map: str = 'viridis',
+    adata_colormap: bool = True,
+    # Mask file location
+    masks_folder: str = 'Masks',
+    masks_ext: str = 'tif',
+    # Numeric scaling for quant_obs
+    min_val: float = None,
+    max_val: float = None,
+    quantile: float = None,
+    # Output
+    save_path: str = None,
+    background_color: str = None,
+    hide_axes: bool = False,
+    hide_ticks: bool = True,
+    svg_smoothing_factor: int = 0,
+    dpi: int = 300,
+    # Label handling
+    label_obs: str = None,
+    # Separator ring
+    separator_color=None,
+    separator_thickness: int = 1,
+    separator_mode='inner',
+    separator_connectivity=1,
+    separator_use_mapped_mask=False,  # <--- new param
+    # Outline from second categorical
+    outline_cat_obs: str = None,
+    outline_cat_colour_map='tab20',
+    outline_thickness: int = 1,
+    outline_mode='inner',
+    outline_connectivity=1,
+    # The order in which layers are plotted
+    layers_order=None
+) -> tuple:
+    """
+    Maps values from AnnData to a mask and generates a color map, with up to 3 'layers':
+      (1) "Inner" fill from cat_obs or quant_obs,
+      (2) "Separator" ring around each cell,
+      (3) "Outline" from a second categorical obs.
+
+    By default, the order is ['inner','separator','outline']. Each layer overwrites
+    pixels from prior layers if they overlap.
+
+    Key points:
+      - If quant_exclude_background=True, label 0 remains untouched.
+      - If separator_use_mapped_mask=False, we find boundaries from base_mask>0
+        (the entire ROI). If True, from mapped_mask>0 (only currently labeled pixels).
+    """
+
+    # 1) Default layer order
+    if layers_order is None:
+        layers_order = ['inner','separator','outline']
+
+    # 2) Load the base segmentation mask
+    mask_path = Path(masks_folder) / f"{roi}.{masks_ext}"
+    base_mask = io.imread(mask_path)
+
+    if base_mask.ndim != 2:
+        raise ValueError(f"Expected 2D mask, got shape {base_mask.shape} for ROI '{roi}'.")
+
+    # 3) Subset adata.obs for this ROI
+    adata_roi_obs = adata.obs.loc[adata.obs[roi_obs] == roi].copy()
+    adata_roi_obs.reset_index(drop=True, inplace=True)
+
+    # 4) Check matching cell counts
+    cells_in_adata = len(adata_roi_obs)
+    cells_in_mask = len(np.unique(base_mask)) - 1
+    if (cells_in_adata != cells_in_mask) and label_obs:
+        cell_ids = adata_roi_obs.loc[:, label_obs].values
+        base_mask = base_mask[np.isin(base_mask, cell_ids)]
+    elif (cells_in_adata != cells_in_mask):
+        raise ValueError(
+            f"Mask has {cells_in_mask} cells, but AnnData has {cells_in_adata} for ROI='{roi}'."
+        )
+
+    # 5) Prepare the final labeled image & colormap
+    mapped_mask = np.zeros_like(base_mask, dtype=np.uint16)
+    pixel_colormap = {}
+    cat_dict = None  # for cat_obs
+
+    #########################################################################
+    # Helper to build a dictionary-based categorical colormap from user input
+    #########################################################################
+    def _build_cat_cmap(cmap_in, cat_obs_in, use_adata_cmap=True):
+        if use_adata_cmap and f"{cat_obs_in}_colormap" in adata.uns:
+            return adata.uns[f"{cat_obs_in}_colormap"]
+
+        if isinstance(cmap_in, dict):
+            return cmap_in
+        elif isinstance(cmap_in, list):
+            cats_all = adata.obs[cat_obs_in].cat.categories
+            return {c: color for c, color in zip(cats_all, cmap_in)}
+        elif isinstance(cmap_in, str):
+            col = mpl_cm.get_cmap(cmap_in).colors
+            cats_all = adata.obs[cat_obs_in].cat.categories
+            return {c: cval for c, cval in zip(cats_all, col)}
+        else:
+            raise ValueError(
+                "cat_colour_map must be a dict, list, or valid matplotlib colormap name."
+            )
+
+    #########################################################################
+    # LAYER FUNCTION 1: "inner" fill from cat_obs or quant_obs
+    #########################################################################
+    def apply_inner_fill():
+        nonlocal mapped_mask, pixel_colormap, cat_dict, cat_obs_groups
+
+        if cat_obs:
+            # 1) Build a list of relevant categories
+            cats_all = adata.obs[cat_obs].cat.categories.tolist()
+            if cat_obs_groups:
+                if not isinstance(cat_obs_groups, list):
+                    cat_obs_groups = [cat_obs_groups]
+                cats_all = [c for c in cats_all if c in cat_obs_groups]
+
+            # 2) Build colormap for these categories
+            cat_cmap = _build_cat_cmap(cat_colour_map, cat_obs, adata_colormap)
+
+            # 3) Fill
+            cat_dict = {}
+            for i, cat_val in enumerate(cats_all, start=1):
+                # Determine which mask labels correspond to this category
+                if label_obs:
+                    cell_ids = adata_roi_obs.loc[adata_roi_obs[cat_obs] == cat_val, label_obs].values
+                else:
+                    cell_ids = (adata_roi_obs.loc[adata_roi_obs[cat_obs] == cat_val].index + 1).to_numpy()
+
+                cat_mask = np.isin(base_mask, cell_ids)
+                mapped_mask[cat_mask] = i
+
+                cat_dict[i] = str(cat_val)
+                pixel_colormap[i] = cat_cmap.get(cat_val, (0.5, 0.5, 0.5))
+
+        elif quant_obs:
+            # Numeric fill
+
+            # 1) Which mask labels correspond to which row in adata
+            if label_obs:
+                objects = adata_roi_obs[label_obs].values
+            else:
+                # fallback: label = row_index + 1
+                objects = np.arange(1, len(adata_roi_obs) + 1)
+
+            # 2) Extract numeric values in the correct order
+            if quant_obs in adata_roi_obs.columns:
+                values = adata_roi_obs[quant_obs].values
+            elif quant_obs in adata.var_names:
+                subX = adata[adata.obs[roi_obs] == roi, adata.var_names == quant_obs].X
+                values = subX.toarray().flatten()
+            else:
+                raise ValueError(f"Could not find '{quant_obs}' in .obs or .var_names.")
+
+            # 3) Build the partial numeric label image
+            quant_mask = map_array(base_mask, objects, values)
+
+            # Remove non-finite values
+            quant_mask[~np.isfinite(quant_mask)] = 0
+
+            #plt.imshow(quant_mask)
+            #plt.show()
+            #df = pd.DataFrame(quant_mask)
+            #df.to_csv(f"{roi}.csv")
+
+            mapped_mask = quant_mask
+
+            # 5) Build color scale for these numeric intensities
+            colormap = map_pixel_values_to_colors(
+                mapped_mask,
+                cmap_name=quant_colour_map,
+                min_val=min_val,
+                max_val=max_val,
+                quantile=quantile
+            )
+
+            pixel_colormap.update(colormap)
+
+
+        else:
+            # No cat_obs or quant_obs => do nothing
+            pass
+
+    #########################################################################
+    # LAYER FUNCTION 2: "separator" ring
+    #########################################################################
+    def apply_separator():
+        nonlocal mapped_mask, pixel_colormap
+
+        if separator_color is None:
+            return
+
+        separator_id = np.max(mapped_mask) + 1
+
+        # If we want to base the boundary on the final-labeled image:
+        if separator_use_mapped_mask:
+            any_cell = (mapped_mask != 0)
+        else:
+            # or based on the original segmentation mask
+            any_cell = (base_mask != 0)
+
+        boundary = segmentation.find_boundaries(
+            any_cell, connectivity=separator_connectivity, mode=separator_mode
+        )
+        if separator_thickness > 1:
+            boundary = morphology.binary_dilation(
+                boundary, morphology.disk(int(separator_thickness))
+            )
+
+        mapped_mask[boundary] = separator_id
+        pixel_colormap[separator_id] = separator_color
+
+    #########################################################################
+    # LAYER FUNCTION 3: "outline" from a second categorical obs
+    #########################################################################
+    def apply_outline():
+        nonlocal mapped_mask, pixel_colormap
+
+        if outline_cat_obs is None:
+            return
+
+        outline_cats_all = adata.obs[outline_cat_obs].cat.categories.tolist()
+        outline_cmap_dict = _build_cat_cmap(outline_cat_colour_map, outline_cat_obs, adata_colormap)
+
+        start_id = np.max(mapped_mask) + 1
+
+        for idx, cat_val in enumerate(outline_cats_all, start=int(start_id)):
+            # which labels in base_mask correspond to this category
+            if label_obs:
+                cell_ids = adata_roi_obs.loc[adata_roi_obs[outline_cat_obs] == cat_val, label_obs].values
+            else:
+                cell_ids = (
+                    adata_roi_obs.loc[adata_roi_obs[outline_cat_obs] == cat_val].index + 1
+                ).to_numpy()
+
+            cat_mask = np.isin(base_mask, cell_ids)
+            cat_boundary = segmentation.find_boundaries(
+                cat_mask, connectivity=outline_connectivity, mode=outline_mode
+            )
+
+            if outline_thickness > 1:
+                cat_boundary = morphology.binary_dilation(
+                    cat_boundary, morphology.disk(int(outline_thickness))
+                )
+
+            mapped_mask[cat_boundary] = idx
+            pixel_colormap[idx] = outline_cmap_dict.get(cat_val, (0, 0, 0))
+
+    #########################################################################
+    # 5) Apply each layer in the chosen order
+    #########################################################################
+    layer_functions = {
+        'inner': apply_inner_fill,
+        'separator': apply_separator,
+        'outline': apply_outline
+    }
+
+    for layer in layers_order:
+        func = layer_functions.get(layer)
+        if func is None:
+            raise ValueError(
+                f"Invalid layer '{layer}'. Must be one of: {list(layer_functions.keys())}"
+            )
+        func()
+
+    #########################################################################
+    # 6) Optionally save
+    #########################################################################
+    if not save_path:
+        return mapped_mask, pixel_colormap, cat_dict
+
+    save_path_obj = Path(save_path)
+    save_path_obj.parent.mkdir(parents=True, exist_ok=True)
+
+    # from SpatialBiologyToolkit.utils import save_labelled_image, save_labelled_image_as_svg
+    ext = save_path_obj.suffix.lower()
+    if ext == '.svg':
+        save_labelled_image_as_svg(
+            mapped_mask,
+            pixel_colormap,
+            str(save_path_obj),
+            exclude_zero=True,
+            smoothing_factor=svg_smoothing_factor,
+            background_color=background_color,
+            dpi=dpi
+        )
+    else:
+        save_labelled_image(
+            mapped_mask,
+            pixel_colormap,
+            str(save_path_obj),
+            background_color=background_color,
+            hide_axes=hide_axes,
+            hide_ticks=hide_ticks,
+            dpi=dpi
+        )
+
+    return mapped_mask, pixel_colormap, cat_dict
+
+

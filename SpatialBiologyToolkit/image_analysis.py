@@ -15,7 +15,7 @@ import scipy
 from scipy.interpolate import splprep, splev
 import matplotlib.pyplot as plt
 from matplotlib import cm
-from matplotlib.colors import Normalize, to_hex
+from matplotlib.colors import Normalize, to_hex, to_rgb
 import seaborn as sb
 import skimage.io as io
 from skimage.util import map_array
@@ -127,48 +127,88 @@ def map_pixel_values_to_colors(
     min_val: float = None,
     max_val: float = None,
     quantile: float = None,
+    skip_zero: bool = True,
     return_norm: bool = False
 ) -> dict:
     """
-    Map pixel values in an image to hex colors using a specified matplotlib colormap.
+    Map pixel values in a 2D image to hex colors using a specified matplotlib colormap.
 
     Parameters
     ----------
     image : np.ndarray
-        2D numpy array of pixel values.
-    cmap_name : str, optional
-        The name of the colormap (default is 'viridis').
+        2D numpy array of pixel values (e.g. intensities or label-based intensities).
+    cmap_name : str or colormap object, optional
+        The matplotlib colormap to use. If string (default 'viridis'), we fetch it by name.
     min_val : float, optional
-        Minimum value for color scaling. If None, it is set to the minimum value in the image.
+        Minimum value for color scaling. If None, defaults to the min of the included data.
     max_val : float, optional
-        Maximum value for color scaling. If None, it is set to the maximum value in the image.
+        Maximum value for color scaling. If None, defaults to the max of the included data.
     quantile : float, optional
-        If specified, use this quantile to set the max value for color scaling.
+        If set (e.g. 0.99), we compute the `max_val` from that quantile of the data, ignoring user-supplied max_val.
+    skip_zero : bool, optional
+        If True (default), do not assign a color for pixel value 0. Useful for ignoring background.
     return_norm : bool, optional
-        Whether to return the normalization function.
+        If True, return only the `Normalize` object instead of the color dict.
 
     Returns
     -------
-    dict
-        A dictionary mapping unique pixel values to hex color codes.
+    dict or Normalize
+        - If return_norm=False (default), a dict {value -> '#RRGGBB'} for the included pixel values.
+        - If return_norm=True, returns the matplotlib.colors.Normalize instance only.
     """
-    cmap = plt.get_cmap(cmap_name)
-    
-    if min_val is None:
-        min_val = np.min(image)
-    if max_val is None:
-        max_val = np.max(image)
-    elif quantile is not None:
-        max_val = np.quantile(image, quantile)
-        
-    norm = Normalize(vmin=min_val, vmax=max_val)
-    
+    # 1) Get the colormap
+    if isinstance(cmap_name, str):
+        cmap = plt.get_cmap(cmap_name)
+    else:
+        cmap = cmap_name
+
+    # 2) Build a list/array of relevant values
     unique_values = np.unique(image)
-    color_mapping = {val: to_hex(cmap(norm(val))) for val in unique_values}
-    
+    if skip_zero:
+        # Omit 0 from the colormap so it doesn't overwrite background
+        unique_values = unique_values[unique_values != 0]
+
+    if unique_values.size == 0:
+        # If there's nothing but zeros or an empty set, return an empty mapping
+        if return_norm:
+            return Normalize(vmin=0, vmax=1)
+        return {}
+
+    # 3) Determine min_val and max_val logic
+    data_for_stats = image[np.isin(image, unique_values)]  # data excluding 0 if skip_zero=True
+
+    # If user gave a quantile, override max_val logic
+    if quantile is not None:
+        max_val = np.quantile(data_for_stats, quantile)
+        # If user also provided max_val, we ignore it (the quantile overrides).
+    else:
+        # If no quantile given but max_val is None, set from data
+        if max_val is None:
+            max_val = data_for_stats.max()
+
+    # If min_val not provided, set from data
+    if min_val is None:
+        min_val = data_for_stats.min()
+
+    # 4) Create the normalizer
+    norm = Normalize(vmin=min_val, vmax=max_val, clip=True)
+
     if return_norm:
         return norm
+
+    # 5) Build color mapping
+    color_mapping = {}
+    for val in unique_values:
+        # Each val is mapped to a color in [0..1]
+        rgba = cmap(norm(val))
+        color_mapping[val] = to_hex(rgba)
+
     return color_mapping
+
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+from matplotlib.colors import to_rgb
 
 def save_labelled_image(
     label_image: np.ndarray,
@@ -176,7 +216,98 @@ def save_labelled_image(
     save_path: str,
     background_color: str = None,
     hide_axes: bool = False,
-    hide_ticks: bool = True
+    hide_ticks: bool = True,
+    dpi: int = 300
+) -> None:
+    """
+    Convert a label image to a color image using a given dictionary
+    of pixel values -> color (any format supported by matplotlib),
+    and save the result using matplotlib.
+
+    Parameters
+    ----------
+    label_image : np.ndarray
+        2D label image; each pixel's integer value is looked up in color_mapping.
+    color_mapping : dict
+        A dictionary: {integer_label: color_string_or_hex}.
+        The color should be interpretable by matplotlib, e.g. '#FF00FF' or 'red'.
+    save_path : str
+        The file path to save the output color image (e.g. 'image.png').
+    background_color : str, optional
+        Background color. If None, we make an RGBA array and the background
+        is transparent. Otherwise we use an RGB array with the specified background.
+    hide_axes : bool, optional
+        If True, hides the axes entirely (default: False).
+    hide_ticks : bool, optional
+        If True, hides ticks & tick labels (default: True).
+    dpi : int, optional
+        Resolution for saving the figure (default: 300).
+    """
+    # Convert background_color to an integer tuple in [0..255]
+    if background_color is not None:
+        bg_rgb = mcolors.to_rgb(background_color)      # floats in [0..1]
+        bg_rgb = tuple(int(round(c * 255)) for c in bg_rgb)  # now in [0..255]
+        channels = 3
+    else:
+        # no background => we use RGBA with alpha=0 for background
+        bg_rgb = (0, 0, 0, 0)
+        channels = 4
+
+    # Create the output image as a NxMx3 or NxMx4 array of uint8
+    color_image = np.full(
+        (label_image.shape[0], label_image.shape[1], channels),
+        bg_rgb, dtype=np.uint8
+    )
+
+    # Map each label to the specified color
+    for label_val, color in color_mapping.items():
+        # Convert color to an (R, G, B) triple in [0..1]
+        float_rgb = to_rgb(color)
+        # Scale up to [0..255]
+        rgb_scaled = [int(round(c * 255)) for c in float_rgb]
+
+        # Assign to the label pixels
+        color_image[label_image == label_val, :3] = rgb_scaled
+
+        # If no background color => we have a 4th channel for alpha
+        # Set alpha=255 to make these pixels fully opaque
+        if channels == 4:
+            color_image[label_image == label_val, 3] = 255
+
+    # Visualize with matplotlib
+    fig, ax = plt.subplots()
+    ax.imshow(color_image)
+
+    if hide_axes:
+        ax.axis('off')
+    else:
+        if hide_ticks:
+            ax.set_xticks([])
+            ax.set_yticks([])
+            ax.set_xticklabels([])
+            ax.set_yticklabels([])
+
+    # If a non-transparent background is used, apply it to the figure patch
+    if background_color is not None:
+        fig.patch.set_facecolor(background_color)
+        plt.savefig(save_path, bbox_inches='tight', pad_inches=0, dpi=dpi, facecolor=background_color)
+    else:
+        # Transparent background
+        plt.savefig(save_path, bbox_inches='tight', pad_inches=0, dpi=dpi, transparent=True)
+
+    plt.close()
+
+
+
+
+def save_labelled_image_old(
+    label_image: np.ndarray,
+    color_mapping: dict,
+    save_path: str,
+    background_color: str = None,
+    hide_axes: bool = False,
+    hide_ticks: bool = True,
+    dpi = 300
 ) -> None:
     """
     Convert a label image to a color image using a given dictionary of pixel values to HEX colors and save the image using matplotlib.
@@ -200,8 +331,8 @@ def save_labelled_image(
     -------
     None
     """
-    def hex_to_rgb(hex_color: str) -> tuple:
-        return tuple(int(hex_color[i:i+2], 16) for i in (1, 3, 5))
+    #def hex_to_rgb(hex_color: str) -> tuple:
+    #    return tuple(int(hex_color[i:i+2], 16) for i in (1, 3, 5))
 
     if background_color is not None:
         background_rgb = mcolors.to_rgb(background_color)
@@ -211,9 +342,12 @@ def save_labelled_image(
 
     color_image = np.full((label_image.shape[0], label_image.shape[1], 4 if background_color is None else 3), background_rgb, dtype=np.uint8)
 
-    for label, hex_color in color_mapping.items():
-        rgb_color = hex_to_rgb(hex_color)
+    for label, color in color_mapping.items():
+
+        rgb_color = to_rgb(color)
         color_image[label_image == label, :3] = rgb_color
+        print(f'Label {label}, rgb {rgb_color}')
+
         if background_color is None:
             color_image[label_image == label, 3] = 255
 
@@ -231,9 +365,9 @@ def save_labelled_image(
 
     if background_color is not None:
         fig.patch.set_facecolor(background_color)
-        plt.savefig(save_path, bbox_inches='tight', pad_inches=0, dpi=300, facecolor=background_color)
+        plt.savefig(save_path, bbox_inches='tight', pad_inches=0, dpi=dpi, facecolor=background_color)
     else:
-        plt.savefig(save_path, bbox_inches='tight', pad_inches=0, dpi=300, transparent=True)
+        plt.savefig(save_path, bbox_inches='tight', pad_inches=0, dpi=dpi, transparent=True)
 
     plt.close()
 
