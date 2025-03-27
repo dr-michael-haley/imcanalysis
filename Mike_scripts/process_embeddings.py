@@ -80,6 +80,8 @@ pixie_cmap = {
 # -----------------------------------------------
 parser = argparse.ArgumentParser(description="Process a single npy embedding file.")
 parser.add_argument("--npy", required=True, help="Path to the .npy file (e.g. node_embeddings_node2vec.npy).")
+parser.add_argument("--prefix", required=True, help="Prefix on AnnData")
+
 args = parser.parse_args()
 
 # Determine name based on filename
@@ -167,4 +169,4 @@ ax2.flatten()[1].set_title('Norm within pixie envs')
 fig.savefig(f'Figures/heatmaps_{name}.png', bbox_inches='tight', dpi=300)
 
 # Save AnnData
-adatas[name].write_h5ad(f'{name}.h5ad')
+adatas[name].write_h5ad(f'{args.prefix}_{name}.h5ad')
