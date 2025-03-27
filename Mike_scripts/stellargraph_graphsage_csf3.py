@@ -13,6 +13,7 @@ import os
 import random
 import itertools
 
+from stellargraph import StellarGraph
 import stellargraph as sg
 from stellargraph.data import EdgeSplitter
 from stellargraph.mapper import GraphSAGELinkGenerator
@@ -162,7 +163,7 @@ history = model.fit(
     epochs=epochs,
     verbose=1,
     use_multiprocessing=False,
-    workers=8,
+    workers=4,
     shuffle=True,
 )
 

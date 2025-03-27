@@ -147,7 +147,7 @@ history = model.fit(
     epochs=epochs,
     verbose=1,
     use_multiprocessing=False,
-    workers=8,
+    workers=4,
     shuffle=True,
 )
 
