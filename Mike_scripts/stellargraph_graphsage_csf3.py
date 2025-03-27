@@ -91,7 +91,7 @@ G = StellarGraph.from_networkx(G_nx, node_features=node_features)
 
 # Specify the  parameter values: root nodes (all, in this case), the number of walks to take per node, the length of each walk, and random seed.**
 nodes = list(G.nodes())
-number_of_walks = 1
+number_of_walks = 10
 length = 5
 
 unsupervised_samples = UnsupervisedSampler(
@@ -133,7 +133,7 @@ history = model.fit(
     epochs=epochs,
     verbose=1,
     use_multiprocessing=False,
-    workers=4,
+    workers=8,
     shuffle=True,
 )
 
