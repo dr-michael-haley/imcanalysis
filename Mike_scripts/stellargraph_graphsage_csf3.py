@@ -4,6 +4,8 @@
 # https://stellargraph.readthedocs.io/en/stable/demos/embeddings/graphsage-unsupervised-sampler-embeddings.html
 # -----------------------------------------------
 
+import argparse
+
 import networkx as nx
 import pandas as pd
 import numpy as np
@@ -30,12 +32,39 @@ from stellargraph import globalvar
 
 from IPython.display import display, HTML
 
+pixie_envs = {
+    1: 'SMA_fibro_HS',
+    2: 'Hypoxia matrix',
+    4: 'Low_level_hypo',
+    5: 'CS_Bi_Col_HS_Fibro',
+    6: 'CS',
+    8: 'Hypoxia_blood',
+    9: 'PanCyto',
+    10: 'Brevican_Neurocan',
+    11: 'Vimentin_Aggre',
+    12: 'Brevican',
+    13: 'GLUT1',
+    14: 'Inflammatory hypoxia',
+    15: 'Vers_Neu_Brev',
+    17: 'TNC_Brevican',
+    29: 'Artifact',
+    30: 'HA'
+}
+
 if tf.config.list_physical_devices('GPU'):
     print('GPU available!')
 else:
     print('NO GPU available?')
 
 print(tf.config.list_physical_devices('GPU'))
+
+# -----------------------------------------------
+# Parse arguments
+# -----------------------------------------------
+parser = argparse.ArgumentParser(description="Save path")
+parser.add_argument("--npy", required=True, help="Save path")
+args = parser.parse_args()
+
 
 # -----------------------------------------------
 # Load NetworkX networks for matrix environments
@@ -154,4 +183,4 @@ node_gen = GraphSAGENodeGenerator(G, batch_size, num_samples).flow(node_ids)
 
 node_embeddings = embedding_model.predict(node_gen, workers=4, verbose=1)
 
-np.save('node_embedding_graphsage.npy', node_embeddings)
+np.save(args.npy, node_embeddings)
