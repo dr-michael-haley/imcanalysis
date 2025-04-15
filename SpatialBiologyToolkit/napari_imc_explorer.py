@@ -16,6 +16,7 @@ import vispy
 from matplotlib import colormaps
 from qtpy.QtWidgets import QWidget, QVBoxLayout
 from napari.utils.colormaps import Colormap  # For colormap reconstruction
+from napari.utils import DirectLabelColormap
 
 def napari_imc_explorer(
     masks_folder: str = 'Masks',
@@ -197,6 +198,7 @@ def napari_imc_explorer(
             if adata_colormap and (f'{pop_obs}_colors' in adata.uns):
                 colour_map = adata.uns[f'{pop_obs}_colors']
             pop_colormap = {(x+1): y for x, y in enumerate(colour_map)}
+            pop_colormap.update({None:'magenta'})
             all_pops_mask = np.zeros(mask.shape, dtype='uint16')
 
             # Create a mask for each population
@@ -210,12 +212,12 @@ def napari_imc_explorer(
                     pop_mask = np.isin(mask, objects)
                     all_pops_mask = np.where(pop_mask, pop_num, all_pops_mask)
                     if add_individual_pops:
-                        viewer.add_labels(pop_mask, name=pop, color={1: pop_colormap[pop_num]})
+                        viewer.add_labels(pop_mask, name=pop, colormap=DirectLabelColormap(color_dict={None: 'magenta', 1: pop_colormap[pop_num]}))
                         viewer.layers[-1].contour = 1
                         viewer.layers[-1].visible = False
                 except Exception as e:
                     print(f'Error adding group {pop} from {pop_obs}: {e}')
-            viewer.add_labels(all_pops_mask, name=pop_obs, color=pop_colormap)
+            viewer.add_labels(all_pops_mask, name=pop_obs, colormap=DirectLabelColormap(color_dict=pop_colormap))
             viewer.layers[-1].contour = 1
         elif quant:
             # Add quantitative data as an overlay
@@ -483,7 +485,7 @@ def napari_imc_explorer(
                 new_layer = viewer.add_labels(
                     expanded_data,
                     name=f'{layer.name}_expanded',
-                    color=dict(layer.color)
+                    colormap=DirectLabelColormap(color_dict=dict(layer.color))
                 )
                 # Copy layer properties
                 new_layer.blending = layer.blending
@@ -536,7 +538,7 @@ def napari_imc_explorer(
             opacity=all_cells_layer.opacity,
             blending=all_cells_layer.blending,
             visible=all_cells_layer.visible,
-            color=all_cells_layer.color  # Copy the colormap from the original layer
+            colormap=all_cells_layer.colormap  # Copy the colormap from the original layer
         )
         # Set the contour property after creating the new layer
         new_layer.contour = all_cells_layer.contour
@@ -835,7 +837,7 @@ def napari_imc_explorer(
                 opacity=layer_data['opacity'],
                 blending=layer_data['blending'],
                 visible=layer_data['visible'],
-                color=layer_data.get('colormap', None)  # Apply colormap for labels as dictionary
+                colormap=layer_data.get('colormap', None)  # Apply colormap for labels as dictionary
             )
             # Set contour after adding the layer
             labels_layer.contour = layer_data.get('contour', 0)  # Default to 0 if missing
