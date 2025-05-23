@@ -20,6 +20,7 @@ from scipy import stats
 from shapely.geometry import MultiPoint, Point, Polygon
 from skimage.util import map_array
 from skimage.transform import resize
+import sklearn
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from sklearn.preprocessing import StandardScaler
