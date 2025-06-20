@@ -69,7 +69,7 @@ def create_overlay_image(
         img_array = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8).reshape(h, w, 3)
     except:
         # >= 3.8.0
-        img_array = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 3)
+        img_array = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 3)[...,:3]
 
     plt.close(fig)
     return img_array
