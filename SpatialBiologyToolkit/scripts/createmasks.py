@@ -62,7 +62,15 @@ def create_overlay_image(
     fig.canvas.draw()
 
     w, h = fig.canvas.get_width_height()
-    img_array = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8).reshape(h, w, 3)
+
+    # Matplotlib version compatability
+    try:
+        # <= 3.7.0
+        img_array = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8).reshape(h, w, 3)
+    except:
+        # >= 3.8.0
+        img_array = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8).reshape(h, w, 3)
+
     plt.close(fig)
     return img_array
 
