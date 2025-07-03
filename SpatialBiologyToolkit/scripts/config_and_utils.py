@@ -32,6 +32,7 @@ class DenoisingConfig:
     window_size: int = 3
     # Outlier removal
     remove_outliers: bool = True
+    remove_outliers_min_threshold: int = 500
     # Parameters specific to 'deep_snf' method
     patch_step_size: int = 100
     intelligent_patch_size: bool = True
@@ -55,7 +56,6 @@ class DenoisingConfig:
     dpi: int = 100
     qc_image_dir: str = 'denoising'
     skip_already_denoised: bool = True
-
 
 @dataclass
 class CreateMasksConfig:

@@ -492,7 +492,8 @@ def load_channels_from_panel(general_config: GeneralConfig,):
 
 import re  # Ensure this is at the top of your script
 
-def remove_outliers_from_images(general_config):
+def remove_outliers_from_images(general_config: GeneralConfig,
+                          denoise_config: DenoisingConfig):
     """
     Removes outlier pixel values from images based on thresholds defined in the panel file.
     Thresholds can be absolute (e.g., 8000) or proportion (e.g., 'p0.001').
@@ -500,6 +501,7 @@ def remove_outliers_from_images(general_config):
     Saves updated images in place and generates a QC CSV report.
     Skips processing if the report already exists.
     """
+
     panel_path = Path(general_config.metadata_folder) / "panel.csv"
     qc_report_path = Path(general_config.qc_folder) / "remove_outliers_report.csv"
 
@@ -537,11 +539,19 @@ def remove_outliers_from_images(general_config):
             all_pixels = np.concatenate([img.flatten() for img in img_collect])
 
             if rule.startswith("p"):
-                # e.g., p0.00025
                 rule_clean = re.sub(r"[^\d\.]", "", rule[1:])
                 percentile_value = float(rule_clean)
                 threshold = np.percentile(all_pixels, 100 * (1 - percentile_value))
                 threshold_type = f"Percentile ({percentile_value:.7f}%)"
+
+                # Skip channel if percentile-derived threshold is too low
+                if threshold < denoise_config.remove_outliers_min_threshold:
+                    logging.warning(
+                        f"Skipping channel {channel} — calculated threshold {threshold:.5f} from percentile rule '{rule}' "
+                        f"is below minimum allowed ({denoise_config.remove_outliers_min_threshold})"
+                    )
+                    continue
+
             else:
                 threshold = float(rule)
                 threshold_type = "Absolute"
@@ -599,7 +609,7 @@ if __name__ == "__main__":
 
     # Remove outliers based on panel (if defined)
     if denoise_config.remove_outliers:
-        remove_outliers_from_images(general_config)
+        remove_outliers_from_images(general_config, denoise_config)
 
     if denoise_config.run_denoising:
 
