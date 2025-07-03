@@ -495,7 +495,7 @@ import re  # Ensure this is at the top of your script
 def remove_outliers_from_images(general_config):
     """
     Removes outlier pixel values from images based on thresholds defined in the panel file.
-    Thresholds can be absolute (e.g., 8000) or percentiles (e.g., 'p0.001').
+    Thresholds can be absolute (e.g., 8000) or proportion (e.g., 'p0.001').
 
     Saves updated images in place and generates a QC CSV report.
     Skips processing if the report already exists.
@@ -540,7 +540,7 @@ def remove_outliers_from_images(general_config):
                 # e.g., p0.00025
                 rule_clean = re.sub(r"[^\d\.]", "", rule[1:])
                 percentile_value = float(rule_clean)
-                threshold = np.percentile(all_pixels, 100 - percentile_value * 100)
+                threshold = np.percentile(all_pixels, 100 * (1 - percentile_value))
                 threshold_type = f"Percentile ({percentile_value:.7f}%)"
             else:
                 threshold = float(rule)
