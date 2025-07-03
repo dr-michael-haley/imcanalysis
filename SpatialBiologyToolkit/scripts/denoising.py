@@ -521,58 +521,57 @@ def remove_outliers_from_images(general_config):
         channel = f"{row['channel_name']}_{row['channel_label']}"
         rule = row.get('remove_outliers')
 
-        if pd.isna(rule) or rule==False:
+        if pd.isna(rule) or str(rule).strip().lower() in ["", "false", "none", "nan"]:
             continue
 
-        try:
-            logging.info(f"Processing outliers for channel: {channel} with rule: {rule}")
-            img_collect, img_file_list, img_folders = load_imgs_from_directory(
-                general_config.raw_images_folder, channel, quiet=True
-            )
+        #try:
+        logging.info(f"Processing outliers for channel: {channel} with rule: {rule}")
+        img_collect, img_file_list, img_folders = load_imgs_from_directory(
+            general_config.raw_images_folder, channel, quiet=True
+        )
 
-            # Determine threshold
-            all_pixels = np.concatenate([img.flatten() for img in img_collect])
-            if isinstance(rule, str) and rule.strip().lower().startswith("p"):
-                # Extract numeric portion and ensure valid float
-                rule_clean = re.sub(r"[^\d\.]", "", str(rule)[1:])  # strip 'p', remove non-numeric
-                try:
-                    percentile_value = float(rule_clean)
-                    threshold = np.percentile(all_pixels, 100 - percentile_value * 100)
-                    threshold_type = f"Percentile ({percentile_value:.3f}%)"
-                except ValueError:
-                    raise ValueError(f"Invalid percentile value: {rule}")
-            else:
-                try:
-                    threshold = float(str(rule).strip())
-                    threshold_type = "Absolute"
-                except ValueError:
-                    raise ValueError(f"Invalid absolute threshold: {rule}")
+        # Determine threshold
+        all_pixels = np.concatenate([img.flatten() for img in img_collect])
+        if isinstance(rule, str) and rule.strip().lower().startswith("p"):
+            # Extract numeric portion and ensure valid float
+            rule_clean = re.sub(r"[^\d\.]", "", str(rule)[1:])  # strip 'p', remove non-numeric
+            try:
+                percentile_value = float(rule_clean)
+                threshold = np.percentile(all_pixels, 100 - percentile_value * 100)
+                threshold_type = f"Percentile ({percentile_value:.7f}%)"
+            except ValueError:
+                raise ValueError(f"Invalid percentile value: {rule}")
+        else:
+            try:
+                threshold = float(str(rule).strip())
+                threshold_type = "Absolute"
+            except ValueError:
+                raise ValueError(f"Invalid absolute threshold: {rule}")
 
-            logging.info(f"Threshold for {channel}: {threshold:.4f} ({threshold_type})")
+        logging.info(f"Threshold for {channel}: {threshold:.7f} ({threshold_type})")
 
-            for img, fname, folder in zip(img_collect, img_file_list, img_folders):
-                original = img.copy()
-                mask = img > threshold
-                num_outliers = np.sum(mask)
-                total_pixels = img.size
-                pct = (num_outliers / total_pixels) * 100
+        for img, fname, folder in zip(img_collect, img_file_list, img_folders):
+            mask = img > float(threshold)
+            num_outliers = np.sum(mask)
+            total_pixels = img.size
+            pct = 100 * num_outliers / total_pixels
 
-                img[mask] = 0
-                save_path = folder / fname
-                tiff.imwrite(save_path, img.astype('float32'))
+            img[mask] = 0
+            save_path = folder / fname
+            tiff.imwrite(save_path, img.astype('float32'))
 
-                report_records.append({
-                    'channel': channel,
-                    'roi': Path(folder).name,
-                    'image': fname,
-                    'threshold': threshold,
-                    'threshold_type': threshold_type,
-                    'outlier_count': int(num_outliers),
-                    'outlier_percentage': pct
-                })
+            report_records.append({
+                'channel': channel,
+                'roi': Path(folder).name,
+                'image': fname,
+                'threshold': threshold,
+                'threshold_type': threshold_type,
+                'outlier_count': int(num_outliers),
+                'outlier_percentage': round(pct, 4)  # or leave as float
+            })
 
-        except Exception as e:
-            logging.error(f"Error removing outliers for {channel}: {e}")
+        #except Exception as e:
+        #    logging.error(f"Error removing outliers for {channel}: {e}")
 
     # Save report
     if report_records:
