@@ -593,6 +593,9 @@ def export_mcd_folder(
             # By default, don't use any raw
             p['use_raw'] = False
 
+            # By default, don't remove outliers
+            p['remove_outliers'] = False
+
         # Save the panel(s)
         if len(unique_panels) == 1:
             logging.info("All panels are identical. Saving as 'panel.csv'.")

@@ -30,8 +30,13 @@ class DenoisingConfig:
     n_neighbours: int = 4
     n_iter: int = 3
     window_size: int = 3
+    # Outlier removal
+    remove_outliers: bool = True
     # Parameters specific to 'deep_snf' method
     patch_step_size: int = 100
+    intelligent_patch_size: bool = False
+    intelligent_patch_size_threshold: float = 0.2  # e.g., 20%
+    # DeepSNIF
     train_epochs: int = 75
     train_initial_lr: float = 0.001
     train_batch_size: int = 200
@@ -50,6 +55,7 @@ class DenoisingConfig:
     dpi: int = 100
     qc_image_dir: str = 'denoising'
     skip_already_denoised: bool = True
+
 
 @dataclass
 class CreateMasksConfig:

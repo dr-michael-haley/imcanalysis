@@ -150,6 +150,24 @@ def denoise_batch(
     print(f'\nPerforming denoising using method "{method}" on the following channels:\n{channels}\n')
     logging.info(f'Performing denoising using method "{method}" on channels: {channels}')
 
+    # DeepSNF parameters from denoise_config
+    patch_step_size = denoise_config.patch_step_size
+    train_epochs = denoise_config.train_epochs
+    train_initial_lr = denoise_config.train_initial_lr
+    train_batch_size = denoise_config.train_batch_size
+    pixel_mask_percent = denoise_config.pixel_mask_percent
+    val_set_percent = denoise_config.val_set_percent
+    loss_function = denoise_config.loss_function
+    loss_name = denoise_config.loss_name
+    weights_save_directory = denoise_config.weights_save_directory
+    is_load_weights = denoise_config.is_load_weights
+    lambda_HF = denoise_config.lambda_HF
+    n_neighbours = denoise_config.n_neighbours
+    n_iter = denoise_config.n_iter
+    window_size = denoise_config.window_size
+    network_size = denoise_config.network_size
+    ratio_thresh = denoise_config.ratio_thresh
+
     for channel_name in channels:
         try:
             logging.info(f'Starting processing for channel: {channel_name}')
@@ -158,23 +176,6 @@ def denoise_batch(
             logging.info(f'Loaded {len(img_collect)} images for channel {channel_name}')
 
             if method == 'deep_snf':
-                # DeepSNF parameters from denoise_config
-                patch_step_size = denoise_config.patch_step_size
-                train_epochs = denoise_config.train_epochs
-                train_initial_lr = denoise_config.train_initial_lr
-                train_batch_size = denoise_config.train_batch_size
-                pixel_mask_percent = denoise_config.pixel_mask_percent
-                val_set_percent = denoise_config.val_set_percent
-                loss_function = denoise_config.loss_function
-                loss_name = denoise_config.loss_name
-                weights_save_directory = denoise_config.weights_save_directory
-                is_load_weights = denoise_config.is_load_weights
-                lambda_HF = denoise_config.lambda_HF
-                n_neighbours = denoise_config.n_neighbours
-                n_iter = denoise_config.n_iter
-                window_size = denoise_config.window_size
-                network_size = denoise_config.network_size
-                ratio_thresh = denoise_config.ratio_thresh
 
                 logging.info(f'DeepSNF parameters: {denoise_config}')
 
@@ -184,22 +185,59 @@ def denoise_batch(
 
                 # Generate patches and train model if not loading weights
                 if not is_load_weights:
-                    logging.info('Generating patches for training.')
-                    data_generator = DeepSNiF_DataGenerator(
+                    logging.info('Calculating maximum patch count using ratio_thresh=1.0')
+                    max_data_generator = DeepSNiF_DataGenerator(
                         channel_name=channel_name,
                         n_neighbours=n_neighbours,
                         n_iter=n_iter,
                         window_size=window_size,
-                        col_step=col_step,
-                        row_step=row_step,
-                        ratio_thresh=ratio_thresh
+                        col_step=patch_step_size,
+                        row_step=patch_step_size,
+                        ratio_thresh=1.0
                     )
+                    max_patches = max_data_generator.generate_patches_from_directory(load_directory=raw_directory)
+                    max_patch_count = max_patches.shape[0]
+                    logging.info(f"Max patch count for {channel_name}: {max_patch_count}")
 
-                    generated_patches = data_generator.generate_patches_from_directory(
-                        load_directory=raw_directory
-                    )
-                    logging.info(f'Generated training patches with shape: {generated_patches.shape}')
-                    print(f'The shape of the generated training set is {generated_patches.shape}.')
+                    current_step = patch_step_size
+                    min_step = 20
+                    threshold = denoise_config.intelligent_patch_size_threshold
+
+                    while True:
+                        logging.info(f"Trying patch_step_size={current_step} with ratio_thresh={ratio_thresh}")
+                        data_generator = DeepSNiF_DataGenerator(
+                            channel_name=channel_name,
+                            n_neighbours=n_neighbours,
+                            n_iter=n_iter,
+                            window_size=window_size,
+                            col_step=current_step,
+                            row_step=current_step,
+                            ratio_thresh=ratio_thresh
+                        )
+                        generated_patches = data_generator.generate_patches_from_directory(load_directory=raw_directory)
+                        patch_count = generated_patches.shape[0]
+
+                        if max_patch_count == 0:
+                            percentage = 0
+                        else:
+                            percentage = patch_count / max_patch_count
+
+                        logging.info(f"Generated {patch_count} patches for {channel_name} ({percentage:.2%} of max)")
+
+                        if not denoise_config.intelligent_patch_size:
+                            break
+
+                        if percentage >= threshold:
+                            break
+
+                        if current_step <= min_step:
+                            logging.warning(
+                                f"Reached minimum patch_step_size ({min_step}). Proceeding with {patch_count} patches.")
+                            break
+
+                        logging.info(
+                            f"Patch count below threshold ({threshold:.0%}) — reducing patch_step_size and retrying.")
+                        current_step -= 20
 
                 weights_name = f"weights_{channel_name}.keras"
                 logging.info(f'Weights file name set to: {weights_name}')
@@ -293,6 +331,55 @@ def denoise_batch(
             print(f"Error in channel {channel_name}: {e}")
             logging.error(f"Error in channel {channel_name}: {e}", exc_info=True)
             error_channels.append(f"{channel_name}: {e}")
+
+
+    # After processing all channels, compute pixel QC metrics
+    logging.info("Computing QC pixel statistics for denoised images...")
+
+    qc_records = []
+
+    for channel_name in channels:
+        try:
+            # Load denoised images
+            pro_imgs, pro_img_names, pro_folders = load_imgs_from_directory(general_config.denoised_images_folder, channel_name, quiet=True)
+
+            stats = {'channel': channel_name, 'num_images': len(pro_imgs),
+                     'mean': [], 'std': [], 'min': [], 'max': []}
+
+            for img in pro_imgs:
+                if img.ndim != 2:
+                    continue
+
+                h, w = img.shape
+                margin_h, margin_w = int(h * 0.2), int(w * 0.2)
+                center = img[margin_h:h - margin_h, margin_w:w - margin_w]
+
+                stats['mean'].append(np.mean(center))
+                stats['std'].append(np.std(center))
+                stats['min'].append(np.min(center))
+                stats['max'].append(np.max(center))
+
+            stats_out = {
+                'channel': channel_name,
+                'num_images': stats['num_images'],
+                'mean': np.mean(stats['mean']),
+                'std': np.mean(stats['std']),
+                'min': np.mean(stats['min']),
+                'max': np.mean(stats['max']),
+                'flag': 'low_std' if np.mean(stats['std']) < 1 else ''
+            }
+
+            qc_records.append(stats_out)
+        except Exception as e:
+            logging.warning(f"Could not compute QC stats for {channel_name}: {e}")
+
+    # Save CSV report
+    qc_df = pd.DataFrame(qc_records)
+    qc_qc_path = Path(general_config.qc_folder) / 'denoised_pixel_qc.csv'
+    qc_qc_path.parent.mkdir(parents=True, exist_ok=True)
+    qc_df.to_csv(qc_qc_path, index=False)
+    logging.info(f"Denoised pixel QC report saved to {qc_qc_path}")
+
 
     print("\nSuccessfully processed channels:")
     print(completed_channels)
@@ -402,6 +489,93 @@ def load_channels_from_panel(general_config: GeneralConfig,):
 
     return channels
 
+def remove_outliers_from_images(general_config):
+    """
+    Removes outlier pixel values from images based on thresholds defined in the panel file.
+    Thresholds can be absolute values (e.g., 8000) or percentiles (e.g., 'p0.001').
+
+    Saves updated images in place and outputs a CSV report to the QC folder.
+
+    Parameters
+    ----------
+    general_config : GeneralConfig
+        Configuration object with paths including raw_images_folder and qc_folder.
+    """
+    panel_path = Path(general_config.metadata_folder) / "panel.csv"
+    qc_report_path = Path(general_config.qc_folder) / "remove_outliers_report.csv"
+
+    if not panel_path.exists():
+        logging.warning(f"Panel file not found at {panel_path}. Skipping outlier removal.")
+        return
+
+    panel = pd.read_csv(panel_path)
+
+    if 'remove_outliers' not in panel.columns:
+        logging.info("No 'remove_outliers' column in panel.csv. Skipping outlier removal.")
+        return
+
+    report_records = []
+
+    for idx, row in panel.iterrows():
+        channel = f"{row['channel_name']}_{row['channel_label']}"
+        rule = row.get('remove_outliers')
+
+        if pd.isna(rule):
+            continue
+
+        try:
+            logging.info(f"Processing outliers for channel: {channel} with rule: {rule}")
+            img_collect, img_file_list, img_folders = load_imgs_from_directory(
+                general_config.raw_images_folder, channel, quiet=True
+            )
+
+            # Determine threshold
+            all_pixels = np.concatenate([img.flatten() for img in img_collect])
+            if isinstance(rule, str) and rule.startswith("p"):
+                percentile_value = float(rule[1:])
+                threshold = np.percentile(all_pixels, 100 - percentile_value * 100)
+                threshold_type = f"Percentile ({percentile_value*100:.3f}%)"
+            else:
+                threshold = float(rule)
+                threshold_type = "Absolute"
+
+            logging.info(f"Threshold for {channel}: {threshold:.4f} ({threshold_type})")
+
+            for img, fname, folder in zip(img_collect, img_file_list, img_folders):
+                original = img.copy()
+                mask = img > threshold
+                num_outliers = np.sum(mask)
+                total_pixels = img.size
+                pct = (num_outliers / total_pixels) * 100
+
+                img[mask] = 0
+                save_path = folder / fname
+                tiff.imwrite(save_path, img.astype('float32'))
+
+                report_records.append({
+                    'channel': channel,
+                    'roi': Path(folder).name,
+                    'image': fname,
+                    'threshold': threshold,
+                    'threshold_type': threshold_type,
+                    'outlier_count': int(num_outliers),
+                    'outlier_percentage': pct
+                })
+
+        except Exception as e:
+            logging.error(f"Error removing outliers for {channel}: {e}")
+
+    # Save report
+    if report_records:
+        report_df = pd.DataFrame(report_records)
+        qc_report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_df.to_csv(qc_report_path, index=False)
+        logging.info(f"Outlier removal report saved to: {qc_report_path}")
+    else:
+        logging.info("No outlier processing performed.")
+
+
+
 if __name__ == "__main__":
     # Define the pipeline stage
     pipeline_stage = 'Denoising'
@@ -415,6 +589,10 @@ if __name__ == "__main__":
     # Get parameters from config
     general_config = GeneralConfig(**config_data.get('general', {}))
     denoise_config = DenoisingConfig(**config_data.get('denoising', {}))
+
+    # Remove outliers based on panel (if defined)
+    if denoise_config.remove_outliers:
+        remove_outliers_from_images(general_config)
 
     if denoise_config.run_denoising:
 
