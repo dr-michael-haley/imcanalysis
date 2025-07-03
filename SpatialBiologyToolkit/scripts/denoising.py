@@ -520,7 +520,7 @@ def remove_outliers_from_images(general_config):
         channel = f"{row['channel_name']}_{row['channel_label']}"
         rule = row.get('remove_outliers')
 
-        if pd.isna(rule):
+        if pd.isna(rule) or rule==False:
             continue
 
         try:
