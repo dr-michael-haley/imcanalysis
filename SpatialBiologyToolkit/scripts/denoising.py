@@ -508,7 +508,7 @@ def remove_outliers_from_images(general_config):
         logging.warning(f"Panel file not found at {panel_path}. Skipping outlier removal.")
         return
 
-    panel = pd.read_csv(panel_path)
+    panel = pd.read_csv(panel_path, dtype={"remove_outliers": str})
 
     if 'remove_outliers' not in panel.columns:
         logging.info("No 'remove_outliers' column in panel.csv. Skipping outlier removal.")
@@ -531,13 +531,21 @@ def remove_outliers_from_images(general_config):
 
             # Determine threshold
             all_pixels = np.concatenate([img.flatten() for img in img_collect])
-            if isinstance(rule, str) and rule.startswith("p"):
-                percentile_value = float(rule[1:])
-                threshold = np.percentile(all_pixels, 100 - percentile_value * 100)
-                threshold_type = f"Percentile ({percentile_value*100:.3f}%)"
+            if isinstance(rule, str) and rule.strip().lower().startswith("p"):
+                # Extract numeric portion and ensure valid float
+                rule_clean = re.sub(r"[^\d\.]", "", str(rule)[1:])  # strip 'p', remove non-numeric
+                try:
+                    percentile_value = float(rule_clean)
+                    threshold = np.percentile(all_pixels, 100 - percentile_value * 100)
+                    threshold_type = f"Percentile ({percentile_value:.3f}%)"
+                except ValueError:
+                    raise ValueError(f"Invalid percentile value: {rule}")
             else:
-                threshold = float(rule)
-                threshold_type = "Absolute"
+                try:
+                    threshold = float(str(rule).strip())
+                    threshold_type = "Absolute"
+                except ValueError:
+                    raise ValueError(f"Invalid absolute threshold: {rule}")
 
             logging.info(f"Threshold for {channel}: {threshold:.4f} ({threshold_type})")
 
