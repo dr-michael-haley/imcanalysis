@@ -34,7 +34,7 @@ class DenoisingConfig:
     remove_outliers: bool = True
     # Parameters specific to 'deep_snf' method
     patch_step_size: int = 100
-    intelligent_patch_size: bool = False
+    intelligent_patch_size: bool = True
     intelligent_patch_size_threshold: float = 0.2  # e.g., 20%
     # DeepSNIF
     train_epochs: int = 75
