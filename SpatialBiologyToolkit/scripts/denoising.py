@@ -490,20 +490,22 @@ def load_channels_from_panel(general_config: GeneralConfig,):
 
     return channels
 
+import re  # Ensure this is at the top of your script
+
 def remove_outliers_from_images(general_config):
     """
     Removes outlier pixel values from images based on thresholds defined in the panel file.
-    Thresholds can be absolute values (e.g., 8000) or percentiles (e.g., 'p0.001').
+    Thresholds can be absolute (e.g., 8000) or percentiles (e.g., 'p0.001').
 
-    Saves updated images in place and outputs a CSV report to the QC folder.
-
-    Parameters
-    ----------
-    general_config : GeneralConfig
-        Configuration object with paths including raw_images_folder and qc_folder.
+    Saves updated images in place and generates a QC CSV report.
+    Skips processing if the report already exists.
     """
     panel_path = Path(general_config.metadata_folder) / "panel.csv"
     qc_report_path = Path(general_config.qc_folder) / "remove_outliers_report.csv"
+
+    if qc_report_path.exists():
+        logging.info(f"Skipping outlier removal — report already exists at {qc_report_path}")
+        return
 
     if not panel_path.exists():
         logging.warning(f"Panel file not found at {panel_path}. Skipping outlier removal.")
@@ -517,61 +519,57 @@ def remove_outliers_from_images(general_config):
 
     report_records = []
 
-    for idx, row in panel.iterrows():
+    for _, row in panel.iterrows():
         channel = f"{row['channel_name']}_{row['channel_label']}"
-        rule = row.get('remove_outliers')
+        rule = str(row.get('remove_outliers')).strip().lower()
 
-        if pd.isna(rule) or str(rule).strip().lower() in ["", "false", "none", "nan"]:
+        if rule in ["", "false", "none", "nan"]:
             continue
 
-        #try:
-        logging.info(f"Processing outliers for channel: {channel} with rule: {rule}")
-        img_collect, img_file_list, img_folders = load_imgs_from_directory(
-            general_config.raw_images_folder, channel, quiet=True
-        )
+        try:
+            logging.info(f"Processing outliers for channel: {channel} with rule: {rule}")
+            img_collect, img_file_list, img_folders = load_imgs_from_directory(
+                general_config.raw_images_folder, channel, quiet=True
+            )
+            img_folders = [Path(f) for f in img_folders]  # ensure they're Path objects
 
-        # Determine threshold
-        all_pixels = np.concatenate([img.flatten() for img in img_collect])
-        if isinstance(rule, str) and rule.strip().lower().startswith("p"):
-            # Extract numeric portion and ensure valid float
-            rule_clean = re.sub(r"[^\d\.]", "", str(rule)[1:])  # strip 'p', remove non-numeric
-            try:
+            # Flatten all image pixels for thresholding
+            all_pixels = np.concatenate([img.flatten() for img in img_collect])
+
+            if rule.startswith("p"):
+                # e.g., p0.00025
+                rule_clean = re.sub(r"[^\d\.]", "", rule[1:])
                 percentile_value = float(rule_clean)
                 threshold = np.percentile(all_pixels, 100 - percentile_value * 100)
                 threshold_type = f"Percentile ({percentile_value:.7f}%)"
-            except ValueError:
-                raise ValueError(f"Invalid percentile value: {rule}")
-        else:
-            try:
-                threshold = float(str(rule).strip())
+            else:
+                threshold = float(rule)
                 threshold_type = "Absolute"
-            except ValueError:
-                raise ValueError(f"Invalid absolute threshold: {rule}")
 
-        logging.info(f"Threshold for {channel}: {threshold:.7f} ({threshold_type})")
+            logging.info(f"Threshold for {channel}: {threshold:.7f} ({threshold_type})")
 
-        for img, fname, folder in zip(img_collect, img_file_list, img_folders):
-            mask = img > float(threshold)
-            num_outliers = np.sum(mask)
-            total_pixels = img.size
-            pct = 100 * num_outliers / total_pixels
+            for img, fname, folder in zip(img_collect, img_file_list, img_folders):
+                mask = img > threshold
+                num_outliers = np.sum(mask)
+                total_pixels = img.size
+                pct = 100 * num_outliers / total_pixels
 
-            img[mask] = 0
-            save_path = Path(general_config.raw_images_folder) / Path(folder).name / fname
-            tiff.imwrite(save_path, img.astype('float32'))
+                img[mask] = 0
+                save_path = Path(general_config.raw_images_folder) / folder.name / fname
+                tiff.imwrite(save_path, img.astype('float32'))
 
-            report_records.append({
-                'channel': channel,
-                'roi': Path(folder).name,
-                'image': fname,
-                'threshold': threshold,
-                'threshold_type': threshold_type,
-                'outlier_count': int(num_outliers),
-                'outlier_percentage': round(pct, 4)  # or leave as float
-            })
+                report_records.append({
+                    'channel': channel,
+                    'roi': folder.name,
+                    'image': fname,
+                    'threshold': threshold,
+                    'threshold_type': threshold_type,
+                    'outlier_count': int(num_outliers),
+                    'outlier_percentage': round(pct, 10)
+                })
 
-        #except Exception as e:
-        #    logging.error(f"Error removing outliers for {channel}: {e}")
+        except Exception as e:
+            logging.error(f"Error removing outliers for {channel}: {e}", exc_info=True)
 
     # Save report
     if report_records:
@@ -581,6 +579,7 @@ def remove_outliers_from_images(general_config):
         logging.info(f"Outlier removal report saved to: {qc_report_path}")
     else:
         logging.info("No outlier processing performed.")
+
 
 
 
