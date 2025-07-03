@@ -557,7 +557,7 @@ def remove_outliers_from_images(general_config):
             pct = 100 * num_outliers / total_pixels
 
             img[mask] = 0
-            save_path = folder / fname
+            save_path = Path(general_config.raw_images_folder) / Path(folder).name / fname
             tiff.imwrite(save_path, img.astype('float32'))
 
             report_records.append({
