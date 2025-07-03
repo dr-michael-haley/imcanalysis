@@ -556,7 +556,7 @@ def remove_outliers_from_images(general_config):
 
                 img[mask] = 0
                 save_path = Path(general_config.raw_images_folder) / folder.name / fname
-                tiff.imwrite(save_path, img.astype('float32'))
+                tp.imwrite(save_path, img.astype('float32'))
 
                 report_records.append({
                     'channel': channel,
