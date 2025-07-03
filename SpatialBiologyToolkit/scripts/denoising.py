@@ -29,6 +29,7 @@ import pandas as pd
 from pathlib import Path
 from shutil import rmtree
 from glob import glob
+import re
 import matplotlib.pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 
