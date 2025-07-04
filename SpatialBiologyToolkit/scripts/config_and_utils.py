@@ -36,7 +36,8 @@ class DenoisingConfig:
     # Parameters specific to 'deep_snf' method
     patch_step_size: int = 100
     intelligent_patch_size: bool = True
-    intelligent_patch_size_threshold: float = 0.2  # e.g., 20%
+    intelligent_patch_size_threshold: float = 0.3  # e.g., 20%
+    intelligent_patch_size_minimum: int = 40
     # DeepSNIF
     train_epochs: int = 75
     train_initial_lr: float = 0.001

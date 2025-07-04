@@ -35,6 +35,7 @@ from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 # Third-party library imports
 import tifffile as tp
+import psutil
 
 # Import shared utilities and configurations
 from .config_and_utils import *
@@ -201,7 +202,7 @@ def denoise_batch(
                     logging.info(f"Max patch count for {channel_name}: {max_patch_count}")
 
                     current_step = patch_step_size
-                    min_step = 20
+                    min_step = denoise_config.intelligent_patch_size_minimum
                     threshold = denoise_config.intelligent_patch_size_threshold
 
                     while True:
@@ -243,6 +244,10 @@ def denoise_batch(
                 weights_name = f"weights_{channel_name}.keras"
                 logging.info(f'Weights file name set to: {weights_name}')
 
+                # Print GPU and RAM availability
+                logging.info(f'RAM check prior to training for {channel_name}')
+                print_memory_status()
+
                 deepsnf = DeepSNiF(
                     train_epoches=train_epochs,
                     train_learning_rate=train_initial_lr,
@@ -267,6 +272,10 @@ def denoise_batch(
                 else:
                     print(f'Using weights file: {weights_name}')
                     logging.info(f'Loading existing weights from file: {weights_name}')
+
+                # Print GPU and RAM availability
+                logging.info(f'RAM check after training for {channel_name}')
+                print_memory_status()
 
                 # Process images
                 for img, img_file_name, folder in zip(img_collect, img_file_list, img_folders):
@@ -590,8 +599,21 @@ def remove_outliers_from_images(general_config: GeneralConfig,
     else:
         logging.info("No outlier processing performed.")
 
+def print_memory_status():
+    # GPU memory (if available)
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    if gpus:
+        for gpu in gpus:
+            try:
+                info = tf.config.experimental.get_memory_info(gpu.name)
+                print(f"[GPU] {gpu.name}: Used {info['current'] / 1024**2:.2f} MB | Peak {info['peak'] / 1024**2:.2f} MB")
+            except:
+                print(f"[GPU] {gpu.name}: Memory info not available (TF < 2.10?)")
 
-
+    # RAM usage
+    process = psutil.Process(os.getpid())
+    ram_mb = process.memory_info().rss / 1024**2
+    print(f"[RAM] Used: {ram_mb:.2f} MB")
 
 if __name__ == "__main__":
     # Define the pipeline stage
