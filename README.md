@@ -77,7 +77,7 @@ A **Conda environment** is like a dedicated workspace on your computer for a spe
 
 ## 📓 Step 3: Explore the Jupyter Notebooks
 
-You are now ready to start working with Jupyter Notebooks. These covers various stages of analysig IMC data. To get more information about the different notebooks, go to the [Tutorials](Tutorials/) folder on this GitHub and consult the `README`.
+You are now ready to start working with Jupyter Notebooks. These covers various stages of analysing IMC data. To get more information about the different notebooks, go to the [Tutorials](Tutorials/) folder on this GitHub and consult the `README`.
 
 Once your environment is set up and you have ran Jupyter Lab, you can begin using the **Jupyter Notebooks** in the `Tutorials` folder that you copied into your programing folder.
 
@@ -102,7 +102,7 @@ Jupyter Notebooks are interactive documents that let you:
    <br>`conda activate spatbiotools`
 9. Start Jupyter as before.
    <br>`jupyter lab`<br>
-   This will open a browser window where you can access and run the notebooks.
+   This will open a browser window where you can continue your analyses.
 
 ---
 
@@ -176,9 +176,8 @@ Understanding how the kernel works will help you troubleshoot and run your noteb
 - Selecting a cell and pressing **D twice** will delete the cell.
 - You can select multiple cells by shift clicking.
 - You can rearrange the order of cells by drag and dropping them.
+
 ---
-
-
 
 # 🧰 Other things on this GitHub
 
@@ -186,13 +185,10 @@ Understanding how the kernel works will help you troubleshoot and run your noteb
 
 Scripts for preprocessing IMC data on CSF3 (a command-line cloud computing platform used at the University of Manchester) are available in the `CSF3` folder. These scripts are designed to work with SLURM-based systems or similar HPC environments.
 
----
 
 ## 🌟 IMC_Denoise (Updated November 2024)
 
 This notebook has largerly been superceded by CSF3-compatible denoising scripts. The original notebook implementation of [IMC Denoise](https://github.com/PENGLU-WashU/IMC_Denoise/)—designed to integrate with the Bodenmiller pipeline—is still available in the repo, but we now recommend running denoising on CSF3 for best results.
-
----
 
 ## 🧬 REDSEA (Cell Segmentation Overlap Correction)
 
