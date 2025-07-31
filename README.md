@@ -34,28 +34,20 @@ The **command line** (also called the *terminal*, *shell*, or *Anaconda Prompt* 
 
 ## 📦 Step 2: Set Up a Conda Environment
 
-Once Anaconda is installed, you’ll use its built-in tool, **Conda**, to create a workspace specifically for IMC data analysis. We will then install the **package** stored in this **GitHub repository** that has specific tools for analysing  IMC data.
+Once Anaconda is installed, you’ll use its built-in tool, **Conda**, to create an **environment** specifically for IMC data analysis with all the **packages** we need. We will then install the **package** stored in this **GitHub repository** that has specific tools for analysing  IMC data.
 
 ### *🔧 "What Is Conda?"*
-Conda helps you:
-- Create **isolated environments** for different projects
-- Install only the libraries (called **packages**) you need
-- Avoid breaking things (i.e. when different package versions become incompatible within the same environment) when updating tools
+**Conda** is a powerful tool included with Anaconda that helps you manage your Python setup. It allows you to install and update packages (libraries of reusable code), manage different versions of both Python and its packages, and create isolated environments for individual projects. This keeps your work organized and avoids conflicts between dependencies. Without Conda, installing scientific packages like NumPy, Pandas, or Scanpy—especially when they require specific versions—can be much more complicated.
+
+### *📦 "What Are Environments"*?
+A **Conda environment** is like a dedicated workspace on your computer for a specific project. Each environment can have its own version of Python and its own set of packages, completely isolated from other projects. This means you can work on multiple projects with different dependencies without them interfering with each other. By using environments, you keep your base Python clean and avoid installing unnecessary or conflicting packages. Switching between environments is simple, making it easy to manage different setups as needed.
 
 ### *📦 "What Are Packages?"*
-Packages are collections of reusable code written by others. There are Python packages to do pretty much anything you can think of, but we will install specific ones that let us read and process images, analyze data, and create plots and charts. Think of packages like apps you install on your phone—they add functionality without needing to build things from scratch.
+**Packages** are collections of reusable code written by others. There are Python packages to do pretty much anything you can think of, but we will install specific ones that let us read and process images, analyze data, and create plots and charts. Think of packages like apps you install on your phone—they add functionality without needing to build things from scratch.
 
-- `Kernel > Interrupt` – Stops a long-running or stuck cell
 
 ### *🐙 "What Is a GitHub repository?"*
-
-**GitHub** is a website and platform for sharing code and collaborating on projects. It’s like a social network for programmers and researchers, where you can:
-- Share your code publicly or privately
-- Track changes to your work over time
-- Collaborate with others using version control (Git)
-- Access and contribute to open-source software
-
-Many scientific tools and research projects (including this one) are hosted on GitHub, referred to as a **repository** (or "repo"). This is just a collection of files and folders that make up a project—like code, data, and documentation. **Cloning** a repository means making a local copy of that project on your own computer so you can use or edit it. If you're not familiar with Git or don’t have it installed, you can also download the repo as a ZIP file by clicking **Download ZIP**. By cloning a repository, it makes it easier to update our code to the latest version stored on a GitHub repository via the command line (i.e. using `git pull`).
+**GitHub** is an online platform for sharing code and collaborating on projects—like a social network for programmers and researchers. It allows you to share code publicly or privately, track changes over time, and contribute to open-source software using version control with Git. Projects on GitHub are stored in **repositories** (or "repos"), which are just collections of files and folders for a particular project. Cloning a repository means making a local copy on your computer so you can use or edit it. If you’re not familiar with Git, you can also download the repo as a ZIP file. Cloning also makes it easy to update your local copy later using a simple command like `git pull` to fetch the latest changes from GitHub.
 
 
 ### 🧪 Setting Up the Environment
@@ -85,7 +77,9 @@ Many scientific tools and research projects (including this one) are hosted on G
 
 ## 📓 Step 3: Explore the Jupyter Notebooks
 
-Once your environment is set up and you have ran Jupyter Lab, you can begin using the **Jupyter Notebooks** in the `Tutorials` folder.
+You are now ready to start working with Jupyter Notebooks. These covers various stages of analysig IMC data. To get more information about the different notebooks, go to the [Tutorials](Tutorials/) folder on this GitHub and consult the `README`.
+
+Once your environment is set up and you have ran Jupyter Lab, you can begin using the **Jupyter Notebooks** in the `Tutorials` folder that you copied into your programing folder.
 
 ### *🖥 "What Are Jupyter Notebooks?"*
 Jupyter Notebooks are interactive documents that let you:
