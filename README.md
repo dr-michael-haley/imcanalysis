@@ -34,7 +34,7 @@ The **command line** (also called the *terminal*, *shell*, or *Anaconda Prompt* 
 
 ## 📦 Step 2: Set Up a Conda Environment
 
-Once Anaconda is installed, you’ll use its built-in tool, **Conda**, to create a workspace specifically for IMC data analysis.
+Once Anaconda is installed, you’ll use its built-in tool, **Conda**, to create a workspace specifically for IMC data analysis. We will then install the **package** stored in this **GitHub repository** that has specific tools for analysing  IMC data.
 
 ### *🔧 "What Is Conda?"*
 Conda helps you:
@@ -44,6 +44,19 @@ Conda helps you:
 
 ### *📦 "What Are Packages?"*
 Packages are collections of reusable code written by others. There are Python packages to do pretty much anything you can think of, but we will install specific ones that let us read and process images, analyze data, and create plots and charts. Think of packages like apps you install on your phone—they add functionality without needing to build things from scratch.
+
+- `Kernel > Interrupt` – Stops a long-running or stuck cell
+
+### *🐙 "What Is a GitHub repository?"*
+
+**GitHub** is a website and platform for sharing code and collaborating on projects. It’s like a social network for programmers and researchers, where you can:
+- Share your code publicly or privately
+- Track changes to your work over time
+- Collaborate with others using version control (Git)
+- Access and contribute to open-source software
+
+Many scientific tools and research projects (including this one) are hosted on GitHub, referred to as a **repository** (or "repo"). This is just a collection of files and folders that make up a project—like code, data, and documentation. **Cloning** a repository means making a local copy of that project on your own computer so you can use or edit it. If you're not familiar with Git or don’t have it installed, you can also download the repo as a ZIP file by clicking **Download ZIP**. By cloning a repository, it makes it easier to update our code to the latest version stored on a GitHub repository via the command line (i.e. using `git pull`).
+
 
 ### 🧪 Setting Up the Environment
 
