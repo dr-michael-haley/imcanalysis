@@ -7,7 +7,11 @@ Whether you're a biologist, analyst, or student—with or without coding experie
 ---
 
 > [!TIP]
-> Helpful advice for doing things better or more easily.
+> **What is Anaconda?**
+> Anaconda is a free and open-source platform that makes it easy to:
+- Run Python code
+- Manage software libraries and environments
+- Use scientific and data analysis tools
 
 ## 🐍 Step 1: Install Python Using Anaconda
 
