@@ -10,7 +10,7 @@ Whether you're a biologist, analyst, or student—with or without coding experie
 
 To run Python and manage analysis tools, we recommend downloading **[Anaconda](https://www.anaconda.com/)**—a user-friendly Python distribution.
 
-### 💡 What Is Anaconda?
+### *💡 "What Is Anaconda?"*
 Anaconda is a free and open-source platform that makes it easy to:
 - Run Python code
 - Manage software libraries and environments
@@ -24,9 +24,9 @@ Anaconda includes:
 
 👉 **Download the version appropriate for your operating system** (Windows, macOS, or Linux) from the [official Anaconda website](https://www.anaconda.com/products/distribution).
 
-Once you've installed Anaconda, several of the next steps require us to interact with the computer and enter commands via a **command line**
+Once you've installed Anaconda, several of the next steps require us to interact with the computer and enter commands via a **command line**.
 
-### 💻 What Is the Command Line?
+### *💻 "What Is the Command Line?"*
 
 The **command line** (also called the *terminal*, *shell*, or *Anaconda Prompt* on Windows) is a text-based interface where you type commands for your computer to execute. Instead of clicking buttons in a graphical interface, you write commands like `cd` (change directory) or `conda install` to navigate and run programs. It might look a little intimidating at first, but it’s just a way to “talk” directly to your computer. For this guide, you’ll mostly copy and paste a few simple commands, but if you get stuck then there is plenty of information on Google. 
 
@@ -36,16 +36,14 @@ The **command line** (also called the *terminal*, *shell*, or *Anaconda Prompt* 
 
 Once Anaconda is installed, you’ll use its built-in tool, **Conda**, to create a workspace specifically for IMC data analysis.
 
-### 🔧 What Is Conda?
+### *🔧 "What Is Conda?"*
 Conda helps you:
 - Create **isolated environments** for different projects
 - Install only the libraries (called **packages**) you need
 - Avoid breaking things (i.e. when different package versions become incompatible within the same environment) when updating tools
 
-### 📦 What Are Packages?
-Packages are collections of reusable code written by others. There are Python packages to do pretty much anything you can think of, but we will install specific ones that let us read and process images, analyze data, and create plots and charts.
-
-🛠 Think of packages like apps you install on your phone—they add functionality without needing to build things from scratch.
+### *📦 "What Are Packages?"*
+Packages are collections of reusable code written by others. There are Python packages to do pretty much anything you can think of, but we will install specific ones that let us read and process images, analyze data, and create plots and charts. Think of packages like apps you install on your phone—they add functionality without needing to build things from scratch.
 
 ### 🧪 Setting Up the Environment
 
@@ -76,7 +74,7 @@ Packages are collections of reusable code written by others. There are Python pa
 
 Once your environment is set up and you have ran Jupyter Lab, you can begin using the **Jupyter Notebooks** in the `Tutorials` folder.
 
-### 🖥 What Are Jupyter Notebooks?
+### *🖥 "What Are Jupyter Notebooks?"*
 Jupyter Notebooks are interactive documents that let you:
 - Run Python code 🧑‍💻
 - Display results instantly (e.g., tables, plots)
@@ -124,7 +122,7 @@ Jupyter Notebooks are a great way to run Python code step by step in your browse
   Use `Kernel > Restart & Run All` to reset the notebook’s memory and rerun everything from scratch. This is a great way to ensure your code works end-to-end. However, it will also reset any analyses you have done, leaving only the results of analyses. 
 
 
-### 🧠 What Is the Kernel in Jupyter Notebooks?
+### *🧠 "What Is the Kernel in Jupyter Notebooks?"*
 
 In Jupyter Notebooks, the **kernel** is the computational engine that runs your Python code. Think of it as the "brain" behind the notebook—when you type code into a cell and press `Shift + Enter` (run the cell), the kernel executes that code and returns the result.
 
