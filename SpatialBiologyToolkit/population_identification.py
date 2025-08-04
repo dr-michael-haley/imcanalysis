@@ -668,14 +668,15 @@ def read_remapping(
         adata.obs[p] = adata.obs[obs_column].map(df[p])
         adata.obs[p] = adata.obs[p].astype('category')
         
-    # Add the list of population observations to AnnData
-    adata.uns.update({'population_obs': list(df_dict.keys())})
+    # Add the list of population observations to AnnData - REMOVED AS ADATA.UNS SAVING CAUSES ISSUES
+    #adata.uns.update({'population_obs': list(df_dict.keys())})
     
     new_pops = ', '.join(list(df_dict.keys()))
     entry = f'Populations remapped from obs: {obs_column}. New populations: {new_pops}'
     print(entry)
-    
-    adlog(adata, entry, save=True)
+
+    # REMOVED AS ADATA.UNS SAVING CAUSES ISSUES
+    #adlog(adata, entry, save=True)
     
     return df
 
@@ -782,3 +783,47 @@ def recolor_population(
     
     if save:
         adlog(adata, None, save=True)
+
+
+def merge_populations(
+        adata,
+        source_column: str,
+        groups_to_merge: list,
+        new_label: str,
+        new_column: str = None
+):
+    """
+    Merge two or more population groups into a single new label in a new obs column.
+
+    Parameters
+    ----------
+    adata : AnnData
+        Annotated data matrix.
+    source_column : str
+        Name of the column in adata.obs containing original population labels.
+    groups_to_merge : list
+        List of original labels (from source_column) to merge together.
+    new_label : str
+        Name of the new merged population.
+    new_column : str, optional
+        Name of the new column in adata.obs. If not given, defaults to source_column + '_merged'.
+
+    Returns
+    -------
+    None
+        Modifies adata.obs in-place.
+    """
+
+    if new_column is None:
+        new_column = source_column + '_merged'
+
+    # Start by copying the source column
+    adata.obs[new_column] = adata.obs[source_column].astype(str)
+
+    # Perform merging
+    adata.obs[new_column] = adata.obs[new_column].replace({group: new_label for group in groups_to_merge})
+
+    # Convert to categorical type
+    adata.obs[new_column] = adata.obs[new_column].astype('category')
+
+    print(f"Merged groups {groups_to_merge} into '{new_label}' in column '{new_column}'.")

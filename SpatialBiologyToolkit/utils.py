@@ -716,3 +716,57 @@ def get_module_path(module_name: str) -> str:
 
     except Exception as e:
         raise ImportError(f"An error occurred while locating the module: {e}")
+
+# Helper function to identify boolean columns saved as objects, and convert them to true boolean columns
+def _convert_to_boolean(df):
+    for col in df.select_dtypes(include=['object']).columns:
+        # Check if all unique values are boolean-like
+        unique_vals = pd.Series(df[col].dropna().unique().astype(str))  # Convert to Pandas Series
+        unique_vals = [x.lower() for x in unique_vals]  # Lower case
+        if all(val in {"true", "false", "yes", "no", "1", "0"} for val in unique_vals):
+            # Convert to boolean
+            df[col] = df[col].astype("boolean")
+    return df
+
+
+def update_sample_metadata(adata, dictionary_path="metadata/dictionary.csv"):
+    # Process dictionary for additional metadata
+    dictionary_path = Path(dictionary_path)
+
+    if dictionary_path.exists():
+        dictionary_file = pd.read_csv(dictionary_path, index_col='ROI')
+
+        # Automatically convert boolean-like columns
+        dictionary_file = _convert_to_boolean(dictionary_file)
+
+        # Get list of columns/metadata from the dictionary file
+        cols = [x for x in dictionary_file.columns if 'Example' not in x and 'description' not in x]
+
+        if len(cols) > 0:
+            print(f'Dictionary file found with the following columns: {str(cols)}')
+
+            # Ensure `adata.obs` is not a view
+            adata.obs = adata.obs.copy()
+
+            for c in cols:
+                # Map the data from the dictionary to the adata.obs
+                mapped_data = adata.obs['ROI'].map(dictionary_file[c].to_dict())
+
+                # Convert to the appropriate type
+                adata.obs[c] = mapped_data.astype(dictionary_file[c].dtype)
+
+            # Make sure boolean columns properly converted
+            adata.obs = _convert_to_boolean(adata.obs)
+
+        else:
+            print(
+                f'Dictionary file found but was empty. Edit dictionary file ({str(dictionary_path)}) to add extra sample-level metadata!'
+            )
+    else:
+        print(f'No dictionary file found, creating a blank file from AnnData at location {str(dictionary_path)}).')
+        dictionary_file = adata.obs[~adata.obs.ROI.duplicated()][['ROI', 'ROI_name']].sort_values('ROI').set_index(
+            'ROI', drop=True).rename(columns={'ROI_name': 'description'}).copy()
+        dictionary_file['Example_1'] = 'Example_info'
+        dictionary_file['Example_2'] = 1
+        dictionary_file['Example_3'] = True
+        dictionary_file.to_csv(dictionary_path)

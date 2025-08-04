@@ -32,6 +32,7 @@ from scipy.spatial import Voronoi
 import seaborn as sns
 from matplotlib.cm import ScalarMappable
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+from IPython.display import display, HTML
 
 from .image_analysis import save_labelled_image, save_labelled_image_as_svg, map_pixel_values_to_colors
 from .utils import (_cleanstring, _save, _check_input_type, _to_list, subset,
@@ -761,7 +762,7 @@ def obs_to_mask(
     quant_colour_map: str = 'viridis',
     adata_colormap: bool = True,
     masks_folder: str = 'Masks',
-    masks_ext: str = 'tif',
+    masks_ext: str = 'tiff',
     min_val: float = None,
     max_val: float = None,
     quantile: float = None,
@@ -770,7 +771,7 @@ def obs_to_mask(
     hide_axes: bool = False,
     hide_ticks: bool = True,
     svg_smoothing_factor: int = 0,
-    label_obs: str = None
+    label_obs: str = 'ObjectNumber'
 ) -> tuple:
     """
     Map values from an AnnData object to a mask and generate a color map, with options to save the resulting image.
@@ -798,7 +799,7 @@ def obs_to_mask(
     masks_folder : str, optional
         Folder containing mask files (default is 'Masks').
     masks_ext : str, optional
-        File extension for mask files (default is 'tif').
+        File extension for mask files (default is 'tiff').
     min_val : float, optional
         Minimum value for quantitative color scaling.
     max_val : float, optional
@@ -816,7 +817,7 @@ def obs_to_mask(
     svg_smoothing_factor : int, optional
         Smoothing factor for SVG output (default is 0).
     label_obs : string, optional
-        Identifier for cell labels in mask
+        Identifier for cell labels in mask (default 'ObjectNumber')
 
     Returns
     -------
@@ -834,6 +835,10 @@ def obs_to_mask(
     cells_in_roi = adata_roi_obs.shape[0]
     cells_in_mask = len(np.unique(mask)) - 1
     assert cells_in_roi == cells_in_mask, f'Number of cells in mask ({cells_in_mask}) does not match cells in AnnData ({cells_in_roi}) for ROI {roi}'
+
+    # Check that label obs exists
+    if label_obs:
+        assert label_obs in adata.obs.columns, f"{label_obs} not found in adata.obs. Set labels_obs=None"
 
     # Setup a blank mask we will map values into
     mapped_mask = np.zeros(mask.shape, dtype='uint16')    
@@ -2049,3 +2054,128 @@ def obs_to_mask_2(
     return mapped_mask, pixel_colormap, cat_dict
 
 
+def grouped_graph(
+        adata,
+        group_by_obs,
+        x_axis,
+        ROI_id='ROI',
+        display_tables=True,
+        fig_size=(6, 5),
+        errorbar='se',
+        save_graph=False,
+        save_table=False,
+        log_scale=True,
+        order=None,
+        scale_factor=False,
+        proportions=False,
+        stacked=False,
+        width=0.8,
+        ylabel=None,
+        sort_by_population=None
+):
+    """
+    Plot a grouped bar graph of cell counts or proportions from an AnnData object.
+
+    Parameters:
+    - adata: AnnData object
+    - group_by_obs: str, obs column used for bar color/grouping
+    - x_axis: str, obs column for x-axis categories
+    - ROI_id: str, ROI column name (used for cross-tabulation)
+    - display_tables: bool, whether to display raw crosstab table
+    - fig_size: tuple, matplotlib figure size
+    - errorbar: Error bars, e.g se (standard error) or sd (standard deviation)
+    - save_graph: str or False, path to save the graph (must end in .png, .jpg, .svg, etc)
+    - save_table: str or False, path to save the table (must end in .csv)
+    - log_scale: bool, use log scale for y-axis
+    - order: list or None, custom order for x-axis
+    - scale_factor: number or False, normalize values by this factor
+    - proportions: bool, normalize crosstab output (proportions)
+    - stacked: bool, if True, use pandas stacked bar plot instead of seaborn
+    - sort_by_population: str or None, if given, sort x_axis by abundance of this group
+    """
+
+    crosstab_norm = 1 if proportions else False
+
+    # Crosstab
+    if x_axis != ROI_id:
+        table = pd.crosstab(
+            [adata.obs[group_by_obs], adata.obs[ROI_id]],
+            adata.obs[x_axis],
+            normalize=crosstab_norm
+        )
+        table.columns = table.columns.astype(str)
+        data_long = table.reset_index().melt(id_vars=[group_by_obs, ROI_id])
+    else:
+        table = pd.crosstab(
+            adata.obs[group_by_obs],
+            adata.obs[x_axis],
+            normalize=crosstab_norm
+        )
+        table.columns = table.columns.astype(str)
+        data_long = table.reset_index().melt(id_vars=group_by_obs)
+
+    # Optional scaling (e.g. to cells/mm²)
+    if scale_factor:
+        data_long['value'] = data_long['value'] / scale_factor
+
+    # Optional sorting
+    if sort_by_population:
+        sort_df = data_long[data_long[group_by_obs] == sort_by_population]
+        sort_order = sort_df.groupby(x_axis)['value'].sum().sort_values(ascending=False).index.tolist()
+        order = sort_order if order is None else order
+
+    # Plotting
+    fig, ax = plt.subplots(figsize=fig_size)
+
+    if stacked:
+        pivot_table = data_long.pivot_table(
+            index=x_axis,
+            columns=group_by_obs,
+            values='value',
+            aggfunc='sum',
+            fill_value=0
+        )
+        if order:
+            pivot_table = pivot_table.loc[order]
+        pivot_table.plot(kind='bar', stacked=True, ax=ax, width=width)
+    else:
+        sb.barplot(
+            data=data_long,
+            y="value",
+            x=x_axis,
+            hue=group_by_obs,
+            errorbar=errorbar,
+            order=order,
+            ax=ax,
+            width=width
+        )
+
+    # Formatting
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=90, fontsize=10)
+    ax.set_xlabel(x_axis)
+    ax.grid(False)
+
+    if not ylabel:
+        ylabel = 'Cells'
+
+    if proportions:
+        if not ylabel:
+            label = 'Proportion'
+        ax.set_ylim(0, 1)
+
+    ax.set_ylabel(ylabel)
+
+    if log_scale and not proportions:
+        ax.set_yscale("log")
+
+    ax.legend(bbox_to_anchor=(1.01, 1), title=group_by_obs)
+
+    if save_graph:
+        fig.savefig(save, bbox_inches='tight', dpi=200)
+
+    if save_table:
+        table.to_csv(save_table)
+
+    if display_tables:
+        print('Raw data:')
+        display(HTML(table.to_html()))
