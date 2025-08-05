@@ -6,7 +6,7 @@ If you are new to IMC analysis and have data to work with that has gone through 
 
 
 # Old Notebooks
-These are various notebooks that were previously the 'pipeline'. Some are still goood to use.
+These are various notebooks that were previously the 'pipeline'. Some are still goood to use, but may require some tweaking. In time, I will update some of these notebooks.
 
 ### Status
 🔴 - Probably won't work, not updated in a long time

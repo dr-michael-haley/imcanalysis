@@ -79,6 +79,11 @@ A **Conda environment** is like a dedicated workspace on your computer for a spe
 
 You are now ready to start working with Jupyter Notebooks. These covers various stages of analysing IMC data. To get more information about the different notebooks, go to the [Tutorials](Tutorials/) folder on this GitHub and consult the `README`.
 
+For most users, you will likely have been supplied with your pre-processed data. In that case, you should start with `NEW - Population identification`. This will give a thorough introduction to analying your data, and is the best place to start.
+
+> [!IMPORTANT]  
+> Some of the older notebooks have not been updated in a long time, and I cannot guarentee they will work without errors, or may need some tweaking to get working. My intention is to update them with robust documentation, though this will take a while!
+
 Once your environment is set up and you have ran Jupyter Lab, you can begin using the **Jupyter Notebooks** in the `Tutorials` folder that you copied into your programing folder.
 
 ### *🖥 "What Are Jupyter Notebooks?"*
