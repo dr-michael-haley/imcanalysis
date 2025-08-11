@@ -1347,8 +1347,8 @@ def obs_to_mask(
     hide_ticks: bool = True,
     svg_smoothing_factor: int = 0,
     dpi: int = 300,
-    # Label handling
-    label_obs: str = None,
+    # Label handling (DEFAULT CHANGED)
+    label_obs: str = 'ObjectNumber',
     # Separator ring
     separator_color=None,
     separator_thickness: int = 1,
@@ -1371,99 +1371,9 @@ def obs_to_mask(
       2) "Separator" ring of uniform color around each cell (optional).
       3) "Outline" from a second categorical observation (optional).
 
-    By default, these layers apply in the order ['inner','separator','outline'], but you
-    can pass a custom `layers_order` to control which layer overwrites the others. For example,
-    `layers_order=['separator','inner','outline']` means the fill would overwrite the separator
-    if they overlap, etc.
-
-    Parameters
-    ----------
-    adata : AnnData
-        Annotated data matrix.
-    roi : str
-        Region of interest identifier.
-    roi_obs : str, optional
-        Column in adata.obs that contains ROI info (default: 'ROI').
-
-    cat_obs : str, optional
-        Categorical observation for the "inner" fill layer.
-    cat_colour_map : str | list | dict, optional
-        Colormap for `cat_obs` (default: 'tab20').
-    cat_obs_groups : list | str, optional
-        Subset of categories to show. If None, all categories are used.
-    quant_obs : str, optional
-        Quantitative observation for the "inner" fill layer.
-    quant_colour_map : str, optional
-        Colormap for numeric data (default: 'viridis').
-    adata_colormap : bool, optional
-        If True, will use a colormap from adata.uns if available (default: True).
-
-    masks_folder : str, optional
-        Directory for mask files (default: 'Masks').
-    masks_ext : str, optional
-        File extension for mask files (default: 'tif').
-
-    min_val : float, optional
-        Lower bound for numeric color scaling.
-    max_val : float, optional
-        Upper bound for numeric color scaling.
-    quantile : float, optional
-        Quantile for numeric color scaling's upper bound.
-
-    save_path : str, optional
-        Where to save the final image (PNG or SVG). If None, just return arrays.
-    background_color : str, optional
-        If None, the background is transparent. Else specify e.g. 'white' or '#FF0000'.
-    hide_axes : bool, optional
-        If True, remove the entire axis from the figure (default: False).
-    hide_ticks : bool, optional
-        If True, remove tick marks & labels (default: True).
-    svg_smoothing_factor : int, optional
-        For `save_labelled_image_as_svg` if used (default: 0).
-    dpi : int, optional
-        Dots per inch for saving the image (default: 300).
-
-    label_obs : str, optional
-        Column in adata.obs for cell labels in the mask. If None, we assume cell # = index+1.
-
-    separator_color : str | tuple | None
-        If set, draw a uniform boundary around all cells. If None, skip this layer.
-    separator_thickness : int
-        Thickness (in pixels) of that boundary (default: 1).
-    separator_mode : str
-        Mode for `skimage.segmentation.find_boundaries` ('inner','outer','thick','subpixel').
-    separator_connectivity : int
-        Connectivity for boundary-finding (1 or 2).
-
-    outline_cat_obs : str, optional
-        A second categorical observation for the final boundary layer.
-    outline_cat_colour_map : str | list | dict, optional
-        Colormap for that second categorical boundary (default: 'tab20').
-    outline_thickness : int
-        Thickness (in pixels) for that boundary (default: 1).
-    outline_mode : str
-        Mode for boundary-finding, as above.
-    outline_connectivity : int
-        Connectivity for boundary-finding, as above.
-
-    layers_order : list of str, optional
-        The order in which to apply layers. Possible layer names: 'inner', 'separator', 'outline'.
-        Default is ['inner','separator','outline'] if not specified.
-
-    Returns
-    -------
-    (mapped_mask, pixel_colormap, cat_dict)
-        mapped_mask : np.ndarray (2D)
-            Each pixel has an integer ID representing the assigned category or boundary.
-        pixel_colormap : dict
-            A mapping of integer ID -> (R,G,B) color.
-        cat_dict : dict or None
-            For the 'inner' cat_obs, a dict from numeric ID -> category name. If no cat_obs is used, this is None.
-
-    Notes
-    -----
-    - The last layer applied will overwrite any pixels from previous layers if they overlap.
-    - If you want a different layering effect, reorder `layers_order`.
+    If `label_obs` is provided (default: 'ObjectNumber'), all mapping uses those
+    label IDs to match AnnData rows to mask labels. This allows correct mapping
+    even if some cells were removed from AnnData or if mask labels are not 1..N.
     """
 
     # Default layer order if user didn't provide any
@@ -1471,20 +1381,25 @@ def obs_to_mask(
         layers_order = ['inner', 'separator', 'outline']
 
     # ------------------------------------------------------------
-    # 1) Load the base segmentation mask and check cell counts
+    # 1) Load the base segmentation mask and subset AnnData to ROI
     # ------------------------------------------------------------
     mask_path = Path(masks_folder) / f"{roi}.{masks_ext}"
     base_mask = io.imread(mask_path)
     if base_mask.ndim != 2:
         raise ValueError(f"Expected 2D mask, got shape {base_mask.shape} for ROI '{roi}'.")
 
-    # Filter adata.obs to just this ROI
     adata_roi_obs = adata.obs.loc[adata.obs[roi_obs] == roi].copy()
     adata_roi_obs.reset_index(drop=True, inplace=True)
 
+    # ---- NEW/CHANGED: validate label_obs and define cells_in_adata safely
+    cells_in_adata = len(adata_roi_obs)
+    if label_obs is not None:
+        assert label_obs in adata.obs.columns, (
+            f"{label_obs} not found in adata.obs. "
+            f"Set label_obs=None to fall back to index+1 mapping."
+        )
+
     if check_cell_numbers:
-        # Check cell counts
-        cells_in_adata = len(adata_roi_obs)
         cells_in_mask = len(np.unique(base_mask)) - 1  # assume 0 is background
         if cells_in_adata != cells_in_mask:
             raise ValueError(
@@ -1528,10 +1443,8 @@ def obs_to_mask(
           - a categorical observation (cat_obs), or
           - a quantitative observation (quant_obs).
 
-        If using quant_obs, we now:
-          1) Respect label_obs for assigning numeric values.
-          2) If quant_exclude_background=True, we do NOT color the zero-labeled
-             background or any previously assigned colors.
+        When `label_obs` is provided, mapping uses those label IDs so removed/missing
+        cells in AnnData do not corrupt the mapping.
         """
         nonlocal mapped_mask, pixel_colormap, cat_dict, cat_obs_groups, label_obs
 
@@ -1552,51 +1465,46 @@ def obs_to_mask(
 
             cat_dict = {}
             for i, cat_val in enumerate(cats_all, start=1):
-                # If label_obs is specified, those are the actual label IDs in the mask
+                # Use label_obs if provided; else fall back to index+1
                 if label_obs:
                     cell_ids = adata_roi_obs.loc[adata_roi_obs[cat_obs] == cat_val, label_obs].values
                 else:
-                    # Otherwise, the mask label = index+1
-                    cell_ids = (adata_roi_obs.loc[adata_roi_obs[cat_obs] == cat_val].index + 1).to_numpy()
+                    cell_ids = (
+                        adata_roi_obs.loc[adata_roi_obs[cat_obs] == cat_val].index + 1
+                    ).to_numpy()
 
-                # Where does the mask match these cell IDs?
                 cat_mask = np.isin(base_mask, cell_ids)
                 mapped_mask[cat_mask] = i
 
                 cat_dict[i] = str(cat_val)
-                pixel_colormap[i] = cat_cmap.get(cat_val, (0.5, 0.5, 0.5))  # fallback color
+                pixel_colormap[i] = cat_cmap.get(cat_val, (0.5, 0.5, 0.5))
 
         # --------------------------
         # 2) Quantitative observation
         # --------------------------
         elif quant_obs:
-
+            # ---- CHANGED: always prefer label_obs for the objects -> values mapping
             if label_obs:
-                # If label_obs is given, these are the actual label IDs in the mask
                 objects = adata_roi_obs[label_obs].values
             else:
-                # Otherwise, we assume mask label = index+1
-                objects = np.arange(1, cells_in_adata + 1)
+                objects = (np.arange(cells_in_adata) + 1).astype(int)
 
-            # Check if quant_obs is in obs or var_names
+            # Values from obs or var
             if quant_obs in adata_roi_obs.columns:
                 values = adata_roi_obs[quant_obs].values
             elif quant_obs in adata.var_names:
-                subX = adata[adata.obs[roi_obs] == roi, adata.var_names == quant_obs].X
-                values = subX.toarray().flatten()
+                subX = adata[adata.obs[roi_obs] == roi, [quant_obs]].X
+                values = np.asarray(subX).ravel()
             else:
                 raise ValueError(f"Can't find '{quant_obs}' in adata.obs or var_names.")
 
-            # map_array: each pixel labeled "objects[i]" gets the intensity "values[i]"
-            quant_mask = map_array(base_mask, objects, values)
+            # Map values to pixels using the explicit objects->values dictionary
+            quant_mask = map_array(np.asarray(base_mask), np.asarray(objects), np.asarray(values))
 
             if quant_exclude_background:
-                # Overwrite only the non-zero areas,
-                # so background remains whatever was already mapped
                 nonzero_locs = (base_mask != 0)
                 mapped_mask[nonzero_locs] = quant_mask[nonzero_locs]
             else:
-                # Overwrite everything, including background = 0
                 mapped_mask = quant_mask
 
             # Build colormap from numeric data
@@ -1609,28 +1517,25 @@ def obs_to_mask(
             )
 
             if quant_exclude_background and 0 in colormap:
-                # Remove 0 from the colormap so background is not assigned any color
                 del colormap[0]
 
-            # Merge into our master pixel_colormap
             pixel_colormap.update(colormap)
 
         else:
-            # If neither cat_obs nor quant_obs is given, do nothing
+            # If neither cat_obs nor quant_obs is given, do nothing for inner fill
             pass
 
     # ------------------------------------------------------------
     # FUNCTION 2: draw a "separator" ring (uniform color)
     # ------------------------------------------------------------
     def apply_separator():
-        nonlocal mapped_mask, pixel_colormap, cat_dict, cat_obs_groups, label_obs
+        nonlocal mapped_mask, pixel_colormap
 
         if separator_color is None:
             return
         separator_id = np.max(mapped_mask) + 1
 
-        # Combine all non-zero cells
-        #any_cell = mapped_mask > 0
+        # Use the base mask for boundaries
         any_cell = base_mask > 0
 
         boundary = segmentation.find_boundaries(
@@ -1646,7 +1551,7 @@ def obs_to_mask(
     # FUNCTION 3: draw an "outline" from a second categorical obs
     # ------------------------------------------------------------
     def apply_outline():
-        nonlocal mapped_mask, pixel_colormap, outline_cat_obs, label_obs
+        nonlocal mapped_mask, pixel_colormap
 
         if outline_cat_obs is None:
             return
@@ -1654,9 +1559,9 @@ def obs_to_mask(
         outline_cats_all = adata.obs[outline_cat_obs].cat.categories.tolist()
         outline_cmap_dict = _build_cat_cmap(outline_cat_colour_map, outline_cat_obs, adata_colormap)
 
-        start_id = np.max(mapped_mask) + 1
+        start_id = int(np.max(mapped_mask)) + 1
 
-        for idx, cat_val in enumerate(outline_cats_all, start=int(start_id)):
+        for idx, cat_val in enumerate(outline_cats_all, start=start_id):
             if label_obs:
                 cell_ids = adata_roi_obs.loc[
                     adata_roi_obs[outline_cat_obs] == cat_val,
@@ -1693,7 +1598,7 @@ def obs_to_mask(
     for layer in layers_order:
         func = layer_functions.get(layer)
         if func is not None:
-            func()  # call the subfunction
+            func()
         else:
             raise ValueError(
                 f"Invalid layer '{layer}' in layers_order. Must be one of {list(layer_functions.keys())}."
@@ -1705,7 +1610,6 @@ def obs_to_mask(
     if not save_path:
         return mapped_mask, pixel_colormap, cat_dict
 
-    # from SpatialBiologyToolkit.utils import save_labelled_image, save_labelled_image_as_svg
     save_path_obj = Path(save_path)
     save_path_obj.parent.mkdir(parents=True, exist_ok=True)
 
@@ -1732,6 +1636,7 @@ def obs_to_mask(
         )
 
     return mapped_mask, pixel_colormap, cat_dict
+
 
 import numpy as np
 import pandas as pd
