@@ -1770,7 +1770,7 @@ def grouped_graph(
     ax.legend(bbox_to_anchor=(1.01, 1), title=group_by_obs)
 
     if save_graph:
-        fig.savefig(save, bbox_inches='tight', dpi=200)
+        fig.savefig(save_graph, bbox_inches='tight', dpi=200)
 
     if save_table:
         table.to_csv(save_table)
