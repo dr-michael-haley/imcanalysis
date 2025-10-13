@@ -123,7 +123,7 @@ DEFAULT_CONFIG_CLASSES = {
     'denoising': DenoisingConfig,
     'createmasks': CreateMasksConfig,
     'segmentation': SegmentationConfig,
-    'basic_process': BasicProcessConfig,
+    'process': BasicProcessConfig,
     'logging': LoggingConfig,
 }
 
