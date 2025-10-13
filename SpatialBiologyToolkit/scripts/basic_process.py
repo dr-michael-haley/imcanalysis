@@ -11,8 +11,8 @@ from .config_and_utils import *
 
 def batch_neighbors(
         adata,
-        correction_method: str = 'bbknn',
-        batch_correction_obs: str = 'Case',
+        correction_method = None, #: str = 'bbknn',
+        batch_correction_obs = None, #: str = 'Case',
         n_for_pca: int = None
 ) -> None:
     """
