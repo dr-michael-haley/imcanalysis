@@ -15,7 +15,7 @@ import seaborn as sns
 import tifffile as tiff
 from matplotlib import pyplot as plt
 from mpl_toolkits.axes_grid1 import make_axes_locatable
-from readimc import MCDFile
+from readimc import MCDFile, TXTFile
 from scipy.stats import zscore
 from tqdm import tqdm
 from sklearn.decomposition import PCA
@@ -23,6 +23,7 @@ from sklearn.preprocessing import StandardScaler
 
 # Import shared utilities and configurations
 from .config_and_utils import *
+from .config_and_utils import cleanstring
 
 ################ Functions
 
@@ -162,6 +163,156 @@ def _get_actual_num_acquisition(acquisitions=None, path=None):
         warnings.warn("Some acquisitions have zero channels. They will be ignored.")
 
     return len(valid_acquisitions)
+
+
+def read_txt(
+    path,
+    only_metadata=False,
+    fill_empty_metals=False,
+):
+    """
+    Reads a TXT file and returns data, channels, names, and metadata.
+
+    Parameters
+    ----------
+    path : str or Path
+        Path to the TXT file.
+    only_metadata : bool, optional
+        If True, only return the metadata. Defaults to False.
+    fill_empty_metals : bool, optional
+        If True, fill empty names with metal names. Defaults to False.
+
+    Returns
+    -------
+    data : numpy.ndarray
+        The data from the TXT file.
+    channels : list of str
+        The channel labels from the TXT file.
+    names : list of str
+        The channel names from the TXT file.
+    meta : pandas.DataFrame
+        Metadata for the acquisition.
+
+    Raises
+    ------
+    ValueError
+        If the file is not a TXT file.
+    """
+    path = Path(path)
+    if path.suffix.lower() != ".txt":
+        raise ValueError("File is not a TXT file.")
+
+    data = None
+    meta = None
+
+    with TXTFile(path) as f:
+        if not only_metadata:
+            # Read data for the acquisition
+            data = f.read_acquisition()
+
+        # Get channel names and labels
+        names = list(f.channel_labels)
+        channels = list(f.channel_names)
+
+        # Create metadata DataFrame - TXT files don't have acquisition descriptions/dimensions
+        # so we'll create minimal metadata
+        clean_stem = cleanstring(path.stem)
+        meta = pd.DataFrame(
+            {
+                "id": [0],  # TXT files have only one acquisition
+                "description": [clean_stem],  # Use cleaned filename as description
+                "width_um": [data.shape[2] if data is not None else None],  # Infer from data shape
+                "height_um": [data.shape[1] if data is not None else None],
+            }
+        )
+
+    # Fill empty target names with metal names or 'unlabeled'
+    unlabel_count = 1
+    for i, n in enumerate(names):
+        if n == "" or n is None:
+            if channels[i] == "" or channels[i] is None:
+                names[i] = f"unlabeled_{unlabel_count}"
+                unlabel_count += 1
+            else:
+                if fill_empty_metals:
+                    names[i] = channels[i]
+                else:
+                    names[i] = None
+
+    return data, channels, names, meta
+
+
+def read_imc_file(
+    path,
+    acquisition_id=0,
+    planes_to_load=None,
+    only_metadata=False,
+    fill_empty_metals=False,
+):
+    """
+    Unified function to read either MCD or TXT IMC files.
+
+    Parameters
+    ----------
+    path : str or Path
+        Path to the IMC file (.mcd or .txt).
+    acquisition_id : int, optional
+        The acquisition ID to read. Only used for MCD files. Defaults to 0.
+    planes_to_load : int or list of int, optional
+        Indices of planes to load. If None, all planes are loaded.
+    only_metadata : bool, optional
+        If True, only return the metadata. Defaults to False.
+    fill_empty_metals : bool, optional
+        If True, fill empty names with metal names. Defaults to False.
+
+    Returns
+    -------
+    data : numpy.ndarray
+        The data from the IMC file.
+    channels : list of str
+        The channel labels from the IMC file.
+    num_acquisitions : int
+        The number of acquisitions (1 for TXT files, variable for MCD files).
+    names : list of str
+        The channel names from the IMC file.
+    meta : pandas.DataFrame
+        Metadata for the acquisition.
+
+    Raises
+    ------
+    ValueError
+        If the file format is not supported (.mcd or .txt).
+    """
+    path = Path(path)
+    
+    if path.suffix.lower() == ".mcd":
+        return read_mcd(
+            path=path,
+            acquisition_id=acquisition_id,
+            planes_to_load=planes_to_load,
+            only_metadata=only_metadata,
+            fill_empty_metals=fill_empty_metals,
+        )
+    elif path.suffix.lower() == ".txt":
+        data, channels, names, meta = read_txt(
+            path=path,
+            only_metadata=only_metadata,
+            fill_empty_metals=fill_empty_metals,
+        )
+        # TXT files only have one acquisition
+        num_acquisitions = 1
+        
+        # Handle planes_to_load for TXT files
+        if not only_metadata and planes_to_load is not None:
+            if isinstance(planes_to_load, int):
+                planes_to_load = [planes_to_load]
+            data = data[planes_to_load]
+            channels = np.array(channels)[planes_to_load].tolist()
+            names = np.array(names)[planes_to_load].tolist()
+        
+        return data, channels, num_acquisitions, names, meta
+    else:
+        raise ValueError(f"Unsupported file format: {path.suffix}. Only .mcd and .txt files are supported.")
 
 
 def read_mcd(
@@ -380,6 +531,248 @@ def export_to_tiffstack(
         logging.error(f"{len(error_acq)} errors encountered when unpacking {str(path.stem)}\n")
 
 
+def export_txt_to_tiffstack(
+    path,
+    export_path,
+    export_panel=True,
+    export_meta=True,
+):
+    """
+    Converts a TXT file to TIFF file stack and metadata.
+
+    Parameters
+    ----------
+    path : str or Path
+        Path to the TXT file.
+    export_path : str or Path
+        Path to the folder where to export the TIFF files.
+    export_panel : bool, optional
+        If True, exports the panel file. Defaults to True.
+    export_meta : bool, optional
+        If True, exports the metadata file. Defaults to True.
+
+    Returns
+    -------
+    None
+    """
+    path = Path(path)
+    
+    # Create a folder inside export path named after the TXT file stem (cleaned)
+    clean_stem = cleanstring(path.stem)
+    export_dir = Path(export_path) / clean_stem
+    export_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        # Read data from the TXT file
+        data, channels, names, meta = read_txt(path)
+        
+        # Save image stack using tifffile (use clean stem)
+        tiff_filename = export_dir / f"{clean_stem}.tiff"
+        tiff.imwrite(
+            tiff_filename, data, photometric="minisblack", metadata={"axes": "CYX"}
+        )
+        logging.info(f"Saved TIFF stack: {tiff_filename}")
+
+        # Export panel file
+        if export_panel:
+            panel = pd.DataFrame(
+                {"channel_name": channels, "channel_label": names}
+            ).set_index("channel_name", drop=True)
+            panel_filename = export_dir / f"{clean_stem}.csv"
+            panel.to_csv(panel_filename)
+            logging.info(f"Saved panel file: {panel_filename}")
+
+        # Save metadata
+        if export_meta:
+            meta_filename = export_dir / f"{clean_stem}_meta.csv"
+            meta.to_csv(meta_filename, index=False)
+            logging.info(f"Saved metadata: {meta_filename}")
+
+    except Exception as e:
+        logging.error(f"Error processing TXT file {path}: {e}")
+        raise
+
+
+def export_imc_folder(
+    path='IMC_files',
+    export_path='tiff_stacks',
+    merged_metadata_output_folder='metadata',
+    export_panel=True,
+    export_meta=True,
+    export_errors=True,
+    minimum_dimension=200,
+):
+    """
+    Extracts every IMC file (.mcd or .txt) in a given directory into TIFF stacks, panel files, and a metadata table.
+
+    Parameters
+    ----------
+    path : str or Path
+        Path to the directory containing IMC files. Defaults to 'IMC_files'.
+    export_path : str or Path
+        Path to the folder where to export the TIFF files. Defaults to 'tiff_stacks'.
+    merged_metadata_output_folder : str or Path, optional
+        Folder where merged metadata and panel files will be saved. Defaults to 'metadata'.
+    export_panel : bool, optional
+        If True, exports the panel files. Defaults to True.
+    export_meta : bool, optional
+        If True, exports the metadata files. Defaults to True.
+    export_errors : bool, optional
+        If True, exports the errors files if any errors are encountered. Defaults to True.
+    minimum_dimension : int, optional
+        Only extract ROIs greater than a specified size in height and width for MCD files. Defaults to 200.
+
+    Returns
+    -------
+    None
+    """
+    path = Path(path)
+
+    # Get a list of paths to IMC files in the directory
+    mcd_paths = list(path.glob("*.mcd"))
+    txt_paths = list(path.glob("*.txt"))
+    
+    # Check export path exists
+    export_path = Path(export_path)
+    export_path.mkdir(parents=True, exist_ok=True)
+
+    if merged_metadata_output_folder:
+        merged_metadata_output_folder = Path(merged_metadata_output_folder)
+        merged_metadata_output_folder.mkdir(parents=True, exist_ok=True)
+
+    # Process MCD files
+    for mcd_file in mcd_paths:
+        logging.info(f"Exporting MCD file: {mcd_file.stem}...")
+        export_to_tiffstack(
+            path=mcd_file,
+            export_path=export_path,
+            export_panel=export_panel,
+            export_meta=export_meta,
+            export_errors=export_errors,
+            minimum_dimension=minimum_dimension
+        )
+
+    # Process TXT files
+    for txt_file in txt_paths:
+        logging.info(f"Exporting TXT file: {txt_file.stem}...")
+        export_txt_to_tiffstack(
+            path=txt_file,
+            export_path=export_path,
+            export_panel=export_panel,
+            export_meta=export_meta,
+        )
+
+    # Merge metadata (same as before, but now handles both file types)
+    if export_meta:
+        # Concatenate all the metadata from the IMC files
+        meta_data = []
+        for x in export_path.iterdir():
+            if x.is_dir():
+                meta_file = x / f"{x.name}_meta.csv"
+                if meta_file.exists():
+                    m = pd.read_csv(meta_file)
+                    m['source_file'] = x.name  # Directory name (already cleaned for TXT files)
+                    # Determine file type from directory name patterns
+                    # For MCD files, x.name matches the original stem
+                    if any(mcd.stem == x.name for mcd in mcd_paths):
+                        m['file_type'] = 'mcd'
+                    # For TXT files, x.name matches the cleaned stem from export
+                    elif any(cleanstring(txt.stem) == x.name for txt in txt_paths):
+                        m['file_type'] = 'txt'
+                    else:
+                        m['file_type'] = 'unknown'
+                    meta_data.append(m.copy())
+                else:
+                    warnings.warn(f"Meta file {meta_file} not found.")
+        
+        if meta_data:
+            meta_data = pd.concat(meta_data)
+            # Column which will later be used to exclude ROIs, e.g., if they are tests or had errors
+            meta_data['import_data'] = True
+
+            # Add data folder columns
+            # For TXT files, we don't have acquisition IDs, so handle differently
+            def create_folder_name(row):
+                if row['file_type'] == 'mcd':
+                    return f"{row['source_file']}_acq_{row['id']}"
+                else:  # txt file - source_file should already be clean from export process
+                    return row['source_file']
+                    
+            def create_tiff_path(row):
+                if row['file_type'] == 'mcd':
+                    return f"{row['source_file']}/{row['source_file']}_acq_{row['id']}.tiff"
+                else:  # txt file - source_file should already be clean from export process
+                    return f"{row['source_file']}/{row['source_file']}.tiff"
+
+            meta_data['unstacked_data_folder'] = meta_data.apply(create_folder_name, axis=1)
+            meta_data['tiff_stacks'] = meta_data.apply(create_tiff_path, axis=1)
+
+            logging.info(f'Merged metadata for IMC files and ROIs saved to metadata.csv in {merged_metadata_output_folder} output folder')
+            meta_data.to_csv(merged_metadata_output_folder / 'metadata.csv', index=None)
+
+            # Create a blank dictionary if one doesn't already exist
+            dictionary_file_path = merged_metadata_output_folder / 'dictionary.csv'
+            if not dictionary_file_path.exists():
+                logging.info('No dictionary file found, creating a blank file.')
+                dictionary_file = meta_data.loc[:, ['unstacked_data_folder', 'description']].copy()
+                dictionary_file.set_index('unstacked_data_folder', drop=True, inplace=True)
+                dictionary_file.index.rename('ROI', inplace=True)
+                dictionary_file['Example_1'] = 'Example_info'
+                dictionary_file['Example_2'] = 1
+                dictionary_file['Example_3'] = True
+                dictionary_file.to_csv(dictionary_file_path)
+            else:
+                logging.info('Existing dictionary file found, not modifying.')
+        else:
+            logging.info('No metadata found to merge.')
+
+    # Merge panels (same logic as before)
+    if export_panel:
+        # Load all panel files as dataframes, then get the unique ones
+        panelfiles = _load_panel_files(export_path)
+        panel_dfs = [pd.read_csv(file) for file in panelfiles]
+        unique_panels = _compare_dataframes(panel_dfs)
+
+        # Add extra useful columns to the panel file(s) for use later
+        for p in unique_panels.values():
+            p = _panel_identify_used_channels(p, 'use_denoised')
+            p['to_denoise'] = p['use_denoised']
+
+            # Clean labels
+            p['channel_label'] = [re.sub(r'\W+', '', str(x)) for x in p['channel_label']]
+
+            # By default, don't use any raw
+            p['use_raw'] = False
+
+            # By default, don't remove outliers
+            p['remove_outliers'] = False
+
+        # Save the panel(s)
+        if len(unique_panels) == 1:
+            logging.info("All panels are identical. Saving as 'panel.csv'.")
+            unique_dataframe = next(iter(unique_panels.values()))
+            unique_dataframe.to_csv(merged_metadata_output_folder / 'panel.csv', index=False)
+        else:
+            logging.warning(f"WARNING: Found {len(unique_panels)} unique panels. Saving them as 'panel_1.csv', 'panel_2.csv', etc.")
+            for i, (hash_val, df) in enumerate(unique_panels.items(), start=1):
+                df.to_csv(merged_metadata_output_folder / f'panel_{i}.csv', index=False)
+
+    # Merge all errors (only relevant for MCD files)
+    if export_errors:
+        error_data = []
+        for x in export_path.iterdir():
+            if x.is_dir():
+                error_file = x / f"{x.name}_errors.csv"
+                if error_file.exists():
+                    m = pd.read_csv(error_file)
+                    m['source_file'] = x.name
+                    error_data.append(m.copy())
+        if error_data:
+            error_data = pd.concat(error_data)
+            logging.error(f'Merged list of import errors for IMC files and ROIs saved to errors.csv in {merged_metadata_output_folder} output folder')
+            error_data.to_csv(merged_metadata_output_folder / 'errors.csv', index=None)
+
+
 def _load_panel_files(directory):
     """
     Load all .csv files from a directory (including subdirectories)
@@ -487,6 +880,7 @@ def export_mcd_folder(
     minimum_dimension=200,
 ):
     """
+    Legacy function for backward compatibility. Now calls export_imc_folder.
     Extracts every MCD file in a given directory into TIFF stacks, panel files, and a metadata table.
 
     Parameters
@@ -510,116 +904,17 @@ def export_mcd_folder(
     -------
     None
     """
-    path = Path(path)
-
-    # Get a list of paths to MCD files in the directory
-    mcd_paths = list(path.glob("*.mcd"))
-
-    # Check export path exists
-    export_path = Path(export_path)
-    export_path.mkdir(parents=True, exist_ok=True)
-
-    if merged_metadata_output_folder:
-        merged_metadata_output_folder = Path(merged_metadata_output_folder)
-        merged_metadata_output_folder.mkdir(parents=True, exist_ok=True)
-
-    for mcd_file in mcd_paths:
-        logging.info(f"Exporting {mcd_file.stem}...")
-        export_to_tiffstack(
-            path=mcd_file,
-            export_path=export_path,
-            export_panel=export_panel,
-            export_meta=export_meta,
-            export_errors=export_errors,
-            minimum_dimension=minimum_dimension
-        )
-
-    # Merge metadata
-    if export_meta:
-        # Concatenate all the metadata from the MCD files
-        meta_data = []
-        for x in export_path.iterdir():
-            if x.is_dir():
-                meta_file = x / f"{x.name}_meta.csv"
-                if meta_file.exists():
-                    m = pd.read_csv(meta_file)
-                    m['mcd'] = x.name
-                    meta_data.append(m.copy())
-                else:
-                    warnings.warn(f"Meta file {meta_file} not found.")
-        if meta_data:
-            meta_data = pd.concat(meta_data)
-            # Column which will later be used to exclude ROIs, e.g., if they are tests or had errors
-            meta_data['import_data'] = True
-
-            # Add data folder columns
-            meta_data['unstacked_data_folder'] = meta_data['mcd'] + "_acq_" + meta_data['id'].astype(str)
-            meta_data['tiff_stacks'] = meta_data['mcd'] + "/" + meta_data['mcd'] + "_acq_" + meta_data['id'].astype(str) + ".tiff"
-
-            logging.info(f'Merged metadata for MCDs and ROIs saved to metadata.csv in {merged_metadata_output_folder} output folder')
-            meta_data.to_csv(merged_metadata_output_folder / 'metadata.csv', index=None)
-
-            # Create a blank dictionary if one doesn't already exist
-            dictionary_file_path = merged_metadata_output_folder / 'dictionary.csv'
-            if not dictionary_file_path.exists():
-                logging.info('No dictionary file found, creating a blank file.')
-                dictionary_file = meta_data.loc[:, ['unstacked_data_folder', 'description']].copy()
-                dictionary_file.set_index('unstacked_data_folder', drop=True, inplace=True)
-                dictionary_file.index.rename('ROI', inplace=True)
-                dictionary_file['Example_1'] = 'Example_info'
-                dictionary_file['Example_2'] = 1
-                dictionary_file['Example_3'] = True
-                dictionary_file.to_csv(dictionary_file_path)
-            else:
-                logging.info('Existing dictionary file found, not modifying.')
-        else:
-            logging.info('No metadata found to merge.')
-
-    # Merge panels
-    if export_panel:
-        # Load all panel files as dataframes, then get the unique ones
-        panelfiles = _load_panel_files(export_path)
-        panel_dfs = [pd.read_csv(file) for file in panelfiles]
-        unique_panels = _compare_dataframes(panel_dfs)
-
-        # Add extra useful columns to the panel file(s) for use later
-        for p in unique_panels.values():
-            p = _panel_identify_used_channels(p, 'use_denoised')
-            p['to_denoise'] = p['use_denoised']
-
-            # Clean labels
-            p['channel_label'] = [re.sub(r'\W+', '', str(x)) for x in p['channel_label']]
-
-            # By default, don't use any raw
-            p['use_raw'] = False
-
-            # By default, don't remove outliers
-            p['remove_outliers'] = False
-
-        # Save the panel(s)
-        if len(unique_panels) == 1:
-            logging.info("All panels are identical. Saving as 'panel.csv'.")
-            unique_dataframe = next(iter(unique_panels.values()))
-            unique_dataframe.to_csv(merged_metadata_output_folder / 'panel.csv', index=False)
-        else:
-            logging.warning(f"WARNING: Found {len(unique_panels)} unique panels. Saving them as 'panel_1.csv', 'panel_2.csv', etc.")
-            for i, (hash_val, df) in enumerate(unique_panels.items(), start=1):
-                df.to_csv(merged_metadata_output_folder / f'panel_{i}.csv', index=False)
-
-    # Merge all errors
-    if export_errors:
-        error_data = []
-        for x in export_path.iterdir():
-            if x.is_dir():
-                error_file = x / f"{x.name}_errors.csv"
-                if error_file.exists():
-                    m = pd.read_csv(error_file)
-                    m['mcd'] = x.name
-                    error_data.append(m.copy())
-        if error_data:
-            error_data = pd.concat(error_data)
-            logging.error(f'Merged list of import errors for MCDs and ROIs saved to errors.csv in {merged_metadata_output_folder} output folder')
-            error_data.to_csv(merged_metadata_output_folder / 'errors.csv', index=None)
+    logging.info("Using legacy export_mcd_folder function. Consider using export_imc_folder for full IMC support.")
+    # Just call the new unified function
+    export_imc_folder(
+        path=path,
+        export_path=export_path,
+        merged_metadata_output_folder=merged_metadata_output_folder,
+        export_panel=export_panel,
+        export_meta=export_meta,
+        export_errors=export_errors,
+        minimum_dimension=minimum_dimension,
+    )
 
 
 def unstack_tiffs(
@@ -1145,113 +1440,6 @@ def reassemble_stacks(
             panel_path = output_folder / f"{folder.name}.csv"
             file_df.to_csv(panel_path)
 
-'''
-No longer used!
-
-def create_denoise_config(
-    config_filename='denoise_config.json',
-    raw_directory='tiffs',
-    metadata_directory='metadata',
-    processed_output_dir='processed',
-    method='deep_snf',
-    channels=None,
-    parameters=None
-):
-    """
-    Create a configuration file for the denoise_batch function.
-
-    Parameters
-    ----------
-    config_filename : str, optional
-        Name of the configuration file to create. Defaults to 'denoise_config.json'.
-    raw_directory : str, optional
-        Path to the directory containing raw images. Defaults to 'tiffs'.
-    metadata_directory : str, optional
-        Path to the directory containing metadata. Defaults to 'metadata'.
-    processed_output_dir : str, optional
-        Path to the directory where processed images will be saved. Defaults to 'processed'.
-    method : str, optional
-        Denoising method to use ('deep_snf' or 'dimr'). Defaults to 'deep_snf'.
-    channels : list of str, optional
-        List of channel names to process. Defaults to None.
-    parameters : dict, optional
-        Dictionary of method-specific parameters. Defaults to None.
-
-    Returns
-    -------
-    None
-    """
-    if channels is None:
-        channels = []
-
-    if parameters is None:
-        # Default parameters for deep_snf method
-        if method == 'deep_snf':
-            parameters = {
-                "patch_step_size": 60,
-                "train_epochs": 100,
-                "train_initial_lr": 0.001,
-                "train_batch_size": 128,
-                "pixel_mask_percent": 0.2,
-                "val_set_percent": 0.15,
-                "loss_function": "I_divergence",
-                "loss_name": None,
-                "weights_save_directory": None,
-                "is_load_weights": False,
-                "lambda_HF": 3e-6,
-                "n_neighbours": 4,
-                "n_iter": 3,
-                "window_size": 3,
-                "network_size": "normal"
-            }
-        elif method == 'dimr':
-            # Default parameters for dimr method
-            parameters = {
-                "n_neighbours": 4,
-                "n_iter": 3,
-                "window_size": 3
-            }
-        else:
-            raise ValueError(f"Unknown method '{method}'.")
-
-    config = {
-        "raw_directory": raw_directory,
-        "processed_output_dir": processed_output_dir,
-        "method": method,
-        "channels": channels,
-        "parameters": parameters
-    }
-
-    # Write the configuration to a JSON file
-    with open(config_filename, 'w') as f:
-        json.dump(config, f, indent=4)
-
-    logging.info(f"Configuration file '{config_filename}' created successfully.")
-
-    # Read the metadata to check
-    if metadata_directory:
-        metadata_file = Path(metadata_directory) / 'metadata.csv'
-        if metadata_file.exists():
-            metadata_df = pd.read_csv(metadata_file)
-
-            # Identify ROIs which are too small for denoising
-            metadata_df['too_small'] = np.where(
-                (metadata_df['height_um'] < parameters.get("patch_step_size", 60)) |
-                (metadata_df['width_um'] < parameters.get("patch_step_size", 60)),
-                True,
-                False
-            )
-
-            # Remove ROIs that are too small
-            for _, r in metadata_df.iterrows():
-                if r['too_small']:
-                    roi_folder = Path(raw_directory) / r['unstacked_data_folder']
-                    if roi_folder.exists():
-                        rmtree(roi_folder)
-                        logging.warning(f"WARNING: ROI {r['description']} was smaller than patch_step_size ({parameters.get('patch_step_size', 60)}), and so was deleted from {str(raw_directory)}.")
-        else:
-            logging.warning(f"Metadata file '{metadata_file}' not found.")
-'''
 ################ Script
 
 if __name__ == "__main__":
@@ -1264,8 +1452,17 @@ if __name__ == "__main__":
     general_config = GeneralConfig(**config.get('general', {}))
     preprocess_config = PreprocessConfig(**config.get('preprocess', {}))
 
-    # Export .tiff stacks from MCD files
-    export_mcd_folder(path=general_config.mcd_files_folder,
+    # Export .tiff stacks from IMC files (both .mcd and .txt)
+    # Check if user is using new config option or legacy option
+    imc_folder = getattr(general_config, 'imc_files_folder', None)
+    if imc_folder and Path(imc_folder).exists():
+        input_folder = imc_folder
+        logging.info(f"Using IMC files folder: {input_folder}")
+    else:
+        input_folder = general_config.mcd_files_folder
+        logging.info(f"Using legacy MCD files folder: {input_folder}")
+    
+    export_imc_folder(path=input_folder,
                       export_path=general_config.tiff_stacks_folder,
                       minimum_dimension=preprocess_config.minimum_roi_dimensions)
 

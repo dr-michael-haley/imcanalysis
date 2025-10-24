@@ -8,7 +8,8 @@ from dataclasses import dataclass, field, asdict
 
 @dataclass
 class GeneralConfig:
-    mcd_files_folder: str = 'MCD_files'
+    imc_files_folder: str = 'IMC_files'  # Supports both .mcd and .txt files
+    mcd_files_folder: str = 'MCD_files'  # Kept for backward compatibility
     metadata_folder: str = 'metadata'
     qc_folder: str = 'QC'
     masks_folder: str = 'masks'
@@ -289,7 +290,7 @@ def process_config_with_overrides():
 
 def cleanstring(data: Any) -> str:
     """
-    Helper function that returns a clean string.
+    Helper function that returns a clean string with underscores replacing non-word characters.
 
     Parameters
     ----------
@@ -299,9 +300,13 @@ def cleanstring(data: Any) -> str:
     Returns
     -------
     str
-        Cleaned string.
+        Cleaned string with underscores instead of special characters.
     """
     import re
     data = str(data)
-    data = re.sub(r'\W+', '', data)
+    # Replace sequences of non-word characters (except underscores) with single underscores
+    data = re.sub(r'[^\w]+', '_', data)
+    # Remove leading/trailing underscores and collapse multiple underscores
+    data = re.sub(r'^_+|_+$', '', data)
+    data = re.sub(r'_+', '_', data)
     return data
