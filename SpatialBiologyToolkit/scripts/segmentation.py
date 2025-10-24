@@ -126,10 +126,23 @@ def extract_single_cell(masks_folder='masks',
 
 def create_celltable(input_directory='cell_tables',
                      metadata_folder='metadata',
-                     output_file='celltable.csv'):
+                     output_file='celltable.csv',
+                     allow_missing_channels=False):
     """
     Concatenate all CSV files in the specified directory into a single DataFrame,
     rename 'Label' to 'ObjectNumber', and save the final DataFrame.
+    
+    Parameters
+    ----------
+    input_directory : str or Path
+        Directory containing individual ROI cell tables.
+    metadata_folder : str or Path
+        Directory containing metadata files.
+    output_file : str or Path
+        Output file path for the master cell table.
+    allow_missing_channels : bool
+        If True, include all channels from panel and fill missing with NaN.
+        If False, only include channels present in all ROIs.
     """
     input_directory = Path(input_directory)
     metadata_folder = Path(metadata_folder)
@@ -140,25 +153,88 @@ def create_celltable(input_directory='cell_tables',
     # Load metadata for ROIs
     metadata = pd.read_csv(metadata_folder / 'metadata.csv', index_col='unstacked_data_folder')
 
+    # Load panel to get expected channels
+    panel = pd.read_csv(metadata_folder / 'panel.csv')
+    panel['channel_label'] = [re.sub(r'\W+', '', str(x)) for x in panel['channel_label']]
+    expected_channels = panel.loc[panel['use_denoised'] | panel['use_raw'], 'channel_label'].tolist()
+
     # Counters for ROIs
     included_rois = 0
     skipped_rois = 0
+    
+    # Track which channels are present in each ROI
+    roi_channels = {}
 
-    # Iterate through each CSV file in the directory and append to the list
+    # First pass: load all dataframes and track available channels
+    temp_dfs = []
     for file in input_directory.glob('*.csv'):
         roi_name = file.stem
         if roi_name in metadata.index and metadata.loc[roi_name, 'import_data']:
             df = pd.read_csv(file)
-
-            # Rename 'Label' column to 'ObjectNumber'
             df.rename(columns={'Label': 'ObjectNumber'}, inplace=True)
-
-            dfs.append(df)
-            logging.info(f'Imported {file.name} to cell table')
+            
+            # Track which expected channels are present in this ROI
+            present_channels = [ch for ch in expected_channels if ch in df.columns]
+            roi_channels[roi_name] = present_channels
+            
+            temp_dfs.append((roi_name, df))
             included_rois += 1
         else:
             logging.warning(f'Skipped importing {file.name} to cell table')
             skipped_rois += 1
+
+    if not temp_dfs:
+        logging.error("No valid ROI data found!")
+        return None
+
+    # Determine which channels to include based on allow_missing_channels setting
+    if allow_missing_channels:
+        # Include all expected channels, fill missing with NaN
+        channels_to_include = expected_channels
+        logging.info(f"Including all {len(channels_to_include)} expected channels, filling missing with NaN")
+    else:
+        # Only include channels present in ALL ROIs
+        if len(temp_dfs) == 1:
+            # Single ROI case
+            channels_to_include = roi_channels[list(roi_channels.keys())[0]]
+        else:
+            # Multiple ROIs - find intersection
+            all_roi_channels = list(roi_channels.values())
+            channels_to_include = list(set(all_roi_channels[0]).intersection(*all_roi_channels[1:]))
+        
+        missing_channels_summary = {}
+        for roi_name, channels in roi_channels.items():
+            missing = set(expected_channels) - set(channels)
+            if missing:
+                missing_channels_summary[roi_name] = list(missing)
+        
+        if missing_channels_summary:
+            logging.warning(f"Missing channels detected in some ROIs: {missing_channels_summary}")
+        
+        logging.info(f"Including only {len(channels_to_include)} channels present in all ROIs: {channels_to_include}")
+        
+        excluded_channels = set(expected_channels) - set(channels_to_include)
+        if excluded_channels:
+            logging.warning(f"Excluded {len(excluded_channels)} channels not present in all ROIs: {list(excluded_channels)}")
+
+    # Second pass: standardize dataframes and concatenate
+    for roi_name, df in temp_dfs:
+        # Get non-channel columns (metadata columns)
+        non_channel_cols = [col for col in df.columns if col not in expected_channels]
+        
+        # Create standardized dataframe with required columns
+        standardized_df = df[non_channel_cols].copy()
+        
+        # Add channel columns
+        for channel in channels_to_include:
+            if channel in df.columns:
+                standardized_df[channel] = df[channel]
+            else:
+                # This should only happen when allow_missing_channels=True
+                standardized_df[channel] = np.nan
+                
+        dfs.append(standardized_df)
+        logging.info(f'Imported {roi_name} to cell table with {len(channels_to_include)} channels')
 
     logging.info(f'TOTAL: Imported {included_rois}, skipped {skipped_rois}.')
 
@@ -231,11 +307,19 @@ def create_anndata(celltable,
 
     # Get list of channels from panel file
     panel['channel_label'] = [re.sub(r'\W+', '', str(x)) for x in panel['channel_label']]
-    channels = panel.loc[panel['use_denoised'] | panel['use_raw'], 'channel_label'].tolist()
-    logging.info(f'Channels found in cell table: {str(channels)}')
+    expected_channels = panel.loc[panel['use_denoised'] | panel['use_raw'], 'channel_label'].tolist()
+    
+    # Only use channels that are actually present in the cell table
+    available_channels = [ch for ch in expected_channels if ch in celltable.columns]
+    missing_channels = [ch for ch in expected_channels if ch not in celltable.columns]
+    
+    if missing_channels:
+        logging.warning(f'Missing channels in cell table: {missing_channels}')
+    
+    logging.info(f'Using {len(available_channels)} available channels: {str(available_channels)}')
 
-    # Extract raw markers
-    markers_raw = celltable.loc[:, channels]
+    # Extract raw markers using only available channels
+    markers_raw = celltable.loc[:, available_channels]
 
     # Marker normalisation
     if normalisation:
@@ -253,7 +337,7 @@ def create_anndata(celltable,
         adata.raw = adata.copy()
 
     # Add cellular obs from celltable
-    non_channels = [x for x in celltable.columns.tolist() if x not in channels]
+    non_channels = [x for x in celltable.columns.tolist() if x not in available_channels]
     logging.info(f'Non-channel data found in cell table: {str(non_channels)}')
 
     for col in non_channels:
@@ -346,7 +430,8 @@ if __name__ == "__main__":
         celltable = create_celltable(
             input_directory=general_config.celltable_folder,
             metadata_folder=general_config.metadata_folder,
-            output_file=seg_config.celltable_output
+            output_file=seg_config.celltable_output,
+            allow_missing_channels=seg_config.allow_missing_channels
         )
     else:
         logging.info(f'SKIPPING creating master cell table...')

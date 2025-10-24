@@ -100,6 +100,7 @@ class SegmentationConfig:
     create_roi_cell_tables: bool = True
     create_master_cell_table: bool = True
     create_anndata: bool = True
+    allow_missing_channels: bool = False  # If True, fill missing channels with NaN; if False, only include channels present in all ROIs
 
 @dataclass
 class BasicProcessConfig:
