@@ -22,7 +22,10 @@ import pandas as pd
 from tqdm import tqdm
 
 # Import shared utilities
-from .config_and_utils import cleanstring, setup_logging, process_config_with_overrides
+try:
+    from .config_and_utils import cleanstring, setup_logging, process_config_with_overrides
+except ImportError:
+    from config_and_utils import cleanstring, setup_logging, process_config_with_overrides
 
 
 class FilenameHarmonizer:
@@ -332,7 +335,9 @@ Examples:
 def main():
     """Main function."""
     parser = setup_argument_parser()
-    args = parser.parse_args()
+    
+    # Parse only the arguments we know about, ignore others (like --override from config system)
+    args, unknown = parser.parse_known_args()
     
     # Setup logging
     logging.basicConfig(
@@ -347,7 +352,7 @@ def main():
         tiff_folder = args.tiff_folder or 'tiffs'
         panel_file = args.panel_file or 'metadata/panel.csv'
     else:
-        # Load from config file
+        # Try to load from config file
         try:
             config = process_config_with_overrides()
             general_config = config.get('general', {})
