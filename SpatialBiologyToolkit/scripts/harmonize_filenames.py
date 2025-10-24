@@ -23,9 +23,9 @@ from tqdm import tqdm
 
 # Import shared utilities
 try:
-    from .config_and_utils import cleanstring, setup_logging, process_config_with_overrides
+    from .config_and_utils import cleanstring
 except ImportError:
-    from config_and_utils import cleanstring, setup_logging, process_config_with_overrides
+    from config_and_utils import cleanstring
 
 
 class FilenameHarmonizer:
@@ -352,14 +352,22 @@ def main():
         tiff_folder = args.tiff_folder or 'tiffs'
         panel_file = args.panel_file or 'metadata/panel.csv'
     else:
-        # Try to load from config file
+        # Try to load from config file manually (avoid process_config_with_overrides)
         try:
-            config = process_config_with_overrides()
-            general_config = config.get('general', {})
-            
-            tiff_folder = general_config.get('raw_images_folder', 'tiffs')
-            metadata_folder = general_config.get('metadata_folder', 'metadata')
-            panel_file = str(Path(metadata_folder) / 'panel.csv')
+            import yaml
+            config_file = args.config
+            if Path(config_file).exists():
+                with open(config_file, 'r') as f:
+                    config = yaml.safe_load(f) or {}
+                
+                general_config = config.get('general', {})
+                tiff_folder = general_config.get('raw_images_folder', 'tiffs')
+                metadata_folder = general_config.get('metadata_folder', 'metadata')
+                panel_file = str(Path(metadata_folder) / 'panel.csv')
+            else:
+                logging.info(f"Config file {config_file} not found, using defaults")
+                tiff_folder = 'tiffs'
+                panel_file = 'metadata/panel.csv'
                 
         except Exception as e:
             logging.warning(f"Could not load config: {e}")
