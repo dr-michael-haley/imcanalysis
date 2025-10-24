@@ -726,12 +726,12 @@ def export_imc_folder(
         else:
             logging.info('No metadata found to merge.')
 
-    # Merge panels (same logic as before)
+    # Merge panels (enhanced with mapping functionality)
     if export_panel:
         # Load all panel files as dataframes, then get the unique ones
         panelfiles = _load_panel_files(export_path)
         panel_dfs = [pd.read_csv(file) for file in panelfiles]
-        unique_panels = _compare_dataframes(panel_dfs)
+        unique_panels, hash_to_files = _compare_dataframes(panel_dfs, panelfiles)
 
         # Add extra useful columns to the panel file(s) for use later
         for p in unique_panels.values():
@@ -747,15 +747,50 @@ def export_imc_folder(
             # By default, don't remove outliers
             p['remove_outliers'] = False
 
+        # Create panel mapping data
+        panel_mapping_data = []
+        hash_to_panel_id = {}
+        
         # Save the panel(s)
         if len(unique_panels) == 1:
             logging.info("All panels are identical. Saving as 'panel.csv'.")
             unique_dataframe = next(iter(unique_panels.values()))
             unique_dataframe.to_csv(merged_metadata_output_folder / 'panel.csv', index=False)
+            
+            # Create mapping for single panel
+            hash_val = next(iter(unique_panels.keys()))
+            panel_file_name = 'panel.csv'
+            hash_to_panel_id[hash_val] = panel_file_name
+            
+            for source_file in hash_to_files[hash_val]:
+                panel_mapping_data.append({
+                    'source_file': source_file,
+                    'panel_file': panel_file_name
+                })
         else:
             logging.warning(f"WARNING: Found {len(unique_panels)} unique panels. Saving them as 'panel_1.csv', 'panel_2.csv', etc.")
             for i, (hash_val, df) in enumerate(unique_panels.items(), start=1):
-                df.to_csv(merged_metadata_output_folder / f'panel_{i}.csv', index=False)
+                panel_file_name = f'panel_{i}.csv'
+                df.to_csv(merged_metadata_output_folder / panel_file_name, index=False)
+                hash_to_panel_id[hash_val] = panel_file_name
+                
+                # Add mapping entries for this panel
+                for source_file in hash_to_files[hash_val]:
+                    panel_mapping_data.append({
+                        'source_file': source_file,
+                        'panel_file': panel_file_name
+                    })
+        
+        # Save panel mapping file
+        if panel_mapping_data:
+            panel_mapping_df = pd.DataFrame(panel_mapping_data)
+            panel_mapping_file = merged_metadata_output_folder / 'panel_mapping.csv'
+            panel_mapping_df.to_csv(panel_mapping_file, index=False)
+            logging.info(f'Panel mapping saved to {panel_mapping_file}')
+            logging.info(f'Panel mapping shows which source files use which panel file:')
+            for panel_file in panel_mapping_df['panel_file'].unique():
+                source_files = panel_mapping_df[panel_mapping_df['panel_file'] == panel_file]['source_file'].tolist()
+                logging.info(f'  {panel_file}: {source_files}')
 
     # Merge all errors (only relevant for MCD files)
     if export_errors:
@@ -793,7 +828,7 @@ def _load_panel_files(directory):
     return csv_files
 
 
-def _compare_dataframes(dataframes):
+def _compare_dataframes(dataframes, file_paths=None):
     """
     Compare all dataframes and identify unique ones.
 
@@ -801,18 +836,39 @@ def _compare_dataframes(dataframes):
     ----------
     dataframes : list of pandas.DataFrame
         List of DataFrames to compare.
+    file_paths : list of Path, optional
+        List of file paths corresponding to the dataframes.
 
     Returns
     -------
-    dict
+    unique_dataframes : dict
         Dictionary of unique dataframes with their hash values as keys.
+    hash_to_files : dict
+        Dictionary mapping hash values to lists of file paths that use each panel.
     """
     unique_dataframes = {}
-    for df in dataframes:
+    hash_to_files = {}
+    
+    for i, df in enumerate(dataframes):
         hash_val = hashlib.sha256(pd.util.hash_pandas_object(df, index=True).values).hexdigest()
+        
         if hash_val not in unique_dataframes:
             unique_dataframes[hash_val] = df
-    return unique_dataframes
+            hash_to_files[hash_val] = []
+        
+        if file_paths is not None and i < len(file_paths):
+            # Extract source file name from the panel file path
+            # Panel files are named like "filename_acq_X.csv" or "filename.csv"
+            panel_file = file_paths[i]
+            source_name = panel_file.stem
+            
+            # For MCD files, remove "_acq_X" suffix to get source file name
+            if '_acq_' in source_name:
+                source_name = source_name.split('_acq_')[0]
+            
+            hash_to_files[hash_val].append(source_name)
+    
+    return unique_dataframes, hash_to_files
 
 
 def _compare_lists_by_characters(list1, list2):
