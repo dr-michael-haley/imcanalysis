@@ -22,7 +22,7 @@ import pandas as pd
 from tqdm import tqdm
 
 # Import shared utilities
-from config_and_utils import cleanstring, setup_logging, process_config_with_overrides
+from .config_and_utils import cleanstring, setup_logging, process_config_with_overrides
 
 
 class FilenameHarmonizer:
