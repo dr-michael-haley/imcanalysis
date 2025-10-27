@@ -250,7 +250,7 @@ class PanelConsistencyChecker:
         logging.info("Computing QC pixel statistics for denoised images...")
         qc_records = []
         
-        for _, row in panel_df.iterrows():
+        for _, row in tqdm(panel_df.iterrows(), total=len(panel_df), desc="Computing pixel QC"):
             channel_name = row['channel_name']
             channel_label = row['channel_label_clean']
             channel_pattern = f"{channel_name}_{channel_label}"
