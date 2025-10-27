@@ -14,6 +14,7 @@ Usage:
 import os
 import argparse
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Set, Tuple
 import pandas as pd
@@ -660,7 +661,7 @@ Examples:
     parser.add_argument('--show_all', action='store_true',
                        help='Show results for all ROIs, not just those with issues')
     parser.add_argument('--save_csv', type=str,
-                       help='Save detailed results to CSV file')
+                       help='Custom filename for CSV report (default: auto-timestamped filename)')
     parser.add_argument('--skip_pixel_qc', action='store_true',
                        help='Skip pixel-level QC analysis (useful if tifffile not available)')
     parser.add_argument('--log_level', type=str, default='INFO',
@@ -727,9 +728,13 @@ def main():
         checker.print_summary()
         checker.print_detailed_results(show_all=args.show_all)
         
-        # Save to CSV if requested
-        if args.save_csv:
-            checker.save_results_to_csv(args.save_csv)
+        # Always save to CSV with timestamped filename
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        default_csv_file = f"panel_consistency_report_{timestamp}.csv"
+        
+        # Use custom filename if provided, otherwise use timestamped default
+        csv_file = args.save_csv if args.save_csv else default_csv_file
+        checker.save_results_to_csv(csv_file)
         
         # Exit with appropriate code
         return 0 if checker.rois_with_issues == 0 else 1
