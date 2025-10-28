@@ -63,6 +63,7 @@ class DenoisingConfig:
 class CreateMasksConfig:
     specific_rois: Optional[List[str]] = None
     dna_image_name: str = 'DNA1'
+    output_folder_name: str = 'preprocessed_dna'  # For DNA preprocessing output
     cellpose_cell_diameter: float = 10.0
     upscale_ratio: float = 1.7
     expand_masks: int = 1

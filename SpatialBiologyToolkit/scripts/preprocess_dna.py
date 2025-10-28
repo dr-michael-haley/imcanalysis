@@ -123,13 +123,9 @@ def preprocess_single_roi(
         )
         processing_steps.append("upscale")
     
-    # Create output directory for this ROI
-    roi_output_path = output_folder / roi
-    roi_output_path.mkdir(parents=True, exist_ok=True)
-    
-    # Save processed image
-    output_filename = dna_file.replace('.tiff', '_processed.tiff').replace('.tif', '_processed.tiff')
-    output_path = roi_output_path / output_filename
+    # Save processed image directly in output folder as {roi_name}.tiff
+    output_filename = f"{roi}.tiff"
+    output_path = output_folder / output_filename
     skio.imsave(output_path, current_img.astype(np.float32))
     
     # Calculate statistics
@@ -234,18 +230,9 @@ def process_all_rois(general_config: GeneralConfig, mask_config: CreateMasksConf
     """
     logging.info("Starting DNA preprocessing for all ROIs.")
     
-    # Setup paths
+    # Setup paths - use simple output folder from config
     input_folder = Path(general_config.denoised_images_folder)
-    # Create a simple output folder name based on processing options
-    output_folder_name = "preprocessed_dna"
-    if mask_config.run_deblur and mask_config.run_upscale:
-        output_folder_name += "_deblur_upscale"
-    elif mask_config.run_deblur:
-        output_folder_name += "_deblur"
-    elif mask_config.run_upscale:
-        output_folder_name += "_upscale"
-    
-    output_folder = Path(output_folder_name)
+    output_folder = Path(mask_config.output_folder_name)
     qc_folder = Path(general_config.qc_folder) / 'DNA_preprocessing_QC'
     
     # Create output directories
