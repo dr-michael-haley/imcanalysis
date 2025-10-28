@@ -187,8 +187,7 @@ def segment_single_roi(
     if cp_sam_model is None:
         cp_sam_model = models.CellposeModel(
             model_type='cpsam',
-            gpu=True,
-            pretrained_model='cpsam'
+            gpu=True
         )
     
     # Prepare normalization parameters
@@ -394,8 +393,7 @@ def process_all_rois(general_config: GeneralConfig, mask_config: CreateMasksConf
     try:
         cp_sam_model = models.CellposeModel(
             model_type='cpsam',
-            gpu=True,
-            pretrained_model='cpsam'
+            gpu=True
         )
         logging.info("CellPose-SAM model loaded successfully")
     except Exception as e:
