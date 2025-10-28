@@ -206,7 +206,7 @@ def segment_single_roi(
     logging.debug(f"Running CellPose-SAM on {roi_name} with diameter={diameter_for_segmentation}")
     
     try:
-        masks, flows, styles, diams = cp_sam_model.eval(
+        masks, flows, styles = cp_sam_model.eval(
             img,
             diameter=diameter_for_segmentation,
             channels=None,  # Grayscale image
@@ -216,11 +216,13 @@ def segment_single_roi(
             flow_threshold=config.flow_threshold,
             min_size=config.min_cell_area or 15,
             max_size_fraction=config.max_size_fraction,
-            resample=config.resample,
             augment=config.augment,
             tile_overlap=config.tile_overlap,
             compute_masks=True
         )
+        
+        # In CellPose v4+, diameter info might be in styles or we use the input diameter
+        actual_diameter = diameter_for_segmentation  # Fallback to input diameter
         
     except Exception as e:
         logging.error(f"CellPose-SAM segmentation failed for {roi_name}: {str(e)}")
@@ -330,7 +332,7 @@ def segment_single_roi(
         'Diameter_used': diameter_for_segmentation,
         'Diameter_base': config.cellpose_cell_diameter,
         'Upscale_ratio': config.upscale_ratio if config.run_upscale else 1.0,
-        'Actual_diameter': diams[0] if isinstance(diams, (list, np.ndarray)) else diams,
+        'Actual_diameter': actual_diameter,
         'CellProb_threshold': config.cellprob_threshold,
         'Flow_threshold': config.flow_threshold,
         'Min_size': min_area,
