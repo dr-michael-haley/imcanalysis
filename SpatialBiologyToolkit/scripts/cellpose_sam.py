@@ -28,8 +28,9 @@ from pathlib import Path
 from skimage import io as skio
 from skimage.measure import regionprops
 from skimage.segmentation import expand_labels
-from skimage.morphology import remove_small_objects, binary_fill_holes
+from skimage.morphology import remove_small_objects
 from skimage.transform import resize
+from scipy.ndimage import binary_fill_holes
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 from tqdm import tqdm
