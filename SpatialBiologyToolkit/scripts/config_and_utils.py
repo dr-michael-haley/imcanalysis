@@ -81,6 +81,15 @@ class CreateMasksConfig:
     image_normalise_percentile_upper: float =  99.9
     dpi_qc_images: int = 300
 
+    # CellPose-SAM mode toggle and settings - uses output_folder_name for input, GeneralConfig.masks_folder for output
+    max_size_fraction: float = 0.4              # Max cell size as fraction of image
+    remove_edge_masks: bool = False         # Remove masks touching image edges  
+    fill_holes: bool = True                 # Fill holes in segmented masks
+    batch_size: int = 8                     # Batch size for segmentation
+    resample: bool = True                   # Resample for better boundaries
+    augment: bool = False                   # Use test-time augmentation
+    tile_overlap: float = 0.1               # Overlap fraction for tiling
+
     # Parameter scanning fields:
     run_parameter_scan: bool = False
     param_a: Optional[str] = 'cellprob_threshold'

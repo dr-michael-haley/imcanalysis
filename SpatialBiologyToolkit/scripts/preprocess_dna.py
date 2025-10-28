@@ -213,7 +213,7 @@ def create_comparison_image(original_img: np.ndarray, processed_img: np.ndarray,
     plt.colorbar(im2, ax=axes[1], shrink=0.6)
     
     plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.savefig(output_path, dpi=400, bbox_inches='tight')
     plt.close()
 
 

@@ -4,6 +4,7 @@ import yaml
 from dataclasses import asdict
 from .config_and_utils import (
     GeneralConfig,
+    PreprocessConfig,
     CreateMasksConfig,
     SegmentationConfig,
     DenoisingConfig,
@@ -19,6 +20,7 @@ def generate_config_template(output_file: str = 'config.yaml'):
     # Create instances of the dataclasses with default values
     config = {
         'general': asdict(GeneralConfig()),
+        'preprocess': asdict(PreprocessConfig()),
         'createmasks': asdict(CreateMasksConfig()),
         'segmentation': asdict(SegmentationConfig()),
         'denoising': asdict(DenoisingConfig()),
