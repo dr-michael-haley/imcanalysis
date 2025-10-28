@@ -71,6 +71,7 @@ def load_imgs_from_directory(load_directory, channel_name, quiet=False):
     img_collect = []
     img_folders = glob(os.path.join(str(load_directory), "*", ""))
     img_file_list = []
+    matched_folders = []  # Only folders that contain the channel
 
     if not quiet:
         print('Loading image data from directories...\n')
@@ -92,6 +93,7 @@ def load_imgs_from_directory(load_directory, channel_name, quiet=False):
 
                 img_file_list.append(img_file)
                 img_collect.append(img_read)
+                matched_folders.append(sub_img_folder)  # Add folder only when channel is found
                 break  # Only one image per channel per folder
 
     if not img_collect:
@@ -100,9 +102,9 @@ def load_imgs_from_directory(load_directory, channel_name, quiet=False):
 
     if not quiet:
         print('\nImage data loading completed!')
-        logging.info('Image data loading completed.')
+        logging.info(f'Found {len(img_collect)} images for channel "{channel_name}" in {len(matched_folders)} ROIs.')
 
-    return img_collect, img_file_list, img_folders
+    return img_collect, img_file_list, matched_folders
 
 def denoise_batch(
     general_config: GeneralConfig,
@@ -174,7 +176,7 @@ def denoise_batch(
         try:
             logging.info(f'Starting processing for channel: {channel_name}')
             # Load images for the channel
-            img_collect, img_file_list, img_folders = load_imgs_from_directory(raw_directory, channel_name)
+            img_collect, img_file_list, matched_folders = load_imgs_from_directory(raw_directory, channel_name)
             logging.info(f'Loaded {len(img_collect)} images for channel {channel_name}')
 
             if method == 'deep_snf':
@@ -278,7 +280,7 @@ def denoise_batch(
                 print_memory_status()
 
                 # Process images
-                for img, img_file_name, folder in zip(img_collect, img_file_list, img_folders):
+                for img, img_file_name, folder in zip(img_collect, img_file_list, matched_folders):
                     # Perform denoising
                     logging.info(f'Denoising image: {img_file_name}')
                     img_denoised = deepsnf.perform_IMC_Denoise(
@@ -315,7 +317,7 @@ def denoise_batch(
                 )
 
                 # Process images
-                for img, img_file_name, folder in zip(img_collect, img_file_list, img_folders):
+                for img, img_file_name, folder in zip(img_collect, img_file_list, matched_folders):
                     logging.info(f'Denoising image: {img_file_name}')
                     # Perform DIMR denoising
                     img_denoised = dimr.perform_DIMR(img)
