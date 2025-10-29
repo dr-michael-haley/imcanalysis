@@ -71,7 +71,8 @@ class CreateMasksConfig:
     qc_boundary_dilation: int = 0
     min_cell_area: Optional[int] = 15
     max_cell_area: Optional[int] = 200
-    cell_pose_model: str = 'nuclei'
+    cell_pose_model: str = 'nuclei'  # For CellPose v3 (original createmasks)
+    cell_pose_sam_model: str = 'cpsam'  # For CellPose-SAM (cellpose_sam script)
     cellprob_threshold: float = 0.0
     flow_threshold: float = 0.4
     run_deblur: bool = True

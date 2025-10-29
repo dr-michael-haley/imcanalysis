@@ -37,6 +37,7 @@ from tqdm import tqdm
 from dataclasses import dataclass, field
 from typing import Optional, List
 import warnings
+import seaborn as sb
 
 from .config_and_utils import (
     process_config_with_overrides,
@@ -152,6 +153,7 @@ def segment_single_roi(
     output_dir: Path,
     qc_dir: Path,
     config: CreateMasksConfig,
+    denoised_folder: Path,
     cp_sam_model=None
 ) -> dict:
     """
@@ -169,6 +171,8 @@ def segment_single_roi(
         QC directory for overlay images.
     config : CreateMasksConfig
         Configuration object.
+    denoised_folder : Path
+        Path to the denoised images folder for overlay generation.
     cp_sam_model : CellposeModel, optional
         Pre-loaded CellPose-SAM model.
         
@@ -181,15 +185,34 @@ def segment_single_roi(
     
     # Load preprocessed image
     img = load_preprocessed_image(image_path)
-    original_shape = img.shape
+    preprocessed_shape = img.shape
+    
+    # Load original denoised DNA image to get true original dimensions
+    from .config_and_utils import get_filename
+    roi_denoised_path = denoised_folder / roi_name
+    original_dna_img = None
+    original_shape = None
+    
+    if roi_denoised_path.exists():
+        try:
+            dna_file = get_filename(roi_denoised_path, config.dna_image_name)
+            original_dna_img = skio.imread(roi_denoised_path / dna_file)
+            original_shape = original_dna_img.shape
+            logging.debug(f"Loaded original denoised DNA image: {original_shape}")
+        except Exception as e:
+            logging.warning(f"Could not load original DNA image for {roi_name}: {e}")
+            original_shape = preprocessed_shape  # Fallback
+    else:
+        logging.warning(f"Denoised ROI folder not found: {roi_denoised_path}")
+        original_shape = preprocessed_shape  # Fallback
     
     # Initialize model if not provided
     if cp_sam_model is None:
         # Determine if GPU is available and working
         use_gpu = torch.cuda.is_available()
-        # In CellPose v4.0.1+, use pretrained_model instead of model_type
+        # Use configurable model instead of hardcoded 'cpsam'
         cp_sam_model = models.CellposeModel(
-            pretrained_model='cpsam',
+            pretrained_model=config.cell_pose_sam_model,
             gpu=use_gpu
         )
     
@@ -232,16 +255,10 @@ def segment_single_roi(
         logging.error(f"CellPose-SAM segmentation failed for {roi_name}: {str(e)}")
         raise
     
-    # If preprocessing included upscaling, we need to get the original image size
-    # to downscale the masks back to the original dimensions
-    # We'll estimate the original size based on the upscale ratio
-    if config.run_upscale:
-        original_estimated_shape = (
-            int(img.shape[0] / config.upscale_ratio),
-            int(img.shape[1] / config.upscale_ratio)
-        )
-        logging.debug(f"Downscaling masks from {img.shape} to estimated original size {original_estimated_shape}")
-        masks = resize(masks, original_estimated_shape, order=0, preserve_range=True, anti_aliasing=False)
+    # If preprocessing included upscaling, we need to downscale the masks back to original dimensions
+    if config.run_upscale and original_shape is not None:
+        logging.debug(f"Downscaling masks from {masks.shape} to original size {original_shape}")
+        masks = resize(masks, original_shape, order=0, preserve_range=True, anti_aliasing=False)
         masks = masks.astype(np.uint16)
     
     # Process masks
@@ -294,18 +311,21 @@ def segment_single_roi(
     mask_path = output_dir / f"{roi_name}.tiff"
     skio.imsave(mask_path, final_mask.astype(np.uint16))
     
-    # Create QC overlay if requested
-    # For QC, we'll use the downscaled image if available, or the preprocessed image
+    # Create QC overlays if requested
     qc_image_path_str = None
+    qc_raw_overlay_path_str = None
+    
     if config.perform_qc:
         qc_overlay_dir = qc_dir / 'CellposeSAM_overlay'
+        qc_raw_overlay_dir = qc_dir / 'CellposeSAM_raw_overlay'
         qc_overlay_dir.mkdir(exist_ok=True, parents=True)
+        qc_raw_overlay_dir.mkdir(exist_ok=True, parents=True)
         
-        # Use the appropriately sized image for QC overlay
+        # Create overlay on processed image (resized to match final masks)
         qc_image = img
-        if config.run_upscale:
-            # Downscale the QC image to match the mask size
-            qc_image = resize(img, final_mask.shape, order=1, preserve_range=True, anti_aliasing=True)
+        if config.run_upscale and original_shape is not None:
+            # Downscale the processed image to match the final mask size
+            qc_image = resize(img, original_shape, order=1, preserve_range=True, anti_aliasing=True)
         
         qc_image_array = create_qc_overlay(
             image=qc_image,
@@ -320,6 +340,25 @@ def segment_single_roi(
         qc_image_path = qc_overlay_dir / f"{roi_name}_cpsam_overlay.png"
         plt.imsave(qc_image_path, qc_image_array, dpi=config.dpi_qc_images)
         qc_image_path_str = str(qc_image_path)
+        
+        # Create overlay on original denoised image if available
+        if original_dna_img is not None:
+            qc_raw_image_array = create_qc_overlay(
+                image=original_dna_img,
+                final_masks=final_mask,
+                excluded_masks=excluded_mask,
+                boundary_dilation=config.qc_boundary_dilation,
+                vmin=0,
+                vmax_quantile=0.97,
+                outline_alpha=0.8
+            )
+            
+            qc_raw_image_path = qc_raw_overlay_dir / f"{roi_name}_cpsam_raw_overlay.png"
+            plt.imsave(qc_raw_image_path, qc_raw_image_array, dpi=config.dpi_qc_images)
+            qc_raw_overlay_path_str = str(qc_raw_image_path)
+            logging.debug(f"Created raw overlay: {qc_raw_image_path}")
+        else:
+            logging.warning(f"No original DNA image available for raw overlay: {roi_name}")
     
     # Compile results
     result = {
@@ -330,9 +369,10 @@ def segment_single_roi(
         'Objects_kept': kept_objects,
         'Objects_excluded': total_objects - kept_objects,
         'Objects_per_mm2': objects_per_mm2,
-        'Image_shape_processed': f"{original_shape[0]}x{original_shape[1]}",
+        'Image_shape_preprocessed': f"{preprocessed_shape[0]}x{preprocessed_shape[1]}",
+        'Image_shape_original': f"{original_shape[0]}x{original_shape[1]}" if original_shape else "unknown",
         'Mask_shape_final': f"{final_mask.shape[0]}x{final_mask.shape[1]}",
-        'Model_type': 'cpsam',
+        'Model_type': config.cell_pose_sam_model,
         'Diameter_used': diameter_for_segmentation,
         'Diameter_base': config.cellpose_cell_diameter,
         'Upscale_ratio': config.upscale_ratio if config.run_upscale else 1.0,
@@ -345,7 +385,8 @@ def segment_single_roi(
         'Expand_masks': config.expand_masks,
         'Fill_holes': config.fill_holes,
         'Remove_edge_masks': config.remove_edge_masks,
-        'QC_image_path': qc_image_path_str
+        'QC_image_path': qc_image_path_str,
+        'QC_raw_overlay_path': qc_raw_overlay_path_str
     }
     
     return result
@@ -368,6 +409,7 @@ def process_all_rois(general_config: GeneralConfig, mask_config: CreateMasksConf
     input_folder = Path(mask_config.output_folder_name)  # Use existing preprocessed DNA folder
     output_folder = Path(general_config.masks_folder)    # Use standard masks folder
     qc_folder = Path(general_config.qc_folder) / 'CellposeSAM_QC'
+    denoised_folder = Path(general_config.denoised_images_folder)  # For raw overlay generation
     
     # Create output directories
     output_folder.mkdir(parents=True, exist_ok=True)
@@ -412,14 +454,14 @@ def process_all_rois(general_config: GeneralConfig, mask_config: CreateMasksConf
         use_gpu = torch.cuda.is_available()
         logging.info(f"Using GPU: {use_gpu}")
         
-        # In CellPose v4.0.1+, use pretrained_model instead of model_type
+        # Use configurable model instead of hardcoded 'cpsam'
         cp_sam_model = models.CellposeModel(
-            pretrained_model='cpsam',
+            pretrained_model=mask_config.cell_pose_sam_model,
             gpu=use_gpu
         )
-        logging.info("CellPose-SAM model loaded successfully")
+        logging.info(f"CellPose-SAM model '{mask_config.cell_pose_sam_model}' loaded successfully")
     except Exception as e:
-        logging.error(f"Failed to load CellPose-SAM model: {str(e)}")
+        logging.error(f"Failed to load CellPose-SAM model '{mask_config.cell_pose_sam_model}': {str(e)}")
         raise
     
     # Process each ROI
@@ -444,6 +486,7 @@ def process_all_rois(general_config: GeneralConfig, mask_config: CreateMasksConf
                 output_dir=output_folder,
                 qc_dir=qc_folder,
                 config=mask_config,
+                denoised_folder=denoised_folder,
                 cp_sam_model=cp_sam_model
             )
             
@@ -478,8 +521,298 @@ def process_all_rois(general_config: GeneralConfig, mask_config: CreateMasksConf
             logging.info(f"Average objects per ROI: {avg_objects:.1f}")
             logging.info(f"Average density: {avg_density:.1f} objects/mm²")
             logging.info(f"Average diameter used: {avg_diameter:.1f} pixels")
+            
+            # Check for dimension consistency
+            dimension_issues = sum(1 for r in results if r['Image_shape_original'] == 'unknown')
+            if dimension_issues > 0:
+                logging.warning(f"{dimension_issues} ROIs had dimension detection issues")
+            
+            # Count overlay creation success
+            raw_overlays_created = sum(1 for r in results if r.get('QC_raw_overlay_path') is not None)
+            logging.info(f"Raw overlays created: {raw_overlays_created}/{len(results)} ROIs")
     
     logging.info("CellPose-SAM segmentation completed.")
+
+
+def parameter_scan_cpsam(general_config: GeneralConfig, mask_config: CreateMasksConfig):
+    """
+    Parameter scan mode for CellPose-SAM: run multiple parameter sets defined by two parameters
+    (param_a, param_b), each with a list of values. Create summarizing plots comparing performance.
+    
+    Simplified version that processes all ROIs (no sampling) and saves masks/QC with parameter
+    identifiers in folder names.
+    
+    Parameters
+    ----------
+    general_config : GeneralConfig
+        General configuration.
+    mask_config : CreateMasksConfig
+        Mask creation configuration with parameter scan settings.
+    """
+    logging.info("Starting CellPose-SAM parameter scan.")
+    
+    param_a = mask_config.param_a
+    param_a_values = mask_config.param_a_values or []
+    param_b = mask_config.param_b
+    param_b_values = mask_config.param_b_values or []
+    
+    if not param_a or not param_a_values or not param_b or not param_b_values:
+        logging.error("Parameter scan requires param_a, param_a_values, param_b, and param_b_values to be set")
+        return
+    
+    # Setup base paths
+    input_folder = Path(mask_config.output_folder_name)
+    denoised_folder = Path(general_config.denoised_images_folder)
+    base_qc_folder = Path(general_config.qc_folder) / f'CellposeSAM_ParameterScan_{cleanstring(param_a)}_{cleanstring(param_b)}'
+    base_qc_folder.mkdir(parents=True, exist_ok=True)
+    
+    # Find available ROIs
+    if mask_config.specific_rois:
+        rois_to_process = mask_config.specific_rois
+        logging.info(f"Parameter scanning specific ROIs: {rois_to_process}")
+    else:
+        # Find all .tiff files in input folder
+        image_files = list(input_folder.glob("*.tiff")) + list(input_folder.glob("*.tif"))
+        rois_to_process = [f.stem for f in image_files]
+        logging.info(f"Parameter scanning all {len(rois_to_process)} ROIs found in {input_folder}")
+        
+        if not rois_to_process:
+            logging.error(f"No .tiff files found in {input_folder}")
+            return
+    
+    # Initialize CellPose-SAM model once
+    use_gpu = torch.cuda.is_available()
+    logging.info(f"Initializing CellPose-SAM model (GPU: {use_gpu})")
+    cp_sam_model = models.CellposeModel(pretrained_model=mask_config.cell_pose_sam_model, gpu=use_gpu)
+    
+    # Construct parameter grid
+    param_sets = []
+    for a_val in param_a_values:
+        for b_val in param_b_values:
+            param_sets.append({param_a: a_val, param_b: b_val})
+    
+    logging.info(f"Running {len(param_sets)} parameter combinations on {len(rois_to_process)} ROIs")
+    
+    all_results = []
+    
+    # Run parameter scan
+    for i, param_set in enumerate(param_sets):
+        logging.info(f"Parameter set {i+1}/{len(param_sets)}: {param_set}")
+        
+        # Create output folders with parameter identifiers
+        param_string = f"{cleanstring(param_a)}-{cleanstring(param_set[param_a])}_{cleanstring(param_b)}-{cleanstring(param_set[param_b])}"
+        
+        # Create temporary config with current parameters
+        temp_config = CreateMasksConfig(**mask_config.__dict__)
+        setattr(temp_config, param_a, param_set[param_a])
+        setattr(temp_config, param_b, param_set[param_b])
+        
+        # Check if we need to reinitialize the model (if model type is being scanned)
+        current_cp_sam_model = cp_sam_model
+        if param_a == 'cell_pose_sam_model' or param_b == 'cell_pose_sam_model':
+            try:
+                current_cp_sam_model = models.CellposeModel(
+                    pretrained_model=temp_config.cell_pose_sam_model,
+                    gpu=use_gpu
+                )
+                logging.info(f"Initialized model '{temp_config.cell_pose_sam_model}' for parameter scan")
+            except Exception as e:
+                logging.error(f"Failed to initialize model '{temp_config.cell_pose_sam_model}': {str(e)}")
+                continue
+        
+        # Setup output folders for this parameter set
+        param_masks_folder = Path(general_config.masks_folder) / f'param_{param_string}'
+        param_qc_folder = base_qc_folder / f'param_{param_string}'
+        param_masks_folder.mkdir(parents=True, exist_ok=True)
+        param_qc_folder.mkdir(parents=True, exist_ok=True)
+        
+        # Process each ROI with current parameter set
+        param_results = []
+        for roi in tqdm(rois_to_process, desc=f"Param set {i+1}"):
+            try:
+                # Construct image path
+                image_path = input_folder / f"{roi}.tiff"
+                if not image_path.exists():
+                    image_path = input_folder / f"{roi}.tif"
+                    if not image_path.exists():
+                        logging.warning(f"Image file not found for ROI {roi}")
+                        continue
+                
+                result = segment_single_roi(
+                    roi_name=roi,
+                    image_path=image_path,
+                    output_dir=param_masks_folder,
+                    qc_dir=param_qc_folder,
+                    config=temp_config,
+                    denoised_folder=denoised_folder,
+                    cp_sam_model=current_cp_sam_model
+                )
+                
+                # Add parameter information to result
+                result[f'{param_a}'] = param_set[param_a]
+                result[f'{param_b}'] = param_set[param_b]
+                result['Parameter_set'] = param_string
+                
+                param_results.append(result)
+                
+            except Exception as e:
+                logging.error(f"Error processing ROI {roi} with params {param_set}: {str(e)}", exc_info=True)
+                continue
+        
+        # Save results for this parameter set
+        if param_results:
+            param_df = pd.DataFrame(param_results)
+            param_csv_path = param_qc_folder / f'CellposeSAM_results_{param_string}.csv'
+            param_df.to_csv(param_csv_path, index=False)
+            logging.info(f"Saved {len(param_results)} results for parameter set {param_string}")
+            
+            all_results.extend(param_results)
+    
+    # Save combined results and create summary plots
+    if all_results:
+        combined_df = pd.DataFrame(all_results)
+        combined_csv_path = base_qc_folder / 'CellposeSAM_ParameterScan_All.csv'
+        combined_df.to_csv(combined_csv_path, index=False)
+        logging.info(f"Saved combined parameter scan results to {combined_csv_path}")
+        
+        # Create summary plots
+        create_parameter_scan_plots(combined_df, base_qc_folder, param_a, param_b, mask_config.dpi_qc_images)
+        
+        # Print summary statistics
+        logging.info(f"\nCellPose-SAM Parameter Scan Summary:")
+        logging.info(f"Total parameter combinations: {len(param_sets)}")
+        logging.info(f"Total ROIs processed: {len(set(r['ROI'] for r in all_results))}")
+        logging.info(f"Total segmentations: {len(all_results)}")
+        
+        # Calculate average statistics by parameter set
+        summary_stats = combined_df.groupby(['Parameter_set']).agg({
+            'Objects_kept': 'mean',
+            'Objects_per_mm2': 'mean',
+            'Objects_excluded': 'mean'
+        }).round(2)
+        
+        logging.info("\nAverage statistics by parameter set:")
+        for param_set, stats in summary_stats.iterrows():
+            logging.info(f"{param_set}: Kept={stats['Objects_kept']:.1f}, "
+                        f"Density={stats['Objects_per_mm2']:.1f}/mm², "
+                        f"Excluded={stats['Objects_excluded']:.1f}")
+    
+    logging.info("CellPose-SAM parameter scan completed.")
+
+
+def create_parameter_scan_plots(df: pd.DataFrame, output_dir: Path, param_a: str, param_b: str, dpi: int = 300):
+    """
+    Create summary plots for parameter scan results.
+    
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Combined results dataframe.
+    output_dir : Path
+        Output directory for plots.
+    param_a : str
+        Name of first parameter.
+    param_b : str
+        Name of second parameter.
+    dpi : int
+        DPI for saved plots.
+    """
+    logging.info("Creating parameter scan summary plots")
+    
+    # Map parameter names to column names (maintain compatibility with original script)
+    param_to_column = {
+        'cellpose_cell_diameter': 'Diameter_base',
+        'cellprob_threshold': 'CellProb_threshold', 
+        'flow_threshold': 'Flow_threshold',
+        'max_size_fraction': 'Max_size_fraction',
+        'min_cell_area': 'Min_size',
+        'expand_masks': 'Expand_masks',
+        'batch_size': 'batch_size',  # May not be in results, use parameter name
+        'cell_pose_sam_model': 'Model_type',
+    }
+    
+    # Use column name if available, otherwise use parameter name directly
+    param_a_col = param_to_column.get(param_a, param_a)
+    param_b_col = param_to_column.get(param_b, param_b)
+    
+    # Check if columns exist in dataframe, if not use parameter value directly
+    if param_a_col not in df.columns:
+        param_a_col = param_a
+    if param_b_col not in df.columns:
+        param_b_col = param_b
+    
+    # Metrics to plot
+    metrics = ['Objects_kept', 'Objects_per_mm2', 'Objects_excluded']
+    metric_labels = ['Objects Kept', 'Objects per mm²', 'Objects Excluded']
+    
+    for metric, label in zip(metrics, metric_labels):
+        try:
+            plt.figure(figsize=(12, 8))
+            
+            # Create barplot
+            ax = sb.barplot(
+                data=df,
+                y=metric,
+                x=param_a_col,
+                hue=param_b_col,
+                palette='tab20',
+                ci='sd',  # Show standard deviation
+                capsize=0.1
+            )
+            
+            # Customize plot
+            ax.set_title(f'CellPose-SAM Parameter Scan: {label}', fontsize=14, fontweight='bold')
+            ax.set_xlabel(f'{param_a}', fontsize=12)
+            ax.set_ylabel(f'{label}', fontsize=12)
+            
+            # Move legend outside plot area
+            sb.move_legend(ax, "upper left", bbox_to_anchor=(1, 1))
+            
+            # Rotate x-axis labels if needed
+            plt.xticks(rotation=45, ha='right')
+            
+            # Save plot
+            plot_path = output_dir / f"ParameterScan_{cleanstring(metric)}.png"
+            plt.savefig(plot_path, bbox_inches='tight', dpi=dpi)
+            plt.close()
+            
+            logging.info(f"Saved parameter scan plot: {plot_path}")
+            
+        except Exception as e:
+            logging.error(f"Error creating plot for {metric}: {str(e)}")
+            plt.close()
+            continue
+    
+    # Create heatmap for Objects_kept
+    try:
+        plt.figure(figsize=(10, 8))
+        
+        # Pivot data for heatmap
+        pivot_data = df.groupby([param_a_col, param_b_col])['Objects_kept'].mean().unstack()
+        
+        # Create heatmap
+        sb.heatmap(
+            pivot_data,
+            annot=True,
+            fmt='.1f',
+            cmap='viridis',
+            cbar_kws={'label': 'Average Objects Kept'}
+        )
+        
+        plt.title('CellPose-SAM Parameter Scan: Objects Kept Heatmap', fontsize=14, fontweight='bold')
+        plt.xlabel(f'{param_b}', fontsize=12)
+        plt.ylabel(f'{param_a}', fontsize=12)
+        
+        # Save heatmap
+        heatmap_path = output_dir / f"ParameterScan_Objects_Kept_Heatmap.png"
+        plt.savefig(heatmap_path, bbox_inches='tight', dpi=dpi)
+        plt.close()
+        
+        logging.info(f"Saved parameter scan heatmap: {heatmap_path}")
+        
+    except Exception as e:
+        logging.error(f"Error creating heatmap: {str(e)}")
+        plt.close()
 
 
 def print_model_info():
@@ -519,5 +852,11 @@ if __name__ == "__main__":
     
     logging.info(f"CellPose-SAM configuration: {mask_config}")
     
-    # Run segmentation
-    process_all_rois(general_config, mask_config)
+    # Decide mode based on run_parameter_scan and param fields
+    if (mask_config.run_parameter_scan and
+        mask_config.param_a and mask_config.param_a_values and
+        mask_config.param_b and mask_config.param_b_values):
+        parameter_scan_cpsam(general_config, mask_config)
+    else:
+        # Run normal segmentation
+        process_all_rois(general_config, mask_config)
