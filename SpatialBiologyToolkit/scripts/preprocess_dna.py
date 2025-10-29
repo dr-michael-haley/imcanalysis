@@ -114,7 +114,7 @@ def preprocess_single_roi(
     
     # Apply upscale if enabled
     if config.run_upscale and upscale_model is not None:
-        logging.debug(f"Applying upscale to {roi}")
+        logging.debug(f"Applying upscale to {roi}: {current_img.shape} -> target diameter {config.upscale_target_diameter}")
         current_img = upscale_model.eval(
             current_img, 
             channels=None, 
@@ -122,6 +122,7 @@ def preprocess_single_roi(
             batch_size=16
         )
         processing_steps.append("upscale")
+        logging.debug(f"After upscale: {current_img.shape} (actual scale factor: {current_img.shape[0] / original_img.shape[0]:.2f}x)")
     
     # Save processed image directly in output folder as {roi_name}.tiff
     output_filename = f"{roi}.tiff"
@@ -152,6 +153,9 @@ def preprocess_single_roi(
         'Run_deblur': config.run_deblur,
         'Run_upscale': config.run_upscale,
         'Cell_diameter': config.cellpose_cell_diameter,
+        'Upscale_target_diameter': config.upscale_target_diameter if config.run_upscale else config.cellpose_cell_diameter,
+        'Calculated_upscale_ratio': config.calculated_upscale_ratio if config.run_upscale else 1.0,
+        'Actual_scale_factor': current_img.shape[0] / original_img.shape[0],  # Actual scaling applied
         'Original_shape': f"{original_img.shape[0]}x{original_img.shape[1]}",
         'Processed_shape': f"{current_img.shape[0]}x{current_img.shape[1]}",
         'Original_mean': original_stats['mean'],
@@ -257,8 +261,10 @@ def process_all_rois(general_config: GeneralConfig, mask_config: CreateMasksConf
         deblur_model = denoise.DenoiseModel(model_type='deblur_nuclei', gpu=True)
     
     if mask_config.run_upscale:
-        logging.info("Initializing upscale model...")
-        upscale_model = denoise.DenoiseModel(model_type='upsample_nuclei', gpu=True)
+        logging.info(f"Initializing upscale model: {mask_config.upscale_model_type}")
+        logging.info(f"Target diameter: {mask_config.upscale_target_diameter}, Input diameter: {mask_config.cellpose_cell_diameter}")
+        logging.info(f"Calculated upscale ratio: {mask_config.calculated_upscale_ratio:.2f}")
+        upscale_model = denoise.DenoiseModel(model_type=mask_config.upscale_model_type, gpu=True)
     
     # Process each ROI
     results = []

@@ -48,6 +48,36 @@ from .config_and_utils import (
 )
 
 
+def load_cellpose_model(model_name: str, use_gpu: bool = True):
+    """
+    Load a CellPose model with correct parameter handling.
+    
+    Parameters
+    ----------
+    model_name : str
+        Model name - 'cpsam' for CellPose-SAM, or standard model names like 'nuclei', 'cyto', 'cyto2'
+    use_gpu : bool
+        Whether to use GPU acceleration
+        
+    Returns
+    -------
+    CellposeModel
+        Initialized CellPose model
+    """
+    if model_name == 'cpsam':
+        # Use CellPose-SAM model with pretrained_model parameter
+        return models.CellposeModel(
+            pretrained_model='cpsam',
+            gpu=use_gpu
+        )
+    else:
+        # Use standard CellPose model with model_type parameter
+        return models.CellposeModel(
+            model_type=model_name,
+            gpu=use_gpu
+        )
+
+
 def create_qc_overlay(
     image: np.ndarray,
     final_masks: np.ndarray,
@@ -210,11 +240,7 @@ def segment_single_roi(
     if cp_sam_model is None:
         # Determine if GPU is available and working
         use_gpu = torch.cuda.is_available()
-        # Use configurable model instead of hardcoded 'cpsam'
-        cp_sam_model = models.CellposeModel(
-            pretrained_model=config.cell_pose_sam_model,
-            gpu=use_gpu
-        )
+        cp_sam_model = load_cellpose_model(config.cell_pose_sam_model, use_gpu)
     
     # Prepare normalization parameters
     normalize_params = {
@@ -227,7 +253,10 @@ def segment_single_roi(
     # by adjusting the diameter and then downscaling the masks
     diameter_for_segmentation = config.cellpose_cell_diameter
     if config.run_upscale:
-        diameter_for_segmentation = config.cellpose_cell_diameter * config.upscale_ratio
+        # CellPose upscale models have fixed target diameters:
+        # upsample_nuclei -> 17.0 pixels, upsample_cyto3 -> 30.0 pixels
+        # Use the actual target diameter rather than our assumed ratio
+        diameter_for_segmentation = config.upscale_target_diameter
     
     logging.debug(f"Running CellPose-SAM on {roi_name} with diameter={diameter_for_segmentation}")
     
@@ -375,7 +404,8 @@ def segment_single_roi(
         'Model_type': config.cell_pose_sam_model,
         'Diameter_used': diameter_for_segmentation,
         'Diameter_base': config.cellpose_cell_diameter,
-        'Upscale_ratio': config.upscale_ratio if config.run_upscale else 1.0,
+        'Upscale_ratio': config.calculated_upscale_ratio if config.run_upscale else 1.0,
+        'Upscale_target_diameter': config.upscale_target_diameter if config.run_upscale else config.cellpose_cell_diameter,
         'Actual_diameter': actual_diameter,
         'CellProb_threshold': config.cellprob_threshold,
         'Flow_threshold': config.flow_threshold,
@@ -448,20 +478,16 @@ def process_all_rois(general_config: GeneralConfig, mask_config: CreateMasksConf
             logging.warning("Consider setting 'specific_rois: [roi1, roi2, roi3]' in config for testing.")
     
     # Initialize CellPose-SAM model
-    logging.info("Initializing CellPose-SAM model")
+    logging.info("Initializing CellPose model")
     try:
         # Determine if GPU is available and working
         use_gpu = torch.cuda.is_available()
         logging.info(f"Using GPU: {use_gpu}")
         
-        # Use configurable model instead of hardcoded 'cpsam'
-        cp_sam_model = models.CellposeModel(
-            pretrained_model=mask_config.cell_pose_sam_model,
-            gpu=use_gpu
-        )
-        logging.info(f"CellPose-SAM model '{mask_config.cell_pose_sam_model}' loaded successfully")
+        cp_sam_model = load_cellpose_model(mask_config.cell_pose_sam_model, use_gpu)
+        logging.info(f"CellPose model '{mask_config.cell_pose_sam_model}' loaded successfully")
     except Exception as e:
-        logging.error(f"Failed to load CellPose-SAM model '{mask_config.cell_pose_sam_model}': {str(e)}")
+        logging.error(f"Failed to load model '{mask_config.cell_pose_sam_model}': {str(e)}")
         raise
     
     # Process each ROI
@@ -580,10 +606,10 @@ def parameter_scan_cpsam(general_config: GeneralConfig, mask_config: CreateMasks
             logging.error(f"No .tiff files found in {input_folder}")
             return
     
-    # Initialize CellPose-SAM model once
+    # Initialize CellPose model once
     use_gpu = torch.cuda.is_available()
-    logging.info(f"Initializing CellPose-SAM model (GPU: {use_gpu})")
-    cp_sam_model = models.CellposeModel(pretrained_model=mask_config.cell_pose_sam_model, gpu=use_gpu)
+    logging.info(f"Initializing CellPose model (GPU: {use_gpu})")
+    cp_sam_model = load_cellpose_model(mask_config.cell_pose_sam_model, use_gpu)
     
     # Construct parameter grid
     param_sets = []
@@ -611,10 +637,7 @@ def parameter_scan_cpsam(general_config: GeneralConfig, mask_config: CreateMasks
         current_cp_sam_model = cp_sam_model
         if param_a == 'cell_pose_sam_model' or param_b == 'cell_pose_sam_model':
             try:
-                current_cp_sam_model = models.CellposeModel(
-                    pretrained_model=temp_config.cell_pose_sam_model,
-                    gpu=use_gpu
-                )
+                current_cp_sam_model = load_cellpose_model(temp_config.cell_pose_sam_model, use_gpu)
                 logging.info(f"Initialized model '{temp_config.cell_pose_sam_model}' for parameter scan")
             except Exception as e:
                 logging.error(f"Failed to initialize model '{temp_config.cell_pose_sam_model}': {str(e)}")

@@ -91,6 +91,25 @@ class CreateMasksConfig:
     augment: bool = False                   # Use test-time augmentation
     tile_overlap: float = 0.1               # Overlap fraction for tiling
 
+    # Upscale model configuration
+    upscale_model_type: str = 'upsample_nuclei'  # 'upsample_nuclei' or 'upsample_cyto3'
+    
+    @property
+    def upscale_target_diameter(self) -> float:
+        """Get the target diameter for the upscale model."""
+        if self.upscale_model_type == 'upsample_nuclei':
+            return 17.0
+        elif self.upscale_model_type == 'upsample_cyto3':
+            return 30.0
+        else:
+            # Fallback to calculated ratio
+            return self.cellpose_cell_diameter * self.upscale_ratio
+    
+    @property 
+    def calculated_upscale_ratio(self) -> float:
+        """Calculate the actual upscale ratio based on target diameter."""
+        return self.upscale_target_diameter / self.cellpose_cell_diameter
+
     # Parameter scanning fields:
     run_parameter_scan: bool = False
     param_a: Optional[str] = 'cellprob_threshold'
