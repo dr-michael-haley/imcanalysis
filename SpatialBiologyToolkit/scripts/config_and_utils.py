@@ -85,7 +85,7 @@ class CreateMasksConfig:
     max_size_fraction: float = 0.4              # Max cell size as fraction of image
     remove_edge_masks: bool = False         # Remove masks touching image edges  
     fill_holes: bool = True                 # Fill holes in segmented masks
-    batch_size: int = 8                     # Batch size for segmentation
+    batch_size: int = 128                     # Batch size for segmentation
     resample: bool = True                   # Resample for better boundaries
     augment: bool = False                   # Use test-time augmentation
     tile_overlap: float = 0.1               # Overlap fraction for tiling

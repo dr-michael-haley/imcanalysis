@@ -185,9 +185,12 @@ def segment_single_roi(
     
     # Initialize model if not provided
     if cp_sam_model is None:
+        # Determine if GPU is available and working
+        use_gpu = torch.cuda.is_available()
+        # In CellPose v4.0.1+, use pretrained_model instead of model_type
         cp_sam_model = models.CellposeModel(
-            model_type='cpsam',
-            gpu=True
+            pretrained_model='cpsam',
+            gpu=use_gpu
         )
     
     # Prepare normalization parameters
@@ -206,18 +209,19 @@ def segment_single_roi(
     logging.debug(f"Running CellPose-SAM on {roi_name} with diameter={diameter_for_segmentation}")
     
     try:
+        # Optimize batch size for CPU vs GPU
+        batch_size = config.batch_size if torch.cuda.is_available() else 1
+        
         masks, flows, styles = cp_sam_model.eval(
             img,
             diameter=diameter_for_segmentation,
             channels=None,  # Grayscale image
-            batch_size=config.batch_size,
+            batch_size=batch_size,
             normalize=normalize_params,
             cellprob_threshold=config.cellprob_threshold,
             flow_threshold=config.flow_threshold,
             min_size=config.min_cell_area or 15,
-            max_size_fraction=config.max_size_fraction,
             augment=config.augment,
-            tile_overlap=config.tile_overlap,
             compute_masks=True
         )
         
@@ -385,17 +389,33 @@ def process_all_rois(general_config: GeneralConfig, mask_config: CreateMasksConf
             return
     
     # Check GPU availability
-    logging.info(f"GPU available: {torch.cuda.is_available()}")
-    if torch.cuda.is_available():
+    gpu_available = torch.cuda.is_available()
+    logging.info(f"GPU available: {gpu_available}")
+    if gpu_available:
         logging.info(f"GPU device: {torch.cuda.get_device_name()}")
         logging.info(f"GPU memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
+    else:
+        logging.warning("GPU not available - CellPose-SAM will run on CPU which is VERY slow!")
+        logging.warning("Consider using a system with CUDA support for faster processing.")
+        logging.warning(f"Estimated time per ROI on CPU: ~6-8 hours (Total: ~{len(rois_to_process) * 7:.0f} hours)")
+        logging.warning("RECOMMENDATION: Use 'specific_rois' to test on a small subset first!")
+        
+        # If running on CPU with many ROIs, suggest limiting the scope
+        if len(rois_to_process) > 5:
+            logging.warning(f"Processing {len(rois_to_process)} ROIs on CPU will take ~{len(rois_to_process) * 7:.0f} hours!")
+            logging.warning("Consider setting 'specific_rois: [roi1, roi2, roi3]' in config for testing.")
     
     # Initialize CellPose-SAM model
     logging.info("Initializing CellPose-SAM model")
     try:
+        # Determine if GPU is available and working
+        use_gpu = torch.cuda.is_available()
+        logging.info(f"Using GPU: {use_gpu}")
+        
+        # In CellPose v4.0.1+, use pretrained_model instead of model_type
         cp_sam_model = models.CellposeModel(
-            model_type='cpsam',
-            gpu=True
+            pretrained_model='cpsam',
+            gpu=use_gpu
         )
         logging.info("CellPose-SAM model loaded successfully")
     except Exception as e:
