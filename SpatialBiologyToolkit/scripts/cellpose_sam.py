@@ -50,12 +50,12 @@ from .config_and_utils import (
 
 def load_cellpose_model(model_name: str, use_gpu: bool = True):
     """
-    Load a CellPose model with correct parameter handling.
+    Load a CellPose model with correct parameter handling for CellPose v4.0.1+.
     
     Parameters
     ----------
     model_name : str
-        Model name - 'cpsam' for CellPose-SAM, or standard model names like 'nuclei', 'cyto', 'cyto2'
+        Model name - 'cpsam' for CellPose-SAM, or full path to user-trained model
     use_gpu : bool
         Whether to use GPU acceleration
         
@@ -63,19 +63,28 @@ def load_cellpose_model(model_name: str, use_gpu: bool = True):
     -------
     CellposeModel
         Initialized CellPose model
+        
+    Notes
+    -----
+    CellPose v4.0.1+ only supports:
+    - 'cpsam' (CellPose-SAM model)
+    - Full paths to user-trained models
+    Traditional models like 'nuclei', 'cyto', 'cyto2' are no longer available.
     """
-    if model_name == 'cpsam':
-        # Use CellPose-SAM model with pretrained_model parameter
-        return models.CellposeModel(
-            pretrained_model='cpsam',
-            gpu=use_gpu
-        )
-    else:
-        # Use standard CellPose model with model_type parameter
-        return models.CellposeModel(
-            model_type=model_name,
-            gpu=use_gpu
-        )
+    # In CellPose v4.0.1+, only pretrained_model parameter is used
+    # model_type parameter is deprecated and ignored
+    
+    if model_name in ['nuclei', 'cyto', 'cyto2', 'livecell']:
+        # Warn about deprecated models and fallback to cpsam
+        logging.warning(f"Model '{model_name}' is not available in CellPose v4.0.1+. "
+                       f"Traditional CellPose models are no longer supported. "
+                       f"Falling back to 'cpsam' (CellPose-SAM).")
+        model_name = 'cpsam'
+    
+    return models.CellposeModel(
+        pretrained_model=model_name,
+        gpu=use_gpu
+    )
 
 
 def create_qc_overlay(
@@ -249,8 +258,9 @@ def segment_single_roi(
     }
     
     # Run CellPose-SAM segmentation
+    # Handle diameter parameter for both CellPose v3 and v4+ compatibility
+    # In v4+, diameter is used for image scaling (30.0 / diameter)
     # If images were upscaled during preprocessing, we need to account for this
-    # by adjusting the diameter and then downscaling the masks
     diameter_for_segmentation = config.cellpose_cell_diameter
     if config.run_upscale:
         # CellPose upscale models have fixed target diameters:
@@ -259,6 +269,8 @@ def segment_single_roi(
         diameter_for_segmentation = config.upscale_target_diameter
     
     logging.debug(f"Running CellPose-SAM on {roi_name} with diameter={diameter_for_segmentation}")
+    logging.debug(f"Image shape for segmentation: {img.shape}")
+    logging.debug(f"Expected scaling factor in CellPose: {30.0 / diameter_for_segmentation:.2f}x")
     
     try:
         # Optimize batch size for CPU vs GPU
@@ -404,6 +416,7 @@ def segment_single_roi(
         'Model_type': config.cell_pose_sam_model,
         'Diameter_used': diameter_for_segmentation,
         'Diameter_base': config.cellpose_cell_diameter,
+        'CellPose_scaling_factor': 30.0 / diameter_for_segmentation,  # CellPose v4+ internal scaling
         'Upscale_ratio': config.calculated_upscale_ratio if config.run_upscale else 1.0,
         'Upscale_target_diameter': config.upscale_target_diameter if config.run_upscale else config.cellpose_cell_diameter,
         'Actual_diameter': actual_diameter,
