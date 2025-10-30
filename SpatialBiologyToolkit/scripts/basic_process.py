@@ -1,5 +1,15 @@
+"""
+Basic preprocessing and visualization.
+
+Adds basic visualizations of initial Leiden clustering:
+- UMAPs colored by Leiden clusters
+- MatrixPlots grouped by Leiden clusters
+- Tissue overlays of populations per ROI using segmentation masks
+"""
+
 # Standard library imports
 import logging
+from pathlib import Path
 
 # Third-party library imports
 import scanpy as sc
@@ -8,6 +18,17 @@ import scanpy.external as sce  # Needed for Harmony and BBKNN
 
 # Import shared utilities and configurations
 from .config_and_utils import *
+
+# Try to import plotting utilities for tissue visualization
+try:
+    # Preferred absolute import if package is available
+    from SpatialBiologyToolkit import plotting as sbt_plotting
+except Exception:
+    try:
+        # Fallback to relative import if run as module inside package
+        from .. import plotting as sbt_plotting  # type: ignore
+    except Exception:
+        sbt_plotting = None  # Will guard usage at runtime
 
 def batch_neighbors(
         adata,
@@ -120,6 +141,98 @@ if __name__ == "__main__":
             logging.info(f'Starting Leiden clustering for resolution {r}.')
             sc.tl.leiden(adata, resolution=r, key_added=f'leiden_{r}')
             logging.info(f'Finished Leiden clustering for resolution {r}.')
+
+    # Set up QC output folders for figures
+    qc_base = Path(general_config.qc_folder) / 'BasicProcess_QC'
+    qc_umap_dir = qc_base / 'UMAPs'
+    qc_matrix_dir = qc_base / 'Matrixplots'
+    qc_pop_dir = qc_base / 'Population_images'
+    for p in [qc_umap_dir, qc_matrix_dir, qc_pop_dir]:
+        p.mkdir(parents=True, exist_ok=True)
+
+    # Create UMAP plots colored by Leiden clusters
+    try:
+        for r in lr_list or []:
+            key = f'leiden_{r}'
+            if key in adata.obs.columns:
+                logging.info(f'Saving UMAP colored by {key}.')
+                try:
+                    fig = sc.pl.umap(
+                        adata,
+                        color=key,
+                        size=10,
+                        legend_loc='right margin',
+                        return_fig=True
+                    )
+                    fig_path = qc_umap_dir / f'UMAP_{key}.png'
+                    fig.savefig(fig_path, bbox_inches='tight', dpi=300)
+                except Exception as e:
+                    logging.warning(f'Failed to save UMAP for {key}: {e}')
+            else:
+                logging.warning(f'{key} not found in adata.obs; skipping UMAP.')
+    except Exception as e:
+        logging.error(f'UMAP visualization step failed: {e}')
+
+    # Create MatrixPlot summaries grouped by Leiden clusters
+    try:
+        prev_figdir = sc.settings.figdir
+        sc.settings.figdir = str(qc_matrix_dir)
+        for r in lr_list or []:
+            key = f'leiden_{r}'
+            if key in adata.obs.columns:
+                logging.info(f'Saving MatrixPlot grouped by {key}.')
+                try:
+                    sc.pl.matrixplot(
+                        adata,
+                        var_names=adata.var_names.tolist(),
+                        groupby=key,
+                        standard_scale='var',
+                        dendrogram=True,
+                        show=False,
+                        save=f'/Matrixplot_{key}.png'
+                    )
+                except Exception as e:
+                    logging.warning(f'Failed to save MatrixPlot for {key}: {e}')
+            else:
+                logging.warning(f'{key} not found in adata.obs; skipping MatrixPlot.')
+        sc.settings.figdir = prev_figdir
+    except Exception as e:
+        logging.error(f'MatrixPlot visualization step failed: {e}')
+
+    # Visualize populations in tissue by mapping clusters back to masks
+    try:
+        if sbt_plotting is None:
+            logging.warning('plotting module unavailable; skipping tissue visualization.')
+        elif 'ROI' not in adata.obs.columns:
+            logging.warning('ROI column not found in adata.obs; skipping tissue visualization.')
+        else:
+            rois = sorted(adata.obs['ROI'].astype(str).unique().tolist())
+            if not rois:
+                logging.warning('No ROIs found in adata.obs; skipping tissue visualization.')
+            for r in lr_list or []:
+                key = f'leiden_{r}'
+                if key not in adata.obs.columns:
+                    continue
+                out_dir = qc_pop_dir / f'{key}'
+                out_dir.mkdir(parents=True, exist_ok=True)
+                logging.info(f'Creating tissue overlays for {key} across {len(rois)} ROIs.')
+                for roi in rois:
+                    try:
+                        save_path = out_dir / f'{roi}.png'
+                        sbt_plotting.obs_to_mask(
+                            adata=adata,
+                            roi=roi,
+                            roi_obs='ROI',
+                            cat_obs=key,
+                            masks_folder=general_config.masks_folder,
+                            save_path=str(save_path),
+                            background_color='white',
+                            separator_color='black'
+                        )
+                    except Exception as e:
+                        logging.warning(f'Failed tissue overlay for ROI {roi} ({key}): {e}')
+    except Exception as e:
+        logging.error(f'Tissue visualization step failed: {e}')
 
     # Save the processed AnnData object
     adata.write_h5ad(process_config.output_adata_path)
