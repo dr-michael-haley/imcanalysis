@@ -348,7 +348,12 @@ def create_anndata(celltable,
     adata.obs['ROI_name'] = adata.obs['ROI'].map(metadata['description'].to_dict())
     adata.obs['ROI_width'] = adata.obs['ROI'].map(metadata['width_um'].to_dict())
     adata.obs['ROI_height'] = adata.obs['ROI'].map(metadata['height_um'].to_dict())
-    adata.obs['MCD_file'] = adata.obs['ROI'].map(metadata['mcd'].to_dict())
+    
+    if 'mcd' in metadata.columns:
+        adata.obs['MCD_file'] = adata.obs['ROI'].map(metadata['mcd'].to_dict())
+    elif 'source_file' in metadata.columns:
+        adata.obs['Source_file'] = adata.obs['ROI'].map(metadata['source_file'].to_dict())
+        adata.obs['File_type'] = adata.obs['ROI'].map(metadata['file_type'].to_dict())
 
     # Add spatial coordinates
     adata.obsm['spatial'] = celltable[['X_loc', 'Y_loc']].to_numpy()
