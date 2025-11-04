@@ -17,9 +17,6 @@ class GeneralConfig:
     tiff_stacks_folder: str  = 'tiff_stacks'
     raw_images_folder: str = 'tiffs'
     denoised_images_folder: str = 'processed'
-    # AI interpretation settings
-    enable_ai: bool = False  # Enable AI-powered cluster interpretation
-    tissue: str = 'Unknown tissue'  # Tissue type for AI interpretation context
 
 @dataclass
 class PreprocessConfig:
@@ -146,6 +143,25 @@ class BasicProcessConfig:
     umap_min_dist: float = 0.5
 
 @dataclass
+class VisualizationConfig:
+    # AI interpretation settings
+    enable_ai: bool = True  # Enable AI-powered cluster interpretation
+    tissue: str = "Unknown tissue"  # Tissue type for AI interpretation context
+    
+    # Backgating assessment settings
+    enable_backgating: bool = True  # Enable backgating assessment for AI-generated populations
+    backgating_cells_per_group: int = 50  # Number of cells to sample per population for backgating
+    backgating_radius: int = 15  # Radius in pixels for cell thumbnail extraction
+    backgating_output_folder: str = 'Backgating_AI'  # Output folder for backgating results
+    backgating_use_masks: bool = True  # Whether to use segmentation masks in backgating
+    backgating_mask_folder: str = 'masks'  # Folder containing segmentation masks
+    
+    # General visualization settings
+    create_color_legends: bool = True  # Generate color legends for categorical plots
+    save_high_res: bool = True  # Save high-resolution figures (300 DPI)
+    figure_format: str = 'png'  # Default figure format ('png', 'pdf', 'svg')
+
+@dataclass
 class LoggingConfig:
     log_file: str = 'pipeline.log'
     level: str = 'INFO'
@@ -159,6 +175,7 @@ DEFAULT_CONFIG_CLASSES = {
     'createmasks': CreateMasksConfig,
     'segmentation': SegmentationConfig,
     'process': BasicProcessConfig,
+    'visualization': VisualizationConfig,
     'logging': LoggingConfig,
 }
 

@@ -9,7 +9,8 @@ from .config_and_utils import (
     SegmentationConfig,
     DenoisingConfig,
     LoggingConfig,
-    BasicProcessConfig
+    BasicProcessConfig,
+    VisualizationConfig
 )
 
 def generate_config_template(output_file: str = 'config.yaml'):
@@ -25,6 +26,7 @@ def generate_config_template(output_file: str = 'config.yaml'):
         'segmentation': asdict(SegmentationConfig()),
         'denoising': asdict(DenoisingConfig()),
         'process': asdict(BasicProcessConfig()),
+        'visualization': asdict(VisualizationConfig()),
         'logging': asdict(LoggingConfig()),
     }
 

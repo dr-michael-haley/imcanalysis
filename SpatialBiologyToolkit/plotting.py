@@ -1417,8 +1417,16 @@ def obs_to_mask(
     # HELPER: build a cat colormap from user input or adata.uns
     # ------------------------------------------------------------
     def _build_cat_cmap(cmap_in, cat_obs_in, use_adata_cmap=True):
+        
+        # If a listed colour map exists in AnnData
         if use_adata_cmap and f"{cat_obs_in}_colormap" in adata.uns:
             return adata.uns[f"{cat_obs_in}_colormap"]
+
+        # If just a list of colors exists in AnnData
+        if use_adata_cmap and f"{cat_obs_in}_colors" in adata.uns:
+            colors = adata.uns[f"{cat_obs_in}_colors"]
+            cats_all = adata.obs[cat_obs_in].cat.categories
+            return {c: color for c, color in zip(cats_all, colors)}
 
         if isinstance(cmap_in, dict):
             return cmap_in

@@ -210,6 +210,17 @@ except Exception:
     except Exception:
         sbt_plotting = None  # Will guard usage at runtime
 
+# Try to import backgating utilities for cell validation
+try:
+    # Preferred absolute import if package is available
+    from SpatialBiologyToolkit import backgating as sbt_backgating
+except Exception:
+    try:
+        # Fallback to relative import if run as module inside package
+        from .. import backgating as sbt_backgating  # type: ignore
+    except Exception:
+        sbt_backgating = None  # Will guard usage at runtime
+
 def create_color_legend(adata, obs_key: str, save_path: Path, title: str = None):
     """
     Create a simple color legend showing how categories map to colors.
@@ -370,6 +381,7 @@ if __name__ == "__main__":
     # Get parameters from config
     general_config = GeneralConfig(**config.get('general', {}))
     process_config = BasicProcessConfig(**config.get('process', {}))
+    viz_config = VisualizationConfig(**config.get('visualization', {}))
 
     # Load saved AnnData
     logging.info(f'Loading AnnData from {process_config.input_adata_path}.')
@@ -393,11 +405,11 @@ if __name__ == "__main__":
     lr_list = process_config.leiden_resolutions_list
 
     # AI mode flag from config
-    ai_mode = bool(getattr(general_config, "enable_ai", False))
+    ai_mode = bool(getattr(viz_config, "enable_ai", False))
     if ai_mode:
-        logging.info("AI mode enabled via config (general_config.enable_ai=True).")
+        logging.info("AI mode enabled via config (visualization.enable_ai=True).")
     else:
-        logging.info("AI mode disabled (set general_config.enable_ai=True to enable).")
+        logging.info("AI mode disabled (set visualization.enable_ai=True to enable).")
 
     if lr_list:
         if not isinstance(lr_list, list):
@@ -464,7 +476,7 @@ if __name__ == "__main__":
         if ai_mode:
             if os.getenv("OPENAI_API_KEY"):
                 logging.info("Starting AI interpretation of Leiden clusters (IMC).")
-                tissue_label = getattr(general_config, "tissue", "Unknown tissue")
+                tissue_label = getattr(viz_config, "tissue", "Unknown tissue")
                 panel_markers = adata.var_names.tolist()
                 ai_dir = qc_base / "AI_Interpretation"
                 _ = annotate_leiden_imc(
@@ -684,6 +696,68 @@ if __name__ == "__main__":
                         logging.warning(f'Failed tissue overlay for ROI {roi} ({key}): {e}')
     except Exception as e:
         logging.error(f'Tissue visualization step failed: {e}')
+
+    # ---------------- Backgating Assessment for AI Labels ----------------
+    if ai_mode and viz_config.enable_backgating:
+        try:
+            if sbt_backgating is None:
+                logging.warning('backgating module unavailable; skipping backgating assessment.')
+            else:
+                logging.info("Starting backgating assessment for AI-generated populations.")
+                
+                # Check if we have image folder available
+                image_folder = getattr(general_config, 'denoised_images_folder', 'images')
+                if not Path(image_folder).exists():
+                    logging.warning(f'Image folder {image_folder} not found; skipping backgating assessment.')
+                else:
+                    # Run backgating assessment for each AI-labeled resolution
+                    for r in lr_list or []:
+                        key_ai = f"leiden_{r}_AIlabel"
+                        if key_ai in adata.obs.columns:
+                            logging.info(f"Running backgating assessment for {key_ai}")
+                            
+                            # Set up output folder for this resolution
+                            backgating_output = qc_base / viz_config.backgating_output_folder / f'{key_ai}'
+                            
+                            try:
+                                sbt_backgating.backgating_assessment(
+                                    adata=adata,
+                                    image_folder=image_folder,
+                                    pop_obs=key_ai,
+                                    mean_expression_file=f'markers_mean_expression_{key_ai}.csv',
+                                    backgating_settings_file=f'backgating_settings_{key_ai}.csv',
+                                    pops_list=None,  # Use all populations
+                                    cells_per_group=viz_config.backgating_cells_per_group,
+                                    radius=viz_config.backgating_radius,
+                                    roi_obs='ROI',
+                                    x_loc_obs='X_loc',
+                                    y_loc_obs='Y_loc',
+                                    cell_index_obs='ObjectNumber',
+                                    # Mask parameters
+                                    use_masks=viz_config.backgating_use_masks,
+                                    mask_folder=viz_config.backgating_mask_folder,
+                                    exclude_rois_without_mask=True,
+                                    # Output settings
+                                    output_folder=str(backgating_output),
+                                    overview_images=True,
+                                    # Intensity scaling
+                                    minimum=0.4,
+                                    max_quantile='q0.98',
+                                    # Marker selection mode
+                                    mode='full',  # Compute mean expression, generate settings, and produce images
+                                    number_top_markers=3,  # Use top 2 markers for RG channels
+                                    specify_blue='DNA1',  # Use DNA1 as blue channel
+                                )
+                                logging.info(f"Backgating assessment completed for {key_ai}. Results saved to {backgating_output}")
+                                
+                            except Exception as e:
+                                logging.error(f"Backgating assessment failed for {key_ai}: {e}")
+                        else:
+                            logging.warning(f"{key_ai} not found in adata.obs; skipping backgating assessment.")
+                            
+                logging.info("Backgating assessment for AI populations completed.")
+        except Exception as e:
+            logging.error(f"Backgating assessment step failed: {e}")
 
     # Save the processed AnnData object
     adata.write_h5ad(process_config.output_adata_path)
