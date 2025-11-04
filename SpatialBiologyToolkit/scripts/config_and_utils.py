@@ -17,6 +17,9 @@ class GeneralConfig:
     tiff_stacks_folder: str  = 'tiff_stacks'
     raw_images_folder: str = 'tiffs'
     denoised_images_folder: str = 'processed'
+    # AI interpretation settings
+    enable_ai: bool = False  # Enable AI-powered cluster interpretation
+    tissue: str = 'Unknown tissue'  # Tissue type for AI interpretation context
 
 @dataclass
 class PreprocessConfig:
