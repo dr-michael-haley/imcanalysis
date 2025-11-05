@@ -109,8 +109,8 @@ if __name__ == "__main__":
     setup_logging(config.get('logging', {}), pipeline_stage)
 
     # Get parameters from config
-    general_config = GeneralConfig(**config.get('general', {}))
-    process_config = BasicProcessConfig(**config.get('process', {}))
+    general_config = GeneralConfig(**filter_config_for_dataclass(config.get('general', {}), GeneralConfig))
+    process_config = BasicProcessConfig(**filter_config_for_dataclass(config.get('process', {}), BasicProcessConfig))
 
     # Load saved AnnData
     logging.info(f'Loading AnnData from {process_config.input_adata_path}.')

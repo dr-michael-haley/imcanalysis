@@ -628,8 +628,8 @@ if __name__ == "__main__":
     setup_logging(config_data.get('logging', {}), pipeline_stage)
 
     # Get parameters from config
-    general_config = GeneralConfig(**config_data.get('general', {}))
-    denoise_config = DenoisingConfig(**config_data.get('denoising', {}))
+    general_config = GeneralConfig(**filter_config_for_dataclass(config_data.get('general', {}), GeneralConfig))
+    denoise_config = DenoisingConfig(**filter_config_for_dataclass(config_data.get('denoising', {}), DenoisingConfig))
 
     # Remove outliers based on panel (if defined)
     if denoise_config.remove_outliers:

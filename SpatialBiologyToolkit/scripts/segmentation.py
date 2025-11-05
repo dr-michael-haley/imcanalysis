@@ -415,8 +415,8 @@ if __name__ == "__main__":
     setup_logging(config.get('logging', {}), pipeline_stage)
 
     # Get parameters from config
-    general_config = GeneralConfig(**config.get('general', {}))
-    seg_config = SegmentationConfig(**config.get('segmentation', {}))
+    general_config = GeneralConfig(**filter_config_for_dataclass(config.get('general', {}), GeneralConfig))
+    seg_config = SegmentationConfig(**filter_config_for_dataclass(config.get('segmentation', {}), SegmentationConfig))
 
     # Extract single-cell info for each ROI
     if seg_config.create_roi_cell_tables:

@@ -429,8 +429,8 @@ if __name__ == "__main__":
     # Check GPU availability
     logging.info(f'GPU available?: {str(torch.cuda.is_available())}')
 
-    general_config = GeneralConfig(**config.get('general', {}))
-    mask_config = CreateMasksConfig(**config.get('createmasks', {}))
+    general_config = GeneralConfig(**filter_config_for_dataclass(config.get('general', {}), GeneralConfig))
+    mask_config = CreateMasksConfig(**filter_config_for_dataclass(config.get('createmasks', {}), CreateMasksConfig))
 
     # Initialize models once
     if mask_config.run_deblur:

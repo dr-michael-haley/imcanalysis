@@ -1505,8 +1505,8 @@ if __name__ == "__main__":
     setup_logging(config.get('logging', {}), pipeline_stage)
 
     # Get parameters from config
-    general_config = GeneralConfig(**config.get('general', {}))
-    preprocess_config = PreprocessConfig(**config.get('preprocess', {}))
+    general_config = GeneralConfig(**filter_config_for_dataclass(config.get('general', {}), GeneralConfig))
+    preprocess_config = PreprocessConfig(**filter_config_for_dataclass(config.get('preprocess', {}), PreprocessConfig))
 
     # Export .tiff stacks from IMC files (both .mcd and .txt)
     # Check if user is using new config option or legacy option

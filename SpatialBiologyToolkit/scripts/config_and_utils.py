@@ -145,11 +145,11 @@ class BasicProcessConfig:
 @dataclass
 class VisualizationConfig:
     # AI interpretation settings
-    enable_ai: bool = True  # Enable AI-powered cluster interpretation
+    enable_ai: bool = False  # Enable AI-powered cluster interpretation
     tissue: str = "Unknown tissue"  # Tissue type for AI interpretation context
     
     # Backgating assessment settings
-    enable_backgating: bool = True  # Enable backgating assessment for AI-generated populations
+    enable_backgating: bool = False  # Enable backgating assessment for AI-generated populations
     backgating_cells_per_group: int = 50  # Number of cells to sample per population for backgating
     backgating_radius: int = 15  # Radius in pixels for cell thumbnail extraction
     backgating_output_folder: str = 'Backgating_AI'  # Output folder for backgating results
@@ -187,6 +187,37 @@ def generate_default_config_dict() -> Dict[str, Any]:
     for section, cls in DEFAULT_CONFIG_CLASSES.items():
         defaults[section] = asdict(cls())
     return defaults
+
+def filter_config_for_dataclass(config_dict: Dict[str, Any], dataclass_type) -> Dict[str, Any]:
+    """
+    Filter a config dictionary to only include keys that are valid for the given dataclass.
+    Log warnings for any unexpected keys.
+    
+    Parameters:
+    config_dict: Dictionary containing configuration values
+    dataclass_type: The dataclass type to filter for
+    
+    Returns:
+    Filtered dictionary with only valid keys for the dataclass
+    """
+    # Get the field names from the dataclass
+    if hasattr(dataclass_type, '__dataclass_fields__'):
+        valid_fields = set(dataclass_type.__dataclass_fields__.keys())
+    else:
+        # Fallback: create a temporary instance and get its attributes
+        temp_instance = dataclass_type()
+        valid_fields = set(temp_instance.__dict__.keys())
+    
+    filtered_config = {}
+    dataclass_name = dataclass_type.__name__
+    
+    for key, value in config_dict.items():
+        if key in valid_fields:
+            filtered_config[key] = value
+        else:
+            logging.warning(f"Ignoring unrecognized config key '{key}' = {value} in {dataclass_name} configuration section. Please check if this key belongs in a different config section.")
+    
+    return filtered_config
 
 def deep_merge_defaults(config: Dict[str, Any], defaults: Dict[str, Any]) -> bool:
     """
@@ -236,6 +267,7 @@ def load_config(config_file: str = 'config.yaml') -> Dict[str, Any]:
     # Merge defaults into config if any keys missing
     changed = deep_merge_defaults(config, defaults)
 
+    # Save if any changes were made
     if changed:
         with open(config_file, 'w') as f:
             yaml.safe_dump(config, f, default_flow_style=False)

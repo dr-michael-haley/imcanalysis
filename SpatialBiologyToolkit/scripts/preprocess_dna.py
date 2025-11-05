@@ -35,7 +35,8 @@ from .config_and_utils import (
     GeneralConfig,
     CreateMasksConfig,
     get_filename,
-    cleanstring
+    cleanstring,
+    filter_config_for_dataclass
 )
 
 
@@ -345,10 +346,10 @@ if __name__ == "__main__":
     print_gpu_info()
     
     # Get configuration objects
-    general_config = GeneralConfig(**config_data.get('general', {}))
+    general_config = GeneralConfig(**filter_config_for_dataclass(config_data.get('general', {}), GeneralConfig))
     
     # Use existing CreateMasksConfig for backwards compatibility
-    mask_config = CreateMasksConfig(**config_data.get('createmasks', {}))
+    mask_config = CreateMasksConfig(**filter_config_for_dataclass(config_data.get('createmasks', {}), CreateMasksConfig))
     
     logging.info(f"DNA preprocessing using mask configuration: {mask_config}")
     

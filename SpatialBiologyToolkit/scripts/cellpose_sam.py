@@ -44,7 +44,8 @@ from .config_and_utils import (
     setup_logging,
     GeneralConfig,
     CreateMasksConfig,
-    cleanstring
+    cleanstring,
+    filter_config_for_dataclass
 )
 
 
@@ -883,8 +884,8 @@ if __name__ == "__main__":
     print_model_info()
     
     # Get configuration objects
-    general_config = GeneralConfig(**config_data.get('general', {}))
-    mask_config = CreateMasksConfig(**config_data.get('createmasks', {}))
+    general_config = GeneralConfig(**filter_config_for_dataclass(config_data.get('general', {}), GeneralConfig))
+    mask_config = CreateMasksConfig(**filter_config_for_dataclass(config_data.get('createmasks', {}), CreateMasksConfig))
     
     logging.info(f"CellPose-SAM configuration: {mask_config}")
     
