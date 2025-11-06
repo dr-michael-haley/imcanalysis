@@ -15,6 +15,9 @@ from pathlib import Path
 import scanpy as sc
 import anndata as ad
 import scanpy.external as sce  # Needed for Harmony and BBKNN
+import matplotlib
+matplotlib.use("Agg")  # must be before importing pyplot/scanpy that plots
+
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 
@@ -742,10 +745,10 @@ if __name__ == "__main__":
                                     overview_images=True,
                                     # Intensity scaling
                                     minimum=0.4,
-                                    max_quantile='q0.98',
+                                    max_quantile='i0.97',
                                     # Marker selection mode
                                     mode='full',  # Compute mean expression, generate settings, and produce images
-                                    number_top_markers=3,  # Use top 2 markers for RG channels
+                                    number_top_markers=2,  # Use top 2 markers for RG channels
                                     specify_blue='DNA1',  # Use DNA1 as blue channel
                                 )
                                 logging.info(f"Backgating assessment completed for {key_ai}. Results saved to {backgating_output}")
