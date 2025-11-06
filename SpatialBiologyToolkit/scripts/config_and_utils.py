@@ -51,7 +51,7 @@ class DenoisingConfig:
     weights_save_directory: Optional[str] = None
     is_load_weights: bool = False
     lambda_HF: float = 3e-6
-    network_size: str = "normal"
+    network_size: str = "small"
     # Parameters for QC images
     run_QC: bool = True
     colourmap: str = "jet"
@@ -145,11 +145,11 @@ class BasicProcessConfig:
 @dataclass
 class VisualizationConfig:
     # AI interpretation settings
-    enable_ai: bool = False  # Enable AI-powered cluster interpretation
+    enable_ai: bool = True  # Enable AI-powered cluster interpretation
     tissue: str = "Unknown tissue"  # Tissue type for AI interpretation context
     
     # Backgating assessment settings
-    enable_backgating: bool = False  # Enable backgating assessment for AI-generated populations
+    enable_backgating: bool = True  # Enable backgating assessment for AI-generated populations
     backgating_cells_per_group: int = 50  # Number of cells to sample per population for backgating
     backgating_radius: int = 15  # Radius in pixels for cell thumbnail extraction
     backgating_output_folder: str = 'Backgating_AI'  # Output folder for backgating results
