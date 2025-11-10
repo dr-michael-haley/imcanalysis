@@ -1703,7 +1703,7 @@ def grouped_graph(
     - use_adata_colormap: bool, if True, use colormap from AnnData.uns if available (default True)
     """
 
-    crosstab_norm = 1 if proportions else False
+    crosstab_norm = 'index' if proportions else False
 
     # Crosstab
     if x_axis != ROI_id:

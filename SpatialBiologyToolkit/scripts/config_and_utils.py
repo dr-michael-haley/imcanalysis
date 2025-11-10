@@ -63,7 +63,7 @@ class DenoisingConfig:
 class CreateMasksConfig:
     specific_rois: Optional[List[str]] = None
     dna_image_name: str = 'DNA1'
-    output_folder_name: str = 'preprocessed_dna'  # For DNA preprocessing output
+    dna_preprocessing_output_folder_name: str = 'preprocessed_dna'  # For DNA preprocessing output
     cellpose_cell_diameter: float = 10.0  # Works in both CellPose v3 and v4+ (behavior may differ)
     upscale_ratio: float = 1.7
     expand_masks: int = 1
@@ -82,7 +82,7 @@ class CreateMasksConfig:
     image_normalise_percentile_upper: float =  99.9
     dpi_qc_images: int = 300
 
-    # CellPose-SAM mode toggle and settings - uses output_folder_name for input, GeneralConfig.masks_folder for output
+    # CellPose-SAM mode toggle and settings - uses dna_preprocessing_output_folder_name for input, GeneralConfig.masks_folder for output
     max_size_fraction: float = 0.4              # Max cell size as fraction of image
     remove_edge_masks: bool = False         # Remove masks touching image edges  
     fill_holes: bool = True                 # Fill holes in segmented masks

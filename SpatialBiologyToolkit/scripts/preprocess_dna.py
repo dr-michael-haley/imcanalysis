@@ -237,7 +237,7 @@ def process_all_rois(general_config: GeneralConfig, mask_config: CreateMasksConf
     
     # Setup paths - use simple output folder from config
     input_folder = Path(general_config.denoised_images_folder)
-    output_folder = Path(mask_config.output_folder_name)
+    output_folder = Path(mask_config.dna_preprocessing_output_folder_name)
     qc_folder = Path(general_config.qc_folder) / 'DNA_preprocessing_QC'
     
     # Create output directories

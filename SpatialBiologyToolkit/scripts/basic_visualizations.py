@@ -313,11 +313,6 @@ def create_categorical_umaps(adata, categorical_columns, qc_umap_dir, qc_legend_
                     fig.savefig(fig_path, bbox_inches='tight', dpi=300 if viz_config.save_high_res else 150)
                     plt.close(fig)
                     
-                    # Create color legend
-                    if viz_config.create_color_legends:
-                        create_color_legend(adata, cat_col, 
-                                            qc_legend_dir / f'{cat_col}_legend.{viz_config.figure_format}')
-                    
                 except Exception as e:
                     logging.warning(f'Failed to create UMAP for {cat_col}: {e}')
             else:
@@ -722,5 +717,28 @@ if __name__ == "__main__":
     if viz_config.create_backgating:
         logging.info("Creating backgating assessment...")
         create_backgating_assessment(adata, population_columns, viz_config, general_config, qc_base)
+    
+    # Create color legends for all categorical columns (independent of other visualizations)
+    if viz_config.create_color_legends:
+        logging.info("Creating color legends...")
+        # Create legends for population columns
+        for pop_col in population_columns:
+            if pop_col in adata.obs.columns:
+                try:
+                    create_color_legend(adata, pop_col, 
+                                      qc_legend_dir / f'{pop_col}_legend.{viz_config.figure_format}',
+                                      title=f"Population: {pop_col}")
+                except Exception as e:
+                    logging.warning(f'Failed to create color legend for {pop_col}: {e}')
+        
+        # Create legends for metadata columns  
+        for meta_col in metadata_columns:
+            if meta_col in adata.obs.columns:
+                try:
+                    create_color_legend(adata, meta_col,
+                                      qc_legend_dir / f'{meta_col}_legend.{viz_config.figure_format}',
+                                      title=f"Metadata: {meta_col}")
+                except Exception as e:
+                    logging.warning(f'Failed to create color legend for {meta_col}: {e}')
     
     logging.info('Visualization pipeline completed successfully!')

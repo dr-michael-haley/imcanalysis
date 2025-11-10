@@ -450,7 +450,7 @@ def process_all_rois(general_config: GeneralConfig, mask_config: CreateMasksConf
     logging.info("Starting CellPose-SAM segmentation for all ROIs.")
     
     # Setup paths
-    input_folder = Path(mask_config.output_folder_name)  # Use existing preprocessed DNA folder
+    input_folder = Path(mask_config.dna_preprocessing_output_folder_name)  # Use existing preprocessed DNA folder
     output_folder = Path(general_config.masks_folder)    # Use standard masks folder
     qc_folder = Path(general_config.qc_folder) / 'CellposeSAM_QC'
     denoised_folder = Path(general_config.denoised_images_folder)  # For raw overlay generation
@@ -601,7 +601,7 @@ def parameter_scan_cpsam(general_config: GeneralConfig, mask_config: CreateMasks
         return
     
     # Setup base paths
-    input_folder = Path(mask_config.output_folder_name)
+    input_folder = Path(mask_config.dna_preprocessing_output_folder_name)
     denoised_folder = Path(general_config.denoised_images_folder)
     base_qc_folder = Path(general_config.qc_folder) / f'CellposeSAM_ParameterScan_{cleanstring(param_a)}_{cleanstring(param_b)}'
     base_qc_folder.mkdir(parents=True, exist_ok=True)
