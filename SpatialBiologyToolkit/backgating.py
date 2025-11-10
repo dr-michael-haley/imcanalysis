@@ -840,17 +840,22 @@ def perform_differential_expression(
     if verbose:
         logging.info(f"  Input data: {adata_copy.n_obs} cells, {adata_copy.n_vars} markers")
         logging.info(f"  Population column: {pop_obs}")
-        logging.info(f"  Target population: {target_population}")
+        logging.info(f"  Target population: {target_population} (type: {type(target_population)})")
         logging.info(f"  Markers to exclude: {markers_exclude}")
         logging.info(f"  Method: {method}")
         
-        # Debug: check population distribution
+        # Debug: check population distribution and types
         pop_counts = adata_copy.obs[pop_obs].value_counts()
         logging.info(f"  Population distribution (top 10): {dict(pop_counts.head(10))}")
-        target_count = (adata_copy.obs[pop_obs] == target_population).sum()
+        
+        # Check data types
+        sample_values = adata_copy.obs[pop_obs].head(5).tolist()
+        logging.info(f"  Sample population values: {sample_values} (types: {[type(x) for x in sample_values]})")
+        
+        target_count = (adata_copy.obs[pop_obs].astype(str) == str(target_population)).sum()
         logging.info(f"  Cells in target population '{target_population}': {target_count}")
         print(f"DE input: {adata_copy.n_obs} cells, {adata_copy.n_vars} markers", flush=True)
-        print(f"Target population '{target_population}' has {target_count} cells", flush=True)
+        print(f"Target population '{target_population}' (type: {type(target_population)}) has {target_count} cells", flush=True)
         print(f"DE input: {adata_copy.n_obs} cells, {adata_copy.n_vars} markers", flush=True)
     
     # Filter markers if specified
@@ -868,9 +873,12 @@ def perform_differential_expression(
         return []
     
     # Create binary comparison: target population vs all others
+    # Convert target_population to string to match data type in obs
+    target_population_str = str(target_population)
+    
     # Use string labels instead of boolean for better scanpy compatibility
     adata_copy.obs['comparison_group'] = np.where(
-        adata_copy.obs[pop_obs] == target_population, 
+        adata_copy.obs[pop_obs].astype(str) == target_population_str, 
         'target', 
         'rest'
     ).astype('category')
@@ -880,11 +888,16 @@ def perform_differential_expression(
     if verbose:
         print(f"Group distribution: {dict(group_counts)}", flush=True)
     
-    # Ensure we have both groups
+    # Ensure we have both groups and target group has cells
     if len(group_counts) < 2:
         if verbose:
             print(f"Warning: Only one group found. Cannot perform differential expression.", flush=True)
         raise ValueError("Insufficient groups for comparison")
+    
+    if 'target' not in group_counts or group_counts['target'] == 0:
+        if verbose:
+            print(f"Warning: Target population '{target_population}' has no cells. Cannot perform DE.", flush=True)
+        raise ValueError("Target population has no cells")
     
     # Ensure minimum cells per group for statistical power
     min_cells = 5
@@ -983,11 +996,11 @@ def perform_differential_expression(
             # Additional debugging information
             print(f"Debug info:", flush=True)
             print(f"  adata_copy shape: {adata_copy.shape}", flush=True)
-            print(f"  Target population '{target_population}' count: {(adata_copy.obs[pop_obs] == target_population).sum()}", flush=True)
+            print(f"  Target population '{target_population}' count: {(adata_copy.obs[pop_obs].astype(str) == str(target_population)).sum()}", flush=True)
             print(f"  Comparison group value counts: {adata_copy.obs['comparison_group'].value_counts()}", flush=True)
         
         # Fallback to simple mean expression
-        target_cells = adata_copy[adata_copy.obs[pop_obs] == target_population]
+        target_cells = adata_copy[adata_copy.obs[pop_obs].astype(str) == str(target_population)]
         if target_cells.n_obs > 0:
             mean_expression = pd.Series(
                 target_cells.X.mean(axis=0), 
