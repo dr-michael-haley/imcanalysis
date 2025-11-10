@@ -1,10 +1,11 @@
 """
-Basic preprocessing and visualization.
+Basic preprocessing and AI interpretation.
 
-Adds basic visualizations of initial Leiden clustering:
-- UMAPs colored by Leiden clusters
-- MatrixPlots grouped by Leiden clusters
-- Tissue overlays of populations per ROI using segmentation masks
+Core processing pipeline including:
+- Batch correction and neighbors computation
+- UMAP computation
+- Leiden clustering at multiple resolutions
+- AI interpretation of clusters (optional)
 """
 
 # Standard library imports
@@ -202,106 +203,9 @@ def openai_adapter_chat(prompt: str) -> str:
 # Import shared utilities and configurations
 from .config_and_utils import *
 
-# Try to import plotting utilities for tissue visualization
-try:
-    # Preferred absolute import if package is available
-    from SpatialBiologyToolkit import plotting as sbt_plotting
-except Exception:
-    try:
-        # Fallback to relative import if run as module inside package
-        from .. import plotting as sbt_plotting  # type: ignore
-    except Exception:
-        sbt_plotting = None  # Will guard usage at runtime
+# Core processing only - visualization moved to separate module
 
-# Try to import backgating utilities for cell validation
-try:
-    # Preferred absolute import if package is available
-    from SpatialBiologyToolkit import backgating as sbt_backgating
-except Exception:
-    try:
-        # Fallback to relative import if run as module inside package
-        from .. import backgating as sbt_backgating  # type: ignore
-    except Exception:
-        sbt_backgating = None  # Will guard usage at runtime
-
-def create_color_legend(adata, obs_key: str, save_path: Path, title: str = None):
-    """
-    Create a simple color legend showing how categories map to colors.
-    
-    Parameters
-    ----------
-    adata : anndata.AnnData
-        Annotated data matrix
-    obs_key : str
-        Key in adata.obs containing categorical data
-    save_path : Path
-        Path to save the legend image
-    title : str, optional
-        Title for the legend
-    """
-    import matplotlib.pyplot as plt
-    import matplotlib.patches as mpatches
-    
-    if obs_key not in adata.obs.columns:
-        logging.warning(f"Observation key '{obs_key}' not found in adata.obs")
-        return
-    
-    # Get unique categories
-    categories = adata.obs[obs_key].cat.categories if hasattr(adata.obs[obs_key], 'cat') else sorted(adata.obs[obs_key].unique())
-    
-    # Try to get colors from adata.uns, otherwise use default colormap
-    colors = None
-    color_key = f"{obs_key}_colors"
-    if color_key in adata.uns:
-        colors = adata.uns[color_key]
-    else:
-        # Use matplotlib's tab20 colormap as default (same as scanpy default)
-        import matplotlib.cm as cm
-        cmap = cm.get_cmap('tab20')
-        colors = [cmap(i / len(categories)) for i in range(len(categories))]
-    
-    # Create figure
-    fig, ax = plt.subplots(figsize=(6, max(3, len(categories) * 0.3)))
-    ax.set_xlim(0, 1)
-    ax.set_ylim(0, len(categories))
-    
-    # Create legend patches
-    patches = []
-    for i, (category, color) in enumerate(zip(categories, colors)):
-        # Convert color to matplotlib format if needed
-        if isinstance(color, str):
-            patch_color = color
-        else:
-            patch_color = color
-        
-        patch = mpatches.Rectangle((0.1, len(categories) - i - 0.8), 0.1, 0.6, 
-                                 facecolor=patch_color, edgecolor='black', linewidth=0.5)
-        ax.add_patch(patch)
-        
-        # Add text label
-        ax.text(0.25, len(categories) - i - 0.5, str(category), 
-               verticalalignment='center', fontsize=10)
-    
-    # Set title
-    if title:
-        ax.set_title(title, fontsize=12, fontweight='bold', pad=20)
-    else:
-        ax.set_title(f"Color Legend: {obs_key}", fontsize=12, fontweight='bold', pad=20)
-    
-    # Remove axes
-    ax.set_xticks([])
-    ax.set_yticks([])
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    ax.spines['bottom'].set_visible(False)
-    ax.spines['left'].set_visible(False)
-    
-    # Save figure
-    plt.tight_layout()
-    plt.savefig(save_path, dpi=300, bbox_inches='tight')
-    plt.close()
-    
-    logging.info(f"Color legend saved to {save_path}")
+# Color legend functionality moved to basic_visualizations.py
 
 def batch_neighbors(
         adata,
@@ -423,56 +327,7 @@ if __name__ == "__main__":
             sc.tl.leiden(adata, resolution=r, key_added=f'leiden_{r}')
             logging.info(f'Finished Leiden clustering for resolution {r}.')
 
-    # Set up QC output folders for figures
-    qc_base = Path(general_config.qc_folder) / 'BasicProcess_QC'
-    qc_umap_dir = qc_base / 'UMAPs'
-    qc_matrix_dir = qc_base / 'Matrixplots'
-    qc_pop_dir = qc_base / 'Population_images'
-    qc_legend_dir = qc_base / 'Color_legends'  # New directory for color legends
-    for p in [qc_umap_dir, qc_matrix_dir, qc_pop_dir, qc_legend_dir]:
-        p.mkdir(parents=True, exist_ok=True)
-
-    # Generate basic visualizations for original Leiden clusters
-    try:
-        if lr_list:
-            markers_to_plot = adata.var_names.tolist()
-            for r in lr_list:
-                leiden_key = f'leiden_{r}'
-                if leiden_key in adata.obs.columns:
-                    logging.info(f"Creating basic visualizations for {leiden_key}")
-                    
-                    # Create UMAP for this resolution
-                    try:
-                        fig = sc.pl.umap(
-                            adata,
-                            color=leiden_key,
-                            size=10,
-                            legend_loc='right margin',
-                            return_fig=True
-                        )
-                        fig_path = qc_umap_dir / f"UMAP_{leiden_key}_original.png"
-                        fig.savefig(fig_path, bbox_inches="tight", dpi=300)
-                        plt.close(fig)
-                        
-                        # Create color legend for this resolution
-                        create_color_legend(adata, leiden_key, 
-                                            qc_legend_dir / f'{leiden_key}_original_legend.png')
-                        
-                    except Exception as e:
-                        logging.warning(f"Failed to create UMAP/legend for {leiden_key}: {e}")
-                    
-                    # Create MatrixPlot for this resolution
-                    try:
-                        matrix_fig = sc.pl.matrixplot(adata, markers_to_plot, leiden_key, 
-                                                      dendrogram=True, return_fig=True, show=False)
-                        matrix_save_path = qc_matrix_dir / f'{leiden_key}_original_matrix.pdf'
-                        matrix_fig.savefig(str(matrix_save_path), bbox_inches='tight')
-                        plt.close(matrix_fig)
-                        logging.info(f"Matrix plot saved to: {matrix_save_path}")
-                    except Exception as e:
-                        logging.warning(f"Could not generate matrix plot for {leiden_key}: {e}")
-    except Exception as e:
-        logging.warning(f"Failed to create basic visualizations: {e}")
+    # Core processing complete - generate processed AnnData
 
     # ---------------- AI Interpretation (IMC) ----------------
     try:
@@ -481,7 +336,8 @@ if __name__ == "__main__":
                 logging.info("Starting AI interpretation of Leiden clusters (IMC).")
                 tissue_label = getattr(viz_config, "tissue", "Unknown tissue")
                 panel_markers = adata.var_names.tolist()
-                ai_dir = qc_base / "AI_Interpretation"
+                ai_dir = Path(general_config.output_folder) / "AI_Interpretation"
+                ai_dir.mkdir(parents=True, exist_ok=True)
                 _ = annotate_leiden_imc(
                     adata=adata,
                     tissue=tissue_label,
@@ -500,267 +356,8 @@ if __name__ == "__main__":
     except Exception as e:
         logging.warning(f"AI interpretation step failed: {e}")
     # ---------------------------------------------------------
-
-    # If AI mode is on, plot UMAPs colored by AI labels for each Leiden resolution
-    if ai_mode:
-        try:
-            for r in lr_list or []:
-                key_ai = f"leiden_{r}_AIlabel"
-                if key_ai in adata.obs.columns:
-                    logging.info(f"Saving UMAP colored by {key_ai}.")
-                    try:
-                        fig = sc.pl.umap(
-                            adata,
-                            color=key_ai,
-                            size=10,
-                            legend_loc='right margin',
-                            return_fig=True
-                        )
-                        fig_path = qc_umap_dir / f"UMAP_{key_ai}.png"
-                        fig.savefig(fig_path, bbox_inches="tight", dpi=300)
-                        plt.close(fig)
-                        
-                        # Create color legend for AI labels
-                        create_color_legend(adata, key_ai, 
-                                            qc_legend_dir / f'{key_ai}_legend.png')
-                        
-                    except Exception as e:
-                        logging.warning(f"Failed to save UMAP for {key_ai}: {e}")
-                else:
-                    logging.warning(f"{key_ai} not found in adata.obs; skipping AI UMAP.")
-        except Exception as e:
-            logging.error(f"AI label UMAP visualization step failed: {e}")
-
-        # Create MatrixPlots for AI labels
-        try:
-            for r in lr_list or []:
-                key_ai = f"leiden_{r}_AIlabel"
-                if key_ai in adata.obs.columns:
-                    logging.info(f"Saving MatrixPlot grouped by {key_ai}.")
-                    try:
-                        fig = sc.pl.matrixplot(
-                            adata,
-                            var_names=adata.var_names.tolist(),
-                            groupby=key_ai,
-                            standard_scale='var',
-                            dendrogram=True,
-                            show=False,
-                            return_fig=True
-                        )
-                        fig_path = qc_matrix_dir / f"Matrixplot_{key_ai}.png"
-                        fig.savefig(fig_path, bbox_inches="tight", dpi=300)
-                        logging.info(f"AI MatrixPlot saved to {fig_path}")
-                    except Exception as e:
-                        logging.warning(f"Failed to save MatrixPlot for {key_ai}: {e}")
-                else:
-                    logging.warning(f"{key_ai} not found in adata.obs; skipping AI MatrixPlot.")
-        except Exception as e:
-            logging.error(f"AI label MatrixPlot visualization step failed: {e}")
-
-        # Create tissue population overlays for AI labels
-        try:
-            if sbt_plotting is None:
-                logging.warning('plotting module unavailable; skipping AI tissue visualization.')
-            elif 'ROI' not in adata.obs.columns:
-                logging.warning('ROI column not found in adata.obs; skipping AI tissue visualization.')
-            else:
-                rois = sorted(adata.obs['ROI'].astype(str).unique().tolist())
-                if not rois:
-                    logging.warning('No ROIs found in adata.obs; skipping AI tissue visualization.')
-                for r in lr_list or []:
-                    key_ai = f"leiden_{r}_AIlabel"
-                    if key_ai not in adata.obs.columns:
-                        continue
-                    out_dir = qc_pop_dir / f'{key_ai}'
-                    out_dir.mkdir(parents=True, exist_ok=True)
-                    logging.info(f'Creating AI tissue overlays for {key_ai} across {len(rois)} ROIs.')
-                    for roi in rois:
-                        try:
-                            save_path = out_dir / f'{roi}.png'
-                            sbt_plotting.obs_to_mask(
-                                adata=adata,
-                                roi=roi,
-                                roi_obs='ROI',
-                                cat_obs=key_ai,
-                                masks_folder=general_config.masks_folder,
-                                save_path=str(save_path),
-                                background_color='white',
-                                separator_color='black'
-                            )
-                        except Exception as e:
-                            logging.warning(f'Failed AI tissue overlay for ROI {roi} ({key_ai}): {e}')
-        except Exception as e:
-            logging.error(f'AI tissue visualization step failed: {e}')
-
-    # Create UMAP plots colored by Leiden clusters
-    try:
-        for r in lr_list or []:
-            key = f'leiden_{r}'
-            if key in adata.obs.columns:
-                logging.info(f'Saving UMAP colored by {key}.')
-                try:
-                    fig = sc.pl.umap(
-                        adata,
-                        color=key,
-                        size=10,
-                        legend_loc='right margin',
-                        return_fig=True
-                    )
-                    fig_path = qc_umap_dir / f'UMAP_{key}.png'
-                    fig.savefig(fig_path, bbox_inches='tight', dpi=300)
-                except Exception as e:
-                    logging.warning(f'Failed to save UMAP for {key}: {e}')
-            else:
-                logging.warning(f'{key} not found in adata.obs; skipping UMAP.')
-    except Exception as e:
-        logging.error(f'UMAP visualization step failed: {e}')
-
-    # Create UMAP plots colored by marker expression
-    try:
-        markers = adata.var_names.tolist()
-        logging.info(f'Creating UMAP plots for {len(markers)} markers.')
-        for marker in markers:
-            if marker in adata.var_names:
-                logging.info(f'Saving UMAP colored by marker {marker}.')
-                try:
-                    fig = sc.pl.umap(
-                        adata,
-                        color=marker,
-                        size=10,
-                        use_raw=False,  # Use processed data
-                        return_fig=True
-                    )
-                    fig_path = qc_umap_dir / f'UMAP_marker_{marker}.png'
-                    fig.savefig(fig_path, bbox_inches='tight', dpi=300)
-                except Exception as e:
-                    logging.warning(f'Failed to save UMAP for marker {marker}: {e}')
-            else:
-                logging.warning(f'Marker {marker} not found in adata.var_names; skipping UMAP.')
-    except Exception as e:
-        logging.error(f'Marker UMAP visualization step failed: {e}')
-
-    # Create MatrixPlot summaries grouped by Leiden clusters
-    try:
-        for r in lr_list or []:
-            key = f'leiden_{r}'
-            if key in adata.obs.columns:
-                logging.info(f'Saving MatrixPlot grouped by {key}.')
-                try:
-                    fig = sc.pl.matrixplot(
-                        adata,
-                        var_names=adata.var_names.tolist(),
-                        groupby=key,
-                        standard_scale='var',
-                        dendrogram=True,
-                        show=False,
-                        return_fig=True
-                    )
-                    fig_path = qc_matrix_dir / f'Matrixplot_{key}.png'
-                    fig.savefig(fig_path, bbox_inches='tight', dpi=300)
-                    logging.info(f'MatrixPlot saved to {fig_path}')
-                except Exception as e:
-                    logging.warning(f'Failed to save MatrixPlot for {key}: {e}')
-            else:
-                logging.warning(f'{key} not found in adata.obs; skipping MatrixPlot.')
-    except Exception as e:
-        logging.error(f'MatrixPlot visualization step failed: {e}')
-
-    # Visualize populations in tissue by mapping clusters back to masks
-    try:
-        if sbt_plotting is None:
-            logging.warning('plotting module unavailable; skipping tissue visualization.')
-        elif 'ROI' not in adata.obs.columns:
-            logging.warning('ROI column not found in adata.obs; skipping tissue visualization.')
-        else:
-            rois = sorted(adata.obs['ROI'].astype(str).unique().tolist())
-            if not rois:
-                logging.warning('No ROIs found in adata.obs; skipping tissue visualization.')
-            for r in lr_list or []:
-                key = f'leiden_{r}'
-                if key not in adata.obs.columns:
-                    continue
-                out_dir = qc_pop_dir / f'{key}'
-                out_dir.mkdir(parents=True, exist_ok=True)
-                logging.info(f'Creating tissue overlays for {key} across {len(rois)} ROIs.')
-                for roi in rois:
-                    try:
-                        save_path = out_dir / f'{roi}.png'
-                        sbt_plotting.obs_to_mask(
-                            adata=adata,
-                            roi=roi,
-                            roi_obs='ROI',
-                            cat_obs=key,
-                            masks_folder=general_config.masks_folder,
-                            save_path=str(save_path),
-                            background_color='white',
-                            separator_color='black'
-                        )
-                    except Exception as e:
-                        logging.warning(f'Failed tissue overlay for ROI {roi} ({key}): {e}')
-    except Exception as e:
-        logging.error(f'Tissue visualization step failed: {e}')
-
-    # ---------------- Backgating Assessment for AI Labels ----------------
-    if ai_mode and viz_config.enable_backgating:
-        try:
-            if sbt_backgating is None:
-                logging.warning('backgating module unavailable; skipping backgating assessment.')
-            else:
-                logging.info("Starting backgating assessment for AI-generated populations.")
-                
-                # Check if we have image folder available
-                image_folder = getattr(general_config, 'denoised_images_folder', 'images')
-                if not Path(image_folder).exists():
-                    logging.warning(f'Image folder {image_folder} not found; skipping backgating assessment.')
-                else:
-                    # Run backgating assessment for each AI-labeled resolution
-                    for r in lr_list or []:
-                        key_ai = f"leiden_{r}_AIlabel"
-                        if key_ai in adata.obs.columns:
-                            logging.info(f"Running backgating assessment for {key_ai}")
-                            
-                            # Set up output folder for this resolution
-                            backgating_output = qc_base / viz_config.backgating_output_folder / f'{key_ai}'
-                            
-                            try:
-                                sbt_backgating.backgating_assessment(
-                                    adata=adata,
-                                    image_folder=image_folder,
-                                    pop_obs=key_ai,
-                                    mean_expression_file=f'markers_mean_expression_{key_ai}.csv',
-                                    backgating_settings_file=f'backgating_settings_{key_ai}.csv',
-                                    pops_list=None,  # Use all populations
-                                    cells_per_group=viz_config.backgating_cells_per_group,
-                                    radius=viz_config.backgating_radius,
-                                    roi_obs='ROI',
-                                    x_loc_obs='X_loc',
-                                    y_loc_obs='Y_loc',
-                                    cell_index_obs='ObjectNumber',
-                                    # Mask parameters
-                                    use_masks=viz_config.backgating_use_masks,
-                                    mask_folder=viz_config.backgating_mask_folder,
-                                    exclude_rois_without_mask=True,
-                                    # Output settings
-                                    output_folder=str(backgating_output),
-                                    overview_images=True,
-                                    # Intensity scaling
-                                    minimum=0.4,
-                                    max_quantile='i0.97',
-                                    # Marker selection mode
-                                    mode='full',  # Compute mean expression, generate settings, and produce images
-                                    number_top_markers=2,  # Use top 2 markers for RG channels
-                                    specify_blue='DNA1',  # Use DNA1 as blue channel
-                                )
-                                logging.info(f"Backgating assessment completed for {key_ai}. Results saved to {backgating_output}")
-                                
-                            except Exception as e:
-                                logging.error(f"Backgating assessment failed for {key_ai}: {e}")
-                        else:
-                            logging.warning(f"{key_ai} not found in adata.obs; skipping backgating assessment.")
-                            
-                logging.info("Backgating assessment for AI populations completed.")
-        except Exception as e:
-            logging.error(f"Backgating assessment step failed: {e}")
+    
+    logging.info("Core processing pipeline complete. Data ready for visualization.")
 
     # Save the processed AnnData object
     adata.write_h5ad(process_config.output_adata_path)

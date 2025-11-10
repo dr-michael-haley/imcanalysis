@@ -1415,7 +1415,11 @@ def _validate_inputs(data, cols_of_interest):
     # If the function completes without raising an error, the input data is valid.
 
 
-def _create_heatmap(data_input, states, col, vmin, vmax, norm, cluster_mh, cmap, figsize, save_folder, save_extension, sig_annot=None, specify_row_order=None, specify_col_order=None, cmap_ticks=None):
+def _create_heatmap(data_input, states, col, vmin, vmax, norm, cluster_by, cmap, figsize, save_folder, save_extension, 
+                   sig_annot=None, specify_row_order=None, specify_col_order=None, cmap_ticks=None,
+                   use_clustermap=False, row_colors=None, col_colors=None, row_cluster=True, 
+                   col_cluster=True, dendrogram_ratio=0.05, colors_ratio=0.05, mark_homotypic=False, 
+                   annotation_color=None):
     """
     Create a heatmap for a specific column.
 
@@ -1426,113 +1430,311 @@ def _create_heatmap(data_input, states, col, vmin, vmax, norm, cluster_mh, cmap,
         vmin (float): The minimum value for the colormap.
         vmax (float): The maximum value for the colormap.
         norm (Normalize): The normalizer for the colormap.
-        cluster_mh (bool): Whether to cluster the 'Morueta-Holme' column.
+        cluster_by (str): Column name to use for clustering. If None, no clustering is applied.
         cmap (Colormap): The colormap to use for the heatmap.
-        figsize (tuple): The size of the figure for the heatmap.
+        figsize (Tuple[int, int]): The size of the figure for the heatmap.
         save_folder (str): The folder to save the heatmap in.
         save_extension (str): The file extension to use for the saved heatmap.
         sig_annot - Column in data that has annotations
         specify_row_order - Specify a row order
         specify_col_order - Specify a column order
         cmap_ticks - Can provide of a list of where ticks should appear on the colourmap
+        use_clustermap (bool): If True, use seaborn clustermap instead of regular heatmap.
+        row_colors - Colors for row annotations. Can be dict, Series, or DataFrame.
+        col_colors - Colors for column annotations. Can be dict, Series, or DataFrame.
+        row_cluster (bool): Whether to cluster rows in clustermap.
+        col_cluster (bool): Whether to cluster columns in clustermap.
+        dendrogram_ratio (float): Ratio of dendrogram size to main plot in clustermap.
+        colors_ratio (float): Ratio of color annotation size to main plot in clustermap.
+        mark_homotypic (bool): If True, mark homotypic interactions with 'X' instead of '*'.
+        annotation_color (str, optional): Custom color for all annotations. If None, uses default color.
 
     Returns:
         None. The heatmap is displayed and saved to a file.
     """
     
-    data = data_input.copy()
-    fig, axs = plt.subplots(1, len(states), figsize=(len(states)*figsize, figsize))
-    
-    # In case only one state is found
-    if not hasattr(axs, '__iter__'):
-        axs = [axs]
-    
-    fig.suptitle(f"Heatmaps for analysis: {col}", fontsize=16, y=1.02)
-
-    # Fill NaN values if clustering is enabled.
-    if cluster_mh:
-        data[col] = data[col].fillna(0)     
-    
-    # If the column is not 'Morueta-Holme' or if clustering is enabled, create a clustermap.
-    if 'Morueta-Holme' in col or cluster_mh:
-        first_state_data = data[data['state'] == states[0]]
-        heatmap_data_first_state = first_state_data.pivot(index='Cell Type 1', columns='Cell Type 2', values=col)
-        g = sns.clustermap(heatmap_data_first_state, cmap=cmap, robust=True, figsize=(10, 10))
-        plt.close(g.fig)
-
-        # Get the order of rows and columns from the clustermap.
-        row_order = g.dendrogram_row.reordered_ind
-        col_order = g.dendrogram_col.reordered_ind
-
-    # Create a heatmap for each state.
-    for ax, state in zip(axs, states):
-        state_data = data[data['state'] == state]
-        heatmap_data = state_data.pivot(index='Cell Type 1', columns='Cell Type 2', values=col)
+    def _process_colors(colors, labels):
+        """
+        Convert color specification to pandas Series format expected by seaborn.
         
-        # Retrieve annotations from the given column in the raw data
-        if sig_annot:
-            annotations = state_data.pivot(index='Cell Type 1', columns='Cell Type 2', values=sig_annot)
-         
-        # Reorder the rows and columns according to the clustermap if the column is not 'MH' or if clustering is enabled.
-        if 'Morueta-Holme' not in col or cluster_mh:
-            heatmap_data = heatmap_data.iloc[row_order, col_order]
-            
-            # Reorder is needed
-            if sig_annot:
-                annotations = annotations.iloc[row_order, col_order]
-
-        # Overwrite column orders if given
-        if specify_row_order:
-            heatmap_data = heatmap_data.loc[specify_row_order, specify_col_order]
-            if sig_annot:
-                annotations = annotations.loc[specify_row_order, specify_col_order]           
+        Parameters:
+            colors: Dict, Series, or DataFrame specifying colors
+            labels: List of labels (row or column names) from the heatmap data
         
-        if type(cmap_ticks) != list and cmap_ticks:
-            cmap_ticks = [vmin, 1, vmax]
+        Returns:
+            pandas Series or DataFrame suitable for seaborn clustermap
+        """
+        if colors is None:
+            return None
         
-        cbar_kws = {'fraction':0.046, 'pad':0.04, 'ticks':cmap_ticks}
+        if isinstance(colors, dict):
+            # Convert dictionary to pandas Series, matching the order of labels
+            color_series = pd.Series(index=labels, dtype=object)
+            for label in labels:
+                if label in colors:
+                    color_series[label] = colors[label]
+                else:
+                    # Use a default color if not specified
+                    color_series[label] = 'lightgray'
+            return color_series
         
-        #if sig_annot:
-        #    print(col)
-        #    display(heatmap_data)
-        #   display(annotations)
-
-        # Generate the heatmap.
-        if not sig_annot:
-            if norm:
-                sns.heatmap(heatmap_data, ax=ax, cmap=cmap, cbar=True, robust=True, square=True, vmin=vmin, vmax=vmax, norm=norm, cbar_kws=cbar_kws)
-            else:
-                sns.heatmap(heatmap_data, ax=ax, cmap=cmap, cbar=True, robust=True, square=True, vmin=vmin, vmax=vmax, cbar_kws=cbar_kws)
+        elif isinstance(colors, pd.Series):
+            # Reindex to match labels order, fill missing with default
+            return colors.reindex(labels, fill_value='lightgray')
+        
+        elif isinstance(colors, pd.DataFrame):
+            # Reindex to match labels order, fill missing with default
+            return colors.reindex(labels, fill_value='lightgray')
+        
         else:
+            print(f"Warning: Unsupported color format {type(colors)}. Expected dict, Series, or DataFrame.")
+            return None
+
+    data = data_input.copy()
+    
+    # Apply clustering if cluster_by is specified
+    if cluster_by is not None:
+        # Fill NaN values in the clustering column if clustering is enabled.
+        if cluster_by in data.columns:
+            data[cluster_by] = data[cluster_by].fillna(0)
+        else:
+            print(f"Warning: Clustering column '{cluster_by}' not found in data. No clustering will be applied.")
+            cluster_by = None
+    
+    # Prepare colorbar kwargs
+    if type(cmap_ticks) != list and cmap_ticks:
+        cmap_ticks = [vmin, 1, vmax]
+    
+    cbar_kws = {'fraction':0.046, 'pad':0.04, 'ticks':cmap_ticks}
+    
+    if use_clustermap:
+        # Create clustermaps for each state
+        for state in states:
+            state_data = data[data['state'] == state]
+            heatmap_data = state_data.pivot(index='Cell Type 1', columns='Cell Type 2', values=col)
             
-            annot_kws={'fontsize':'x-large', 'fontweight':'extra bold','va':'center','ha':'center'}
-
+            # Retrieve annotations from the given column in the raw data
+            if sig_annot:
+                annotations = state_data.pivot(index='Cell Type 1', columns='Cell Type 2', values=sig_annot)
+            
+            # Overwrite column orders if given
+            if specify_row_order and specify_col_order:
+                heatmap_data = heatmap_data.loc[specify_row_order, specify_col_order]
+                if sig_annot:
+                    annotations = annotations.loc[specify_row_order, specify_col_order]
+            
+            # Process row and column colors
+            processed_row_colors = _process_colors(row_colors, heatmap_data.index.tolist())
+            processed_col_colors = _process_colors(col_colors, heatmap_data.columns.tolist())
+            
+            # Prepare clustermap arguments
+            clustermap_kwargs = {
+                'data': heatmap_data,
+                'cmap': cmap,
+                'robust': True,
+                'figsize': figsize,
+                'row_cluster': row_cluster,
+                'col_cluster': col_cluster,
+                'dendrogram_ratio': dendrogram_ratio,
+                'colors_ratio': colors_ratio,
+                'cbar_kws': cbar_kws,
+                'linecolor': 'black',
+                'linewidth': 0.5,
+            }
+            
+            # Add norm and vmin/vmax if specified
             if norm:
-                sns.heatmap(heatmap_data, ax=ax, cmap=cmap, cbar=True, robust=True, square=True, vmin=vmin, vmax=vmax, norm=norm, cbar_kws=cbar_kws, annot=annotations.to_numpy(), annot_kws=annot_kws, fmt="")
+                clustermap_kwargs['norm'] = norm
+                clustermap_kwargs['vmin'] = vmin
+                clustermap_kwargs['vmax'] = vmax
             else:
-                sns.heatmap(heatmap_data, ax=ax, cmap=cmap, cbar=True, robust=True, square=True, vmin=vmin, vmax=vmax, cbar_kws=cbar_kws, annot=annotations.to_numpy(), annot_kws=annot_kws, fmt="")        
-
-        ax.set_title(state)
-
+                clustermap_kwargs['vmin'] = vmin
+                clustermap_kwargs['vmax'] = vmax
+            
+            # Add row and column colors if processed successfully
+            if processed_row_colors is not None:
+                clustermap_kwargs['row_colors'] = processed_row_colors
+            if processed_col_colors is not None:
+                clustermap_kwargs['col_colors'] = processed_col_colors
+            
+            # Add annotations if available
+            if sig_annot:
+                clustermap_kwargs['annot'] = annotations
+                clustermap_kwargs['fmt'] = ""
+                annot_kws = {'fontsize':'large', 
+                             #'fontweight':'bold',
+                             'va':'center',
+                             'ha':'center'}
+                # Apply custom annotation color if specified
+                if annotation_color is not None:
+                    annot_kws['color'] = annotation_color
+                clustermap_kwargs['annot_kws'] = annot_kws
+            
+            # Create clustermap with error handling
+            try:
+                g = sns.clustermap(**clustermap_kwargs)
+                
+                # Add title
+                g.fig.suptitle(f"Clustermap for {col}: {state}", fontsize=16, y=0.98)
+                
+                # Save figure
+                g.savefig(os.path.join(save_folder, f'clustermap_{col}_{state.replace(" ", "_")}{save_extension}'), 
+                         bbox_inches='tight', dpi=400)
+                plt.show()
+                
+            except ValueError as e:
+                if "condensed distance matrix" in str(e) or "finite values" in str(e):
+                    print(f"Warning: Cannot create clustermap for {col} in state '{state}' due to clustering issues.")
+                    print(f"Creating regular heatmap instead. Error: {str(e)}")
+                    
+                    # Create a regular heatmap as fallback
+                    fig, ax = plt.subplots(figsize=figsize)
+                    
+                    # Prepare heatmap arguments without clustering
+                    heatmap_kwargs = {
+                        'data': heatmap_data,
+                        'ax': ax,
+                        'cmap': cmap,
+                        'cbar': True,
+                        'robust': True,
+                        'square': True,
+                        'cbar_kws': cbar_kws
+                    }
+                    
+                    # Add norm and vmin/vmax
+                    if norm:
+                        heatmap_kwargs['norm'] = norm
+                        heatmap_kwargs['vmin'] = vmin
+                        heatmap_kwargs['vmax'] = vmax
+                    else:
+                        heatmap_kwargs['vmin'] = vmin
+                        heatmap_kwargs['vmax'] = vmax
+                    
+                    # Add annotations if available
+                    if sig_annot:
+                        heatmap_kwargs['annot'] = annotations
+                        heatmap_kwargs['fmt'] = ""
+                        annot_kws = {'fontsize':'large', 'fontweight':'bold','va':'center','ha':'center'}
+                        # Apply custom annotation color if specified
+                        if annotation_color is not None:
+                            annot_kws['color'] = annotation_color
+                        heatmap_kwargs['annot_kws'] = annot_kws
+                    
+                    # Create regular heatmap
+                    sns.heatmap(**heatmap_kwargs)
+                    ax.set_title(f"Heatmap for {col}: {state} (clustering failed)")
+                    
+                    plt.tight_layout()
+                    plt.savefig(os.path.join(save_folder, f'heatmap_fallback_{col}_{state.replace(" ", "_")}{save_extension}'), 
+                               bbox_inches='tight', dpi=400)
+                    plt.show()
+                else:
+                    # Re-raise other ValueError types
+                    raise
+    
+    else:
+        # Original heatmap logic
+        fig, axs = plt.subplots(1, len(states), figsize=(len(states)*figsize[0], figsize[1]))
         
-    plt.tight_layout()
-    plt.savefig(os.path.join(save_folder, f'heatmap_{col}{save_extension}'), bbox_inches='tight', dpi=400)
-    plt.show()
+        # In case only one state is found
+        if not hasattr(axs, '__iter__'):
+            axs = [axs]
+        
+        fig.suptitle(f"Heatmaps for analysis: {col}", fontsize=16, y=1.02)
+        
+        # If clustering is enabled, create a clustermap to get the ordering.
+        if cluster_by is not None:
+            first_state_data = data[data['state'] == states[0]]
+            heatmap_data_first_state = first_state_data.pivot(index='Cell Type 1', columns='Cell Type 2', values=cluster_by)
+            
+            try:
+                g = sns.clustermap(heatmap_data_first_state, cmap=cmap, robust=True, figsize=figsize)
+                plt.close(g.fig)
+
+                # Get the order of rows and columns from the clustermap.
+                row_order = g.dendrogram_row.reordered_ind
+                col_order = g.dendrogram_col.reordered_ind
+                
+            except ValueError as e:
+                if "condensed distance matrix" in str(e) or "finite values" in str(e):
+                    print(f"Warning: Cannot perform clustering with column '{cluster_by}' due to clustering issues.")
+                    print(f"Proceeding without clustering. Error: {str(e)}")
+                    cluster_by = None  # Disable clustering for this run
+                else:
+                    # Re-raise other ValueError types
+                    raise
+
+        # Create a heatmap for each state.
+        for ax, state in zip(axs, states):
+            state_data = data[data['state'] == state]
+            heatmap_data = state_data.pivot(index='Cell Type 1', columns='Cell Type 2', values=col)
+            
+            # Retrieve annotations from the given column in the raw data
+            if sig_annot:
+                annotations = state_data.pivot(index='Cell Type 1', columns='Cell Type 2', values=sig_annot)
+             
+            # Reorder the rows and columns according to the clustermap if clustering is enabled.
+            if cluster_by is not None:
+                heatmap_data = heatmap_data.iloc[row_order, col_order]
+                
+                # Reorder is needed
+                if sig_annot:
+                    annotations = annotations.iloc[row_order, col_order]
+
+            # Overwrite column orders if given
+            if specify_row_order:
+                heatmap_data = heatmap_data.loc[specify_row_order, specify_col_order]
+                if sig_annot:
+                    annotations = annotations.loc[specify_row_order, specify_col_order]           
+
+            # Generate the heatmap.
+            if not sig_annot:
+                if norm:
+                    sns.heatmap(heatmap_data, ax=ax, cmap=cmap, cbar=True, robust=True, square=True, vmin=vmin, vmax=vmax, norm=norm, cbar_kws=cbar_kws)
+                else:
+                    sns.heatmap(heatmap_data, ax=ax, cmap=cmap, cbar=True, robust=True, square=True, vmin=vmin, vmax=vmax, cbar_kws=cbar_kws)
+            else:
+                
+                annot_kws={'fontsize':'x-large', 'fontweight':'extra bold','va':'center','ha':'center'}
+                # Apply custom annotation color if specified
+                if annotation_color is not None:
+                    annot_kws['color'] = annotation_color
+
+                if norm:
+                    sns.heatmap(heatmap_data, ax=ax, cmap=cmap, cbar=True, robust=True, square=True, vmin=vmin, vmax=vmax, norm=norm, cbar_kws=cbar_kws, annot=annotations.to_numpy(), annot_kws=annot_kws, fmt="")
+                else:
+                    sns.heatmap(heatmap_data, ax=ax, cmap=cmap, cbar=True, robust=True, square=True, vmin=vmin, vmax=vmax, cbar_kws=cbar_kws, annot=annotations.to_numpy(), annot_kws=annot_kws, fmt="")        
+
+            ax.set_title(state)
+
+        plt.tight_layout()
+        plt.savefig(os.path.join(save_folder, f'heatmap_{col}{save_extension}'), bbox_inches='tight', dpi=400)
+        plt.show()
 
 
 def create_spoox_heatmaps(data_input: pd.DataFrame, 
                           percentile: float = 95, 
                           sig_threshold: float = 0.05, 
-                          cluster_mh: bool = True, 
+                          cluster_by: Optional[str] = 'Morueta-Holme_All', 
                           save_folder: str = 'spoox_figures', 
                           save_extension: str = '.png', 
-                          figsize: int = 10, 
+                          figsize: Tuple[int, int] = (10, 10), 
                           cell_type_1_list: Optional[List[str]] = None, 
                           cell_type_2_list: Optional[List[str]] = None, 
                           annotate_signficance: bool = True, 
                           specify_row_order: Optional[List[str]] = None, 
                           specify_col_order: Optional[List[str]] = None, 
-                          cmap_ticks: Optional[List[float]] = None) -> pd.DataFrame:
+                          cmap_ticks: Optional[List[float]] = None,
+                          cluster_mh: Optional[bool] = None,
+                          use_clustermap: bool = False,
+                          row_colors: Optional[Union[Dict[str, str], pd.Series, pd.DataFrame]] = None,
+                          col_colors: Optional[Union[Dict[str, str], pd.Series, pd.DataFrame]] = None,
+                          row_cluster: bool = True,
+                          col_cluster: bool = True,
+                          dendrogram_ratio: float = 0.2,
+                          colors_ratio: float = 0.03,
+                          mark_homotypic: bool = False,
+                          annotation_color: Optional[str] = None) -> pd.DataFrame:
     """
     Creates heatmaps from the SpOOx sumary data
     
@@ -1540,20 +1742,45 @@ def create_spoox_heatmaps(data_input: pd.DataFrame,
         data_input (pd.DataFrame): Pandas dataframe of loaded SpOOx summary data.
         percentile (float): Percentile to determine vmax for heatmap color scaling. Default is 95.
         sig_threshold (float): Threshold for significance. Default is 0.05.
-        cluster_mh (bool): If True, the Morueta-Holme column is clustered. Default is True.
+        cluster_by (Optional[str]): Column name to use for clustering heatmaps. If None, no clustering is applied.
+            Default is 'Morueta-Holme_All'. Other options include 'gr20', 'gr20 PCF lower', etc.
         save_folder (str): Folder to save the generated heatmaps. Default is 'spoox_figures'.
         save_extension (str): File extension for the saved heatmaps. Default is '.png'.
-        figsize (int): Size of the figure for the heatmaps. Default is 10.
+        figsize (Tuple[int, int]): Size of the figure for the heatmaps. Default is (10, 10).
         cell_type_1_list (Optional[List[str]]): Populations to filter to in cell type 1 (rows).
         cell_type_2_list (Optional[List[str]]): Populations to filter to in cell type 1 (columns).
         annotate_signficance (bool): Whether to annotate significant values or not. Default is True.
         specify_row_order (Optional[List[str]]): Specify a row order. Default is None.
         specify_col_order (Optional[List[str]]): Specify a column order. Default is None.
         cmap_ticks (Optional[List[float]]): List of where ticks should appear on the color map. Default is None.
+        cluster_mh (Optional[bool]): Deprecated parameter for backward compatibility. If provided, overrides cluster_by.
+        use_clustermap (bool): If True, use seaborn clustermap instead of regular heatmap. Default is False.
+        row_colors (Optional[Union[Dict[str, str], pd.Series, pd.DataFrame]]): Colors for row annotations in clustermap. 
+            Can be a dictionary mapping row names to colors, a pandas Series, or DataFrame for multiple tracks.
+            Only used when use_clustermap=True. Default is None.
+        col_colors (Optional[Union[Dict[str, str], pd.Series, pd.DataFrame]]): Colors for column annotations in clustermap.
+            Can be a dictionary mapping column names to colors, a pandas Series, or DataFrame for multiple tracks.
+            Only used when use_clustermap=True. Default is None.
+        row_cluster (bool): Whether to cluster rows in clustermap. Only used when use_clustermap=True. Default is True.
+        col_cluster (bool): Whether to cluster columns in clustermap. Only used when use_clustermap=True. Default is True.
+        dendrogram_ratio (float): Ratio of dendrogram size to main plot in clustermap. Only used when use_clustermap=True. Default is 0.2.
+        colors_ratio (float): Ratio of color annotation size to main plot in clustermap. Only used when use_clustermap=True. Default is 0.03.
+        mark_homotypic (bool): If True, mark homotypic interactions (same cell type) with "X" instead of "*". Default is False.
+        annotation_color (Optional[str]): If provided, all annotations will be displayed in this color. Default is None (uses default text color).
        
     Returns:
         pd.DataFrame: The function saves heatmap figures in the specified folder.
     """
+    # Handle backward compatibility
+    if cluster_mh is not None:
+        import warnings
+        warnings.warn("The 'cluster_mh' parameter is deprecated. Use 'cluster_by' instead.", 
+                     DeprecationWarning, stacklevel=2)
+        if cluster_mh:
+            cluster_by = 'Morueta-Holme_All'
+        else:
+            cluster_by = None
+    
     # These are the columns from the SpOOx output
     cols_of_interest = ['gr10 PCF lower', 'gr20', 'gr20 PCF lower', 'gr20 PCF upper', 'gr20 PCF combined', 'Morueta-Holme_Significant', 'Morueta-Holme_All', 'contacts', '%contacts', 'Network', 'Network(%)']
 
@@ -1581,8 +1808,23 @@ def create_spoox_heatmaps(data_input: pd.DataFrame,
     data['Morueta-Holme_All'] = data['MH_SES']
     
     if annotate_signficance:
-        data['Morueta-Holme_Annotation'] = np.where(data['MH_FDR']<sig_threshold, "*", "")
-        data['gr20_Annotation'] = copy(np.where(~data['gr20 PCF combined'].isna(), "*", ""))
+        # Determine annotation symbol based on homotypic marking preference
+        if mark_homotypic:
+            # Create annotations with 'X' for homotypic interactions, '*' for heterotypic
+            data['Morueta-Holme_Annotation'] = np.where(
+                data['MH_FDR']<sig_threshold,
+                np.where(data['Cell Type 1'] == data['Cell Type 2'], "X", "*"),
+                ""
+            )
+            data['gr20_Annotation'] = copy(np.where(
+                ~data['gr20 PCF combined'].isna(),
+                np.where(data['Cell Type 1'] == data['Cell Type 2'], "X", "*"),
+                ""
+            ))
+        else:
+            # Standard annotation with '*' for all significant interactions
+            data['Morueta-Holme_Annotation'] = np.where(data['MH_FDR']<sig_threshold, "*", "")
+            data['gr20_Annotation'] = copy(np.where(~data['gr20 PCF combined'].isna(), "*", ""))
     
     # Filter to only specific cells on axes
     if cell_type_1_list:
@@ -1625,6 +1867,7 @@ def create_spoox_heatmaps(data_input: pd.DataFrame,
             print(vmax)
             #vmin = np.percentile(data[col].dropna(), (100-percentile))
             vmin = np.min(data[col].dropna())
+            
             print(vmin)
             
             cmap = get_cmap("coolwarm")
@@ -1641,8 +1884,8 @@ def create_spoox_heatmaps(data_input: pd.DataFrame,
          
         elif col == 'gr20':
             
-            vmax = np.percentile(data[col].dropna(), percentile)
-            vmin = np.percentile(data[col].dropna(), (100-percentile))
+            vmax = np.percentile(data[data["Cell Type 1"] != data["Cell Type 2"]][col].dropna(), percentile)
+            vmin = np.percentile(data[data["Cell Type 1"] != data["Cell Type 2"]][col].dropna(), (100-percentile))
             cmap = get_cmap("coolwarm")
             
             norm = TwoSlopeNorm(vmin=vmin, vcenter=1, vmax=vmax)
@@ -1651,8 +1894,8 @@ def create_spoox_heatmaps(data_input: pd.DataFrame,
                 sig_annot = 'gr20_Annotation'
                        
         elif 'Morueta-Holme' in col:
-            vmax = np.percentile(data[col].dropna(), percentile)
-            vmin = np.percentile(data[col].dropna(), (100-percentile))
+            vmax = np.percentile(data[data["Cell Type 1"] != data["Cell Type 2"]][col].dropna(), percentile)
+            vmin = np.percentile(data[data["Cell Type 1"] != data["Cell Type 2"]][col].dropna(), (100-percentile))
             cmap = get_cmap("coolwarm")
             
             norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
@@ -1665,7 +1908,10 @@ def create_spoox_heatmaps(data_input: pd.DataFrame,
             norm = None
         
         # Call the function to create the heatmap for the current column.
-        _create_heatmap(data, states, col, vmin, vmax, norm, cluster_mh, cmap, figsize, save_folder, save_extension, sig_annot, specify_row_order, specify_col_order, cmap_ticks)
+        _create_heatmap(data, states, col, vmin, vmax, norm, cluster_by, cmap, figsize, save_folder, save_extension, 
+                       sig_annot, specify_row_order, specify_col_order, cmap_ticks, use_clustermap, 
+                       row_colors, col_colors, row_cluster, col_cluster, dendrogram_ratio, colors_ratio, 
+                       mark_homotypic, annotation_color)
 
         print(f"Saved heatmap for column '{col}' in folder '{save_folder}'")
         

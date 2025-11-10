@@ -148,16 +148,35 @@ class VisualizationConfig:
     enable_ai: bool = True  # Enable AI-powered cluster interpretation
     tissue: str = "Unknown tissue"  # Tissue type for AI interpretation context
     
+    # Visualization module toggles - all default True
+    create_umaps: bool = True  # Create UMAP plots for populations and markers
+    create_matrix_plots: bool = True  # Create MatrixPlot summaries
+    create_tissue_overlays: bool = True  # Create tissue population overlays
+    create_population_analysis: bool = True  # Create population analysis across metadata
+    create_backgating: bool = True  # Create backgating assessment
+    create_color_legends: bool = True  # Generate color legends for categorical plots
+    
+    # Categorical visualization controls
+    include_metadata_umaps: bool = True  # Include metadata columns in UMAP plots
+    include_metadata_matrix_plots: bool = True  # Include metadata columns in MatrixPlots
+    include_marker_umaps: bool = True  # Include marker expression UMAPs
+    
     # Backgating assessment settings
-    enable_backgating: bool = True  # Enable backgating assessment for AI-generated populations
     backgating_cells_per_group: int = 50  # Number of cells to sample per population for backgating
     backgating_radius: int = 15  # Radius in pixels for cell thumbnail extraction
-    backgating_output_folder: str = 'Backgating_AI'  # Output folder for backgating results
+    backgating_output_folder: str = 'Backgating'  # Output folder for backgating results
     backgating_use_masks: bool = True  # Whether to use segmentation masks in backgating
     backgating_mask_folder: str = 'masks'  # Folder containing segmentation masks
     
+    # Backgating intensity and marker settings
+    backgating_minimum: float = 0.3  # Minimum intensity for backgating normalization
+    backgating_max_quantile: str = 'i0.96'  # Maximum quantile method for intensity scaling
+    backgating_number_top_markers: int = 2  # Number of top markers to use for RGB channels
+    backgating_specify_blue: Optional[str] = 'DNA1'  # Marker to use for blue channel
+    backgating_specify_red: Optional[str] = None  # Marker to use for red channel (None = auto-select)
+    backgating_specify_green: Optional[str] = None  # Marker to use for green channel (None = auto-select)
+    
     # General visualization settings
-    create_color_legends: bool = True  # Generate color legends for categorical plots
     save_high_res: bool = True  # Save high-resolution figures (300 DPI)
     figure_format: str = 'png'  # Default figure format ('png', 'pdf', 'svg')
 

@@ -1678,7 +1678,8 @@ def grouped_graph(
         stacked=False,
         width=0.8,
         ylabel=None,
-        sort_by_population=None
+        sort_by_population=None,
+        use_adata_colormap=True
 ):
     """
     Plot a grouped bar graph of cell counts or proportions from an AnnData object.
@@ -1699,6 +1700,7 @@ def grouped_graph(
     - proportions: bool, normalize crosstab output (proportions)
     - stacked: bool, if True, use pandas stacked bar plot instead of seaborn
     - sort_by_population: str or None, if given, sort x_axis by abundance of this group
+    - use_adata_colormap: bool, if True, use colormap from AnnData.uns if available (default True)
     """
 
     crosstab_norm = 1 if proportions else False
@@ -1731,6 +1733,35 @@ def grouped_graph(
         sort_order = sort_df.groupby(x_axis)['value'].sum().sort_values(ascending=False).index.tolist()
         order = sort_order if order is None else order
 
+    # Extract colors from AnnData if available
+    palette = None
+    if use_adata_colormap:
+        # Check for colormap in AnnData.uns (try multiple possible keys)
+        color_key_options = [
+            f"{group_by_obs}_colors",
+            f"{group_by_obs}_colormap", 
+            f"{group_by_obs}_colour_map"
+        ]
+        
+        for color_key in color_key_options:
+            if color_key in adata.uns:
+                colors = adata.uns[color_key]
+                
+                # Get the categories for this observation
+                if hasattr(adata.obs[group_by_obs], 'cat'):
+                    categories = adata.obs[group_by_obs].cat.categories.tolist()
+                else:
+                    categories = sorted(adata.obs[group_by_obs].unique().tolist())
+                
+                # Create palette dict or list depending on color format
+                if isinstance(colors, dict):
+                    palette = colors
+                elif isinstance(colors, (list, tuple, np.ndarray)):
+                    # Map categories to colors
+                    palette = {cat: color for cat, color in zip(categories, colors[:len(categories)])}
+                
+                break  # Use first found colormap
+    
     # Plotting
     fig, ax = plt.subplots(figsize=fig_size)
 
@@ -1744,7 +1775,14 @@ def grouped_graph(
         )
         if order:
             pivot_table = pivot_table.loc[order]
-        pivot_table.plot(kind='bar', stacked=True, ax=ax, width=width)
+        
+        # Apply colors to stacked plot if palette is available
+        if palette:
+            # Create color list in the order of pivot_table columns
+            color_list = [palette.get(col, '#1f77b4') for col in pivot_table.columns]
+            pivot_table.plot(kind='bar', stacked=True, ax=ax, width=width, color=color_list)
+        else:
+            pivot_table.plot(kind='bar', stacked=True, ax=ax, width=width)
     else:
         sb.barplot(
             data=data_long,
@@ -1754,7 +1792,8 @@ def grouped_graph(
             errorbar=errorbar,
             order=order,
             ax=ax,
-            width=width
+            width=width,
+            palette=palette
         )
 
     # Formatting
