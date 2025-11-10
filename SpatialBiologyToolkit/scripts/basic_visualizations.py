@@ -497,6 +497,13 @@ def create_backgating_assessment(adata, population_columns, viz_config, general_
                 backgating_output = qc_base / viz_config.backgating_output_folder / f'{pop_col}'
                 
                 try:
+                    # Debug configuration being used
+                    use_de = getattr(viz_config, 'backgating_use_differential_expression', True)
+                    mode = getattr(viz_config, 'backgating_mode', 'full')
+                    logging.info(f"Backgating config - use_differential_expression: {use_de}, mode: {mode}")
+                    logging.info(f"Specify overrides - red: {viz_config.backgating_specify_red}, "
+                                f"green: {viz_config.backgating_specify_green}, blue: {viz_config.backgating_specify_blue}")
+                    
                     sbt_backgating.backgating_assessment(
                         adata=adata,
                         image_folder=image_folder,
@@ -522,11 +529,11 @@ def create_backgating_assessment(adata, population_columns, viz_config, general_
                         max_quantile=viz_config.backgating_max_quantile,
                         # Marker selection and differential expression
                         markers_exclude=getattr(viz_config, 'backgating_markers_exclude', ['DNA1', 'DNA3']),
-                        use_differential_expression=getattr(viz_config, 'backgating_use_differential_expression', True),
+                        use_differential_expression=use_de,
                         de_method=getattr(viz_config, 'backgating_de_method', 'wilcoxon'),
                         min_logfc_threshold=getattr(viz_config, 'backgating_min_logfc_threshold', 0.2),
                         max_pval_adj=getattr(viz_config, 'backgating_max_pval_adj', 0.05),
-                        mode=getattr(viz_config, 'backgating_mode', 'full'),  # Control execution mode
+                        mode=mode,  # Control execution mode
                         number_top_markers=viz_config.backgating_number_top_markers,
                         specify_blue=viz_config.backgating_specify_blue,
                         specify_red=viz_config.backgating_specify_red,

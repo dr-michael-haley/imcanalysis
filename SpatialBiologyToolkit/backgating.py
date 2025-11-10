@@ -826,11 +826,24 @@ def perform_differential_expression(
     Returns:
         List of top marker names ranked by discriminative power (test statistic)
     """
+    if verbose:
+        import logging
+        logging.info(f"  Starting differential expression analysis for {target_population}")
+        print(f"Starting DE analysis for {target_population}...", flush=True)
+        
     if markers_exclude is None:
         markers_exclude = []
     
     # Create a copy to avoid modifying the original
     adata_copy = adata.copy()
+    
+    if verbose:
+        logging.info(f"  Input data: {adata_copy.n_obs} cells, {adata_copy.n_vars} markers")
+        logging.info(f"  Population column: {pop_obs}")
+        logging.info(f"  Target population: {target_population}")
+        logging.info(f"  Markers to exclude: {markers_exclude}")
+        logging.info(f"  Method: {method}")
+        print(f"DE input: {adata_copy.n_obs} cells, {adata_copy.n_vars} markers", flush=True)
     
     # Filter markers if specified
     if only_use_markers:
@@ -902,18 +915,22 @@ def perform_differential_expression(
         ])
         
         if verbose:
-            print(f"\nDifferential expression results for {target_population}:")
-            print(f"  Total markers tested: {len(markers_df)}")
-            print(f"  Markers meeting significance thresholds (padj < {max_pval_adj}, logFC > {min_logfc_threshold}): {significant_count}")
-            print(f"  Top {n_top_markers} most discriminative markers selected: {top_markers}")
+            import logging
+            logging.info(f"\nDifferential expression results for {target_population}:")
+            logging.info(f"  Total markers tested: {len(markers_df)}")
+            logging.info(f"  Markers meeting significance thresholds (padj < {max_pval_adj}, logFC > {min_logfc_threshold}): {significant_count}")
+            logging.info(f"  Top {n_top_markers} most discriminative markers selected: {top_markers}")
             
             if len(top_markers) > 0:
-                print(f"\nTop marker details (ranked by discriminative power):")
+                logging.info(f"\nTop marker details (ranked by discriminative power):")
                 top_details = markers_df_sorted.head(n_top_markers)
                 for _, row in top_details.iterrows():
                     sig_status = "significant" if (row['pvals_adj'] < max_pval_adj and row['logfoldchanges'] > min_logfc_threshold) else "not significant"
-                    print(f"    {row['names']}: score={row['scores']:.2f}, logFC={row['logfoldchanges']:.2f}, "
+                    logging.info(f"    {row['names']}: score={row['scores']:.2f}, logFC={row['logfoldchanges']:.2f}, "
                           f"padj={row['pvals_adj']:.2e} ({sig_status})")
+            
+            # Also print to ensure immediate output in SLURM
+            print(f"DE analysis for {target_population}: selected {top_markers}", flush=True)
         
         return top_markers
         
@@ -1118,13 +1135,38 @@ def backgating_assessment(
     for col in needed_columns:
         if col not in settings_df.columns:
             settings_df[col] = None
+            
+    print(f"Settings DataFrame shape after initialization: {settings_df.shape}")
+    print(f"Population categories to process: {pop_categories}")
+    if len(pop_categories) > 0:
+        print(f"Sample settings for first population ({pop_categories[0]}):")
+        print(f"  Red: {settings_df.loc[pop_categories[0], 'Red']}")
+        print(f"  Green: {settings_df.loc[pop_categories[0], 'Green']}")  
+        print(f"  Blue: {settings_df.loc[pop_categories[0], 'Blue']}")
 
     # 3) Fill in missing marker assignments
     if mode in ['full','save_markers']:
-        print(f"\nDetermining top markers for each population using {'differential expression' if use_differential_expression else 'mean expression'}...")
+        print(f"\nDetermining top markers for each population using {'differential expression' if use_differential_expression else 'mean expression'}...", flush=True)
         
         for pop in pop_categories:
-            if pd.isna(settings_df.loc[pop, 'Red']):
+            print(f"Processing population: {pop}", flush=True)
+            print(f"  Current Red marker: {settings_df.loc[pop, 'Red']}", flush=True)
+            print(f"  Is Red marker NaN? {pd.isna(settings_df.loc[pop, 'Red'])}", flush=True)
+            
+            # In 'full' mode, always recalculate unless Red/Green overrides are specified
+            # In 'save_markers' mode, only calculate if missing
+            # Note: Blue override (typically DNA1) doesn't prevent DE since Red/Green are what DE selects
+            should_calculate = (
+                pd.isna(settings_df.loc[pop, 'Red']) or 
+                (mode == 'full' and specify_red is None and specify_green is None)
+            )
+            
+            print(f"  Should calculate markers? {should_calculate}", flush=True)
+            print(f"  Reason: Red is NaN: {pd.isna(settings_df.loc[pop, 'Red'])}, "
+                  f"Full mode with no R/G overrides: {mode == 'full' and specify_red is None and specify_green is None}", flush=True)
+            
+            if should_calculate:
+                print(f"  Running marker selection for {pop}...", flush=True)
                 if use_differential_expression:
                     # Use differential expression analysis
                     top_markers = perform_differential_expression(
