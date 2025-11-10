@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from glob import glob
 from itertools import compress
@@ -10,6 +11,7 @@ import numpy as np
 import pandas as pd
 import tifffile as tp
 import matplotlib.pyplot as plt
+import scanpy as sc
 
 from skimage import io, exposure, segmentation
 from skimage.draw import rectangle_perimeter
@@ -81,7 +83,18 @@ def load_imgs_from_directory(
         ]
 
         for candidate_file in found_files:
-            if channel_name.lower() in candidate_file.lower():
+            # More precise matching: check if channel_name appears as a separate word/token
+            # This prevents CD45 from matching CD45RO
+            filename_lower = candidate_file.lower()
+            channel_lower = channel_name.lower()
+            
+            # Split filename by common separators and check for exact match
+            import re
+            # Split on common separators: underscore, dash, dot, space
+            filename_tokens = re.split(r'[_\-\.\s]+', filename_lower)
+            
+            # Check if channel name matches any token exactly
+            if channel_lower in filename_tokens:
                 img_read = load_single_img(os.path.join(subfolder, candidate_file))
                 if not quiet:
                     print(os.path.join(subfolder, candidate_file))
@@ -780,6 +793,146 @@ def get_top_columns(series: pd.Series, top_n: int = 3) -> str:
     return "__".join(top_markers)
 
 
+def perform_differential_expression(
+    adata,
+    pop_obs: str,
+    target_population: str,
+    markers_exclude: Optional[List[str]] = None,
+    only_use_markers: Optional[List[str]] = None,
+    method: str = 'wilcoxon',
+    n_top_markers: int = 3,
+    min_logfc_threshold: float = 0.5,
+    max_pval_adj: float = 0.05,
+    verbose: bool = True
+) -> List[str]:
+    """
+    Perform differential expression analysis to identify most discriminative markers for a population.
+    
+    This function prioritizes discriminative power (effect size) over statistical significance,
+    making it ideal for backgating where visual contrast is more important than statistical rigor.
+    
+    Args:
+        adata: AnnData object with expression data
+        pop_obs: Column name in adata.obs containing population labels
+        target_population: Population to compare against all others
+        markers_exclude: List of markers to exclude from analysis
+        only_use_markers: If provided, only consider these markers
+        method: Statistical test method ('wilcoxon', 't-test', 'logreg')
+        n_top_markers: Number of top markers to return
+        min_logfc_threshold: Optional minimum log fold change for quality filtering (0 to disable)
+        max_pval_adj: Used for reporting significance status, not for filtering
+        verbose: Whether to print detailed results
+        
+    Returns:
+        List of top marker names ranked by discriminative power (test statistic)
+    """
+    if markers_exclude is None:
+        markers_exclude = []
+    
+    # Create a copy to avoid modifying the original
+    adata_copy = adata.copy()
+    
+    # Filter markers if specified
+    if only_use_markers:
+        # Only keep specified markers
+        keep_markers = [m for m in only_use_markers if m in adata_copy.var_names and m not in markers_exclude]
+        adata_copy = adata_copy[:, keep_markers]
+    else:
+        # Remove excluded markers
+        exclude_mask = ~adata_copy.var_names.isin(markers_exclude)
+        adata_copy = adata_copy[:, exclude_mask]
+    
+    if adata_copy.n_vars == 0:
+        print(f"Warning: No markers available for differential expression after filtering.")
+        return []
+    
+    # Create binary comparison: target population vs all others
+    adata_copy.obs['comparison_group'] = (adata_copy.obs[pop_obs] == target_population).astype('category')
+    
+    # Perform differential expression
+    try:
+        sc.tl.rank_genes_groups(
+            adata_copy, 
+            groupby='comparison_group',
+            groups=[True],  # Only test the target population (True) vs others (False)
+            reference='rest',
+            method=method,
+            use_raw=False,
+            layer=None,
+            pts=True  # Calculate fraction of cells expressing the gene
+        )
+        
+        # Extract results for the target population (True group)
+        result = adata_copy.uns['rank_genes_groups']
+        
+        # Get top markers
+        markers_df = pd.DataFrame({
+            'names': result['names'][str(True)],
+            'scores': result['scores'][str(True)], 
+            'logfoldchanges': result['logfoldchanges'][str(True)],
+            'pvals': result['pvals'][str(True)],
+            'pvals_adj': result['pvals_adj'][str(True)],
+            'pts': result['pts'][str(True)],
+            'pts_rest': result['pts_rest'][str(True)]
+        })
+        
+        # Sort by discriminative power (score) - prioritize effect size over significance
+        # We want the most discriminative markers regardless of statistical significance
+        markers_df_sorted = markers_df.sort_values('scores', ascending=False)
+        
+        # Optionally filter out markers with very low fold changes (for quality)
+        if min_logfc_threshold > 0:
+            quality_markers = markers_df_sorted[
+                markers_df_sorted['logfoldchanges'] > min_logfc_threshold
+            ]
+            # If filtering removes too many markers, use all markers
+            if len(quality_markers) >= n_top_markers:
+                markers_df_sorted = quality_markers
+            elif verbose:
+                print(f"Warning: Only {len(quality_markers)} markers meet logFC > {min_logfc_threshold} threshold. "
+                      f"Using all markers ranked by discriminative power.")
+        
+        # Get top markers by discriminative power
+        top_markers = markers_df_sorted.head(n_top_markers)['names'].tolist()
+        
+        # Count how many are statistically significant (for reporting)
+        significant_count = len(markers_df_sorted[
+            (markers_df_sorted['pvals_adj'] < max_pval_adj) & 
+            (markers_df_sorted['logfoldchanges'] > min_logfc_threshold)
+        ])
+        
+        if verbose:
+            print(f"\nDifferential expression results for {target_population}:")
+            print(f"  Total markers tested: {len(markers_df)}")
+            print(f"  Markers meeting significance thresholds (padj < {max_pval_adj}, logFC > {min_logfc_threshold}): {significant_count}")
+            print(f"  Top {n_top_markers} most discriminative markers selected: {top_markers}")
+            
+            if len(top_markers) > 0:
+                print(f"\nTop marker details (ranked by discriminative power):")
+                top_details = markers_df_sorted.head(n_top_markers)
+                for _, row in top_details.iterrows():
+                    sig_status = "significant" if (row['pvals_adj'] < max_pval_adj and row['logfoldchanges'] > min_logfc_threshold) else "not significant"
+                    print(f"    {row['names']}: score={row['scores']:.2f}, logFC={row['logfoldchanges']:.2f}, "
+                          f"padj={row['pvals_adj']:.2e} ({sig_status})")
+        
+        return top_markers
+        
+    except Exception as e:
+        print(f"Error in differential expression analysis: {e}")
+        print(f"Falling back to simple mean expression ranking for {target_population}")
+        
+        # Fallback to simple mean expression
+        target_cells = adata_copy[adata_copy.obs[pop_obs] == target_population]
+        if target_cells.n_obs > 0:
+            mean_expression = pd.Series(
+                target_cells.X.mean(axis=0), 
+                index=adata_copy.var_names
+            )
+            return mean_expression.nlargest(n_top_markers).index.tolist()
+        else:
+            return []
+
+
 def backgating_assessment(
     adata,
     image_folder: str,
@@ -810,6 +963,11 @@ def backgating_assessment(
     markers_exclude=None,
     only_use_markers=None,
     number_top_markers: int = 3,
+    # Differential expression parameters
+    use_differential_expression: bool = True,
+    de_method: str = 'wilcoxon',
+    min_logfc_threshold: float = 0.5,
+    max_pval_adj: float = 0.05,
     # Modes
     mode: str = 'full',  # 'full', 'save_markers', 'load_markers'
     specify_red=None,
@@ -860,6 +1018,15 @@ def backgating_assessment(
         only_use_markers: If set, only consider these markers for top marker analysis.
         number_top_markers:
                           How many top markers are used (1->Red, 2->R/G, 3->R/G/B).
+        
+        use_differential_expression:
+                          If True, use scanpy differential expression analysis to find most discriminative markers.
+                          If False, fall back to simple mean expression ranking.
+        de_method:        Statistical method for differential expression ('wilcoxon', 't-test', 'logreg').
+        min_logfc_threshold:
+                          Optional minimum log fold change for quality filtering (set to 0 to disable).
+                          Markers are ranked by discriminative power, not significance.
+        max_pval_adj:     Used for reporting significance status, not for filtering markers.
 
         mode:             One of ['full','save_markers','load_markers'].
                           - 'full': compute means + settings, then run backgating
@@ -954,24 +1121,37 @@ def backgating_assessment(
 
     # 3) Fill in missing marker assignments
     if mode in ['full','save_markers']:
-        # Re-load mean_df to get top markers
-        mean_df = pd.read_csv(mean_expression_path, index_col=0)
-
-        def pick_top_markers(row, n):
-            return get_top_columns(row, n)
-
-        top_series = mean_df.apply(lambda r: pick_top_markers(r, number_top_markers), axis=1)
-
+        print(f"\nDetermining top markers for each population using {'differential expression' if use_differential_expression else 'mean expression'}...")
+        
         for pop in pop_categories:
             if pd.isna(settings_df.loc[pop, 'Red']):
-                top_str = top_series.loc[pop]
-                top_split = top_str.split('__')
-                if len(top_split) > 0:
-                    settings_df.loc[pop, 'Red'] = top_split[0]
-                if len(top_split) > 1:
-                    settings_df.loc[pop, 'Green'] = top_split[1]
-                if len(top_split) > 2:
-                    settings_df.loc[pop, 'Blue'] = top_split[2]
+                if use_differential_expression:
+                    # Use differential expression analysis
+                    top_markers = perform_differential_expression(
+                        adata=adata,
+                        pop_obs=pop_obs,
+                        target_population=pop,
+                        markers_exclude=markers_exclude,
+                        only_use_markers=only_use_markers,
+                        method=de_method,
+                        n_top_markers=number_top_markers,
+                        min_logfc_threshold=min_logfc_threshold,
+                        max_pval_adj=max_pval_adj,
+                        verbose=True
+                    )
+                else:
+                    # Fallback to mean expression (original method)
+                    mean_df = pd.read_csv(mean_expression_path, index_col=0)
+                    top_str = get_top_columns(mean_df.loc[pop], number_top_markers)
+                    top_markers = top_str.split('__')
+                
+                # Assign markers to RGB channels
+                if len(top_markers) > 0:
+                    settings_df.loc[pop, 'Red'] = top_markers[0]
+                if len(top_markers) > 1:
+                    settings_df.loc[pop, 'Green'] = top_markers[1]
+                if len(top_markers) > 2:
+                    settings_df.loc[pop, 'Blue'] = top_markers[2]
 
         # Override if user specified
         if specify_red is not None:

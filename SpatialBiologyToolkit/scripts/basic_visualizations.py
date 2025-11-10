@@ -520,8 +520,13 @@ def create_backgating_assessment(adata, population_columns, viz_config, general_
                         # Intensity scaling
                         minimum=viz_config.backgating_minimum,
                         max_quantile=viz_config.backgating_max_quantile,
-                        # Marker selection mode
-                        mode='full',  # Compute mean expression, generate settings, and produce images
+                        # Marker selection and differential expression
+                        markers_exclude=getattr(viz_config, 'backgating_markers_exclude', ['DNA1', 'DNA3']),
+                        use_differential_expression=getattr(viz_config, 'backgating_use_differential_expression', True),
+                        de_method=getattr(viz_config, 'backgating_de_method', 'wilcoxon'),
+                        min_logfc_threshold=getattr(viz_config, 'backgating_min_logfc_threshold', 0.2),
+                        max_pval_adj=getattr(viz_config, 'backgating_max_pval_adj', 0.05),
+                        mode=getattr(viz_config, 'backgating_mode', 'full'),  # Control execution mode
                         number_top_markers=viz_config.backgating_number_top_markers,
                         specify_blue=viz_config.backgating_specify_blue,
                         specify_red=viz_config.backgating_specify_red,

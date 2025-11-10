@@ -176,6 +176,16 @@ class VisualizationConfig:
     backgating_specify_red: Optional[str] = None  # Marker to use for red channel (None = auto-select)
     backgating_specify_green: Optional[str] = None  # Marker to use for green channel (None = auto-select)
     
+    # Differential expression settings for backgating marker selection
+    backgating_use_differential_expression: bool = True  # Use scanpy DE analysis for marker selection
+    backgating_de_method: str = 'wilcoxon'  # Statistical method ('wilcoxon', 't-test', 'logreg')
+    backgating_min_logfc_threshold: float = 0.2  # Minimum log fold change for quality filtering (0 to disable)
+    backgating_max_pval_adj: float = 0.05  # Used for significance reporting, not filtering
+    backgating_markers_exclude: Optional[List[str]] = field(default_factory=lambda: ['DNA1', 'DNA3'])  # Markers to exclude from DE analysis
+    
+    # Backgating execution mode control
+    backgating_mode: str = 'full'  # 'full' (compute + run), 'save_markers' (compute only), 'load_markers' (load + run)
+    
     # General visualization settings
     save_high_res: bool = True  # Save high-resolution figures (300 DPI)
     figure_format: str = 'png'  # Default figure format ('png', 'pdf', 'svg')

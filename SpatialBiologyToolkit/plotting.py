@@ -1707,13 +1707,29 @@ def grouped_graph(
 
     # Crosstab
     if x_axis != ROI_id:
-        table = pd.crosstab(
+        # Create crosstab with ROI level first (always start with raw counts)
+        table_raw = pd.crosstab(
             [adata.obs[group_by_obs], adata.obs[ROI_id]],
             adata.obs[x_axis],
-            normalize=crosstab_norm
+            normalize=False
         )
-        table.columns = table.columns.astype(str)
-        data_long = table.reset_index().melt(id_vars=[group_by_obs, ROI_id])
+        table_raw.columns = table_raw.columns.astype(str)
+        
+        if proportions:
+            # For proportions: aggregate across ROIs first, then normalize by column (x_axis category)
+            table_agg = table_raw.groupby(level=0).sum()  # Sum across ROIs for each population
+            table = table_agg.div(table_agg.sum(axis=0), axis=1)  # Normalize columns to sum to 1
+        else:
+            # For counts: keep raw table with ROI structure
+            table = table_raw
+        
+        # Create long format data
+        if proportions:
+            # For proportions, we work with the aggregated table (no ROI level)
+            data_long = table.reset_index().melt(id_vars=[group_by_obs])
+        else:
+            # For counts, keep ROI level
+            data_long = table.reset_index().melt(id_vars=[group_by_obs, ROI_id])
     else:
         table = pd.crosstab(
             adata.obs[group_by_obs],
@@ -1805,8 +1821,7 @@ def grouped_graph(
         ylabel = 'Cells'
 
     if proportions:
-        if not ylabel:
-            label = 'Proportion'
+        ylabel = 'Proportion'
         ax.set_ylim(0, 1)
 
     ax.set_ylabel(ylabel)
