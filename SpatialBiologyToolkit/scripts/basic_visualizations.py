@@ -125,7 +125,6 @@ def find_metadata_columns(adata, population_columns=None, metadata_folder='metad
     # Define columns to always exclude from metadata analysis
     exclude_columns = {
         'X_loc', 'Y_loc', 'Master_Index', 'ObjectNumber', 
-        'n_genes', 'n_counts', 'total_counts', 'pct_counts_highest_gene',
         'ROI_name', 'ROI_width', 'ROI_height', 'MCD_file', 'Source_file', 'File_type',
         'mask_area', 'mask_perimeter', 'mask_circularity', 'mask_largest_diameter', 'mask_largest_diameter_angle'
     }
@@ -609,7 +608,8 @@ def create_population_analysis(adata, population_columns, metadata_columns, qc_b
                         log_scale=True,
                         fig_size=(max(8, n_categories * 0.8), 6),
                         display_tables=False,
-                        save_graph=str(pop_analysis_subdir / f"{metadata_col}_raw_counts.png")
+                        save_graph=str(pop_analysis_subdir / f"{metadata_col}_raw_counts.png"),
+                        save_table=str(pop_analysis_subdir / f"{metadata_col}_raw_counts.csv")
                     )
                     
                     # 2. Proportions plot  
@@ -622,7 +622,8 @@ def create_population_analysis(adata, population_columns, metadata_columns, qc_b
                         log_scale=False,
                         fig_size=(max(8, n_categories * 0.8), 6),
                         display_tables=False,
-                        save_graph=str(pop_analysis_subdir / f"{metadata_col}_proportions.png")
+                        save_graph=str(pop_analysis_subdir / f"{metadata_col}_proportions.png"),
+                        save_table=str(pop_analysis_subdir / f"{metadata_col}_proportions.csv")
                     )
                     
                     # 3. Stacked plot for better comparison
@@ -636,7 +637,8 @@ def create_population_analysis(adata, population_columns, metadata_columns, qc_b
                         log_scale=False,
                         fig_size=(max(8, n_categories * 0.8), 6),
                         display_tables=False,
-                        save_graph=str(pop_analysis_subdir / f"{metadata_col}_stacked.png")
+                        save_graph=str(pop_analysis_subdir / f"{metadata_col}_stacked.png"),
+                        save_table=str(pop_analysis_subdir / f"{metadata_col}_stacked.csv")
                     )
                     
                 except Exception as e:
