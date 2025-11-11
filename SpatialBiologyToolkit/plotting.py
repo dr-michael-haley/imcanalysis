@@ -95,7 +95,7 @@ def _count_summary(data: ad.AnnData | pd.DataFrame | str,
         wide = crosstab_df
         long = crosstab_df.reset_index().melt(id_vars=levels)
         if mean_over:
-            wide = wide.groupby(mean_over).mean(numeric_only=True)
+            wide = wide.groupby(mean_over, observed=True).mean(numeric_only=True)
         long = long.groupby(mean_over + [pop_col], observed=True).mean(numeric_only=True).reset_index()
 
     return wide, long
@@ -311,7 +311,7 @@ def mlm_stats(data: pd.DataFrame,
     for i in pop_list:
         subset = data[data[pop_col] == i]
         formula = f"{value_col} ~ {group_col}"
-        roi_counts = subset.groupby(case_col)[roi_col].nunique()
+        roi_counts = subset.groupby(case_col, observed=True)[roi_col].nunique()
         case_roi_counts = subset.groupby([case_col, roi_col], observed=True).size()
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
@@ -1073,7 +1073,9 @@ def draw_voronoi_scatter(
     scatter_hue='ClusterName',
     figsize=(5, 5),
     voronoi_kwargs={},
-    scatter_kwargs={}
+    scatter_kwargs={},
+    show=True,
+    close_fig=False
 ) -> list:
     """
     Plot Voronoi of a region and overlay the location of specific cell types.
@@ -1102,6 +1104,10 @@ def draw_voronoi_scatter(
         Arguments passed to plot_voronoi function. Default is {}.
     scatter_kwargs : dict, optional
         Arguments passed to plt.scatter(). Default is {}.
+    show : bool, optional
+        Whether to display the plot. Default is True.
+    close_fig : bool, optional
+        Whether to close the figure to prevent memory leaks. Default is False.
 
     Returns
     -------
@@ -1136,6 +1142,15 @@ def draw_voronoi_scatter(
         )
 
     plt.axis('off')
+    
+    fig = plt.gcf()  # Get current figure
+    
+    if show:
+        plt.show()
+    
+    if close_fig:
+        plt.close(fig)
+    
     return areas
 
 
@@ -1717,7 +1732,7 @@ def grouped_graph(
         
         if proportions:
             # For proportions: aggregate across ROIs first, then normalize by column (x_axis category)
-            table_agg = table_raw.groupby(level=0).sum()  # Sum across ROIs for each population
+            table_agg = table_raw.groupby(level=0, observed=True).sum()  # Sum across ROIs for each population
             table = table_agg.div(table_agg.sum(axis=0), axis=1)  # Normalize columns to sum to 1
         else:
             # For counts: keep raw table with ROI structure
@@ -1746,7 +1761,7 @@ def grouped_graph(
     # Optional sorting
     if sort_by_population:
         sort_df = data_long[data_long[group_by_obs] == sort_by_population]
-        sort_order = sort_df.groupby(x_axis)['value'].sum().sort_values(ascending=False).index.tolist()
+        sort_order = sort_df.groupby(x_axis, observed=True)['value'].sum().sort_values(ascending=False).index.tolist()
         order = sort_order if order is None else order
 
     # Extract colors from AnnData if available
@@ -1813,7 +1828,7 @@ def grouped_graph(
         )
 
     # Formatting
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=90, fontsize=10)
+    ax.tick_params(axis='x', rotation=90, labelsize=10)
     ax.set_xlabel(x_axis)
     ax.grid(False)
 
@@ -1840,3 +1855,6 @@ def grouped_graph(
     if display_tables:
         print('Raw data:')
         display(HTML(table.to_html()))
+    
+    # Close the figure to prevent memory leaks
+    plt.close(fig)

@@ -344,6 +344,9 @@ def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, v
             if cat_col in adata.obs.columns:
                 logging.info(f'Creating MatrixPlot for {category_type} column: {cat_col}')
                 try:
+                    # Pre-compute dendrogram to avoid warning
+                    sc.tl.dendrogram(adata, groupby=cat_col)
+                    
                     # Create the matrixplot - this returns a MatrixPlot object, not a Figure
                     matrixplot = sc.pl.matrixplot(
                         adata,

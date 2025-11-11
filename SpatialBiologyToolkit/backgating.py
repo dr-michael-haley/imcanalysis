@@ -867,6 +867,9 @@ def perform_differential_expression(
         # Remove excluded markers
         exclude_mask = ~adata_copy.var_names.isin(markers_exclude)
         adata_copy = adata_copy[:, exclude_mask]
+
+    # Ensure we are working on a full copy (not a view) before adding columns
+    adata_copy = adata_copy.copy()
     
     if adata_copy.n_vars == 0:
         print(f"Warning: No markers available for differential expression after filtering.")
@@ -877,15 +880,15 @@ def perform_differential_expression(
     target_population_str = str(target_population)
     
     # Use string labels instead of boolean for better scanpy compatibility
-    comparison = np.where(
+    labels = np.where(
         adata_copy.obs[pop_obs].astype(str) == target_population_str,
         'target',
         'rest'
     )
-    adata_copy.obs['comparison_group'] = pd.Series(
-        comparison,
-        index=adata_copy.obs_names
-    ).astype('category')
+    adata_copy.obs['comparison_group'] = pd.Categorical(
+        labels,
+        categories=['rest', 'target']
+    )
     
     # Check group distribution
     group_counts = adata_copy.obs['comparison_group'].value_counts()
