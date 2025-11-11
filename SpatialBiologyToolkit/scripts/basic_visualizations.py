@@ -268,7 +268,7 @@ def create_color_legend(adata, obs_key: str, save_path: Path, title: str = None)
         colors = adata.uns[color_key]
     else:
         # Use matplotlib's tab20 colormap as default (same as scanpy default)
-        cmap = cm.get_cmap('tab20')
+        cmap = matplotlib.colormaps['tab20']
         colors = [cmap(i / len(categories)) for i in range(len(categories))]
     
     # Create figure

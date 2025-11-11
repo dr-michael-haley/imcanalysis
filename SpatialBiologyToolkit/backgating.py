@@ -1426,45 +1426,45 @@ def backgating_assessment(
             
         if population_overlays:
             for roi in pop_rois:
-            try:
-                # Path to composite image (created by earlier make_images call)
-                composite_img_path = pop_subfolder / f"{roi}.png"
-                
-                # Path to mask file (if using masks)
-                mask_path = None
-                if use_masks:
-                    if isinstance(use_masks, bool) and use_masks:
-                        # Look for standard mask files
-                        potential_tif = Path(mask_folder) / f"{roi}.tif"
-                        potential_tiff = Path(mask_folder) / f"{roi}.tiff"
-                        if potential_tif.exists():
-                            mask_path = str(potential_tif)
-                        elif potential_tiff.exists():
-                            mask_path = str(potential_tiff)
-                    elif isinstance(use_masks, str):
-                        # CSV mapping - would need to implement reading logic here
-                        print(f"CSV mask mapping not yet implemented for population overlays")
-                
-                # Create overlay
-                overlay_output_path = overlay_dir / f"{roi}_population_overlay.png"
-                
-                create_population_overlay(
-                    adata=adata,
-                    population=pop,
-                    pop_obs=pop_obs,
-                    roi_name=roi,
-                    composite_image_path=str(composite_img_path),
-                    mask_path=mask_path,
-                    roi_obs=roi_obs,
-                    cell_index_obs=cell_index_obs,
-                    output_path=str(overlay_output_path),
-                    contour_color=(255, 255, 255),  # White contours
-                    contour_width=2
-                )
-                
-            except Exception as e:
-                print(f"Warning: Failed to create population overlay for ROI '{roi}': {e}")
-                continue
+                try:
+                    # Path to composite image (created by earlier make_images call)
+                    composite_img_path = pop_subfolder / f"{roi}.png"
+                    
+                    # Path to mask file (if using masks)
+                    mask_path = None
+                    if use_masks:
+                        if isinstance(use_masks, bool) and use_masks:
+                            # Look for standard mask files
+                            potential_tif = Path(mask_folder) / f"{roi}.tif"
+                            potential_tiff = Path(mask_folder) / f"{roi}.tiff"
+                            if potential_tif.exists():
+                                mask_path = str(potential_tif)
+                            elif potential_tiff.exists():
+                                mask_path = str(potential_tiff)
+                        elif isinstance(use_masks, str):
+                            # CSV mapping - would need to implement reading logic here
+                            print(f"CSV mask mapping not yet implemented for population overlays")
+                    
+                    # Create overlay
+                    overlay_output_path = overlay_dir / f"{roi}_population_overlay.png"
+                    
+                    create_population_overlay(
+                        adata=adata,
+                        population=pop,
+                        pop_obs=pop_obs,
+                        roi_name=roi,
+                        composite_image_path=str(composite_img_path),
+                        mask_path=mask_path,
+                        roi_obs=roi_obs,
+                        cell_index_obs=cell_index_obs,
+                        output_path=str(overlay_output_path),
+                        contour_color=(255, 255, 255),  # White contours
+                        contour_width=2
+                    )
+                    
+                except Exception as e:
+                    print(f"Warning: Failed to create population overlay for ROI '{roi}': {e}")
+                    continue
         
         print(f"Population overlay visualizations completed for '{pop}'.")
 
