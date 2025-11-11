@@ -2267,7 +2267,7 @@ def create_population_overlay(
     composite_image_path: str,
     mask_path: str = None,
     roi_obs: str = 'ROI',
-    cell_index_obs: str = 'ObjectNumber',
+    object_index_obs: str = 'ObjectNumber',
     output_path: str = None,
     contour_color: tuple = (255, 255, 255),  # White contours
     contour_width: int = 2
@@ -2284,7 +2284,7 @@ def create_population_overlay(
         composite_image_path: Path to the composite RGB image
         mask_path: Path to the segmentation mask (optional)
         roi_obs: Column name for ROI identifiers
-        cell_index_obs: Column name for cell indices
+        object_index_obs: Column name for cell indices
         output_path: Where to save the overlay image
         contour_color: RGB color for cell contours (default: yellow)
         contour_width: Width of contour lines in pixels
@@ -2329,8 +2329,8 @@ def create_population_overlay(
     # If we have a mask, draw contours for cells of this population
     if mask is not None:
         # Get unique cell labels for this population
-        if cell_index_obs in roi_cells.columns:
-            target_cell_ids = set(roi_cells[cell_index_obs].astype(int))
+        if object_index_obs in roi_cells.columns:
+            target_cell_ids = set(roi_cells[object_index_obs].astype(int))
         else:
             # Fallback: use mask values at cell locations
             target_cell_ids = set()
@@ -2389,7 +2389,7 @@ def population_backgating(
     image_folder: str,
     roi_list: list[str] = None,
     roi_obs: str = 'ROI',
-    cell_index_obs: str = 'Master_Index',
+    object_index_obs: str = 'ObjectNumber',
     output_folder: str = 'Population_Backgating',
     # Marker assignments for composite images
     red: str | None = None,
@@ -2434,7 +2434,7 @@ def population_backgating(
         image_folder: Directory containing image subfolders for each ROI
         roi_list: List of ROI names to process. If None, uses all ROIs with the population
         roi_obs: Column name for ROI identifiers
-        cell_index_obs: Column name for cell indices
+        object_index_obs: Column name for cell indices
         output_folder: Directory to save output images
         
         # Color channel assignments (same as make_images)
@@ -2581,7 +2581,7 @@ def population_backgating(
                         composite_image_path=composite_img_path,
                         mask_path=mask_path,
                         roi_obs=roi_obs,
-                        cell_index_obs=cell_index_obs,
+                        object_index_obs=object_index_obs,
                         output_path=str(overlay_output_path),
                         contour_color=contour_color,
                         contour_width=contour_width

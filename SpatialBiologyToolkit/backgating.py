@@ -1,5 +1,6 @@
 import os
 import re
+import logging
 from pathlib import Path
 from glob import glob
 from itertools import compress
@@ -77,7 +78,7 @@ def load_imgs_from_directory(
     img_folders = glob(os.path.join(load_directory, "*", "")) or [load_directory]
 
     if not quiet:
-        print(f'Loading image data for channel "{channel_name}" from ...')
+        logging.info(f'Loading image data for channel "{channel_name}" from ...')
 
     for subfolder in img_folders:
         found_files = [
@@ -101,17 +102,17 @@ def load_imgs_from_directory(
             if channel_lower in filename_tokens:
                 img_read = load_single_img(os.path.join(subfolder, candidate_file))
                 if not quiet:
-                    print(os.path.join(subfolder, candidate_file))
+                    logging.debug(os.path.join(subfolder, candidate_file))
                 img_file_list.append(candidate_file)
                 img_collect.append(img_read)
                 # Break once we find the first matching file per subfolder.
                 break
 
     if not quiet:
-        print('Image data loading completed!')
+        logging.info('Image data loading completed!')
 
     if not img_collect:
-        print(f'No files found with channel name "{channel_name}".')
+        logging.warning(f'No files found with channel name "{channel_name}".')
         return None
 
     return img_collect, img_file_list, img_folders
@@ -181,7 +182,7 @@ def load_rescale_images(
 
     if not image_list:
         # If nothing is loaded after filtering, return.
-        print(f"No images found for marker {marker} matching {samples_list}.")
+        logging.warning(f"No images found for marker {marker} matching {samples_list}.")
         return [], []
 
     # Compute maximum intensities
@@ -198,22 +199,22 @@ def load_rescale_images(
             max_value = float(np.max(all_vals))
             mode_str = f'Max of {max_quantile} quantiles'
 
-        print(f"Marker={marker} | Mode={mode_str} | Min={minimum:.3f} | "
-              f"Calculated max={max_value:.3f}")
+        logging.debug(f"Marker={marker} | Mode={mode_str} | Min={minimum:.3f} | "
+                      f"Calculated max={max_value:.3f}")
         image_list = [im.clip(minimum, max_value) for im in image_list]
 
     elif mode == 'individual_quantile':
         # Each image is clipped to its own quantile
         max_values = [np.quantile(im, max_quantile) for im in image_list]
-        print(f"Marker={marker} | Mode=Individual quantile {max_quantile} | "
-              f"Min={minimum} | Using image-specific maxima.")
+        logging.debug(f"Marker={marker} | Mode=Individual quantile {max_quantile} | "
+                      f"Min={minimum} | Using image-specific maxima.")
         image_list = [
             im.clip(minimum, mv) for im, mv in zip(image_list, max_values)
         ]
 
     else:
         # Fixed numeric value
-        print(f"Marker={marker} | Using numeric min={minimum}, max={max_val}")
+        logging.debug(f"Marker={marker} | Using numeric min={minimum}, max={max_val}")
         max_value = float(max_val)
         image_list = [im.clip(minimum, max_value) for im in image_list]
 
@@ -312,7 +313,7 @@ def make_images(
 
     # Figure out how many ROIs total we have. We can unify by taking the max length across channels.
     num_rois = max(len(r) for r in loaded_rois.values()) if loaded_rois else 0
-    print(f'Found {num_rois} ROIs total (across requested channels).')
+    logging.info(f'Found {num_rois} ROIs total (across requested channels).')
 
     # Build the final composite images ROI by ROI
     # Note: The assumption here is that channels align in the same "ROI index" order,
@@ -533,12 +534,12 @@ def backgating(
     adata_obs_cells = adata.obs.loc[adata.obs[cell_index_obs].isin(cell_index)].copy()
     roi_list = adata_obs_cells[roi_obs].unique().tolist()
 
-    print(f"Backgating on {len(adata_obs_cells)} cells across {len(roi_list)} ROIs.")
+    logging.info(f"Backgating on {len(adata_obs_cells)} cells across {len(roi_list)} ROIs.")
 
     # ----------------------------------------------------------------
     # 2) Build composite images for each ROI (from your existing function)
     # ----------------------------------------------------------------
-    print("Creating composite images via `make_images` ...")
+    logging.info("Creating composite images via `make_images` ...")
     make_images(
         image_folder=image_folder,
         samples_list=roi_list,
@@ -562,7 +563,7 @@ def backgating(
         white_range=white_range,
         save_subfolder=save_subfolder
     )
-    print("Composite images created.")
+    logging.info("Composite images created.")
 
     # ----------------------------------------------------------------
     # 3) Load those composite images from disk into a DataFrame
@@ -594,7 +595,7 @@ def backgating(
     df_images['y_length'] = [img.shape[0] if img is not None else 0 for img in df_images['image']]
     df_images['x_length'] = [img.shape[1] if img is not None else 0 for img in df_images['image']]
 
-    print(f"DataFrame of images built for {len(df_images)} ROIs.")
+    logging.info(f"DataFrame of images built for {len(df_images)} ROIs.")
 
     # ----------------------------------------------------------------
     # 4) Load segmentation masks, if requested
@@ -626,27 +627,27 @@ def backgating(
             # user passed a CSV mapping ROI->mask path
             mask_csv = Path(use_masks)
             if not mask_csv.is_file():
-                print(f"WARNING: mask CSV file '{mask_csv}' not found. No masks loaded.")
+                logging.warning(f"mask CSV file '{mask_csv}' not found. No masks loaded.")
             else:
-                print(f"Loading mask mappings from CSV: {mask_csv}")
+                logging.info(f"Loading mask mappings from CSV: {mask_csv}")
                 mask_df = pd.read_csv(mask_csv).set_index(roi_obs)
                 for roi_name in df_images.index:
                     if roi_name in mask_df.index:
                         mask_path = Path(mask_df.loc[roi_name, 'mask_path'])
                         if mask_path.is_file():
                             df_images.at[roi_name, 'mask'] = io.imread(str(mask_path))
-                            print(f"  Loaded mask for ROI='{roi_name}' -> {mask_path}")
+                            logging.debug(f"  Loaded mask for ROI='{roi_name}' -> {mask_path}")
                         else:
                             rois_to_exclude.append(roi_name)
                     else:
                         rois_to_exclude.append(roi_name)
 
         if rois_to_exclude:
-            print("WARNING: The following ROIs do NOT have matching mask files:")
+            logging.warning("The following ROIs do NOT have matching mask files:")
             for r_ in rois_to_exclude:
-                print(f"    - {r_}")
+                logging.warning(f"    - {r_}")
             if exclude_rois_without_mask:
-                print("These ROIs will be excluded due to `exclude_rois_without_mask=True`.")
+                logging.warning("These ROIs will be excluded due to `exclude_rois_without_mask=True`.")
                 df_images.drop(rois_to_exclude, inplace=True)
 
     # Now filter cells in adata_obs_cells if their ROI was excluded
@@ -655,7 +656,7 @@ def backgating(
     adata_obs_cells = adata_obs_cells[adata_obs_cells[roi_obs].isin(valid_rois)]
     after_count = len(adata_obs_cells)
     if before_count != after_count:
-        print(f"Excluded {before_count - after_count} cells whose ROI lacked masks (or images).")
+        logging.info(f"Excluded {before_count - after_count} cells whose ROI lacked masks (or images).")
 
     # ----------------------------------------------------------------
     # 5) Filter out cells that would be out-of-bounds for the given radius
@@ -674,11 +675,11 @@ def backgating(
     adata_obs_cells['in_range'] = adata_obs_cells.apply(in_range_func, axis=1)
     adata_obs_cells_filtered = adata_obs_cells[adata_obs_cells['in_range']].copy()
     out_of_bounds_count = len(adata_obs_cells) - len(adata_obs_cells_filtered)
-    print(f"{out_of_bounds_count} cells are out-of-bounds for plotting.")
-    print(f"Proceeding with {len(adata_obs_cells_filtered)} cells.")
+    logging.info(f"{out_of_bounds_count} cells are out-of-bounds for plotting.")
+    logging.info(f"Proceeding with {len(adata_obs_cells_filtered)} cells.")
 
     if len(adata_obs_cells_filtered) == 0:
-        print("No valid cells remain to plot. Exiting backgating.")
+        logging.warning("No valid cells remain to plot. Exiting backgating.")
         return
 
     # ----------------------------------------------------------------
@@ -692,7 +693,7 @@ def backgating(
     ax_idx = 0
     cell_dfs = []
 
-    print(f"Plotting thumbnails ({cells_per_row} per row) for {total_cells} cells...")
+    logging.info(f"Plotting thumbnails ({cells_per_row} per row) for {total_cells} cells...")
 
     # Sort by ROI to group
     rois_in_data = adata_obs_cells_filtered[roi_obs].unique().tolist()
@@ -755,13 +756,13 @@ def backgating(
     cell_fig_path = out_subdir / "Cells.png"
     fig.savefig(cell_fig_path, bbox_inches='tight', dpi=200)
     plt.close(fig)
-    print(f"Saved thumbnails to: {cell_fig_path}")
+    logging.info(f"Saved thumbnails to: {cell_fig_path}")
 
     # ----------------------------------------------------------------
     # 7) Overview images with bounding boxes
     # ----------------------------------------------------------------
     if overview_images:
-        print("Creating overview images with bounding boxes...")
+        logging.info("Creating overview images with bounding boxes...")
         for roi_name in rois_in_data:
             sub_cells = adata_obs_cells_filtered[adata_obs_cells_filtered[roi_obs] == roi_name]
             if sub_cells.empty:
@@ -787,8 +788,8 @@ def backgating(
     cell_dfs = pd.concat(cell_dfs) if cell_dfs else pd.DataFrame()
     csv_path = out_subdir / "cells_list.csv"
     cell_dfs.to_csv(csv_path)
-    print(f"Saved list of plotted cells -> {csv_path}")
-    print("Backgating completed successfully.")
+    logging.info(f"Saved list of plotted cells -> {csv_path}")
+    logging.info("Backgating completed successfully.")
 
 
 def get_top_columns(series: pd.Series, top_n: int = 3) -> str:
@@ -1075,6 +1076,7 @@ def backgating_assessment(
     x_loc_obs: str = 'X_loc',
     y_loc_obs: str = 'Y_loc',
     cell_index_obs: str = 'Master_Index',
+    object_index_obs: str = 'ObjectNumber',
     # Mask parameters:
     use_masks=True,
     mask_folder='masks',
@@ -1207,7 +1209,7 @@ def backgating_assessment(
             mean_df = mean_df[keep_cols]
 
         mean_df.to_csv(mean_expression_path)
-        print(f"Saved population mean expression to: {mean_expression_path}")
+        logging.info(f"Saved population mean expression to: {mean_expression_path}")
 
     elif mode == 'load_markers':
         # do nothing about mean expression
@@ -1218,9 +1220,9 @@ def backgating_assessment(
     # 2) Build or load backgating settings
     if backgating_settings_path.is_file():
         settings_df = pd.read_csv(backgating_settings_path, index_col=0)
-        print(f"Loaded existing backgating settings from {backgating_settings_path}")
+        logging.info(f"Loaded existing backgating settings from {backgating_settings_path}")
     else:
-        print(f"No existing settings file found; creating a new one at {backgating_settings_path}")
+        logging.info(f"No existing settings file found; creating a new one at {backgating_settings_path}")
         settings_df = pd.DataFrame()
 
     # We'll use the columns: 'Red','Green','Blue' + 'Red_min','Red_max', etc.
@@ -1251,22 +1253,22 @@ def backgating_assessment(
         if col not in settings_df.columns:
             settings_df[col] = None
             
-    print(f"Settings DataFrame shape after initialization: {settings_df.shape}")
-    print(f"Population categories to process: {pop_categories}")
+    logging.info(f"Settings DataFrame shape after initialization: {settings_df.shape}")
+    logging.info(f"Population categories to process: {pop_categories}")
     if len(pop_categories) > 0:
-        print(f"Sample settings for first population ({pop_categories[0]}):")
-        print(f"  Red: {settings_df.loc[pop_categories[0], 'Red']}")
-        print(f"  Green: {settings_df.loc[pop_categories[0], 'Green']}")  
-        print(f"  Blue: {settings_df.loc[pop_categories[0], 'Blue']}")
+        logging.debug(f"Sample settings for first population ({pop_categories[0]}):")
+        logging.debug(f"  Red: {settings_df.loc[pop_categories[0], 'Red']}")
+        logging.debug(f"  Green: {settings_df.loc[pop_categories[0], 'Green']}")  
+        logging.debug(f"  Blue: {settings_df.loc[pop_categories[0], 'Blue']}")
 
     # 3) Fill in missing marker assignments
     if mode in ['full','save_markers']:
-        print(f"\nDetermining top markers for each population using {'differential expression' if use_differential_expression else 'mean expression'}...", flush=True)
+        logging.info(f"Determining top markers for each population using {'differential expression' if use_differential_expression else 'mean expression'}...")
         
         for pop in pop_categories:
-            print(f"Processing population: {pop}", flush=True)
-            print(f"  Current Red marker: {settings_df.loc[pop, 'Red']}", flush=True)
-            print(f"  Is Red marker NaN? {pd.isna(settings_df.loc[pop, 'Red'])}", flush=True)
+            logging.info(f"Processing population: {pop}")
+            logging.debug(f"  Current Red marker: {settings_df.loc[pop, 'Red']}")
+            logging.debug(f"  Is Red marker NaN? {pd.isna(settings_df.loc[pop, 'Red'])}")
             
             # In 'full' mode, always recalculate unless Red/Green overrides are specified
             # In 'save_markers' mode, only calculate if missing
@@ -1276,12 +1278,12 @@ def backgating_assessment(
                 (mode == 'full' and specify_red is None and specify_green is None)
             )
             
-            print(f"  Should calculate markers? {should_calculate}", flush=True)
-            print(f"  Reason: Red is NaN: {pd.isna(settings_df.loc[pop, 'Red'])}, "
-                  f"Full mode with no R/G overrides: {mode == 'full' and specify_red is None and specify_green is None}", flush=True)
+            logging.debug(f"  Should calculate markers? {should_calculate}")
+            logging.debug(f"  Reason: Red is NaN: {pd.isna(settings_df.loc[pop, 'Red'])}, "
+                  f"Full mode with no R/G overrides: {mode == 'full' and specify_red is None and specify_green is None}")
             
             if should_calculate:
-                print(f"  Running marker selection for {pop}...", flush=True)
+                logging.info(f"  Running marker selection for {pop}...")
                 if use_differential_expression:
                     # Use differential expression analysis
                     top_markers = perform_differential_expression(
@@ -1345,18 +1347,18 @@ def backgating_assessment(
 
     # Save the updated settings to CSV
     settings_df.to_csv(backgating_settings_path)
-    print(f"Saved backgating settings to: {backgating_settings_path}")
+    logging.info(f"Saved backgating settings to: {backgating_settings_path}")
 
     # 5) If mode='save_markers', we stop here (no imaging).
     if mode == 'save_markers':
-        print("Markers saved; no further backgating performed (mode='save_markers').")
+        logging.info("Markers saved; no further backgating performed (mode='save_markers').")
         return
 
     # 6) If we get here, we either 'full' or 'load_markers' => run the actual backgating
     for pop in pop_categories:
         pop_cells = adata.obs[adata.obs[pop_obs] == pop][cell_index_obs]
         if pop_cells.empty:
-            print(f"No cells found for population '{pop}'. Skipping.")
+            logging.warning(f"No cells found for population '{pop}'. Skipping.")
             continue
 
         # Subsample
@@ -1371,10 +1373,10 @@ def backgating_assessment(
         green_range = (settings_df.loc[pop, 'Green_min'], settings_df.loc[pop, 'Green_max']) if specify_ranges else None
         blue_range  = (settings_df.loc[pop, 'Blue_min'],  settings_df.loc[pop, 'Blue_max'])  if specify_ranges else None
 
-        print(f"\nBackgating population: {pop}")
-        print(f"  -> Red={red_marker}, range={red_range}")
-        print(f"  -> Green={green_marker}, range={green_range}")
-        print(f"  -> Blue={blue_marker}, range={blue_range}")
+        logging.info(f"Backgating population: {pop}")
+        logging.info(f"  -> Red={red_marker}, range={red_range}")
+        logging.info(f"  -> Green={green_marker}, range={green_range}")
+        logging.info(f"  -> Blue={blue_marker}, range={blue_range}")
 
         # Call your backgating function
         # Make sure it supports the new parameters: mask_folder, exclude_rois_without_mask, cell_plot_spacing
@@ -1414,7 +1416,7 @@ def backgating_assessment(
 
         # Create population overlay visualizations for all cells of this type in each ROI
         if population_overlays:
-            print(f"\nCreating population overlay visualizations for '{pop}'...")
+            logging.info(f"Creating population overlay visualizations for '{pop}'...")
             
             # Get all ROIs that contain cells of this population
             pop_rois = adata.obs[adata.obs[pop_obs].astype(str) == str(pop)][roi_obs].unique()
@@ -1443,7 +1445,7 @@ def backgating_assessment(
                                 mask_path = str(potential_tiff)
                         elif isinstance(use_masks, str):
                             # CSV mapping - would need to implement reading logic here
-                            print(f"CSV mask mapping not yet implemented for population overlays")
+                            logging.warning(f"CSV mask mapping not yet implemented for population overlays")
                     
                     # Create overlay
                     overlay_output_path = overlay_dir / f"{roi}_population_overlay.png"
@@ -1456,16 +1458,16 @@ def backgating_assessment(
                         composite_image_path=str(composite_img_path),
                         mask_path=mask_path,
                         roi_obs=roi_obs,
-                        cell_index_obs=cell_index_obs,
+                        object_index_obs=object_index_obs,
                         output_path=str(overlay_output_path),
                         contour_color=(255, 255, 255),  # White contours
                         contour_width=2
                     )
                     
                 except Exception as e:
-                    print(f"Warning: Failed to create population overlay for ROI '{roi}': {e}")
+                    logging.warning(f"Failed to create population overlay for ROI '{roi}': {e}")
                     continue
         
-        print(f"Population overlay visualizations completed for '{pop}'.")
+        logging.info(f"Population overlay visualizations completed for '{pop}'.")
 
-    print("\nBackgating assessment complete.\n")
+    logging.info("Backgating assessment complete.")
