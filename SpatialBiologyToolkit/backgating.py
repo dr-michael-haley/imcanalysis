@@ -828,8 +828,8 @@ def perform_differential_expression(
     """
     if verbose:
         import logging
-        logging.info(f"  Starting differential expression analysis for {target_population}")
-        print(f"Starting DE analysis for {target_population}...", flush=True)
+        logging.info(f"Starting differential expression analysis for {target_population}")
+        logging.info(f"Starting DE analysis for {target_population}...")
         
     if markers_exclude is None:
         markers_exclude = []
@@ -854,9 +854,8 @@ def perform_differential_expression(
         
         target_count = (adata_copy.obs[pop_obs].astype(str) == str(target_population)).sum()
         logging.info(f"  Cells in target population '{target_population}': {target_count}")
-        print(f"DE input: {adata_copy.n_obs} cells, {adata_copy.n_vars} markers", flush=True)
-        print(f"Target population '{target_population}' (type: {type(target_population)}) has {target_count} cells", flush=True)
-        print(f"DE input: {adata_copy.n_obs} cells, {adata_copy.n_vars} markers", flush=True)
+        logging.info(f"DE input: {adata_copy.n_obs} cells, {adata_copy.n_vars} markers")
+        logging.info(f"Target population '{target_population}' (type: {type(target_population)}) has {target_count} cells")
     
     # Filter markers if specified
     if only_use_markers:
@@ -872,7 +871,7 @@ def perform_differential_expression(
     adata_copy = adata_copy.copy()
     
     if adata_copy.n_vars == 0:
-        print(f"Warning: No markers available for differential expression after filtering.")
+        logging.warning("No markers available for differential expression after filtering.")
         return []
     
     # Create binary comparison: target population vs all others
@@ -895,24 +894,24 @@ def perform_differential_expression(
     # Check group distribution
     group_counts = adata_copy.obs['comparison_group'].value_counts()
     if verbose:
-        print(f"Group distribution: {dict(group_counts)}", flush=True)
+        logging.info(f"Group distribution: {dict(group_counts)}")
     
     # Ensure we have both groups and target group has cells
     if len(group_counts) < 2:
         if verbose:
-            print(f"Warning: Only one group found. Cannot perform differential expression.", flush=True)
+            logging.warning("Only one group found. Cannot perform differential expression.")
         raise ValueError("Insufficient groups for comparison")
     
-    if 'target' not in group_counts or group_counts['target'] == 0:
+    if 'target' not in group_counts.index or group_counts.get('target', 0) == 0:
         if verbose:
-            print(f"Warning: Target population '{target_population}' has no cells. Cannot perform DE.", flush=True)
+            logging.warning(f"Target population '{target_population}' has no cells. Cannot perform DE.")
         raise ValueError("Target population has no cells")
     
     # Ensure minimum cells per group for statistical power
     min_cells = 5
-    if any(count < min_cells for count in group_counts.values()):
+    if any(count < min_cells for count in group_counts.values):
         if verbose:
-            print(f"Warning: Some groups have fewer than {min_cells} cells. DE may be unreliable.", flush=True)
+            logging.warning(f"Some groups have fewer than {min_cells} cells. DE may be unreliable.")
     
     # Perform differential expression
     try:
@@ -935,8 +934,8 @@ def perform_differential_expression(
         # Check if results exist and are not empty
         if 'target' not in result['names'] or len(result['names']['target']) == 0:
             if verbose:
-                print(f"Warning: No differential expression results found for {target_population}", flush=True)
-                print(f"Available groups in results: {list(result['names'].keys())}", flush=True)
+                logging.warning(f"No differential expression results found for {target_population}")
+                logging.warning(f"Available groups in results: {list(result['names'].keys())}")
             raise ValueError("No DE results returned")
         
         # Get top markers
@@ -963,7 +962,7 @@ def perform_differential_expression(
             if len(quality_markers) >= n_top_markers:
                 markers_df_sorted = quality_markers
             elif verbose:
-                print(f"Warning: Only {len(quality_markers)} markers meet logFC > {min_logfc_threshold} threshold. "
+                logging.warning(f"Only {len(quality_markers)} markers meet logFC > {min_logfc_threshold} threshold. "
                       f"Using all markers ranked by discriminative power.")
         
         # Get top markers by discriminative power
@@ -990,25 +989,25 @@ def perform_differential_expression(
                     logging.info(f"    {row['names']}: score={row['scores']:.2f}, logFC={row['logfoldchanges']:.2f}, "
                           f"padj={row['pvals_adj']:.2e} ({sig_status})")
             
-            # Also print to ensure immediate output in SLURM
-            print(f"DE analysis for {target_population}: selected {top_markers}", flush=True)
+            # Log selected markers
+            logging.info(f"DE analysis for {target_population}: selected {top_markers}")
         
         return top_markers
         
     except Exception as e:
-        print(f"Error in differential expression analysis: {e}", flush=True)
-        print(f"Falling back to simple mean expression ranking for {target_population}", flush=True)
+        logging.error(f"Error in differential expression analysis: {e}")
+        logging.info(f"Falling back to simple mean expression ranking for {target_population}")
         
         if verbose:
             import traceback
-            print(f"Full error traceback:", flush=True)
-            traceback.print_exc()
+            logging.error("Full error traceback:")
+            logging.error(traceback.format_exc())
             
             # Additional debugging information
-            print(f"Debug info:", flush=True)
-            print(f"  adata_copy shape: {adata_copy.shape}", flush=True)
-            print(f"  Target population '{target_population}' count: {(adata_copy.obs[pop_obs].astype(str) == str(target_population)).sum()}", flush=True)
-            print(f"  Comparison group value counts: {adata_copy.obs['comparison_group'].value_counts()}", flush=True)
+            logging.info("Debug info:")
+            logging.info(f"  adata_copy shape: {adata_copy.shape}")
+            logging.info(f"  Target population '{target_population}' count: {(adata_copy.obs[pop_obs].astype(str) == str(target_population)).sum()}")
+            logging.info(f"  Comparison group value counts: {adata_copy.obs['comparison_group'].value_counts()}")
         
         # Fallback to simple mean expression
         target_cells = adata_copy[adata_copy.obs[pop_obs].astype(str) == str(target_population)]
@@ -1019,10 +1018,10 @@ def perform_differential_expression(
             )
             fallback_markers = mean_expression.nlargest(n_top_markers).index.tolist()
             if verbose:
-                print(f"Fallback mean expression markers: {fallback_markers}", flush=True)
+                logging.info(f"Fallback mean expression markers: {fallback_markers}")
             return fallback_markers
         else:
-            print(f"Warning: No cells found for population {target_population}", flush=True)
+            logging.warning(f"No cells found for population {target_population}")
             return []
 
 
