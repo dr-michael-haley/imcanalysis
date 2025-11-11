@@ -885,10 +885,12 @@ def perform_differential_expression(
         'target',
         'rest'
     )
-    adata_copy.obs['comparison_group'] = pd.Categorical(
+    comparison_series = pd.Series(
         labels,
-        categories=['rest', 'target']
-    )
+        index=adata_copy.obs_names,
+        name='comparison_group'
+    ).astype('category')
+    adata_copy.obs['comparison_group'] = comparison_series
     
     # Check group distribution
     group_counts = adata_copy.obs['comparison_group'].value_counts()

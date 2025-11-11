@@ -1802,7 +1802,8 @@ def grouped_graph(
             columns=group_by_obs,
             values='value',
             aggfunc='sum',
-            fill_value=0
+            fill_value=0,
+            observed=True
         )
         if order:
             pivot_table = pivot_table.loc[order]
