@@ -344,7 +344,8 @@ def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, v
             if cat_col in adata.obs.columns:
                 logging.info(f'Creating MatrixPlot for {category_type} column: {cat_col}')
                 try:
-                    fig = sc.pl.matrixplot(
+                    # Create the matrixplot - this returns a MatrixPlot object, not a Figure
+                    matrixplot = sc.pl.matrixplot(
                         adata,
                         var_names=markers_to_plot,
                         groupby=cat_col,
@@ -354,8 +355,12 @@ def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, v
                         return_fig=True
                     )
                     fig_path = qc_matrix_dir / f'Matrixplot_{cat_col}.{viz_config.figure_format}'
-                    fig.savefig(fig_path, bbox_inches='tight', dpi=300 if viz_config.save_high_res else 150)
-                    plt.close(fig)
+                    
+                    # Save using the MatrixPlot object's savefig method
+                    matrixplot.savefig(fig_path, bbox_inches='tight', dpi=300 if viz_config.save_high_res else 150)
+                    
+                    # Close the underlying figure properly
+                    plt.close()
                     logging.info(f'MatrixPlot saved to {fig_path}')
                 except Exception as e:
                     logging.warning(f'Failed to create MatrixPlot for {cat_col}: {e}')

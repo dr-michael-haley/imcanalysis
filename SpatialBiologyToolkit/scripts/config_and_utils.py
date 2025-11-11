@@ -195,6 +195,9 @@ class LoggingConfig:
     log_file: str = 'pipeline.log'
     level: str = 'INFO'
     to_console: bool = True
+    console_only: bool = False  # Only log to console, not file (useful for SLURM jobs)
+    prevent_duplicate_console: bool = True  # Prevent double console output
+    use_custom_format: bool = True  # Use custom format vs basicConfig default
 
 
 DEFAULT_CONFIG_CLASSES = {
@@ -307,25 +310,42 @@ def load_config(config_file: str = 'config.yaml') -> Dict[str, Any]:
 def setup_logging(logging_config, pipeline_stage):
     log_level = getattr(logging, logging_config.get('level', 'INFO').upper(), logging.INFO)
     log_file = logging_config.get('log_file', 'pipeline.log')
-
-    # Configure logging
-    logging.basicConfig(
-        filename=log_file,
-        filemode='a',
-        level=log_level,
-        format=f'%(asctime)s [%(levelname)s] [{pipeline_stage}] %(message)s',
+    to_console = logging_config.get('to_console', True)
+    console_only = logging_config.get('console_only', False)
+    prevent_duplicate = logging_config.get('prevent_duplicate_console', True)
+    use_custom_format = logging_config.get('use_custom_format', True)
+    
+    # Clear any existing handlers to prevent accumulation
+    root_logger = logging.getLogger()
+    if prevent_duplicate:
+        root_logger.handlers.clear()
+    
+    # Set root logger level
+    root_logger.setLevel(log_level)
+    
+    # Create formatter
+    formatter = logging.Formatter(
+        f'%(asctime)s [%(levelname)s] [{pipeline_stage}] %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
-    )
-
-    # Console handler
-    if logging_config.get('to_console', True):
+    ) if use_custom_format else logging.Formatter()
+    
+    if not console_only:
+        # Add file handler
+        file_handler = logging.FileHandler(log_file, mode='a')
+        file_handler.setLevel(log_level)
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+    
+    if to_console:
+        # Add console handler
         console_handler = logging.StreamHandler()
         console_handler.setLevel(log_level)
-        console_handler.setFormatter(logging.Formatter(
-            f'%(asctime)s [%(levelname)s] [{pipeline_stage}] %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S'
-        ))
-        logging.getLogger('').addHandler(console_handler)
+        console_handler.setFormatter(formatter)
+        root_logger.addHandler(console_handler)
+    
+    # Prevent propagation to avoid duplicate messages if requested
+    if prevent_duplicate:
+        root_logger.propagate = False
 
 def get_filename(path: Path, name: str) -> str:
     """

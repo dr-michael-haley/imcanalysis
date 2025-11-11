@@ -877,10 +877,14 @@ def perform_differential_expression(
     target_population_str = str(target_population)
     
     # Use string labels instead of boolean for better scanpy compatibility
-    adata_copy.obs['comparison_group'] = np.where(
-        adata_copy.obs[pop_obs].astype(str) == target_population_str, 
-        'target', 
+    comparison = np.where(
+        adata_copy.obs[pop_obs].astype(str) == target_population_str,
+        'target',
         'rest'
+    )
+    adata_copy.obs['comparison_group'] = pd.Series(
+        comparison,
+        index=adata_copy.obs_names
     ).astype('category')
     
     # Check group distribution
