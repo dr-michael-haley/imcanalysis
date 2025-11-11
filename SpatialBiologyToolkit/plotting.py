@@ -2267,7 +2267,7 @@ def create_population_overlay(
     composite_image_path: str,
     mask_path: str = None,
     roi_obs: str = 'ROI',
-    cell_index_obs: str = 'Master_Index',
+    cell_index_obs: str = 'ObjectNumber',
     output_path: str = None,
     contour_color: tuple = (255, 255, 0),  # Yellow contours
     contour_width: int = 2
@@ -2443,7 +2443,7 @@ def population_backgating(
     mask_folder: str = 'masks',
     mask_extension: str = 'tiff',
     # Overlay appearance
-    contour_color: tuple = (255, 255, 0),  # Yellow contours by default
+    contour_color: tuple = (255, 255, 255),  # White contours by default
     contour_width: int = 2,
     # Output options
     save_composite_images: bool = True,
