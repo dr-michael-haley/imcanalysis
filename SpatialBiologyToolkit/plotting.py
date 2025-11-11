@@ -2269,7 +2269,7 @@ def create_population_overlay(
     roi_obs: str = 'ROI',
     cell_index_obs: str = 'ObjectNumber',
     output_path: str = None,
-    contour_color: tuple = (255, 255, 0),  # Yellow contours
+    contour_color: tuple = (255, 255, 255),  # White contours
     contour_width: int = 2
 ):
     """
@@ -2293,9 +2293,8 @@ def create_population_overlay(
         None. Saves overlay image to output_path if provided.
     """
     import matplotlib.pyplot as plt
-    import matplotlib.patches as mpatches
-    from matplotlib.collections import LineCollection
-    from skimage.measure import find_contours
+    from skimage.segmentation import find_boundaries
+    from scipy.ndimage import binary_dilation
     
     # Load composite image
     if not Path(composite_image_path).exists():
@@ -2344,51 +2343,23 @@ def create_population_overlay(
         # Remove background (typically 0)
         target_cell_ids.discard(0)
         
-        # Create binary mask for target cells
-        target_mask = np.isin(mask, list(target_cell_ids))
-        
-        # Find contours for each cell
-        labeled_mask = mask * target_mask  # Keep only target cells with their original labels
-        
-        # Draw contours for each individual cell
-        contours_drawn = 0
-        for cell_id in target_cell_ids:
-            if cell_id == 0:
-                continue
-                
-            # Create binary mask for this specific cell
-            single_cell_mask = (labeled_mask == cell_id).astype(np.uint8)
-            
-            if np.sum(single_cell_mask) == 0:
-                continue
-            
-            # Find contours for this cell
-            try:
-                contours = find_contours(single_cell_mask, 0.5)
-                
-                for contour in contours:
-                    # Convert contour coordinates (note: find_contours returns (row, col) = (y, x))
-                    contour_coords = contour[:, [1, 0]]  # Swap to (x, y)
-                    
-                    # Create LineCollection for smooth contour drawing
-                    if len(contour_coords) > 2:
-                        # Close the contour
-                        contour_coords = np.vstack([contour_coords, contour_coords[0]])
-                        
-                        # Draw contour
-                        for i in range(contour_width):
-                            offset = i - contour_width // 2
-                            offset_coords = contour_coords + offset
-                            ax.plot(offset_coords[:, 0], offset_coords[:, 1], 
-                                   color=np.array(contour_color)/255, 
-                                   linewidth=1, alpha=0.8)
-                        
-                        contours_drawn += 1
-            except Exception as e:
-                print(f"Warning: Could not process contours for cell {cell_id}: {e}")
-                continue
-        
-        print(f"Drew contours for {contours_drawn} cells")
+        if target_cell_ids:
+            target_mask = np.isin(mask, list(target_cell_ids))
+            if not target_mask.any():
+                print("Warning: No matching labels found in mask for selected population.")
+            else:
+                boundaries = find_boundaries(target_mask, mode='inner')
+                if contour_width > 1:
+                    iterations = max(1, contour_width // 2)
+                    boundaries = binary_dilation(boundaries, iterations=iterations)
+
+                overlay = np.zeros((*boundaries.shape, 4), dtype=float)
+                overlay[..., :3] = np.array(contour_color) / 255.0
+                overlay[..., 3] = boundaries.astype(float)
+                ax.imshow(overlay)
+                print(f"Drew contours for {len(target_cell_ids)} cells")
+        else:
+            print("Warning: No target cell IDs found; skipping contour overlay.")
         
     else:
         # If no mask, just plot cell centers as points
