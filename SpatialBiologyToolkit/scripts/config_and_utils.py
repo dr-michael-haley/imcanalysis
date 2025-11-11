@@ -186,6 +186,9 @@ class VisualizationConfig:
     # Backgating execution mode control
     backgating_mode: str = 'full'  # 'full' (compute + run), 'save_markers' (compute only), 'load_markers' (load + run)
     
+    # Population overlay visualization settings
+    backgating_population_overlay_outline_width: int = 1  # Width of contour outlines in population overlay visualizations
+    
     # General visualization settings
     save_high_res: bool = True  # Save high-resolution figures (300 DPI)
     figure_format: str = 'png'  # Default figure format ('png', 'pdf', 'svg')

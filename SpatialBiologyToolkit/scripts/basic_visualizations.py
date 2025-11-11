@@ -573,6 +573,8 @@ def create_backgating_assessment(adata, population_columns, viz_config, general_
                         # Intensity scaling
                         minimum=viz_config.backgating_minimum,
                         max_quantile=viz_config.backgating_max_quantile,
+                        # Population overview setttings
+                        population_overlay_outline_width=viz_config.backgating_population_overlay_outline_width,
                         # Marker selection and differential expression
                         markers_exclude=getattr(viz_config, 'backgating_markers_exclude', ['DNA1', 'DNA3']),
                         use_differential_expression=use_de,

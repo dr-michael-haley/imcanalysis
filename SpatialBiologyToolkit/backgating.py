@@ -1088,6 +1088,7 @@ def backgating_assessment(
     output_folder: str = 'Backgating',
     overview_images: bool = True,
     population_overlays: bool = True,  # New parameter for population overlay visualizations
+    population_overlay_outline_width: int = 2,
     # Intensity scaling
     minimum: float = 0.4,
     max_quantile: str = 'q0.98',
@@ -1461,7 +1462,7 @@ def backgating_assessment(
                         object_index_obs=object_index_obs,
                         output_path=str(overlay_output_path),
                         contour_color=(255, 255, 255),  # White contours
-                        contour_width=2
+                        contour_width=population_overlay_outline_width
                     )
                     
                 except Exception as e:
