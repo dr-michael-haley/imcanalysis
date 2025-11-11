@@ -18,8 +18,13 @@ from matplotlib.colors import Normalize, to_hex
 from matplotlib.lines import Line2D
 from scipy import stats
 from shapely.geometry import MultiPoint, Point, Polygon
-from skimage.util import map_array
+from skimage.util import map_array, img_as_ubyte
 from skimage.transform import resize
+from skimage.measure import find_contours
+from skimage import exposure
+from glob import glob
+from itertools import compress
+import re
 import sklearn as sklearn
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
@@ -1859,3 +1864,833 @@ def grouped_graph(
     
     # Close the figure to prevent memory leaks
     plt.close(fig)
+
+
+def load_single_img(filename: str) -> np.ndarray:
+    """
+    Load a single 2D .tif or .tiff image as float32.
+
+    Args:
+        filename (str): Path to the image file, must end with .tiff or .tif.
+
+    Returns:
+        np.ndarray: Loaded image data (2D).
+    """
+    import tifffile as tp
+    
+    if not (filename.endswith('.tiff') or filename.endswith('.tif')):
+        raise ValueError('Raw file should end with .tif or .tiff!')
+    img_in = tp.imread(filename).astype('float32')
+
+    if img_in.ndim != 2:
+        raise ValueError('Single image should be 2D!')
+    return img_in
+
+
+def load_imgs_from_directory(
+    load_directory: str,
+    channel_name: str,
+    quiet: bool = False
+) -> tuple[list[np.ndarray], list[str], list[str]] | None:
+    """
+    Searches a directory (and any subfolders) for images whose filenames
+    contain the given channel_name. Returns a list of those images and filenames.
+
+    Args:
+        load_directory (str): Directory or parent directory of images.
+        channel_name (str): Channel name to search for in the filenames.
+        quiet (bool): Whether to suppress print statements.
+
+    Returns:
+        Optional[Tuple[List[np.ndarray], List[str], List[str]]]:
+            - A list of images (2D numpy arrays)
+            - A list of corresponding filenames
+            - A list of the subfolders from which images were loaded
+              If no images are found, returns None.
+    """
+    img_collect = []
+    img_file_list = []
+
+    # Find any subdirectories (one level down). If none found, use load_directory itself.
+    img_folders = glob(os.path.join(load_directory, "*", "")) or [load_directory]
+
+    if not quiet:
+        print(f'Loading image data for channel "{channel_name}" from ...')
+
+    for subfolder in img_folders:
+        found_files = [
+            f for f in os.listdir(subfolder)
+            if os.path.isfile(os.path.join(subfolder, f)) and
+               (f.lower().endswith(".tiff") or f.lower().endswith(".tif"))
+        ]
+
+        for candidate_file in found_files:
+            # More precise matching: check if channel_name appears as a separate word/token
+            # This prevents CD45 from matching CD45RO
+            filename_lower = candidate_file.lower()
+            channel_lower = channel_name.lower()
+            
+            # Split on common separators: underscore, dash, dot, space
+            filename_tokens = re.split(r'[_\-\.\s]+', filename_lower)
+            
+            # Check if channel name matches any token exactly
+            if channel_lower in filename_tokens:
+                img_read = load_single_img(os.path.join(subfolder, candidate_file))
+                if not quiet:
+                    print(os.path.join(subfolder, candidate_file))
+                img_file_list.append(candidate_file)
+                img_collect.append(img_read)
+                # Break once we find the first matching file per subfolder.
+                break
+
+    if not quiet:
+        print('Image data loading completed!')
+
+    if not img_collect:
+        print(f'No files found with channel name "{channel_name}".')
+        return None
+
+    return img_collect, img_file_list, img_folders
+
+
+def load_rescale_images(
+    image_folder: str,
+    samples_list: list[str],
+    marker: str,
+    minimum: float,
+    max_val: float | str
+) -> tuple[list[np.ndarray], list[str]]:
+    """
+    Helper function that:
+      1) Loads images for a given marker across provided samples.
+      2) Clips intensities using user-specified or quantile-based maxima.
+      3) Rescales intensities to [0,1].
+
+    Args:
+        image_folder (str): Directory where images (and subfolders) are located.
+        samples_list (List[str]): List of ROI/sample names to filter by.
+        marker (str): The marker (channel name) to load from the image folder.
+        minimum (float): Lower clip value.
+        max_val (Union[float, str]): A numeric max or a string with prefix:
+          - 'q': Mean quantile
+          - 'i': Individual quantile
+          - 'm': Minimum of quantiles
+          - 'x': Maximum of quantiles
+          Example: 'q0.97' => Use mean of the 97th percentile for all images.
+
+    Returns:
+        Tuple[List[np.ndarray], List[str]]:
+            - List of images (each rescaled/clipped)
+            - Matching list of ROI names
+    """
+    # Interpret the user-specified max_val mode
+    mode = 'value'
+    if isinstance(max_val, str):
+        prefix = max_val[0].lower()
+        try:
+            max_quantile = float(max_val[1:])
+        except ValueError:
+            raise ValueError(f"Could not parse quantile from '{max_val}'")
+        if prefix == 'q':
+            mode = 'mean_quantile'
+        elif prefix == 'i':
+            mode = 'individual_quantile'
+        elif prefix == 'm':
+            mode = 'minimum_quantile'
+        elif prefix == 'x':
+            mode = 'max_quantile'
+
+    # Load the images (quiet=True to suppress prints)
+    loaded = load_imgs_from_directory(image_folder, marker, quiet=True)
+    if not loaded:
+        return [], []
+
+    image_list, _, folder_list = loaded
+
+    # ROI names are the last part of the subfolder path
+    roi_list = [os.path.basename(Path(x)) for x in folder_list]
+
+    # Filter out any ROIs not in our samples_list
+    sample_filter = [r in samples_list for r in roi_list]
+    image_list = list(compress(image_list, sample_filter))
+    roi_list = list(compress(roi_list, sample_filter))
+
+    if not image_list:
+        # If nothing is loaded after filtering, return.
+        print(f"No images found for marker {marker} matching {samples_list}.")
+        return [], []
+
+    # Compute maximum intensities
+    if mode in ('mean_quantile', 'minimum_quantile', 'max_quantile'):
+        # For each image, find the quantile, then reduce them by mean, min, or max
+        all_vals = [np.quantile(im, max_quantile) for im in image_list]
+        if mode == 'mean_quantile':
+            max_value = float(np.mean(all_vals))
+            mode_str = f'Mean of {max_quantile} quantiles'
+        elif mode == 'minimum_quantile':
+            max_value = float(np.min(all_vals))
+            mode_str = f'Min of {max_quantile} quantiles'
+        else:  # 'max_quantile'
+            max_value = float(np.max(all_vals))
+            mode_str = f'Max of {max_quantile} quantiles'
+
+        print(f"Marker={marker} | Mode={mode_str} | Min={minimum:.3f} | "
+              f"Calculated max={max_value:.3f}")
+        image_list = [im.clip(minimum, max_value) for im in image_list]
+
+    elif mode == 'individual_quantile':
+        # Each image is clipped to its own quantile
+        max_values = [np.quantile(im, max_quantile) for im in image_list]
+        print(f"Marker={marker} | Mode=Individual quantile {max_quantile} | "
+              f"Min={minimum} | Using image-specific maxima.")
+        image_list = [
+            im.clip(minimum, mv) for im, mv in zip(image_list, max_values)
+        ]
+
+    else:
+        # Fixed numeric value
+        print(f"Marker={marker} | Using numeric min={minimum}, max={max_val}")
+        max_value = float(max_val)
+        image_list = [im.clip(minimum, max_value) for im in image_list]
+
+    # Rescale intensities to [0..1]
+    image_list = [exposure.rescale_intensity(i) for i in image_list]
+
+    return image_list, roi_list
+
+
+def make_images(
+    image_folder: str,
+    samples_list: list[str],
+    output_folder: str,
+    name_prefix: str = '',
+    minimum: float = 0.2,
+    max_quantile: float | str = 'q0.97',
+    red: str | None = None,
+    red_range: tuple[float, float | str] | None = None,
+    green: str | None = None,
+    green_range: tuple[float, float | str] | None = None,
+    blue: str | None = None,
+    blue_range: tuple[float, float | str] | None = None,
+    magenta: str | None = None,
+    magenta_range: tuple[float, float | str] | None = None,
+    cyan: str | None = None,
+    cyan_range: tuple[float, float | str] | None = None,
+    yellow: str | None = None,
+    yellow_range: tuple[float, float | str] | None = None,
+    white: str | None = None,
+    white_range: tuple[float, float | str] | None = None,
+    roi_folder_save: bool = False,
+    simple_file_names: bool = False,
+    save_subfolder: str = ''
+) -> None:
+    """
+    Create composite RGB images from up to seven channels. Each channel can be
+    mapped onto red/green/blue/magenta/cyan/yellow/white in an additive manner
+    (as done by typical multi-channel viewers).
+
+    Args:
+        image_folder (str): Folder of subfolders where each ROI is stored.
+        samples_list (List[str]): List of ROI names to process.
+        output_folder (str): Where to save the resulting images.
+        name_prefix (str): Optional prefix for output files.
+        minimum (float): Global intensity minimum for clipping (before rescale).
+        max_quantile (float or str): Global intensity maximum for clipping
+            (e.g., 0.97 or 'q0.97' or 'i0.97').
+        {color} (str): The marker to use for that color channel.
+        {color}_range (tuple): Lower and upper intensity specs, can be numeric or 'q0.95', etc.
+        roi_folder_save (bool): Whether each ROI gets its own subfolder in output.
+        simple_file_names (bool): If True, save images as 'ROI.png' only (otherwise includes channel info).
+        save_subfolder (str): Subdirectory under output_folder for saving images.
+
+    Returns:
+        None. Saves .png images to disk.
+    """
+
+    # Create output folder if it doesn't exist
+    Path(output_folder).mkdir(parents=True, exist_ok=True)
+
+    # Map the color name to the marker name and to user-specified ranges
+    color_configs = {
+        'red':     (red,     red_range),
+        'green':   (green,   green_range),
+        'blue':    (blue,    blue_range),
+        'magenta': (magenta, magenta_range),
+        'cyan':    (cyan,    cyan_range),
+        'yellow':  (yellow,  yellow_range),
+        'white':   (white,   white_range),
+    }
+
+    # For each color channel, load images & ROI lists
+    loaded_images = {}  # color -> list of scaled images
+    loaded_rois = {}    # color -> list of ROI names
+
+    for color_name, (marker_name, color_range) in color_configs.items():
+        if marker_name is not None:
+            # Determine the min/max for this channel if provided
+            if color_range is not None:
+                ch_min, ch_max = color_range
+            else:
+                ch_min, ch_max = (minimum, max_quantile)
+
+            imgs, rois = load_rescale_images(
+                image_folder, samples_list,
+                marker=marker_name,
+                minimum=ch_min,
+                max_val=ch_max
+            )
+            loaded_images[color_name] = imgs
+            loaded_rois[color_name] = rois
+        else:
+            # This color not used
+            loaded_images[color_name] = []
+            loaded_rois[color_name] = []
+
+    # Figure out how many ROIs total we have. We can unify by taking the max length across channels.
+    num_rois = max(len(r) for r in loaded_rois.values()) if loaded_rois else 0
+    print(f'Found {num_rois} ROIs total (across requested channels).')
+
+    # Build the final composite images ROI by ROI
+    # Note: The assumption here is that channels align in the same "ROI index" order,
+    # because we used the same sample_list for each. If your data is misaligned, you'll
+    # need more robust logic (e.g., matching by ROI name).
+    for i in range(num_rois):
+        # We pick whichever color has a valid ROI for indexing
+        # and assume they are the same ROI in the same i-th position
+        # in each channel's list. If any channel is missing that i-th ROI,
+        # we fill with zeros.
+
+        # A quick approach is to find a channel that has rois for index i
+        # and get the actual ROI name from there. Then we try to match
+        # which index that ROI is in the other channels. A more thorough
+        # approach would be to unify them by dictionary, but that requires
+        # more changes.
+
+        # For simplicity, let's pick the first non-empty color:
+        some_color = None
+        for c in color_configs:
+            if i < len(loaded_rois[c]):
+                some_color = c
+                break
+        if some_color is None:
+            continue  # no channels have i-th ROI (unlikely)
+
+        roi_name = loaded_rois[some_color][i]
+
+        # Now gather the images for each color, matching the ROI name
+        # by index if it matches, else a blank array of the same shape.
+        shape_ref = loaded_images[some_color][i].shape  # reference shape
+        (h, w) = shape_ref
+
+        # Initialize R, G, B as zeros
+        channel_r = np.zeros((h, w), dtype=np.float32)
+        channel_g = np.zeros((h, w), dtype=np.float32)
+        channel_b = np.zeros((h, w), dtype=np.float32)
+
+        for color_name, (marker_name, _) in color_configs.items():
+            if marker_name is None:
+                # Not used
+                continue
+            # Attempt to find the ROI in that channel
+            if roi_name in loaded_rois[color_name]:
+                # find the index for that ROI
+                idx = loaded_rois[color_name].index(roi_name)
+                this_img = loaded_images[color_name][idx]
+            else:
+                # no ROI found => fallback to zeros
+                this_img = np.zeros((h, w), dtype=np.float32)
+
+            if color_name == 'red':
+                channel_r = np.clip(channel_r + this_img, 0, 1)
+            elif color_name == 'green':
+                channel_g = np.clip(channel_g + this_img, 0, 1)
+            elif color_name == 'blue':
+                channel_b = np.clip(channel_b + this_img, 0, 1)
+            elif color_name == 'magenta':
+                # Magenta = Red + Blue
+                channel_r = np.clip(channel_r + this_img, 0, 1)
+                channel_b = np.clip(channel_b + this_img, 0, 1)
+            elif color_name == 'cyan':
+                # Cyan = Green + Blue
+                channel_g = np.clip(channel_g + this_img, 0, 1)
+                channel_b = np.clip(channel_b + this_img, 0, 1)
+            elif color_name == 'yellow':
+                # Yellow = Red + Green
+                channel_r = np.clip(channel_r + this_img, 0, 1)
+                channel_g = np.clip(channel_g + this_img, 0, 1)
+            elif color_name == 'white':
+                # White = Red + Green + Blue
+                channel_r = np.clip(channel_r + this_img, 0, 1)
+                channel_g = np.clip(channel_g + this_img, 0, 1)
+                channel_b = np.clip(channel_b + this_img, 0, 1)
+
+        # Stack channels
+        stack = np.dstack([channel_r, channel_g, channel_b])
+        stack_ubyte = img_as_ubyte(stack)
+
+        # Build filename
+        if not simple_file_names:
+            # Include the channels used (e.g., b_markerName_, r_markerName_, etc.)
+            color_strs = []
+            for color_name, (marker_name, _) in color_configs.items():
+                if marker_name:
+                    prefix = color_name[0].lower()  # r/g/b/m/c/y/w
+                    color_strs.append(f'{prefix}_{marker_name}')
+            color_part = "_".join(color_strs)
+            filename = f'{name_prefix}{roi_name}_{color_part}'.rstrip('_')
+        else:
+            filename = roi_name
+
+        # Possibly write to a subfolder named after ROI
+        if roi_folder_save:
+            roi_dir = Path(output_folder, roi_name)
+            roi_dir.mkdir(parents=True, exist_ok=True)
+            if save_subfolder:
+                roi_dir = roi_dir / save_subfolder
+                roi_dir.mkdir(parents=True, exist_ok=True)
+            save_path = roi_dir / f'{filename}.png'
+        else:
+            out_dir = Path(output_folder)
+            if save_subfolder:
+                out_dir = out_dir / save_subfolder
+                out_dir.mkdir(parents=True, exist_ok=True)
+            save_path = out_dir / f'{filename}.png'
+
+        io.imsave(str(save_path), stack_ubyte)
+
+
+def create_population_overlay(
+    adata,
+    population: str,
+    pop_obs: str,
+    roi_name: str,
+    composite_image_path: str,
+    mask_path: str = None,
+    roi_obs: str = 'ROI',
+    cell_index_obs: str = 'Master_Index',
+    output_path: str = None,
+    contour_color: tuple = (255, 255, 0),  # Yellow contours
+    contour_width: int = 2
+):
+    """
+    Create an overlay visualization showing all cells of a specific population
+    with mask contours on a composite RGB image.
+    
+    Args:
+        adata: AnnData object with cell data
+        population: Population name to visualize
+        pop_obs: Column name containing population labels
+        roi_name: Name of the ROI to process
+        composite_image_path: Path to the composite RGB image
+        mask_path: Path to the segmentation mask (optional)
+        roi_obs: Column name for ROI identifiers
+        cell_index_obs: Column name for cell indices
+        output_path: Where to save the overlay image
+        contour_color: RGB color for cell contours (default: yellow)
+        contour_width: Width of contour lines in pixels
+        
+    Returns:
+        None. Saves overlay image to output_path if provided.
+    """
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as mpatches
+    from matplotlib.collections import LineCollection
+    from skimage.measure import find_contours
+    
+    # Load composite image
+    if not Path(composite_image_path).exists():
+        print(f"Warning: Composite image not found: {composite_image_path}")
+        return
+        
+    composite_img = io.imread(composite_image_path)
+    
+    # Load mask if provided
+    mask = None
+    if mask_path and Path(mask_path).exists():
+        mask = io.imread(mask_path)
+    elif mask_path:
+        print(f"Warning: Mask file not found: {mask_path}")
+    
+    # Get cells of this population in this ROI
+    roi_cells = adata.obs[
+        (adata.obs[roi_obs] == roi_name) & 
+        (adata.obs[pop_obs].astype(str) == str(population))
+    ]
+    
+    if len(roi_cells) == 0:
+        print(f"No cells of population '{population}' found in ROI '{roi_name}'")
+        return
+        
+    # Create figure
+    fig, ax = plt.subplots(figsize=(12, 10), dpi=150)
+    
+    # Display composite image as background
+    ax.imshow(composite_img)
+    
+    # If we have a mask, draw contours for cells of this population
+    if mask is not None:
+        # Get unique cell labels for this population
+        if cell_index_obs in roi_cells.columns:
+            target_cell_ids = set(roi_cells[cell_index_obs].astype(int))
+        else:
+            # Fallback: use mask values at cell locations
+            target_cell_ids = set()
+            for _, cell in roi_cells.iterrows():
+                if 'X_loc' in cell and 'Y_loc' in cell:
+                    x, y = int(cell['X_loc']), int(cell['Y_loc'])
+                    if 0 <= y < mask.shape[0] and 0 <= x < mask.shape[1]:
+                        target_cell_ids.add(mask[y, x])
+        
+        # Remove background (typically 0)
+        target_cell_ids.discard(0)
+        
+        # Create binary mask for target cells
+        target_mask = np.isin(mask, list(target_cell_ids))
+        
+        # Find contours for each cell
+        labeled_mask = mask * target_mask  # Keep only target cells with their original labels
+        
+        # Draw contours for each individual cell
+        contours_drawn = 0
+        for cell_id in target_cell_ids:
+            if cell_id == 0:
+                continue
+                
+            # Create binary mask for this specific cell
+            single_cell_mask = (labeled_mask == cell_id).astype(np.uint8)
+            
+            if np.sum(single_cell_mask) == 0:
+                continue
+            
+            # Find contours for this cell
+            try:
+                contours = find_contours(single_cell_mask, 0.5)
+                
+                for contour in contours:
+                    # Convert contour coordinates (note: find_contours returns (row, col) = (y, x))
+                    contour_coords = contour[:, [1, 0]]  # Swap to (x, y)
+                    
+                    # Create LineCollection for smooth contour drawing
+                    if len(contour_coords) > 2:
+                        # Close the contour
+                        contour_coords = np.vstack([contour_coords, contour_coords[0]])
+                        
+                        # Draw contour
+                        for i in range(contour_width):
+                            offset = i - contour_width // 2
+                            offset_coords = contour_coords + offset
+                            ax.plot(offset_coords[:, 0], offset_coords[:, 1], 
+                                   color=np.array(contour_color)/255, 
+                                   linewidth=1, alpha=0.8)
+                        
+                        contours_drawn += 1
+            except Exception as e:
+                print(f"Warning: Could not process contours for cell {cell_id}: {e}")
+                continue
+        
+        print(f"Drew contours for {contours_drawn} cells")
+        
+    else:
+        # If no mask, just plot cell centers as points
+        print(f"No mask available, plotting cell centers as points")
+        if 'X_loc' in roi_cells.columns and 'Y_loc' in roi_cells.columns:
+            ax.scatter(roi_cells['X_loc'], roi_cells['Y_loc'], 
+                      c=[np.array(contour_color)/255], s=20, alpha=0.8, marker='o')
+    
+    # Remove ticks for cleaner look
+    ax.set_xticks([])
+    ax.set_yticks([])
+    
+    # Save if output path provided
+    if output_path:
+        plt.savefig(output_path, bbox_inches='tight', dpi=200, facecolor='white')
+        plt.close(fig)
+    else:
+        plt.show()
+        
+    return fig
+
+
+def population_backgating(
+    adata,
+    population: str,
+    pop_obs: str,
+    image_folder: str,
+    roi_list: list[str] = None,
+    roi_obs: str = 'ROI',
+    cell_index_obs: str = 'Master_Index',
+    output_folder: str = 'Population_Backgating',
+    # Marker assignments for composite images
+    red: str | None = None,
+    red_range: tuple[float, float | str] | None = None,
+    green: str | None = None,
+    green_range: tuple[float, float | str] | None = None,
+    blue: str | None = None,
+    blue_range: tuple[float, float | str] | None = None,
+    magenta: str | None = None,
+    magenta_range: tuple[float, float | str] | None = None,
+    cyan: str | None = None,
+    cyan_range: tuple[float, float | str] | None = None,
+    yellow: str | None = None,
+    yellow_range: tuple[float, float | str] | None = None,
+    white: str | None = None,
+    white_range: tuple[float, float | str] | None = None,
+    # Image processing parameters
+    minimum: float = 0.2,
+    max_quantile: float | str = 'q0.97',
+    # Mask parameters
+    use_masks: bool = True,
+    mask_folder: str = 'masks',
+    mask_extension: str = 'tiff',
+    # Overlay appearance
+    contour_color: tuple = (255, 255, 0),  # Yellow contours by default
+    contour_width: int = 2,
+    # Output options
+    save_composite_images: bool = True,
+    save_overlays: bool = True,
+    create_summary_figure: bool = True
+) -> dict:
+    """
+    Streamlined backgating function that creates composite images and population overlays.
+    
+    This function combines make_images() and create_population_overlay() to provide
+    an easy way to visualize specific cell populations with custom marker channels.
+    
+    Args:
+        adata: AnnData object with cell data
+        population: Population name to visualize
+        pop_obs: Column name containing population labels
+        image_folder: Directory containing image subfolders for each ROI
+        roi_list: List of ROI names to process. If None, uses all ROIs with the population
+        roi_obs: Column name for ROI identifiers
+        cell_index_obs: Column name for cell indices
+        output_folder: Directory to save output images
+        
+        # Color channel assignments (same as make_images)
+        red, green, blue, etc.: Marker names for each color channel
+        red_range, green_range, etc.: Intensity ranges for each channel
+        
+        # Image processing
+        minimum: Global intensity minimum for clipping
+        max_quantile: Global intensity maximum for clipping
+        
+        # Mask parameters
+        use_masks: Whether to use segmentation masks for overlays
+        mask_folder: Directory containing mask files
+        mask_extension: File extension for mask files
+        
+        # Overlay appearance
+        contour_color: RGB color for population contours
+        contour_width: Width of contour lines
+        
+        # Output control
+        save_composite_images: Whether to save composite RGB images
+        save_overlays: Whether to save population overlay images
+        create_summary_figure: Whether to create a summary figure with all ROIs
+        
+    Returns:
+        dict: Summary information including file paths and cell counts
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.gridspec import GridSpec
+    
+    # Create output directories
+    output_path = Path(output_folder)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    composite_dir = output_path / 'composite_images'
+    overlay_dir = output_path / 'population_overlays'
+    
+    if save_composite_images:
+        composite_dir.mkdir(parents=True, exist_ok=True)
+    if save_overlays:
+        overlay_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Get ROIs that contain the target population
+    population_cells = adata.obs[adata.obs[pop_obs].astype(str) == str(population)]
+    
+    if len(population_cells) == 0:
+        print(f"No cells found for population '{population}'")
+        return {'error': f'No cells found for population {population}'}
+    
+    available_rois = population_cells[roi_obs].unique().tolist()
+    
+    if roi_list is None:
+        roi_list = available_rois
+    else:
+        # Filter to only ROIs that have the population
+        roi_list = [roi for roi in roi_list if roi in available_rois]
+    
+    if len(roi_list) == 0:
+        print(f"No ROIs found containing population '{population}'")
+        return {'error': f'No ROIs found containing population {population}'}
+    
+    print(f"Processing {len(roi_list)} ROIs for population '{population}'")
+    
+    # Step 1: Create composite images
+    composite_paths = {}
+    if save_composite_images:
+        print("Creating composite images...")
+        make_images(
+            image_folder=image_folder,
+            samples_list=roi_list,
+            output_folder=str(composite_dir),
+            name_prefix=f'{population}_',
+            minimum=minimum,
+            max_quantile=max_quantile,
+            red=red,
+            red_range=red_range,
+            green=green,
+            green_range=green_range,
+            blue=blue,
+            blue_range=blue_range,
+            magenta=magenta,
+            magenta_range=magenta_range,
+            cyan=cyan,
+            cyan_range=cyan_range,
+            yellow=yellow,
+            yellow_range=yellow_range,
+            white=white,
+            white_range=white_range,
+            roi_folder_save=False,
+            simple_file_names=True
+        )
+        
+        # Build dictionary of composite image paths
+        for roi in roi_list:
+            composite_paths[roi] = composite_dir / f'{population}_{roi}.png'
+    
+    # Step 2: Create population overlays
+    overlay_paths = {}
+    cell_counts = {}
+    successful_overlays = 0
+    
+    if save_overlays:
+        print("Creating population overlays...")
+        
+        for roi in roi_list:
+            # Get cell count for this ROI and population
+            roi_pop_cells = population_cells[population_cells[roi_obs] == roi]
+            cell_counts[roi] = len(roi_pop_cells)
+            
+            if cell_counts[roi] == 0:
+                print(f"  Skipping {roi}: no {population} cells found")
+                continue
+            
+            # Determine paths
+            if save_composite_images and composite_paths[roi].exists():
+                composite_img_path = str(composite_paths[roi])
+            else:
+                # Try to find existing composite or create a minimal one
+                print(f"  Warning: No composite image found for {roi}, creating overlay without background")
+                composite_img_path = None
+            
+            mask_path = None
+            if use_masks:
+                for ext in [mask_extension, 'tif', 'tiff']:
+                    potential_mask = Path(mask_folder) / f'{roi}.{ext}'
+                    if potential_mask.exists():
+                        mask_path = str(potential_mask)
+                        break
+                
+                if not mask_path:
+                    print(f"  Warning: No mask found for {roi}")
+            
+            # Create overlay
+            overlay_output_path = overlay_dir / f'{population}_{roi}_overlay.png'
+            overlay_paths[roi] = overlay_output_path
+            
+            try:
+                if composite_img_path and Path(composite_img_path).exists():
+                    create_population_overlay(
+                        adata=adata,
+                        population=population,
+                        pop_obs=pop_obs,
+                        roi_name=roi,
+                        composite_image_path=composite_img_path,
+                        mask_path=mask_path,
+                        roi_obs=roi_obs,
+                        cell_index_obs=cell_index_obs,
+                        output_path=str(overlay_output_path),
+                        contour_color=contour_color,
+                        contour_width=contour_width
+                    )
+                    successful_overlays += 1
+                    print(f"  Created overlay for {roi}: {cell_counts[roi]} {population} cells")
+                else:
+                    print(f"  Skipped overlay for {roi}: no composite image available")
+            
+            except Exception as e:
+                print(f"  Error creating overlay for {roi}: {e}")
+                continue
+    
+    # Step 3: Create summary figure (optional)
+    summary_info = {
+        'population': population,
+        'total_rois_processed': len(roi_list),
+        'total_cells': sum(cell_counts.values()),
+        'successful_overlays': successful_overlays,
+        'composite_paths': composite_paths,
+        'overlay_paths': overlay_paths,
+        'cell_counts_by_roi': cell_counts,
+        'output_folder': str(output_path)
+    }
+    
+    if create_summary_figure and successful_overlays > 0:
+        print("Creating summary figure...")
+        try:
+            # Create a grid layout for summary
+            n_rois = len([roi for roi in roi_list if roi in overlay_paths and overlay_paths[roi].exists()])
+            if n_rois > 0:
+                cols = min(3, n_rois)  # Max 3 columns
+                rows = (n_rois + cols - 1) // cols  # Ceiling division
+                
+                fig = plt.figure(figsize=(cols * 4, rows * 4))
+                gs = GridSpec(rows, cols, figure=fig)
+                
+                roi_idx = 0
+                for roi in roi_list:
+                    if roi not in overlay_paths or not overlay_paths[roi].exists():
+                        continue
+                    
+                    row = roi_idx // cols
+                    col = roi_idx % cols
+                    ax = fig.add_subplot(gs[row, col])
+                    
+                    # Load and display overlay image
+                    overlay_img = io.imread(str(overlay_paths[roi]))
+                    ax.imshow(overlay_img)
+                    ax.set_title(f'{roi}\n{cell_counts[roi]} {population} cells')
+                    ax.axis('off')
+                    
+                    roi_idx += 1
+                
+                plt.suptitle(f'Population: {population}', fontsize=16)
+                plt.tight_layout()
+                
+                summary_path = output_path / f'{population}_summary.png'
+                plt.savefig(summary_path, bbox_inches='tight', dpi=200, facecolor='white')
+                plt.close(fig)
+                
+                summary_info['summary_figure'] = str(summary_path)
+                print(f"Summary figure saved to: {summary_path}")
+        
+        except Exception as e:
+            print(f"Error creating summary figure: {e}")
+    
+    # Save summary information
+    summary_csv = output_path / f'{population}_summary.csv'
+    summary_df = pd.DataFrame([
+        {'ROI': roi, 'Population': population, 'Cell_Count': cell_counts.get(roi, 0)}
+        for roi in roi_list
+    ])
+    summary_df.to_csv(summary_csv, index=False)
+    summary_info['summary_csv'] = str(summary_csv)
+    
+    print(f"\nPopulation backgating complete!")
+    print(f"Total ROIs: {len(roi_list)}")
+    print(f"Total {population} cells: {sum(cell_counts.values())}")
+    print(f"Successful overlays: {successful_overlays}")
+    print(f"Output folder: {output_path}")
+    
+    return summary_info

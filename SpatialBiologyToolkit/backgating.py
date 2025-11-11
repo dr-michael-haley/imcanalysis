@@ -16,6 +16,10 @@ import scanpy as sc
 from skimage import io, exposure, segmentation
 from skimage.draw import rectangle_perimeter
 from skimage.util import img_as_ubyte
+from skimage.measure import find_contours
+
+# Import population overlay function from plotting module
+from .plotting import create_population_overlay
 
 
 def clean_text(text: str) -> str:
@@ -793,6 +797,7 @@ def get_top_columns(series: pd.Series, top_n: int = 3) -> str:
     return "__".join(top_markers)
 
 
+
 def perform_differential_expression(
     adata,
     pop_obs: str,
@@ -1080,6 +1085,7 @@ def backgating_assessment(
     # Output folder & overview
     output_folder: str = 'Backgating',
     overview_images: bool = True,
+    population_overlays: bool = True,  # New parameter for population overlay visualizations
     # Intensity scaling
     minimum: float = 0.4,
     max_quantile: str = 'q0.98',
@@ -1133,6 +1139,8 @@ def backgating_assessment(
         cell_plot_spacing: (vertical_space, horizontal_space) for subplots (Cells.png).
         output_folder:    Where to store output images/files.
         overview_images:  Whether to save an ROI overview with bounding boxes.
+        population_overlays: Whether to create population overlay visualizations showing all cells
+                          of each population type with mask contours on composite images.
         show_gallery_titles:    Whether to show titles of ROIs and figure in cell gallery.
 
         minimum, max_quantile:
@@ -1403,5 +1411,61 @@ def backgating_assessment(
             minimum=minimum,
             max_quantile=max_quantile
         )
+
+        # Create population overlay visualizations for all cells of this type in each ROI
+        if population_overlays:
+            print(f"\nCreating population overlay visualizations for '{pop}'...")
+            
+            # Get all ROIs that contain cells of this population
+            pop_rois = adata.obs[adata.obs[pop_obs].astype(str) == str(pop)][roi_obs].unique()
+            pop_subfolder = Path(output_folder) / clean_text(pop)
+            
+            # Create population overlays subdirectory
+            overlay_dir = pop_subfolder / 'population_overlays'
+            overlay_dir.mkdir(parents=True, exist_ok=True)
+            
+        if population_overlays:
+            for roi in pop_rois:
+            try:
+                # Path to composite image (created by earlier make_images call)
+                composite_img_path = pop_subfolder / f"{roi}.png"
+                
+                # Path to mask file (if using masks)
+                mask_path = None
+                if use_masks:
+                    if isinstance(use_masks, bool) and use_masks:
+                        # Look for standard mask files
+                        potential_tif = Path(mask_folder) / f"{roi}.tif"
+                        potential_tiff = Path(mask_folder) / f"{roi}.tiff"
+                        if potential_tif.exists():
+                            mask_path = str(potential_tif)
+                        elif potential_tiff.exists():
+                            mask_path = str(potential_tiff)
+                    elif isinstance(use_masks, str):
+                        # CSV mapping - would need to implement reading logic here
+                        print(f"CSV mask mapping not yet implemented for population overlays")
+                
+                # Create overlay
+                overlay_output_path = overlay_dir / f"{roi}_population_overlay.png"
+                
+                create_population_overlay(
+                    adata=adata,
+                    population=pop,
+                    pop_obs=pop_obs,
+                    roi_name=roi,
+                    composite_image_path=str(composite_img_path),
+                    mask_path=mask_path,
+                    roi_obs=roi_obs,
+                    cell_index_obs=cell_index_obs,
+                    output_path=str(overlay_output_path),
+                    contour_color=(255, 255, 255),  # White contours
+                    contour_width=2
+                )
+                
+            except Exception as e:
+                print(f"Warning: Failed to create population overlay for ROI '{roi}': {e}")
+                continue
+        
+        print(f"Population overlay visualizations completed for '{pop}'.")
 
     print("\nBackgating assessment complete.\n")
