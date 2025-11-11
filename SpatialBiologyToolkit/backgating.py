@@ -932,21 +932,53 @@ def perform_differential_expression(
         result = adata_copy.uns['rank_genes_groups']
         
         # Check if results exist and are not empty
-        if 'target' not in result['names'] or len(result['names']['target']) == 0:
+        # Handle structured arrays properly
+        try:
+            # Get the column names (group names) from the structured array
+            if hasattr(result['names'], 'dtype') and result['names'].dtype.names:
+                # This is a structured array - get available group names
+                available_groups = result['names'].dtype.names
+            else:
+                # This might be a dictionary-like structure
+                available_groups = list(result['names'].keys()) if hasattr(result['names'], 'keys') else []
+            
+            if 'target' not in available_groups:
+                if verbose:
+                    logging.warning(f"No differential expression results found for target group")
+                    logging.warning(f"Available groups in results: {available_groups}")
+                raise ValueError("Target group not found in DE results")
+            
+            # Extract data for target group from structured arrays
+            names_data = result['names']['target'] if hasattr(result['names'], 'dtype') else result['names']['target']
+            scores_data = result['scores']['target'] if hasattr(result['scores'], 'dtype') else result['scores']['target']
+            logfc_data = result['logfoldchanges']['target'] if hasattr(result['logfoldchanges'], 'dtype') else result['logfoldchanges']['target']
+            pvals_data = result['pvals']['target'] if hasattr(result['pvals'], 'dtype') else result['pvals']['target']
+            pvals_adj_data = result['pvals_adj']['target'] if hasattr(result['pvals_adj'], 'dtype') else result['pvals_adj']['target']
+            pts_data = result['pts']['target'] if hasattr(result['pts'], 'dtype') else result['pts']['target']
+            pts_rest_data = result['pts_rest']['target'] if hasattr(result['pts_rest'], 'dtype') else result['pts_rest']['target']
+            
+            if len(names_data) == 0:
+                if verbose:
+                    logging.warning(f"No markers found in differential expression results")
+                raise ValueError("No markers in DE results")
+            
+        except (KeyError, TypeError, AttributeError) as e:
             if verbose:
-                logging.warning(f"No differential expression results found for {target_population}")
-                logging.warning(f"Available groups in results: {list(result['names'].keys())}")
-            raise ValueError("No DE results returned")
+                logging.warning(f"Error accessing DE results structure: {e}")
+                logging.warning(f"Result structure: {type(result)}")
+                if hasattr(result, 'keys'):
+                    logging.warning(f"Result keys: {list(result.keys())}")
+            raise ValueError(f"Cannot access DE results: {e}")
         
         # Get top markers
         markers_df = pd.DataFrame({
-            'names': result['names']['target'],
-            'scores': result['scores']['target'], 
-            'logfoldchanges': result['logfoldchanges']['target'],
-            'pvals': result['pvals']['target'],
-            'pvals_adj': result['pvals_adj']['target'],
-            'pts': result['pts']['target'],
-            'pts_rest': result['pts_rest']['target']
+            'names': names_data,
+            'scores': scores_data, 
+            'logfoldchanges': logfc_data,
+            'pvals': pvals_data,
+            'pvals_adj': pvals_adj_data,
+            'pts': pts_data,
+            'pts_rest': pts_rest_data
         })
         
         # Sort by discriminative power (score) - prioritize effect size over significance
