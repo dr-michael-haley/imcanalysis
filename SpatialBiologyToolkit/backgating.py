@@ -916,6 +916,8 @@ def perform_differential_expression(
     
     # Perform differential expression
     try:
+        sc.settings.verbosity = 4
+        
         sc.tl.rank_genes_groups(
             adata_copy, 
             groupby='comparison_group',

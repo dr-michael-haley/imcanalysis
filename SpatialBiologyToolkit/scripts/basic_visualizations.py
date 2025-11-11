@@ -12,6 +12,7 @@ Creates comprehensive visualizations for processed AnnData objects including:
 
 # Standard library imports
 import logging
+import traceback
 from pathlib import Path
 
 # Third-party library imports
@@ -47,6 +48,42 @@ except Exception:
         from .. import backgating as sbt_backgating  # type: ignore
     except Exception:
         sbt_backgating = None  # Will guard usage at runtime
+
+
+def log_detailed_error(error, context="", logger=None):
+    """
+    Log detailed error information including traceback and context.
+    
+    Parameters
+    ----------
+    error : Exception
+        The exception that occurred
+    context : str, optional
+        Additional context information about when/where the error occurred
+    logger : logging.Logger, optional
+        Logger to use. If None, uses the root logger
+    """
+    if logger is None:
+        logger = logging.getLogger()
+    
+    # Get the full traceback
+    tb_str = traceback.format_exc()
+    
+    # Extract line number from traceback if possible
+    tb_lines = tb_str.strip().split('\n')
+    line_info = "Line info not available"
+    for line in tb_lines:
+        if 'File "' in line and 'line' in line:
+            line_info = line.strip()
+            break
+    
+    # Format the error message with all details
+    error_msg = f"Error in {context}:\n"
+    error_msg += f"  Exception: {type(error).__name__}: {str(error)}\n"
+    error_msg += f"  Location: {line_info}\n"
+    error_msg += f"  Full traceback:\n{tb_str}"
+    
+    logger.error(error_msg)
 
 
 def find_population_columns(adata):
@@ -215,6 +252,7 @@ def create_color_legend(adata, obs_key: str, save_path: Path, title: str = None)
         Title for the legend
     """
     from matplotlib import cm
+    import matplotlib.pyplot as plt
     
     if obs_key not in adata.obs.columns:
         logging.warning(f"Observation key '{obs_key}' not found in adata.obs")
@@ -230,7 +268,6 @@ def create_color_legend(adata, obs_key: str, save_path: Path, title: str = None)
         colors = adata.uns[color_key]
     else:
         # Use matplotlib's tab20 colormap as default (same as scanpy default)
-        import matplotlib.pyplot as plt
         cmap = cm.get_cmap('tab20')
         colors = [cmap(i / len(categories)) for i in range(len(categories))]
     
@@ -314,11 +351,11 @@ def create_categorical_umaps(adata, categorical_columns, qc_umap_dir, qc_legend_
                     plt.close(fig)
                     
                 except Exception as e:
-                    logging.warning(f'Failed to create UMAP for {cat_col}: {e}')
+                    log_detailed_error(e, f"creating UMAP for {category_type} column '{cat_col}'")
             else:
                 logging.warning(f'{cat_col} not found in adata.obs; skipping UMAP.')
     except Exception as e:
-        logging.error(f'{category_type.title()} UMAP visualization step failed: {e}')
+        log_detailed_error(e, f"{category_type.title()} UMAP visualization step")
 
 
 def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, viz_config, category_type="categorical"):
@@ -366,11 +403,11 @@ def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, v
                     plt.close()
                     logging.info(f'MatrixPlot saved to {fig_path}')
                 except Exception as e:
-                    logging.warning(f'Failed to create MatrixPlot for {cat_col}: {e}')
+                    log_detailed_error(e, f"creating MatrixPlot for {category_type} column '{cat_col}'")
             else:
                 logging.warning(f'{cat_col} not found in adata.obs; skipping MatrixPlot.')
     except Exception as e:
-        logging.error(f'{category_type.title()} MatrixPlot visualization step failed: {e}')
+        log_detailed_error(e, f"{category_type.title()} MatrixPlot visualization step")
 
 
 def create_marker_umaps(adata, qc_umap_dir, viz_config):
@@ -404,11 +441,11 @@ def create_marker_umaps(adata, qc_umap_dir, viz_config):
                     fig.savefig(fig_path, bbox_inches='tight', dpi=300 if viz_config.save_high_res else 150)
                     plt.close(fig)
                 except Exception as e:
-                    logging.warning(f'Failed to create UMAP for marker {marker}: {e}')
+                    log_detailed_error(e, f"creating UMAP for marker '{marker}'")
             else:
                 logging.warning(f'Marker {marker} not found in adata.var_names; skipping UMAP.')
     except Exception as e:
-        logging.error(f'Marker UMAP visualization step failed: {e}')
+        log_detailed_error(e, "marker UMAP visualization step")
 
 
 def create_population_tissue_overlays(adata, population_columns, qc_pop_dir, general_config):
@@ -462,9 +499,9 @@ def create_population_tissue_overlays(adata, population_columns, qc_pop_dir, gen
                         separator_color='black'
                     )
                 except Exception as e:
-                    logging.warning(f'Failed to create tissue overlay for ROI {roi}, {pop_col}: {e}')
+                    log_detailed_error(e, f"creating tissue overlay for ROI '{roi}', population column '{pop_col}'")
     except Exception as e:
-        logging.error(f'Tissue visualization step failed: {e}')
+        log_detailed_error(e, "tissue visualization step")
 
 
 def create_backgating_assessment(adata, population_columns, viz_config, general_config, qc_base):
@@ -550,13 +587,13 @@ def create_backgating_assessment(adata, population_columns, viz_config, general_
                     logging.info(f"Backgating assessment completed for {pop_col}. Results saved to {backgating_output}")
                     
                 except Exception as e:
-                    logging.error(f"Backgating assessment failed for {pop_col}: {e}")
+                    log_detailed_error(e, f"backgating assessment for population column '{pop_col}'")
             else:
                 logging.warning(f"{pop_col} not found in adata.obs; skipping backgating assessment.")
                 
         logging.info("Backgating assessment for all populations completed.")
     except Exception as e:
-        logging.error(f"Backgating assessment step failed: {e}")
+        log_detailed_error(e, "backgating assessment step")
 
 
 def create_population_analysis(adata, population_columns, metadata_columns, qc_base):
@@ -657,12 +694,12 @@ def create_population_analysis(adata, population_columns, metadata_columns, qc_b
                     )
                     
                 except Exception as e:
-                    logging.error(f"Failed to create plots for {population_col} by {metadata_col}: {e}")
+                    log_detailed_error(e, f"creating plots for population column '{population_col}' by metadata column '{metadata_col}'")
         
         logging.info(f"Population analysis completed. Figures saved to: {population_analysis_dir}")
         
     except Exception as e:
-        logging.error(f"Population analysis step failed: {e}")
+        log_detailed_error(e, "population analysis step")
 
 
 if __name__ == "__main__":
@@ -749,7 +786,7 @@ if __name__ == "__main__":
                                       qc_legend_dir / f'{pop_col}_legend.{viz_config.figure_format}',
                                       title=f"Population: {pop_col}")
                 except Exception as e:
-                    logging.warning(f'Failed to create color legend for {pop_col}: {e}')
+                    log_detailed_error(e, f"creating color legend for population column '{pop_col}'")
         
         # Create legends for metadata columns  
         for meta_col in metadata_columns:
@@ -759,6 +796,6 @@ if __name__ == "__main__":
                                       qc_legend_dir / f'{meta_col}_legend.{viz_config.figure_format}',
                                       title=f"Metadata: {meta_col}")
                 except Exception as e:
-                    logging.warning(f'Failed to create color legend for {meta_col}: {e}')
+                    log_detailed_error(e, f"creating color legend for metadata column '{meta_col}'")
     
     logging.info('Visualization pipeline completed successfully!')
