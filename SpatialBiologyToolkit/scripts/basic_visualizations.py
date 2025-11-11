@@ -562,6 +562,7 @@ def create_backgating_assessment(adata, population_columns, viz_config, general_
                         x_loc_obs='X_loc',
                         y_loc_obs='Y_loc',
                         cell_index_obs='Master_Index',
+                        object_index_obs='ObjectNumber',
                         # Mask parameters
                         use_masks=viz_config.backgating_use_masks,
                         mask_folder=viz_config.backgating_mask_folder,
