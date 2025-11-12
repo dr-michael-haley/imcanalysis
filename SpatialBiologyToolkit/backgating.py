@@ -1190,11 +1190,15 @@ def backgating_assessment(
 
     # 1) Possibly compute & save population mean expression
     if mode in ['full', 'save_markers']:
-        pop_categories = adata.obs[pop_obs].unique().tolist()
+        # Ensure population categories are preserved as strings to avoid type conversion issues
+        pop_categories = adata.obs[pop_obs].astype(str).unique().tolist()
+        logging.info(f"Found population categories: {pop_categories} (types: {[type(x) for x in pop_categories]})")
         mean_df = pd.DataFrame(index=pop_categories, columns=adata.var_names)
 
         for pop in pop_categories:
-            subset = adata[adata.obs[pop_obs] == pop, :]
+            # Ensure consistent string comparison to avoid type mismatch issues
+            subset = adata[adata.obs[pop_obs].astype(str) == str(pop), :]
+            logging.debug(f"Population '{pop}': found {subset.n_obs} cells")
             mean_df.loc[pop] = subset.X.mean(axis=0)
 
         mean_df = mean_df.astype(float)
@@ -1238,7 +1242,11 @@ def backgating_assessment(
         pop_categories = mean_df.index.tolist()
     else:
         # 'load_markers' mode => we rely on adata and/or settings
-        pop_categories = sorted(list(set(adata.obs[pop_obs].unique()).union(settings_df.index)))
+        # Ensure consistent string handling
+        adata_pops = adata.obs[pop_obs].astype(str).unique().tolist()
+        settings_pops = [str(x) for x in settings_df.index.tolist()]
+        pop_categories = sorted(list(set(adata_pops).union(settings_pops)))
+        logging.info(f"Load mode - found population categories: {pop_categories}")
 
     # If user gave a subset of pops
     if pops_list:
@@ -1357,9 +1365,14 @@ def backgating_assessment(
 
     # 6) If we get here, we either 'full' or 'load_markers' => run the actual backgating
     for pop in pop_categories:
-        pop_cells = adata.obs[adata.obs[pop_obs] == pop][cell_index_obs]
+        # Ensure consistent string comparison to handle leiden categories stored as strings
+        pop_mask = adata.obs[pop_obs].astype(str) == str(pop)
+        pop_cells = adata.obs.loc[pop_mask, cell_index_obs]
+        
+        logging.debug(f"Population '{pop}' (type: {type(pop)}): checking {pop_mask.sum()} cells")
         if pop_cells.empty:
             logging.warning(f"No cells found for population '{pop}'. Skipping.")
+            logging.debug(f"Available population values: {adata.obs[pop_obs].astype(str).unique()[:10]}")
             continue
 
         # Subsample
@@ -1421,6 +1434,7 @@ def backgating_assessment(
             
             # Get all ROIs that contain cells of this population
             pop_rois = adata.obs[adata.obs[pop_obs].astype(str) == str(pop)][roi_obs].unique()
+            logging.debug(f"Population '{pop}' found in ROIs: {pop_rois}")
             pop_subfolder = Path(output_folder) / clean_text(pop)
             
             # Create population overlays subdirectory
