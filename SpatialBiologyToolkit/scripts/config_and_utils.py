@@ -141,6 +141,16 @@ class BasicProcessConfig:
     n_for_pca: Optional[int] = None
     leiden_resolutions_list: List[float] = field(default_factory=lambda: [0.3, 1.0])
     umap_min_dist: float = 0.5
+    
+    # BioBatchNet-specific parameters
+    biobatchnet_data_type: str = 'imc'  # Data type for BioBatchNet ('imc', 'scrnaseq', etc.)
+    biobatchnet_latent_dim: int = 20  # Latent dimensionality for BioBatchNet embeddings
+    biobatchnet_epochs: int = 100  # Number of training epochs for BioBatchNet
+    biobatchnet_device: Optional[str] = None  # Device for BioBatchNet ('cpu', 'cuda', or None for auto)
+    biobatchnet_kwargs: Optional[Dict[str, Any]] = None  # Additional kwargs for BioBatchNet
+    
+    # Scanpy neighbors computation
+    n_neighbors: Optional[int] = None  # Number of neighbors for scanpy neighbors computation (None uses scanpy default)
 
 @dataclass
 class VisualizationConfig:

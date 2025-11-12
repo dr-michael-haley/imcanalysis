@@ -175,11 +175,11 @@ def main() -> None:
         )
 
     biobatchnet_params = {
-        "data_type": getattr(process_config, "biobatchnet_data_type", "imc"),
-        "latent_dim": int(getattr(process_config, "biobatchnet_latent_dim", 20)),
-        "epochs": int(getattr(process_config, "biobatchnet_epochs", 100)),
-        "device": getattr(process_config, "biobatchnet_device", None),
-        "extra_params": getattr(process_config, "biobatchnet_kwargs", None),
+        "data_type": process_config.biobatchnet_data_type,
+        "latent_dim": process_config.biobatchnet_latent_dim,
+        "epochs": process_config.biobatchnet_epochs,
+        "device": process_config.biobatchnet_device,
+        "extra_params": process_config.biobatchnet_kwargs,
     }
 
     run_biobatchnet_correction(
@@ -193,9 +193,8 @@ def main() -> None:
     )
 
     neighbors_kwargs: Dict[str, Any] = {}
-    n_neighbors = getattr(process_config, "n_neighbors", None)
-    if n_neighbors:
-        neighbors_kwargs["n_neighbors"] = n_neighbors
+    if process_config.n_neighbors is not None:
+        neighbors_kwargs["n_neighbors"] = process_config.n_neighbors
     logging.info("Computing neighbors using BioBatchNet embeddings.")
     sc.pp.neighbors(adata, use_rep="X_biobatchnet", **neighbors_kwargs)
 
