@@ -149,6 +149,8 @@ class BasicProcessConfig:
     biobatchnet_device: Optional[str] = None  # Device for BioBatchNet ('cpu', 'cuda', or None for auto)
     biobatchnet_kwargs: Optional[Dict[str, Any]] = None  # Additional kwargs for BioBatchNet
     biobatchnet_use_raw: bool = True  # Use raw data (adata.raw.X) instead of normalized data (adata.X)
+    biobatchnet_scan_parameter_sets: Optional[List[Dict[str, Any]]] = None  # Parameter overrides for scanning
+    biobatchnet_scan_include_base: bool = True  # Run the base configuration alongside scans by default
     
     # Scanpy neighbors computation
     n_neighbors: Optional[int] = None  # Number of neighbors for scanpy neighbors computation (None uses scanpy default)

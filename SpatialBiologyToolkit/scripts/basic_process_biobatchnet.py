@@ -5,9 +5,12 @@ a processed AnnData object ready for downstream visualization.
 
 from __future__ import annotations
 
+import copy
+import csv
+import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import anndata as ad
 import numpy as np
@@ -32,6 +35,7 @@ from .config_and_utils import (  # pylint: disable=relative-beyond-top-level
     BasicProcessConfig,
     GeneralConfig,
     VisualizationConfig,
+    cleanstring,
     filter_config_for_dataclass,
     process_config_with_overrides,
     setup_logging,
@@ -178,6 +182,191 @@ def run_biobatchnet_correction(
     logging.info("BioBatchNet embeddings stored in adata.obsm['X_biobatchnet'].")
 
 
+def _merge_run_params(
+    base_params: Dict[str, Any],
+    overrides: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Return a deep-copied parameter dictionary with overrides applied."""
+    params = copy.deepcopy(base_params)
+    if not overrides:
+        return params
+    for key, value in overrides.items():
+        if key == "name":
+            continue
+        if key == "extra_params":
+            merged_extra = copy.deepcopy(params.get("extra_params") or {})
+            if value:
+                merged_extra.update(value)
+            params["extra_params"] = merged_extra
+            continue
+        params[key] = value
+    return params
+
+
+def _slugify_label(label: Optional[str], fallback: str) -> Optional[str]:
+    """Convert a label into a filesystem-friendly suffix."""
+    if not label:
+        return None
+    slug = cleanstring(label)
+    if not slug:
+        return fallback
+    return slug
+
+
+def _prepare_output_path(base_path: Path, suffix: Optional[str]) -> Path:
+    """Attach a suffix to the output filename if provided."""
+    if not suffix:
+        return base_path
+    return base_path.with_name(f"{base_path.stem}_{suffix}{base_path.suffix}")
+
+
+def _prepare_qc_dir(base_dir: Path, suffix: Optional[str]) -> Path:
+    """Return a QC directory for the given suffix."""
+    if not suffix:
+        return base_dir
+    return base_dir / suffix
+
+
+def _postprocess_biobatchnet_results(
+    adata: ad.AnnData,
+    process_config: BasicProcessConfig,
+    batch_key: str,
+    qc_dir: Path,
+) -> None:
+    """Run neighbors/UMAP/clustering and save QC plots."""
+    neighbors_kwargs: Dict[str, Any] = {}
+    if process_config.n_neighbors is not None:
+        neighbors_kwargs["n_neighbors"] = process_config.n_neighbors
+
+    logging.info("Computing neighbors using BioBatchNet embeddings.")
+    sc.pp.neighbors(adata, use_rep="X_biobatchnet", **neighbors_kwargs)
+
+    logging.info("Running UMAP (min_dist=%s).", process_config.umap_min_dist)
+    sc.tl.umap(adata, min_dist=process_config.umap_min_dist)
+
+    resolutions = process_config.leiden_resolutions_list
+    if resolutions and not isinstance(resolutions, list):
+        resolutions = [resolutions]
+    else:
+        resolutions = resolutions or []
+
+    for res in resolutions:
+        logging.info("Running Leiden clustering at resolution %s.", res)
+        sc.tl.leiden(adata, resolution=res, key_added=f"leiden_{res}")
+
+    qc_dir.mkdir(parents=True, exist_ok=True)
+    logging.info("Saving UMAP plots to %s", qc_dir)
+
+    if batch_key not in adata.obs:
+        logging.warning("Batch key '%s' missing from AnnData.obs; skipping QC UMAPs.", batch_key)
+        return
+
+    def _save_combined_umap(leiden_key: str, suffix: str) -> None:
+        sc.pl.umap(
+            adata,
+            color=[batch_key, leiden_key],
+            ncols=2,
+            legend_loc="on data",
+            frameon=False,
+            show=False,
+        )
+        fig = plt.gcf()
+        fig.savefig(qc_dir / f"umap_{suffix}.png", dpi=200, bbox_inches="tight")
+        plt.close(fig)
+
+    for res in resolutions:
+        leiden_key = f"leiden_{res}"
+        if leiden_key in adata.obs:
+            suffix = f"{batch_key}_vs_{leiden_key}"
+            _save_combined_umap(leiden_key, suffix)
+
+
+def _run_single_parameter_set(
+    base_adata: ad.AnnData,
+    *,
+    batch_key: str,
+    process_config: BasicProcessConfig,
+    base_params: Dict[str, Any],
+    overrides: Optional[Dict[str, Any]],
+    label: Optional[str],
+    base_output_path: Path,
+    base_qc_dir: Path,
+) -> Dict[str, Any]:
+    """Execute BioBatchNet + downstream processing for a specific parameter set."""
+    run_params = _merge_run_params(base_params, overrides)
+    suffix = _slugify_label(label, "scan")
+    output_path = _prepare_output_path(base_output_path, suffix)
+    qc_dir = _prepare_qc_dir(base_qc_dir, suffix)
+
+    adata_copy = base_adata.copy()
+    logging.info(
+        "Running BioBatchNet for '%s' with parameters: %s",
+        label or "base",
+        {k: v for k, v in run_params.items() if k != "extra_params"},
+    )
+    run_biobatchnet_correction(
+        adata_copy,
+        batch_key=batch_key,
+        data_type=run_params["data_type"],
+        latent_dim=run_params["latent_dim"],
+        epochs=run_params["epochs"],
+        device=run_params["device"],
+        extra_params=run_params.get("extra_params"),
+        use_raw=run_params["use_raw"],
+    )
+
+    _postprocess_biobatchnet_results(
+        adata_copy,
+        process_config=process_config,
+        batch_key=batch_key,
+        qc_dir=qc_dir,
+    )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    adata_copy.write_h5ad(output_path)
+    logging.info("Saved batch-corrected AnnData to %s", output_path)
+
+    return {
+        "label": label or "base",
+        "output_path": str(output_path),
+        "qc_dir": str(qc_dir),
+        "data_type": run_params["data_type"],
+        "latent_dim": run_params["latent_dim"],
+        "epochs": run_params["epochs"],
+        "device": run_params["device"],
+        "use_raw": run_params["use_raw"],
+        "extra_params": run_params.get("extra_params"),
+    }
+
+
+def _write_scan_summary(rows: List[Dict[str, Any]], qc_dir: Path) -> None:
+    """Persist a CSV summary of all parameter runs."""
+    if not rows:
+        return
+    summary_path = qc_dir / "biobatchnet_parameter_scan_summary.csv"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "label",
+        "output_path",
+        "qc_dir",
+        "data_type",
+        "latent_dim",
+        "epochs",
+        "device",
+        "use_raw",
+        "extra_params",
+    ]
+    with summary_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            serialized = row.copy()
+            extra = serialized.get("extra_params")
+            serialized["extra_params"] = json.dumps(extra, sort_keys=True) if extra else ""
+            writer.writerow(serialized)
+    logging.info("Wrote parameter scan summary to %s", summary_path)
+
+
 def main() -> None:
     pipeline_stage = "BioBatchNetProcess"
     config = process_config_with_overrides()
@@ -216,63 +405,46 @@ def main() -> None:
         "use_raw": process_config.biobatchnet_use_raw,
     }
 
-    run_biobatchnet_correction(
-        adata,
-        batch_key=batch_key,
-        data_type=biobatchnet_params["data_type"],
-        latent_dim=biobatchnet_params["latent_dim"],
-        epochs=biobatchnet_params["epochs"],
-        device=biobatchnet_params["device"],
-        extra_params=biobatchnet_params["extra_params"],
-        use_raw=biobatchnet_params["use_raw"],
-    )
+    scan_sets = process_config.biobatchnet_scan_parameter_sets or []
+    include_base = process_config.biobatchnet_scan_include_base or not scan_sets
+    base_qc_dir = Path(general_config.qc_folder) / "BioBatchNet"
+    base_qc_dir.mkdir(parents=True, exist_ok=True)
 
-    neighbors_kwargs: Dict[str, Any] = {}
-    if process_config.n_neighbors is not None:
-        neighbors_kwargs["n_neighbors"] = process_config.n_neighbors
-    logging.info("Computing neighbors using BioBatchNet embeddings.")
-    sc.pp.neighbors(adata, use_rep="X_biobatchnet", **neighbors_kwargs)
-
-    logging.info("Running UMAP (min_dist=%s).", process_config.umap_min_dist)
-    sc.tl.umap(adata, min_dist=process_config.umap_min_dist)
-
-    resolutions = process_config.leiden_resolutions_list
-    if resolutions and not isinstance(resolutions, list):
-        resolutions = [resolutions]
-
-    for res in resolutions:
-        logging.info("Running Leiden clustering at resolution %s.", res)
-        sc.tl.leiden(adata, resolution=res, key_added=f"leiden_{res}")
-
-    qc_dir = Path(general_config.qc_folder) / "BioBatchNet"
-    qc_dir.mkdir(parents=True, exist_ok=True)
-    logging.info("Saving UMAP plots to %s", qc_dir)
-
-    if batch_key in adata.obs:
-        def _save_combined_umap(leiden_key: str, suffix: str) -> None:
-            sc.pl.umap(
+    scan_results: List[Dict[str, Any]] = []
+    if include_base:
+        scan_results.append(
+            _run_single_parameter_set(
                 adata,
-                color=[batch_key, leiden_key],
-                ncols=2,
-                legend_loc="on data",
-                frameon=False,
-                show=False,
+                batch_key=batch_key,
+                process_config=process_config,
+                base_params=biobatchnet_params,
+                overrides=None,
+                label=None,
+                base_output_path=output_path,
+                base_qc_dir=base_qc_dir,
             )
-            fig = plt.gcf()
-            fig.savefig(qc_dir / f"umap_{suffix}.png", dpi=200, bbox_inches="tight")
-            plt.close(fig)
+        )
 
-        for res in resolutions:
-            leiden_key = f"leiden_{res}"
-            if leiden_key in adata.obs:
-                suffix = f"{batch_key}_vs_{leiden_key}"
-                _save_combined_umap(leiden_key, suffix)
-    else:
-        logging.warning("Batch key '%s' missing from AnnData.obs; skipping QC UMAPs.", batch_key)
+    for idx, scan_override in enumerate(scan_sets, start=1):
+        label = scan_override.get("name") if isinstance(scan_override, dict) else None
+        fallback_label = label or f"scan_{idx}"
+        overrides = scan_override if isinstance(scan_override, dict) else {}
+        logging.info("Running parameter scan '%s'.", fallback_label)
+        scan_results.append(
+            _run_single_parameter_set(
+                adata,
+                batch_key=batch_key,
+                process_config=process_config,
+                base_params=biobatchnet_params,
+                overrides=overrides,
+                label=fallback_label,
+                base_output_path=output_path,
+                base_qc_dir=base_qc_dir,
+            )
+        )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    adata.write_h5ad(output_path)
-    logging.info("Saved batch-corrected AnnData to %s", output_path)
+    if len(scan_results) > 1:
+        _write_scan_summary(scan_results, base_qc_dir)
 
 
 if __name__ == "__main__":
