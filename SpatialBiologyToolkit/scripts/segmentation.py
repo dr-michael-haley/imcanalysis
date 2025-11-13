@@ -321,20 +321,20 @@ def create_anndata(celltable,
     # Extract raw markers using only available channels
     markers_raw = celltable.loc[:, available_channels]
 
-    # Marker normalisation
-    if normalisation:
-        markers = normalise_markers(markers_raw, normalisation)
-        logging.info(f'Markers normalised: {normalisation}')
-    else:
-        markers = markers_raw
-        logging.info('Markers not normalised, raw values used')
-
-    # Create AnnData object using the normalised markers
-    adata = sc.AnnData(markers)
-
-    # Store raw / not normalised data
+    # Create AnnData object using the raw markers first
+    adata = sc.AnnData(markers_raw)
+    
+    # Store raw / not normalised data BEFORE normalisation
     if store_raw:
         adata.raw = adata.copy()
+        logging.info('Raw marker data stored in adata.raw')
+    
+    # Marker normalisation - apply to the main data matrix
+    if normalisation:
+        adata.X = normalise_markers(pd.DataFrame(adata.X, columns=adata.var_names), normalisation).values
+        logging.info(f'Markers normalised: {normalisation}')
+    else:
+        logging.info('Markers not normalised, raw values used')
 
     # Add cellular obs from celltable
     non_channels = [x for x in celltable.columns.tolist() if x not in available_channels]
@@ -392,6 +392,7 @@ def create_anndata(celltable,
     else:
         logging.info('No dictionary file found.')
 
+    
     # Remove specified channels
     if remove_channels:
         remove_channels_list = [

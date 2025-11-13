@@ -148,6 +148,7 @@ class BasicProcessConfig:
     biobatchnet_epochs: int = 100  # Number of training epochs for BioBatchNet
     biobatchnet_device: Optional[str] = None  # Device for BioBatchNet ('cpu', 'cuda', or None for auto)
     biobatchnet_kwargs: Optional[Dict[str, Any]] = None  # Additional kwargs for BioBatchNet
+    biobatchnet_use_raw: bool = True  # Use raw data (adata.raw.X) instead of normalized data (adata.X)
     
     # Scanpy neighbors computation
     n_neighbors: Optional[int] = None  # Number of neighbors for scanpy neighbors computation (None uses scanpy default)

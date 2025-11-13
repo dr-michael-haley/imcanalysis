@@ -74,15 +74,48 @@ def run_biobatchnet_correction(
     epochs: int = 100,
     device: Optional[str] = None,
     extra_params: Optional[Dict[str, Any]] = None,
+    use_raw: bool = True,
 ) -> None:
     """
     Run BioBatchNet on the provided AnnData object and attach the embeddings.
+    
+    Parameters
+    ----------
+    adata : ad.AnnData
+        The AnnData object containing expression data
+    batch_key : str
+        The column name in adata.obs that contains batch information
+    data_type : str, default "imc"
+        Type of data for BioBatchNet
+    latent_dim : int, default 20
+        Latent dimension for BioBatchNet
+    epochs : int, default 100
+        Number of training epochs
+    device : str, optional
+        Computing device ('cpu' or 'cuda')
+    extra_params : dict, optional
+        Additional parameters for BioBatchNet
+    use_raw : bool, default True
+        If True, use adata.raw.X (raw data) for batch correction.
+        If False, use adata.X (potentially normalized data).
     """
     if batch_key not in adata.obs.columns:
         raise ValueError(f"Batch column '{batch_key}' not found in AnnData.obs")
 
-    matrix = _ensure_dense_matrix(adata.X)
-    expression_df = pd.DataFrame(matrix, index=adata.obs_names, columns=adata.var_names)
+    # Use raw data by default, fall back to .X if raw is not available
+    if use_raw and adata.raw is not None:
+        matrix = _ensure_dense_matrix(adata.raw.X)
+        var_names = adata.raw.var_names
+        logging.info("Using raw data (adata.raw.X) for BioBatchNet correction")
+    else:
+        if use_raw and adata.raw is None:
+            logging.warning("Raw data requested but not available. Using normalized data (adata.X)")
+        else:
+            logging.info("Using normalized data (adata.X) for BioBatchNet correction")
+        matrix = _ensure_dense_matrix(adata.X)
+        var_names = adata.var_names
+    
+    expression_df = pd.DataFrame(matrix, index=adata.obs_names, columns=var_names)
 
     batch_series = adata.obs[batch_key].astype(str)
     unique_batches = pd.Index(sorted(batch_series.unique()))
@@ -180,6 +213,7 @@ def main() -> None:
         "epochs": process_config.biobatchnet_epochs,
         "device": process_config.biobatchnet_device,
         "extra_params": process_config.biobatchnet_kwargs,
+        "use_raw": process_config.biobatchnet_use_raw,
     }
 
     run_biobatchnet_correction(
@@ -190,6 +224,7 @@ def main() -> None:
         epochs=biobatchnet_params["epochs"],
         device=biobatchnet_params["device"],
         extra_params=biobatchnet_params["extra_params"],
+        use_raw=biobatchnet_params["use_raw"],
     )
 
     neighbors_kwargs: Dict[str, Any] = {}
