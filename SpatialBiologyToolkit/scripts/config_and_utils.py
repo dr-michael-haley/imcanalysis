@@ -157,6 +157,7 @@ class VisualizationConfig:
     # AI interpretation settings
     enable_ai: bool = True  # Enable AI-powered cluster interpretation
     tissue: str = "Unknown tissue"  # Tissue type for AI interpretation context
+    repeat_ai_interpretation: bool = False  # Re-run AI interpretation even if labels already exist
     
     # Visualization module toggles - all default True
     create_umaps: bool = True  # Create UMAP plots for populations and markers
