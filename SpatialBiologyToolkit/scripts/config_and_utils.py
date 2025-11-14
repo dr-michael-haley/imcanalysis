@@ -151,6 +151,7 @@ class BasicProcessConfig:
     biobatchnet_use_raw: bool = True  # Use raw data (adata.raw.X) instead of normalized data (adata.X)
     biobatchnet_scan_parameter_sets: Optional[List[Dict[str, Any]]] = None  # Parameter overrides for scanning
     biobatchnet_scan_include_base: bool = True  # Run the base configuration alongside scans by default
+    biobatchnet_run_leiden: bool = True  # Run Leiden clustering after BioBatchNet correction
     
     # Scanpy neighbors computation
     n_neighbors: Optional[int] = None  # Number of neighbors for scanpy neighbors computation (None uses scanpy default)

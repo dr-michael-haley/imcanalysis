@@ -244,15 +244,19 @@ def _postprocess_biobatchnet_results(
     logging.info("Running UMAP (min_dist=%s).", process_config.umap_min_dist)
     sc.tl.umap(adata, min_dist=process_config.umap_min_dist)
 
-    resolutions = process_config.leiden_resolutions_list
-    if resolutions and not isinstance(resolutions, list):
-        resolutions = [resolutions]
-    else:
-        resolutions = resolutions or []
+    # Only run Leiden clustering if enabled
+    if process_config.biobatchnet_run_leiden:
+        resolutions = process_config.leiden_resolutions_list
+        if resolutions and not isinstance(resolutions, list):
+            resolutions = [resolutions]
+        else:
+            resolutions = resolutions or []
 
-    for res in resolutions:
-        logging.info("Running Leiden clustering at resolution %s.", res)
-        sc.tl.leiden(adata, resolution=res, key_added=f"leiden_{res}")
+        for res in resolutions:
+            logging.info("Running Leiden clustering at resolution %s.", res)
+            sc.tl.leiden(adata, resolution=res, key_added=f"leiden_{res}")
+    else:
+        logging.info("Leiden clustering skipped (biobatchnet_run_leiden=False).")
 
     qc_dir.mkdir(parents=True, exist_ok=True)
     logging.info("Saving UMAP plots to %s", qc_dir)
@@ -274,11 +278,31 @@ def _postprocess_biobatchnet_results(
         fig.savefig(qc_dir / f"umap_{suffix}.png", dpi=200, bbox_inches="tight")
         plt.close(fig)
 
-    for res in resolutions:
-        leiden_key = f"leiden_{res}"
-        if leiden_key in adata.obs:
-            suffix = f"{batch_key}_vs_{leiden_key}"
-            _save_combined_umap(leiden_key, suffix)
+    # Only create Leiden clustering UMAPs if Leiden was run
+    if process_config.biobatchnet_run_leiden:
+        resolutions = process_config.leiden_resolutions_list
+        if resolutions and not isinstance(resolutions, list):
+            resolutions = [resolutions]
+        else:
+            resolutions = resolutions or []
+            
+        for res in resolutions:
+            leiden_key = f"leiden_{res}"
+            if leiden_key in adata.obs:
+                suffix = f"{batch_key}_vs_{leiden_key}"
+                _save_combined_umap(leiden_key, suffix)
+    else:
+        # Create a simple batch-only UMAP
+        sc.pl.umap(
+            adata,
+            color=batch_key,
+            legend_loc="on data",
+            frameon=False,
+            show=False,
+        )
+        fig = plt.gcf()
+        fig.savefig(qc_dir / f"umap_{batch_key}.png", dpi=200, bbox_inches="tight")
+        plt.close(fig)
 
 
 def _run_single_parameter_set(
