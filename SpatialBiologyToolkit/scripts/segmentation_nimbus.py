@@ -7,6 +7,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import random
 import re
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -106,20 +107,45 @@ class ToolkitNimbusDataset(MultiplexDataset):
         quantile: float = 0.999,
         clip_values: Sequence[float] = (0, 2),
         n_subset: int = 10,
-        multiprocessing: bool = False,
+        multiprocessing: bool = False,  # kept for API compatibility
         overwrite: bool = False,
     ):
+        """
+        Compute per-channel normalization without re-instantiating MultiplexDataset (avoids filename-based discovery).
+        """
         self.clip_values = tuple(clip_values)
         self.normalization_dict_path = os.path.join(self.output_dir, "normalization_dict.json")
+
         if os.path.exists(self.normalization_dict_path) and not overwrite:
             with open(self.normalization_dict_path, "r", encoding="utf-8") as handle:
                 data = json.load(handle)
             self.normalization_dict = {k: float(v) for k, v in data.items()}
-        else:
-            jobs = self.normalization_n_jobs if (multiprocessing or self.normalization_n_jobs > 1) else 1
-            self.normalization_dict = prepare_normalization_dict(
-                self, self.output_dir, quantile, n_subset, jobs
-            )
+            return
+
+        fov_list = list(self.fovs)
+        if n_subset is not None and len(fov_list) > n_subset:
+            fov_list = random.sample(fov_list, n_subset)
+
+        norm_vals: Dict[str, List[float]] = {ch: [] for ch in self._channels}
+        for fov in fov_list:
+            for ch in self._channels:
+                img = self.get_channel(fov, ch).astype(float)
+                if np.any(img):
+                    foreground = img[img > 0]
+                    if foreground.size:
+                        norm_vals[ch].append(float(np.quantile(foreground, quantile)))
+
+        self.normalization_dict = {}
+        for ch, vals in norm_vals.items():
+            if vals:
+                self.normalization_dict[ch] = float(np.mean(vals))
+            else:
+                self.normalization_dict[ch] = 1e-8
+
+        norm_str = {k: str(v) for k, v in self.normalization_dict.items()}
+        os.makedirs(self.output_dir, exist_ok=True)
+        with open(self.normalization_dict_path, "w", encoding="utf-8") as handle:
+            json.dump(norm_str, handle)
 
 
 def _load_panel(metadata_folder: Path) -> pd.DataFrame:
