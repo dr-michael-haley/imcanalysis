@@ -17,6 +17,7 @@ import pandas as pd
 from alpineer import io_utils
 from skimage import io
 from skimage.measure import regionprops
+from skimage.transform import resize
 
 try:
     from nimbus_inference.nimbus import Nimbus
@@ -53,12 +54,14 @@ class ToolkitNimbusDataset(MultiplexDataset):
         output_dir: str = "nimbus_output",
         normalization_jobs: int = 1,
         clip_values: Sequence[float] = (0.0, 2.0),
+        suffix_match: Optional[str] = None,
     ) -> None:
         self._channels = sorted(channels)
         self._channel_paths = channel_paths
         self._mask_lookup = mask_lookup
         self.normalization_n_jobs = max(1, int(normalization_jobs))
         self.clip_values = tuple(clip_values)
+        self._suffix_match = suffix_match or suffix
 
         def _seg_lookup(fov_path: str) -> Path:
             return str(self._mask_lookup[Path(fov_path).name])
@@ -100,7 +103,29 @@ class ToolkitNimbusDataset(MultiplexDataset):
             image_path = self._channel_paths[roi][channel]
         except KeyError as exc:  # pragma: no cover - defensive
             raise FileNotFoundError(f"Missing image for ROI '{roi}', channel '{channel}'") from exc
-        return np.squeeze(io.imread(image_path))
+        img = io.imread(image_path)
+        if img.ndim == 2:
+            return img
+        # If channel dimension leaked through (e.g., multichannel format), take first plane
+        return np.squeeze(img)[0] if np.squeeze(img).ndim == 3 else np.squeeze(img)
+
+    def get_segmentation(self, fov: str):  # type: ignore[override]
+        roi = Path(fov).name
+        mask = io.imread(self._mask_lookup[roi])
+        mask = np.squeeze(mask)
+        if mask.ndim == 3:
+            mask = np.squeeze(mask[..., 0])
+
+        # Align mask to the reference channel image shape if needed
+        ref_path = next(iter(self._channel_paths[roi].values()))
+        ref_img = io.imread(ref_path)
+        ref_shape = np.squeeze(ref_img).shape[-2:] if ref_img.ndim >= 2 else ref_img.shape
+
+        if mask.shape != tuple(ref_shape):
+            mask = resize(mask, ref_shape, order=0, preserve_range=True, anti_aliasing=False).astype(np.uint32)
+        else:
+            mask = mask.astype(np.uint32)
+        return mask
 
     def prepare_normalization_dict(  # type: ignore[override]
         self,
@@ -224,13 +249,12 @@ def _resolve_channel_paths(
             for base_dir in candidates:
                 if not base_dir.exists():
                     continue
-                try:
-                    filename = get_filename(base_dir, filename_hint)
-                except Exception:
-                    continue
-                found = base_dir / filename
-                representative = representative or base_dir
-                break
+                # Match on any file containing the filename hint (handles prefixes like index_roi_)
+                matches = sorted([p for p in base_dir.iterdir() if filename_hint in p.name])
+                if matches:
+                    found = matches[0]
+                    representative = representative or base_dir
+                    break
 
             if found:
                 paths[channel] = found
