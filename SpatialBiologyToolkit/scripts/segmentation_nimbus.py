@@ -61,7 +61,7 @@ class ToolkitNimbusDataset(MultiplexDataset):
         self.clip_values = tuple(clip_values)
 
         def _seg_lookup(fov_path: str) -> Path:
-            return self._mask_lookup[Path(fov_path).name]
+            return str(self._mask_lookup[Path(fov_path).name])
 
         str_fov_paths = [str(p) for p in fov_paths]
 
