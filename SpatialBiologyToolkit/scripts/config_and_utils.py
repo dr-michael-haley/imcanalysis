@@ -145,7 +145,7 @@ class NimbusConfig:
     test_time_augmentation: bool = True
     batch_size: int = 4
     model_magnification: int = 10
-    dataset_magnification: int = 20
+    dataset_magnification: int = 10
     checkpoint: str = 'latest'
     device: str = 'auto'
     normalization_quantile: float = 0.999
