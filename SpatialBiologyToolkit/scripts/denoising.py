@@ -466,6 +466,17 @@ def qc_check_side_by_side(general_config: GeneralConfig,
             pro_Img_collect, pro_Img_file_list, pro_img_folders = load_imgs_from_directory(general_config.denoised_images_folder,
                                                                                            channel_name, quiet=True)
 
+            # Subsample ROIs if qc_num_rois is specified
+            if denoise_config.qc_num_rois is not None and denoise_config.qc_num_rois < len(raw_Img_collect):
+                num_rois = min(denoise_config.qc_num_rois, len(raw_Img_collect))
+                indices = np.random.choice(len(raw_Img_collect), size=num_rois, replace=False)
+                raw_Img_collect = [raw_Img_collect[i] for i in indices]
+                pro_Img_collect = [pro_Img_collect[i] for i in indices]
+                raw_Img_file_list = [raw_Img_file_list[i] for i in indices]
+                logging.info(f'QC visualization for {channel_name}: Using {num_rois} random ROIs out of {len(raw_img_folders)} available')
+            else:
+                logging.info(f'QC visualization for {channel_name}: Using all {len(raw_Img_collect)} ROIs')
+
             fig, axs = plt.subplots(len(raw_Img_collect), 2, figsize=(10, 5 * len(raw_Img_collect)), dpi=denoise_config.dpi)
 
             count = 0

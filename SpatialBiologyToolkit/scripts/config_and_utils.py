@@ -57,6 +57,7 @@ class DenoisingConfig:
     colourmap: str = "jet"
     dpi: int = 100
     qc_image_dir: str = 'denoising'
+    qc_num_rois: Optional[int] = None  # Number of random ROIs to include in QC (None = all ROIs)
     skip_already_denoised: bool = True
 
 @dataclass

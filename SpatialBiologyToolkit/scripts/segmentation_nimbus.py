@@ -13,6 +13,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
 import pandas as pd
+from alpineer import io_utils
 from skimage import io
 from skimage.measure import regionprops
 
@@ -75,6 +76,19 @@ class ToolkitNimbusDataset(MultiplexDataset):
 
         # Normalise FOV names to ROI folder names so downstream joins are stable
         self.fovs = [Path(p).name for p in str_fov_paths]
+        self.channels = self._channels
+        self.include_channels = self._channels
+
+    def check_inputs(self):  # type: ignore[override]
+        """
+        Simplified check to avoid directory-derived channel validation; we supply channels explicitly.
+        """
+        paths = self.fov_paths if isinstance(self.fov_paths, (list, tuple)) else [self.fov_paths]
+        io_utils.validate_paths(paths)
+        self.channels = self._channels
+        self.include_channels = self._channels
+        if not getattr(self, "silent", True):
+            print("All inputs are valid")
 
     def get_channels(self):  # type: ignore[override]
         return self._channels
