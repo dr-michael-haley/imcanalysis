@@ -133,6 +133,29 @@ class SegmentationConfig:
     allow_missing_channels: bool = False  # If True, fill missing channels with NaN; if False, only include channels present in all ROIs
 
 @dataclass
+class NimbusConfig:
+    output_dir: str = 'nimbus_output'
+    roi_table_subfolder: str = 'nimbus_cell_tables'
+    master_celltable: str = 'nimbus_celltable.csv'
+    anndata_output: str = 'nimbus_anndata.h5ad'
+    roi_table_prefix: str = 'nimbus_'
+    use_denoised_first: bool = True
+    allow_raw_fallback: bool = True
+    mask_extensions: List[str] = field(default_factory=lambda: ['.tiff', '.tif'])
+    test_time_augmentation: bool = True
+    batch_size: int = 4
+    model_magnification: int = 10
+    dataset_magnification: int = 20
+    checkpoint: str = 'latest'
+    device: str = 'auto'
+    normalization_quantile: float = 0.999
+    normalization_subset: int = 10
+    normalization_jobs: int = 1
+    normalization_clip: List[float] = field(default_factory=lambda: [0.0, 2.0])
+    save_prediction_maps: bool = False
+    overwrite_existing_outputs: bool = False
+
+@dataclass
 class BasicProcessConfig:
     input_adata_path: str = 'anndata.h5ad'
     output_adata_path: str = 'anndata_processed.h5ad'
@@ -276,6 +299,7 @@ DEFAULT_CONFIG_CLASSES = {
     'denoising': DenoisingConfig,
     'createmasks': CreateMasksConfig,
     'segmentation': SegmentationConfig,
+    'nimbus': NimbusConfig,
     'process': BasicProcessConfig,
     'visualization': VisualizationConfig,
     'logging': LoggingConfig,
@@ -512,3 +536,5 @@ def cleanstring(data: Any) -> str:
     data = re.sub(r'^_+|_+$', '', data)
     data = re.sub(r'_+', '_', data)
     return data
+
+

@@ -323,11 +323,23 @@ def _run_single_parameter_set(
     qc_dir = _prepare_qc_dir(base_qc_dir, suffix)
 
     adata_copy = base_adata.copy()
+    
+    # Log main parameters
+    main_params = {k: v for k, v in run_params.items() if k != "extra_params"}
     logging.info(
         "Running BioBatchNet for '%s' with parameters: %s",
         label or "base",
-        {k: v for k, v in run_params.items() if k != "extra_params"},
+        main_params,
     )
+    
+    # Log extra_params separately if present
+    if run_params.get("extra_params"):
+        logging.info(
+            "  Extra parameters for '%s': %s",
+            label or "base",
+            run_params["extra_params"],
+        )
+    
     run_biobatchnet_correction(
         adata_copy,
         batch_key=batch_key,
