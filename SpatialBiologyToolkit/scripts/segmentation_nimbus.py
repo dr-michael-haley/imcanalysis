@@ -12,15 +12,23 @@ import re
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
+import cv2
 import numpy as np
 import pandas as pd
 from alpineer import io_utils
 from skimage import io
 from skimage.measure import regionprops
+from tqdm import tqdm
 
 try:
     from nimbus_inference.nimbus import Nimbus
-    from nimbus_inference.utils import MultiplexDataset, prepare_normalization_dict
+    from nimbus_inference.utils import (
+        MultiplexDataset,
+        prepare_input_data,
+        prepare_normalization_dict,
+        segment_mean,
+        test_time_aug,
+    )
 except ImportError as exc:  # pragma: no cover - dependency guard
     raise ImportError(
         "Nimbus-Inference is required for this script. Install it with 'pip install nimbus-inference'."
@@ -340,6 +348,80 @@ def _save_roi_tables(cell_df: pd.DataFrame, output_dir: Path, prefix: str) -> No
         roi_df.to_csv(output_dir / f"{prefix}{roi}.csv", index=False)
 
 
+def _predict_fovs_shape_guard(
+    nimbus,
+    dataset,
+    output_dir: str,
+    suffix: str = ".tiff",
+    save_predictions: bool = True,
+    batch_size: int = 4,
+    test_time_augmentation: bool = True,
+):
+    """
+    Nimbus predict_fovs with a shape guard: if prediction and mask differ in shape, resize prediction to mask.
+    """
+    fov_dict_list = []
+    for fov_path, fov in zip(dataset.fov_paths, dataset.fovs):
+        logging.info("Predicting %s...", fov_path)
+        out_fov_path = os.path.join(os.path.normpath(output_dir), os.path.basename(fov_path).replace(suffix, ""))
+        df_fov = pd.DataFrame()
+        instance_mask = dataset.get_segmentation(fov)
+        for channel_name in tqdm(dataset.channels, desc=f"{fov}", leave=False):
+            mplex_img = dataset.get_channel_normalized(fov, channel_name)
+            input_data = prepare_input_data(mplex_img, instance_mask)
+            if dataset.magnification != nimbus.model_magnification:
+                scale = nimbus.model_magnification / dataset.magnification
+                input_data = np.squeeze(input_data)
+                _, h, w = input_data.shape
+                img = cv2.resize(input_data[0], [int(w * scale), int(h * scale)])
+                binary_mask = cv2.resize(input_data[1], [int(w * scale), int(h * scale)], interpolation=0)
+                input_data = np.stack([img, binary_mask], axis=0)[np.newaxis, ...]
+            if test_time_augmentation:
+                prediction = test_time_aug(
+                    input_data,
+                    channel_name,
+                    nimbus,
+                    dataset.normalization_dict,
+                    batch_size=batch_size,
+                    clip_values=dataset.clip_values,
+                )
+            else:
+                prediction = nimbus.predict_segmentation(input_data)
+            if not isinstance(prediction, np.ndarray):
+                prediction = prediction.cpu().numpy()
+            prediction = np.squeeze(prediction)
+            if dataset.magnification != nimbus.model_magnification:
+                prediction = cv2.resize(prediction, (w, h), interpolation=cv2.INTER_NEAREST)
+            if prediction.shape != instance_mask.shape:
+                logging.warning(
+                    "Prediction/mask shape mismatch for %s channel %s: %s vs %s -> resizing prediction",
+                    fov,
+                    channel_name,
+                    prediction.shape,
+                    instance_mask.shape,
+                )
+                prediction = cv2.resize(
+                    prediction,
+                    (instance_mask.shape[1], instance_mask.shape[0]),
+                    interpolation=cv2.INTER_NEAREST,
+                )
+            df = pd.DataFrame(segment_mean(instance_mask, prediction))
+            if df_fov.empty:
+                df_fov["label"] = df["label"]
+                df_fov["fov"] = os.path.basename(fov_path)
+            df_fov[channel_name] = df["intensity_mean"]
+            if save_predictions:
+                os.makedirs(out_fov_path, exist_ok=True)
+                pred_int = (prediction * 255.0).astype(np.uint8)
+                io.imsave(
+                    os.path.join(out_fov_path, channel_name + suffix),
+                    pred_int,
+                    check_contrast=False,
+                )
+        fov_dict_list.append(df_fov)
+    return pd.concat(fov_dict_list, ignore_index=True)
+
+
 def main() -> None:
     pipeline_stage = "NimbusSegmentation"
     config = process_config_with_overrides()
@@ -419,7 +501,17 @@ def main() -> None:
         checkpoint=nimbus_config.checkpoint,
     )
 
-    nimbus_df = _prepare_nimbus_output(nimbus.predict_fovs())
+    nimbus_df = _prepare_nimbus_output(
+        _predict_fovs_shape_guard(
+            nimbus=nimbus,
+            dataset=dataset,
+            output_dir=nimbus_config.output_dir,
+            suffix=".tiff",
+            save_predictions=nimbus_config.save_prediction_maps,
+            batch_size=nimbus_config.batch_size,
+            test_time_augmentation=nimbus_config.test_time_augmentation,
+        )
+    )
     mask_features = _build_mask_features(mask_lookup, valid_rois)
     merged_celltable, predicted_channels = _merge_with_masks(
         mask_features, nimbus_df, expected_channels, channels_for_model, seg_config.allow_missing_channels
@@ -461,10 +553,10 @@ def main() -> None:
         adata = create_anndata(
             merged_celltable,
             metadata_folder=general_config.metadata_folder,
-            normalisation=seg_config.marker_normalisation,
-            store_raw=seg_config.store_raw_marker_data,
-            remove_channels=seg_config.remove_channels_list,
-        )
+        normalisation=seg_config.marker_normalisation,
+        store_raw=seg_config.store_raw_marker_data,
+        remove_channels=seg_config.remove_channels_list,
+    )
         anndata_path.parent.mkdir(parents=True, exist_ok=True)
         adata.write_h5ad(anndata_path)
         logging.info("Saved Nimbus AnnData to %s", anndata_path)
