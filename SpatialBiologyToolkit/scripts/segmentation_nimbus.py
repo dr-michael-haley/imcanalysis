@@ -393,7 +393,7 @@ def _predict_fovs_shape_guard(
             if dataset.magnification != nimbus.model_magnification:
                 prediction = cv2.resize(prediction, (w, h), interpolation=cv2.INTER_NEAREST)
             if prediction.shape != instance_mask.shape:
-                logging.warning(
+                logging.info(
                     "Prediction/mask shape mismatch for %s channel %s: %s vs %s -> resizing prediction",
                     fov,
                     channel_name,

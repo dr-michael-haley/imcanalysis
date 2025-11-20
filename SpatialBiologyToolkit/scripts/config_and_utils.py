@@ -57,7 +57,7 @@ class DenoisingConfig:
     colourmap: str = "jet"
     dpi: int = 100
     qc_image_dir: str = 'denoising'
-    qc_num_rois: Optional[int] = None  # Number of random ROIs to include in QC (None = all ROIs)
+    qc_num_rois: Optional[int] = 10  # Number of random ROIs to include in QC (None = all ROIs)
     skip_already_denoised: bool = True
 
 @dataclass
@@ -164,7 +164,7 @@ class BasicProcessConfig:
     batch_correction_obs: Optional[str] = None
     n_for_pca: Optional[int] = None
     leiden_resolutions_list: List[float] = field(default_factory=lambda: [0.3, 1.0])
-    umap_min_dist: float = 0.5
+    umap_min_dist: float = 0.1
     
     # BioBatchNet-specific parameters (nested dictionary format)
     biobatchnet_params: Optional[Dict[str, Any]] = field(default_factory=lambda: {
@@ -173,7 +173,16 @@ class BasicProcessConfig:
         'epochs': 100,
         'device': None,
         'use_raw': True,
-        'extra_params': None,
+        'extra_params': {
+            'loss_weights': {
+                'recon_loss': 100.0,
+                'discriminator': 0.05, # Batch mixing (default: 0.3 — lower = more mixing)
+                'classifier': 1.0, # Batch retention (default: 1)
+                'kl_loss_1': 0.0005, # KL divergence for bio encoder (default: 0.005)
+                'kl_loss_2': 0.1, # KL divergence for batch encoder (default: 0.1)
+                'ortho_loss': 0.01, # Orthogonality constraint (default: 0.01)
+            }
+        },
     })
     
     # BioBatchNet parameter scanning
@@ -202,7 +211,16 @@ class BasicProcessConfig:
                 'epochs': 100,
                 'device': None,
                 'use_raw': True,
-                'extra_params': None,
+                'extra_params': {
+                    'loss_weights': {
+                        'recon_loss': 100.0,
+                        'discriminator': 0.05,
+                        'classifier': 1.0,
+                        'kl_loss_1': 0.0005,
+                        'kl_loss_2': 0.1,
+                        'ortho_loss': 0.01,
+                    }
+                },
             }
         
         # Migrate old flat parameters if they are set
