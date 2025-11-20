@@ -41,7 +41,7 @@ class ToolkitNimbusDataset(MultiplexDataset):
 
     def __init__(
         self,
-        fov_paths: List[Path],
+        fov_paths: List[Path] | List[str],
         channels: Iterable[str],
         channel_paths: Dict[str, Dict[str, Path]],
         mask_lookup: Dict[str, Path],
@@ -61,8 +61,10 @@ class ToolkitNimbusDataset(MultiplexDataset):
         def _seg_lookup(fov_path: str) -> Path:
             return self._mask_lookup[Path(fov_path).name]
 
+        str_fov_paths = [str(p) for p in fov_paths]
+
         super().__init__(
-            list(fov_paths),
+            str_fov_paths,
             segmentation_naming_convention=_seg_lookup,
             include_channels=self._channels,
             suffix=suffix,
@@ -72,7 +74,7 @@ class ToolkitNimbusDataset(MultiplexDataset):
         )
 
         # Normalise FOV names to ROI folder names so downstream joins are stable
-        self.fovs = [Path(p).name for p in fov_paths]
+        self.fovs = [Path(p).name for p in str_fov_paths]
 
     def get_channels(self):  # type: ignore[override]
         return self._channels
@@ -411,5 +413,11 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
+
 
 
