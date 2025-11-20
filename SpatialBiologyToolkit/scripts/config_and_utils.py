@@ -137,7 +137,7 @@ class NimbusConfig:
     output_dir: str = 'nimbus_output'
     roi_table_subfolder: str = 'nimbus_cell_tables'
     master_celltable: str = 'nimbus_celltable.csv'
-    anndata_output: str = 'nimbus_anndata.h5ad'
+    anndata_output: str = 'anndata.h5ad'
     roi_table_prefix: str = 'nimbus_'
     use_denoised_first: bool = True
     allow_raw_fallback: bool = True
