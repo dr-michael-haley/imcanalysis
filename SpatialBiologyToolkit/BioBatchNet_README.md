@@ -84,6 +84,71 @@ adata.obsm['X_biobatchnet'] = bio_embeddings
 - 📖 **USAGE Documentation:** [GitHub](https://github.com/UoM-HealthAI/BioBatchNet/blob/main/USAGE.md)
 - 📓 **Tutorial Notebook:** [GitHub](https://github.com/UoM-HealthAI/BioBatchNet/blob/main/tutorial.ipynb) | [nbviewer preview](https://nbviewer.org/github/UoM-HealthAI/BioBatchNet/blob/main/tutorial.ipynb)
 
+### Config-based Processing in SpatialBiologyToolkit
+
+When using BioBatchNet as part of the SpatialBiologyToolkit pipeline, configure it in your `config.yaml`:
+
+#### Single Parameter Set (No Scanning)
+
+```yaml
+process:
+  batch_correction_obs: 'ROI'  # Column in adata.obs with batch information
+  
+  # BioBatchNet parameters (nested dictionary format)
+  biobatchnet_params:
+    data_type: 'imc'           # 'imc' or 'scrnaseq'
+    latent_dim: 20             # Latent dimension size
+    epochs: 100                # Training epochs
+    device: null               # 'cpu', 'cuda', or null for auto-detect
+    use_raw: true              # Use adata.raw.X instead of adata.X
+    extra_params:              # Additional parameters passed to BioBatchNet
+      lambda_bio: 1.0          # Weight for biological loss
+      lambda_batch: 0.5        # Weight for batch loss
+      learning_rate: 0.001     # Learning rate
+  
+  biobatchnet_run_leiden: true  # Run Leiden clustering after correction
+  leiden_resolutions_list: [0.3, 1.0]
+  n_neighbors: 15              # Number of neighbors for scanpy
+```
+
+#### Parameter Scanning (Multiple Sets)
+
+To test multiple parameter combinations:
+
+```yaml
+process:
+  batch_correction_obs: 'ROI'
+  
+  # Base parameters (used if scan_include_base: true)
+  biobatchnet_params:
+    data_type: 'imc'
+    latent_dim: 20
+    epochs: 100
+    device: null
+    use_raw: true
+  
+  # Parameter scan sets
+  biobatchnet_scan_parameter_sets:
+    - name: 'high_latent'
+      latent_dim: 40
+      epochs: 150
+      
+    - name: 'custom_weights'
+      extra_params:
+        lambda_bio: 2.0
+        lambda_batch: 0.3
+        
+    - name: 'low_latent_long'
+      latent_dim: 10
+      epochs: 200
+      extra_params:
+        learning_rate: 0.0005
+  
+  biobatchnet_scan_include_base: true  # Also run base parameters
+```
+
+Each parameter set will generate a separate output file and QC directory with results.
+
 ### Config-based Training (For Development/Research)
 
 For reproducing research results or training with specific configurations:

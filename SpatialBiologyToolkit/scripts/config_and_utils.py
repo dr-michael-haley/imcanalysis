@@ -142,19 +142,71 @@ class BasicProcessConfig:
     leiden_resolutions_list: List[float] = field(default_factory=lambda: [0.3, 1.0])
     umap_min_dist: float = 0.5
     
-    # BioBatchNet-specific parameters
-    biobatchnet_data_type: str = 'imc'  # Data type for BioBatchNet ('imc', 'scrnaseq', etc.)
-    biobatchnet_latent_dim: int = 20  # Latent dimensionality for BioBatchNet embeddings
-    biobatchnet_epochs: int = 100  # Number of training epochs for BioBatchNet
-    biobatchnet_device: Optional[str] = None  # Device for BioBatchNet ('cpu', 'cuda', or None for auto)
-    biobatchnet_kwargs: Optional[Dict[str, Any]] = None  # Additional kwargs for BioBatchNet
-    biobatchnet_use_raw: bool = True  # Use raw data (adata.raw.X) instead of normalized data (adata.X)
+    # BioBatchNet-specific parameters (nested dictionary format)
+    biobatchnet_params: Optional[Dict[str, Any]] = field(default_factory=lambda: {
+        'data_type': 'imc',
+        'latent_dim': 20,
+        'epochs': 100,
+        'device': None,
+        'use_raw': True,
+        'extra_params': None,
+    })
+    
+    # BioBatchNet parameter scanning
     biobatchnet_scan_parameter_sets: Optional[List[Dict[str, Any]]] = None  # Parameter overrides for scanning
     biobatchnet_scan_include_base: bool = True  # Run the base configuration alongside scans by default
     biobatchnet_run_leiden: bool = True  # Run Leiden clustering after BioBatchNet correction
     
     # Scanpy neighbors computation
     n_neighbors: Optional[int] = None  # Number of neighbors for scanpy neighbors computation (None uses scanpy default)
+    
+    # DEPRECATED: Old flat-style parameters (kept for backward compatibility, will be migrated to biobatchnet_params)
+    biobatchnet_data_type: Optional[str] = None
+    biobatchnet_latent_dim: Optional[int] = None
+    biobatchnet_epochs: Optional[int] = None
+    biobatchnet_device: Optional[str] = None
+    biobatchnet_kwargs: Optional[Dict[str, Any]] = None
+    biobatchnet_use_raw: Optional[bool] = None
+    
+    def __post_init__(self):
+        """Migrate old flat-style parameters to nested biobatchnet_params format."""
+        # If biobatchnet_params is None, initialize with defaults
+        if self.biobatchnet_params is None:
+            self.biobatchnet_params = {
+                'data_type': 'imc',
+                'latent_dim': 20,
+                'epochs': 100,
+                'device': None,
+                'use_raw': True,
+                'extra_params': None,
+            }
+        
+        # Migrate old flat parameters if they are set
+        migrated = False
+        if self.biobatchnet_data_type is not None:
+            self.biobatchnet_params['data_type'] = self.biobatchnet_data_type
+            migrated = True
+        if self.biobatchnet_latent_dim is not None:
+            self.biobatchnet_params['latent_dim'] = self.biobatchnet_latent_dim
+            migrated = True
+        if self.biobatchnet_epochs is not None:
+            self.biobatchnet_params['epochs'] = self.biobatchnet_epochs
+            migrated = True
+        if self.biobatchnet_device is not None:
+            self.biobatchnet_params['device'] = self.biobatchnet_device
+            migrated = True
+        if self.biobatchnet_kwargs is not None:
+            self.biobatchnet_params['extra_params'] = self.biobatchnet_kwargs
+            migrated = True
+        if self.biobatchnet_use_raw is not None:
+            self.biobatchnet_params['use_raw'] = self.biobatchnet_use_raw
+            migrated = True
+        
+        if migrated:
+            logging.warning(
+                "Deprecated flat BioBatchNet parameters detected and migrated to 'biobatchnet_params'. "
+                "Please update your config.yaml to use the nested format under process.biobatchnet_params."
+            )
 
 @dataclass
 class VisualizationConfig:

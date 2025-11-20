@@ -331,12 +331,12 @@ def _run_single_parameter_set(
     run_biobatchnet_correction(
         adata_copy,
         batch_key=batch_key,
-        data_type=run_params["data_type"],
-        latent_dim=run_params["latent_dim"],
-        epochs=run_params["epochs"],
-        device=run_params["device"],
+        data_type=run_params.get("data_type", "imc"),
+        latent_dim=run_params.get("latent_dim", 20),
+        epochs=run_params.get("epochs", 100),
+        device=run_params.get("device"),
         extra_params=run_params.get("extra_params"),
-        use_raw=run_params["use_raw"],
+        use_raw=run_params.get("use_raw", True),
     )
 
     _postprocess_biobatchnet_results(
@@ -420,14 +420,16 @@ def main() -> None:
             "process.batch_correction_obs must be set in the config to use BioBatchNet."
         )
 
-    biobatchnet_params = {
-        "data_type": process_config.biobatchnet_data_type,
-        "latent_dim": process_config.biobatchnet_latent_dim,
-        "epochs": process_config.biobatchnet_epochs,
-        "device": process_config.biobatchnet_device,
-        "extra_params": process_config.biobatchnet_kwargs,
-        "use_raw": process_config.biobatchnet_use_raw,
-    }
+    # Use the nested biobatchnet_params dictionary
+    biobatchnet_params = process_config.biobatchnet_params or {}
+    
+    # Ensure all required keys have defaults
+    biobatchnet_params.setdefault('data_type', 'imc')
+    biobatchnet_params.setdefault('latent_dim', 20)
+    biobatchnet_params.setdefault('epochs', 100)
+    biobatchnet_params.setdefault('device', None)
+    biobatchnet_params.setdefault('use_raw', True)
+    biobatchnet_params.setdefault('extra_params', None)
 
     scan_sets = process_config.biobatchnet_scan_parameter_sets or []
     include_base = process_config.biobatchnet_scan_include_base or not scan_sets
