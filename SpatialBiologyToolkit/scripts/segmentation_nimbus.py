@@ -17,7 +17,6 @@ import pandas as pd
 from alpineer import io_utils
 from skimage import io
 from skimage.measure import regionprops
-from skimage.transform import resize
 
 try:
     from nimbus_inference.nimbus import Nimbus
@@ -122,10 +121,8 @@ class ToolkitNimbusDataset(MultiplexDataset):
         ref_shape = np.squeeze(ref_img).shape[-2:] if ref_img.ndim >= 2 else ref_img.shape
 
         if mask.shape != tuple(ref_shape):
-            mask = resize(mask, ref_shape, order=0, preserve_range=True, anti_aliasing=False).astype(np.uint32)
-        else:
-            mask = mask.astype(np.uint32)
-        return mask
+            raise ValueError(f"Mask/Image shape mismatch for ROI {roi}: {mask.shape} vs {ref_shape}")
+        return mask.astype(np.uint32)
 
     def prepare_normalization_dict(  # type: ignore[override]
         self,
