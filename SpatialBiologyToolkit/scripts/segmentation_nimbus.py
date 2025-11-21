@@ -827,8 +827,6 @@ def main() -> None:
 
     if seg_config.create_anndata:
         anndata_path = Path(nimbus_config.anndata_output or seg_config.anndata_save_path)
-        if not anndata_path.is_absolute():
-            anndata_path = Path(nimbus_config.output_dir) / anndata_path
 
         # Create AnnData with layers for both Nimbus and classic data
         adata = _create_anndata_with_layers(
