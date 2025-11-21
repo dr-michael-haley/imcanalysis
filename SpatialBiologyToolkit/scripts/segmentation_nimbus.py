@@ -15,11 +15,11 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 import cv2
 import numpy as np
 import pandas as pd
-import scanpy as sc
 from alpineer import io_utils
 from skimage import io
-from skimage.measure import regionprops
+from skimage.measure import regionprops, regionprops_table
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 try:
     from nimbus_inference.nimbus import Nimbus
@@ -142,7 +142,8 @@ class ToolkitNimbusDataset(MultiplexDataset):
         overwrite: bool = False,
     ):
         """
-        Compute per-channel normalization without re-instantiating MultiplexDataset (avoids filename-based discovery).
+        Compute per-channel normalization using ALL FOVs and only in-mask pixels.
+        Also writes a QC gallery and QC histograms.
         """
         self.clip_values = tuple(clip_values)
         self.normalization_dict_path = os.path.join(self.output_dir, "normalization_dict.json")
@@ -151,32 +152,116 @@ class ToolkitNimbusDataset(MultiplexDataset):
             with open(self.normalization_dict_path, "r", encoding="utf-8") as handle:
                 data = json.load(handle)
             self.normalization_dict = {k: float(v) for k, v in data.items()}
-            return
-
-        fov_list = list(self.fovs)
-        if n_subset is not None and len(fov_list) > n_subset:
-            fov_list = random.sample(fov_list, n_subset)
-
-        norm_vals: Dict[str, List[float]] = {ch: [] for ch in self._channels}
-        for fov in fov_list:
-            for ch in self._channels:
-                img = self.get_channel(fov, ch).astype(float)
-                if np.any(img):
-                    foreground = img[img > 0]
+        else:
+            norm_vals: Dict[str, List[float]] = {ch: [] for ch in self._channels}
+            for fov in self.fovs:
+                mask = self.get_segmentation(fov)
+                mask_bool = mask > 0
+                if not np.any(mask_bool):
+                    continue
+                for ch in self._channels:
+                    img = self.get_channel(fov, ch).astype(float)
+                    foreground = img[mask_bool]
                     if foreground.size:
                         norm_vals[ch].append(float(np.quantile(foreground, quantile)))
 
-        self.normalization_dict = {}
-        for ch, vals in norm_vals.items():
-            if vals:
-                self.normalization_dict[ch] = float(np.mean(vals))
-            else:
-                self.normalization_dict[ch] = 1e-8
+            self.normalization_dict = {}
+            for ch, vals in norm_vals.items():
+                if vals:
+                    self.normalization_dict[ch] = float(np.mean(vals))
+                else:
+                    self.normalization_dict[ch] = 1e-8
 
-        norm_str = {k: str(v) for k, v in self.normalization_dict.items()}
-        os.makedirs(self.output_dir, exist_ok=True)
-        with open(self.normalization_dict_path, "w", encoding="utf-8") as handle:
-            json.dump(norm_str, handle)
+            norm_str = {k: str(v) for k, v in self.normalization_dict.items()}
+            os.makedirs(self.output_dir, exist_ok=True)
+            with open(self.normalization_dict_path, "w", encoding="utf-8") as handle:
+                json.dump(norm_str, handle)
+
+        # QC: histograms of raw norms and cell-level positivity, plus gallery of normalized images
+        os.makedirs(os.path.join(self.output_dir, "normalization_qc"), exist_ok=True)
+        norm_hist_dir = os.path.join(self.output_dir, "normalization_qc", "norm_hists")
+        pos_hist_dir = os.path.join(self.output_dir, "normalization_qc", "cellpos_hists")
+        os.makedirs(norm_hist_dir, exist_ok=True)
+        os.makedirs(pos_hist_dir, exist_ok=True)
+
+        # Histogram of per-ROI norms with marker at final value
+        for ch, vals in self.normalization_dict.items():
+            pass
+
+        upper_clip = self.clip_values[1] if len(self.clip_values) > 1 else 2.0
+
+        def _save_hist(data: List[float], marker: Optional[float], out_path: str, xlabel: str, title: str):
+            if not data:
+                return
+            plt.figure(figsize=(4, 3))
+            plt.hist(data, bins=30, color="steelblue", edgecolor="black", alpha=0.7)
+            if marker is not None:
+                plt.axvline(marker, color="red", linestyle="--", label=f"marker={marker:.3g}")
+            plt.xlabel(xlabel)
+            plt.ylabel("Count")
+            plt.title(title)
+            if marker is not None:
+                plt.legend()
+            plt.tight_layout()
+            plt.savefig(out_path, dpi=150)
+            plt.close()
+
+        # Collect per-ROI norms and positivity proportions
+        norm_vals: Dict[str, List[float]] = {ch: [] for ch in self._channels}
+        cell_pos_props: Dict[str, List[float]] = {ch: [] for ch in self._channels}
+
+        for fov in self.fovs:
+            mask = self.get_segmentation(fov)
+            mask_bool = mask > 0
+            if not np.any(mask_bool):
+                continue
+            labels = mask.astype(np.int32)
+            for ch in self._channels:
+                norm = self.normalization_dict.get(ch, 1.0) or 1.0
+                img_raw = self.get_channel(fov, ch).astype(float)
+                norm_vals[ch].append(float(np.quantile(img_raw[mask_bool], quantile)))
+
+                img = np.clip(img_raw / norm, 0, upper_clip)
+                props = regionprops_table(label_image=labels, intensity_image=img, properties=["intensity_mean"])
+                means = props.get("intensity_mean", [])
+                if len(means) > 0:
+                    cell_pos_props[ch].append(float(np.mean(np.array(means) > 1.0)))
+
+        for ch in self._channels:
+            final_val = self.normalization_dict.get(ch, 1.0)
+            _save_hist(
+                norm_vals.get(ch, []),
+                final_val,
+                os.path.join(norm_hist_dir, f"{ch}.png"),
+                xlabel=f"{ch} per-ROI quantiles",
+                title=f"{ch} norm values (final {final_val:.3g})",
+            )
+            _save_hist(
+                cell_pos_props.get(ch, []),
+                None if not cell_pos_props.get(ch, []) else np.mean(cell_pos_props[ch]),
+                os.path.join(pos_hist_dir, f"{ch}.png"),
+                xlabel=f"{ch} proportion of cells > normalized 1.0",
+                title=f"{ch} cell positivity per ROI",
+            )
+
+        # QC gallery: use up to n_subset FOVs to save normalized images per channel
+        if n_subset and n_subset > 0:
+            qc_fovs = list(self.fovs)
+            if len(qc_fovs) > n_subset:
+                qc_fovs = random.sample(qc_fovs, n_subset)
+            for fov in qc_fovs:
+                mask = self.get_segmentation(fov)
+                mask_bool = mask > 0
+                safe_fov = re.sub(r"[^A-Za-z0-9._-]", "_", fov)
+                for ch in self._channels:
+                    norm = self.normalization_dict.get(ch, 1.0) or 1.0
+                    img = self.get_channel(fov, ch).astype(float) / norm
+                    img = np.clip(img, 0, upper_clip)
+                    img = img * mask_bool  # zero background for display
+                    scaled = (img / upper_clip * 255.0).astype(np.uint8)
+                    qc_dir = os.path.join(self.output_dir, "normalization_qc", ch)
+                    os.makedirs(qc_dir, exist_ok=True)
+                    io.imsave(os.path.join(qc_dir, f"{safe_fov}.png"), scaled, check_contrast=False)
 
 
 def _load_panel(metadata_folder: Path) -> pd.DataFrame:
