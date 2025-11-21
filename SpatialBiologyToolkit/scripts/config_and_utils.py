@@ -150,7 +150,7 @@ class NimbusConfig:
     checkpoint: str = 'latest'
     device: str = 'auto'
     normalization_quantile: float = 0.999
-    normalization_subset: Optional[int] = None
+    normalization_subset: int = 10
     normalization_jobs: int = 1
     normalization_clip: List[float] = field(default_factory=lambda: [0.0, 2.0])
     save_prediction_maps: bool = False
