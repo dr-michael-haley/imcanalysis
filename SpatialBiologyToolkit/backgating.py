@@ -1,6 +1,7 @@
 import os
 import re
 import logging
+import warnings
 from pathlib import Path
 from glob import glob
 from itertools import compress
@@ -417,13 +418,14 @@ def make_images(
         else:
             out_dir = Path(output_folder)
             if save_subfolder:
-                out_dir = out_dir / save_subfolder
-                out_dir.mkdir(parents=True, exist_ok=True)
-            save_path = out_dir / f'{filename}.png'
+            out_dir = out_dir / save_subfolder
+            out_dir.mkdir(parents=True, exist_ok=True)
+        save_path = out_dir / f'{filename}.png'
 
+    # Suppress low contrast warnings when saving images
+    with warnings.catch_warnings():
+        warnings.filterwarnings('ignore', message='.*is a low contrast image')
         io.imsave(str(save_path), stack_ubyte)
-
-
 def backgating(
     adata,
     cell_index,
@@ -1476,7 +1478,8 @@ def backgating_assessment(
                         object_index_obs=object_index_obs,
                         output_path=str(overlay_output_path),
                         contour_color=(255, 255, 255),  # White contours
-                        contour_width=population_overlay_outline_width
+                        contour_width=population_overlay_outline_width,
+                        verbose=False
                     )
                     
                 except Exception as e:

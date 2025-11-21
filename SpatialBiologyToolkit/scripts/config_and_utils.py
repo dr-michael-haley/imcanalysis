@@ -155,6 +155,7 @@ class NimbusConfig:
     normalization_clip: List[float] = field(default_factory=lambda: [0.0, 2.0])
     save_prediction_maps: bool = False
     overwrite_existing_outputs: bool = False
+    extract_classic_intensities: bool = True  # Extract classic mean intensities over masks
 
 @dataclass
 class BasicProcessConfig:
@@ -269,6 +270,7 @@ class VisualizationConfig:
     include_metadata_umaps: bool = True  # Include metadata columns in UMAP plots
     include_metadata_matrix_plots: bool = True  # Include metadata columns in MatrixPlots
     include_marker_umaps: bool = True  # Include marker expression UMAPs
+    max_categories: int = 50  # Maximum number of unique categories for population/metadata columns
     
     # Backgating assessment settings
     backgating_cells_per_group: int = 50  # Number of cells to sample per population for backgating
@@ -297,6 +299,9 @@ class VisualizationConfig:
     
     # Population overlay visualization settings
     backgating_population_overlay_outline_width: int = 1  # Width of contour outlines in population overlay visualizations
+    
+    # MatrixPlot settings
+    matrixplot_vmax: float = 0.8  # Maximum value for non-scaled matrix plots
     
     # General visualization settings
     save_high_res: bool = True  # Save high-resolution figures (300 DPI)

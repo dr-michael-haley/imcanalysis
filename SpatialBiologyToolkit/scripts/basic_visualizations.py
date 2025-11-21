@@ -86,7 +86,7 @@ def log_detailed_error(error, context="", logger=None):
     logger.error(error_msg)
 
 
-def find_population_columns(adata):
+def find_population_columns(adata, max_categories=50):
     """
     Intelligently find population/clustering columns in adata.obs.
     
@@ -94,6 +94,8 @@ def find_population_columns(adata):
     ----------
     adata : anndata.AnnData
         Annotated data matrix
+    max_categories : int, optional
+        Maximum number of unique categories allowed (default: 50)
         
     Returns
     -------
@@ -124,11 +126,11 @@ def find_population_columns(adata):
     filtered_columns = []
     for col in population_columns:
         n_unique = adata.obs[col].nunique()
-        # Reasonable range: 2-50 unique populations
-        if 2 <= n_unique <= 50:
+        # Reasonable range: 2 to max_categories unique populations
+        if 2 <= n_unique <= max_categories:
             filtered_columns.append(col)
         else:
-            logging.info(f"Excluding {col} from population analysis: {n_unique} unique values (outside range 2-50)")
+            logging.info(f"Excluding {col} from population analysis: {n_unique} unique values (outside range 2-{max_categories})")
     
     if filtered_columns:
         logging.info(f"Found population columns: {filtered_columns}")
@@ -138,7 +140,7 @@ def find_population_columns(adata):
     return filtered_columns
 
 
-def find_metadata_columns(adata, population_columns=None, metadata_folder='metadata'):
+def find_metadata_columns(adata, population_columns=None, metadata_folder='metadata', max_categories=50):
     """
     Intelligently find metadata/categorical columns in adata.obs using dictionary.csv.
     
@@ -150,6 +152,8 @@ def find_metadata_columns(adata, population_columns=None, metadata_folder='metad
         List of population columns to exclude from metadata
     metadata_folder : str or Path, optional
         Path to metadata folder containing dictionary.csv
+    max_categories : int, optional
+        Maximum number of unique categories allowed (default: 50)
         
     Returns
     -------
@@ -192,10 +196,10 @@ def find_metadata_columns(adata, population_columns=None, metadata_folder='metad
     for col in dictionary_columns:
         if col in adata.obs.columns and col not in exclude_columns:
             n_unique = adata.obs[col].nunique()
-            if 2 <= n_unique <= 50:  # Reasonable range for visualization
+            if 2 <= n_unique <= max_categories:  # Reasonable range for visualization
                 metadata_columns.append(col)
             else:
-                logging.info(f"Excluding dictionary column {col}: {n_unique} unique values (outside range 2-50)")
+                logging.info(f"Excluding dictionary column {col}: {n_unique} unique values (outside range 2-{max_categories})")
     
     # Also check for ROI column and other common metadata patterns not in dictionary
     for col in adata.obs.columns:
@@ -212,7 +216,7 @@ def find_metadata_columns(adata, population_columns=None, metadata_folder='metad
         elif any(term in col.lower() for term in ['sample', 'patient', 'batch', 'replicate', 'condition', 'treatment', 'group']):
             is_metadata = True
         # General categorical data with reasonable categories (fallback)
-        elif 2 <= n_unique <= 20:  # Stricter range for non-dictionary columns
+        elif 2 <= n_unique <= min(20, max_categories):  # Stricter range for non-dictionary columns
             # Check if it's not obviously continuous data
             try:
                 # If all values can be converted to float and show continuous distribution, skip
@@ -223,10 +227,10 @@ def find_metadata_columns(adata, population_columns=None, metadata_folder='metad
                 # Not numeric, likely categorical
                 is_metadata = True
         
-        if is_metadata and 2 <= n_unique <= 50:
+        if is_metadata and 2 <= n_unique <= max_categories:
             metadata_columns.append(col)
         elif is_metadata:
-            logging.info(f"Excluding {col} from metadata analysis: {n_unique} unique values (outside range 2-50)")
+            logging.info(f"Excluding {col} from metadata analysis: {n_unique} unique values (outside range 2-{max_categories})")
     
     if metadata_columns:
         logging.info(f"Found metadata columns: {metadata_columns}")
@@ -361,6 +365,7 @@ def create_categorical_umaps(adata, categorical_columns, qc_umap_dir, qc_legend_
 def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, viz_config, category_type="categorical"):
     """
     Create MatrixPlot summaries grouped by categorical columns (populations or metadata).
+    Creates both standard-scaled and vmax-capped versions.
     
     Parameters
     ----------
@@ -379,13 +384,14 @@ def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, v
         markers_to_plot = adata.var_names.tolist()
         for cat_col in categorical_columns:
             if cat_col in adata.obs.columns:
-                logging.info(f'Creating MatrixPlot for {category_type} column: {cat_col}')
+                logging.info(f'Creating MatrixPlots for {category_type} column: {cat_col}')
                 try:
                     # Pre-compute dendrogram to avoid warning
                     sc.tl.dendrogram(adata, groupby=cat_col)
                     
-                    # Create the matrixplot - this returns a MatrixPlot object, not a Figure
-                    matrixplot = sc.pl.matrixplot(
+                    # 1. Create standard-scaled matrixplot
+                    logging.info(f'  Creating standard-scaled MatrixPlot for {cat_col}')
+                    matrixplot_scaled = sc.pl.matrixplot(
                         adata,
                         var_names=markers_to_plot,
                         groupby=cat_col,
@@ -394,14 +400,28 @@ def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, v
                         show=False,
                         return_fig=True
                     )
-                    fig_path = qc_matrix_dir / f'Matrixplot_{cat_col}.{viz_config.figure_format}'
-                    
-                    # Save using the MatrixPlot object's savefig method
-                    matrixplot.savefig(fig_path, bbox_inches='tight', dpi=300 if viz_config.save_high_res else 150)
-                    
-                    # Close the underlying figure properly
+                    fig_path_scaled = qc_matrix_dir / f'Matrixplot_{cat_col}_scaled.{viz_config.figure_format}'
+                    matrixplot_scaled.savefig(fig_path_scaled, bbox_inches='tight', dpi=300 if viz_config.save_high_res else 150)
                     plt.close()
-                    logging.info(f'MatrixPlot saved to {fig_path}')
+                    logging.info(f'  Standard-scaled MatrixPlot saved to {fig_path_scaled}')
+                    
+                    # 2. Create non-scaled matrixplot with vmax
+                    logging.info(f'  Creating vmax-capped MatrixPlot for {cat_col} (vmax={viz_config.matrixplot_vmax})')
+                    matrixplot_vmax = sc.pl.matrixplot(
+                        adata,
+                        var_names=markers_to_plot,
+                        groupby=cat_col,
+                        standard_scale=None,
+                        dendrogram=True,
+                        vmax=viz_config.matrixplot_vmax,
+                        show=False,
+                        return_fig=True
+                    )
+                    fig_path_vmax = qc_matrix_dir / f'Matrixplot_{cat_col}_vmax.{viz_config.figure_format}'
+                    matrixplot_vmax.savefig(fig_path_vmax, bbox_inches='tight', dpi=300 if viz_config.save_high_res else 150)
+                    plt.close()
+                    logging.info(f'  Vmax-capped MatrixPlot saved to {fig_path_vmax}')
+                    
                 except Exception as e:
                     log_detailed_error(e, f"creating MatrixPlot for {category_type} column '{cat_col}'")
             else:
@@ -599,7 +619,7 @@ def create_backgating_assessment(adata, population_columns, viz_config, general_
         log_detailed_error(e, "backgating assessment step")
 
 
-def create_population_analysis(adata, population_columns, metadata_columns, qc_base):
+def create_population_analysis(adata, population_columns, metadata_columns, qc_base, max_categories=20):
     """
     Create population analysis across metadata categories.
     
@@ -613,6 +633,8 @@ def create_population_analysis(adata, population_columns, metadata_columns, qc_b
         List of metadata column names
     qc_base : Path
         Base QC directory
+    max_categories : int, optional
+        Maximum number of categories to plot (default: 20, stricter for plotting)
     """
     logging.info("Starting population analysis across metadata categories...")
     
@@ -648,8 +670,8 @@ def create_population_analysis(adata, population_columns, metadata_columns, qc_b
                 n_categories = adata.obs[metadata_col].nunique()
                 logging.info(f"Number of categories in {metadata_col}: {n_categories}")
                 
-                if n_categories > 20:
-                    logging.warning(f"Skipping {metadata_col} - too many categories ({n_categories})")
+                if n_categories > max_categories:
+                    logging.warning(f"Skipping {metadata_col} - too many categories ({n_categories}, max: {max_categories})")
                     continue
                 
                 try:
@@ -734,8 +756,8 @@ if __name__ == "__main__":
         p.mkdir(parents=True, exist_ok=True)
 
     # Find all population and metadata columns intelligently
-    population_columns = find_population_columns(adata)
-    metadata_columns = find_metadata_columns(adata, population_columns, general_config.metadata_folder)
+    population_columns = find_population_columns(adata, max_categories=viz_config.max_categories)
+    metadata_columns = find_metadata_columns(adata, population_columns, general_config.metadata_folder, max_categories=viz_config.max_categories)
     
     logging.info("Starting comprehensive visualization suite...")
     
@@ -771,7 +793,7 @@ if __name__ == "__main__":
     # Create population analysis across metadata
     if viz_config.create_population_analysis:
         logging.info("Creating population analysis...")
-        create_population_analysis(adata, population_columns, metadata_columns, qc_base)
+        create_population_analysis(adata, population_columns, metadata_columns, qc_base, max_categories=min(20, viz_config.max_categories))
     
     # Create backgating assessment for populations
     if viz_config.create_backgating:

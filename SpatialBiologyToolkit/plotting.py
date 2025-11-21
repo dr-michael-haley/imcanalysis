@@ -2270,7 +2270,8 @@ def create_population_overlay(
     object_index_obs: str = 'ObjectNumber',
     output_path: str = None,
     contour_color: tuple = (255, 255, 255),  # White contours
-    contour_width: int = 2
+    contour_width: int = 2,
+    verbose: bool = True
 ):
     """
     Create an overlay visualization showing all cells of a specific population
@@ -2288,6 +2289,7 @@ def create_population_overlay(
         output_path: Where to save the overlay image
         contour_color: RGB color for cell contours (default: yellow)
         contour_width: Width of contour lines in pixels
+        verbose: Whether to print status messages (default: True)
         
     Returns:
         None. Saves overlay image to output_path if provided.
@@ -2298,7 +2300,8 @@ def create_population_overlay(
     
     # Load composite image
     if not Path(composite_image_path).exists():
-        print(f"Warning: Composite image not found: {composite_image_path}")
+        if verbose:
+            print(f"Warning: Composite image not found: {composite_image_path}")
         return
         
     composite_img = io.imread(composite_image_path)
@@ -2308,7 +2311,8 @@ def create_population_overlay(
     if mask_path and Path(mask_path).exists():
         mask = io.imread(mask_path)
     elif mask_path:
-        print(f"Warning: Mask file not found: {mask_path}")
+        if verbose:
+            print(f"Warning: Mask file not found: {mask_path}")
     
     # Get cells of this population in this ROI
     roi_cells = adata.obs[
@@ -2317,7 +2321,8 @@ def create_population_overlay(
     ]
     
     if len(roi_cells) == 0:
-        print(f"No cells of population '{population}' found in ROI '{roi_name}'")
+        if verbose:
+            print(f"No cells of population '{population}' found in ROI '{roi_name}'")
         return
         
     # Create figure
@@ -2346,7 +2351,8 @@ def create_population_overlay(
         if target_cell_ids:
             target_mask = np.isin(mask, list(target_cell_ids))
             if not target_mask.any():
-                print("Warning: No matching labels found in mask for selected population.")
+                if verbose:
+                    print("Warning: No matching labels found in mask for selected population.")
             else:
                 boundaries = find_boundaries(target_mask, mode='inner')
                 if contour_width > 1:
@@ -2357,13 +2363,16 @@ def create_population_overlay(
                 overlay[..., :3] = np.array(contour_color) / 255.0
                 overlay[..., 3] = boundaries.astype(float)
                 ax.imshow(overlay)
-                print(f"Drew contours for {len(target_cell_ids)} cells")
+                if verbose:
+                    print(f"Drew contours for {len(target_cell_ids)} cells")
         else:
-            print("Warning: No target cell IDs found; skipping contour overlay.")
+            if verbose:
+                print("Warning: No target cell IDs found; skipping contour overlay.")
         
     else:
         # If no mask, just plot cell centers as points
-        print(f"No mask available, plotting cell centers as points")
+        if verbose:
+            print(f"No mask available, plotting cell centers as points")
         if 'X_loc' in roi_cells.columns and 'Y_loc' in roi_cells.columns:
             ax.scatter(roi_cells['X_loc'], roi_cells['Y_loc'], 
                       c=[np.array(contour_color)/255], s=20, alpha=0.8, marker='o')

@@ -15,6 +15,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 import cv2
 import numpy as np
 import pandas as pd
+import scanpy as sc
 from alpineer import io_utils
 from skimage import io
 from skimage.measure import regionprops
@@ -43,7 +44,7 @@ from .config_and_utils import (
     process_config_with_overrides,
     setup_logging,
 )
-from .segmentation import create_anndata
+from .segmentation import create_anndata, normalise_markers
 
 
 class ToolkitNimbusDataset(MultiplexDataset):
@@ -288,7 +289,7 @@ def _build_mask_features(mask_lookup: Dict[str, Path], rois: List[str]) -> pd.Da
         mask = io.imread(mask_lookup[roi])
         props = regionprops(mask)
         df = pd.DataFrame({
-            "Label": [p.label for p in props],
+            "ObjectNumber": [p.label for p in props],
             "X_loc": [p.centroid[1] for p in props],
             "Y_loc": [p.centroid[0] for p in props],
             "mask_area": [p.area for p in props],
@@ -303,12 +304,59 @@ def _build_mask_features(mask_lookup: Dict[str, Path], rois: List[str]) -> pd.Da
     return pd.concat(frames, ignore_index=True)
 
 
+def _extract_classic_intensities(
+    mask_lookup: Dict[str, Path],
+    rois: List[str],
+    channel_paths: Dict[str, Dict[str, Path]],
+    expected_channels: List[str],
+) -> pd.DataFrame:
+    """
+    Extract classic mean intensities by measuring directly over masks (like original segmentation.py).
+    Returns DataFrame with ROI, ObjectNumber, and channel intensities.
+    """
+    frames: List[pd.DataFrame] = []
+    
+    for roi in tqdm(rois, desc="Classic intensity extraction"):
+        mask = io.imread(mask_lookup[roi])
+        props = regionprops(mask)
+        
+        # Initialize DataFrame with object numbers
+        roi_df = pd.DataFrame({
+            "ObjectNumber": [p.label for p in props],
+        })
+        
+        # Extract mean intensities for each channel
+        available_channels = channel_paths.get(roi, {})
+        
+        for channel in expected_channels:
+            if channel not in available_channels:
+                roi_df[channel] = np.nan
+                continue
+                
+            try:
+                image_path = available_channels[channel]
+                image = io.imread(image_path)
+                
+                # Calculate mean intensity for each label
+                mean_intensities = [region.mean_intensity for region in regionprops(mask, image)]
+                roi_df[channel] = mean_intensities
+                
+            except Exception as e:
+                logging.warning(f"Error extracting classic intensity for {roi}, channel {channel}: {e}")
+                roi_df[channel] = np.nan
+        
+        roi_df["ROI"] = roi
+        frames.append(roi_df)
+    
+    return pd.concat(frames, ignore_index=True)
+
+
 def _prepare_nimbus_output(cell_table: pd.DataFrame) -> pd.DataFrame:
     if cell_table is None or cell_table.empty:
         raise ValueError("Nimbus returned an empty cell table")
-    renamed = cell_table.rename(columns={"label": "Label", "fov": "ROI"})
+    renamed = cell_table.rename(columns={"label": "ObjectNumber", "fov": "ROI"})
     renamed["ROI"] = renamed["ROI"].astype(str)
-    renamed["Label"] = renamed["Label"].astype(int)
+    renamed["ObjectNumber"] = renamed["ObjectNumber"].astype(int)
     return renamed
 
 
@@ -319,7 +367,7 @@ def _merge_with_masks(
     predicted_channels: List[str],
     allow_missing: bool,
 ) -> Tuple[pd.DataFrame, List[str]]:
-    merged = mask_features.merge(nimbus_df, on=["ROI", "Label"], how="left")
+    merged = mask_features.merge(nimbus_df, on=["ROI", "ObjectNumber"], how="left")
 
     if allow_missing:
         for ch in expected_channels:
@@ -332,10 +380,10 @@ def _merge_with_masks(
         expected_channels = [ch for ch in expected_channels if ch in merged.columns]
 
     channel_cols = [ch for ch in expected_channels if ch in merged.columns]
-    metadata_cols = [c for c in mask_features.columns if c not in {"ROI", "Label"}]
-    other_cols = [c for c in merged.columns if c not in {"ROI", "Label"} | set(channel_cols) | set(metadata_cols)]
+    metadata_cols = [c for c in mask_features.columns if c not in {"ROI", "ObjectNumber"}]
+    other_cols = [c for c in merged.columns if c not in {"ROI", "ObjectNumber"} | set(channel_cols) | set(metadata_cols)]
 
-    ordered = ["ROI", "Label"] + metadata_cols + other_cols + channel_cols
+    ordered = ["ROI", "ObjectNumber"] + metadata_cols + other_cols + channel_cols
     merged = merged.loc[:, ordered]
     merged.reset_index(drop=True, inplace=True)
     merged["Master_Index"] = merged.index
@@ -346,6 +394,130 @@ def _save_roi_tables(cell_df: pd.DataFrame, output_dir: Path, prefix: str) -> No
     output_dir.mkdir(parents=True, exist_ok=True)
     for roi, roi_df in cell_df.groupby("ROI"):
         roi_df.to_csv(output_dir / f"{prefix}{roi}.csv", index=False)
+
+
+def _create_anndata_with_layers(
+    celltable: pd.DataFrame,
+    classic_intensities: Optional[pd.DataFrame],
+    metadata_folder: Path,
+    normalisation: Optional[List[str]],
+    remove_channels: Optional[List[str]],
+    expected_channels: List[str],
+) -> sc.AnnData:
+    """
+    Create AnnData object with multiple layers:
+    - .X: normalized Nimbus data (default)
+    - .layers['nimbus_raw']: raw Nimbus predictions
+    - .layers['classic_raw']: raw classic mean intensities (if available)
+    - .layers['classic_normalized']: normalized classic mean intensities (if available)
+    """
+    
+    # Get available channels in celltable
+    available_channels = [ch for ch in expected_channels if ch in celltable.columns]
+    if not available_channels:
+        raise ValueError("No marker channels found in cell table")
+    
+    logging.info(f'Creating AnnData with {len(available_channels)} channels: {available_channels}')
+    
+    # Extract Nimbus raw data
+    nimbus_raw = celltable.loc[:, available_channels].values
+    
+    # Create AnnData with raw Nimbus data first
+    adata = sc.AnnData(nimbus_raw)
+    adata.var_names = available_channels
+    
+    # Store raw Nimbus data in layer
+    adata.layers['nimbus_raw'] = nimbus_raw.copy()
+    
+    # Normalize Nimbus data for .X
+    if normalisation:
+        adata.X = normalise_markers(
+            pd.DataFrame(adata.X, columns=adata.var_names), normalisation
+        ).values
+        logging.info(f'Nimbus data normalized: {normalisation}')
+    else:
+        logging.info('Nimbus data not normalized in .X')
+    
+    # Add classic intensities if available
+    if classic_intensities is not None:
+        logging.info('Adding classic mean intensity measurements to AnnData layers')
+        
+        # Merge classic data with celltable to ensure same cell order
+        classic_merged = celltable[['ROI', 'ObjectNumber']].merge(
+            classic_intensities, on=['ROI', 'ObjectNumber'], how='left'
+        )
+        
+        # Extract classic raw data for available channels
+        classic_raw_data = classic_merged.loc[:, available_channels].values
+        adata.layers['classic_raw'] = classic_raw_data
+        
+        # Normalize classic data
+        if normalisation:
+            classic_normalized = normalise_markers(
+                pd.DataFrame(classic_raw_data, columns=available_channels), normalisation
+            ).values
+            adata.layers['classic_normalized'] = classic_normalized
+            logging.info(f'Classic data normalized: {normalisation}')
+        else:
+            adata.layers['classic_normalized'] = classic_raw_data.copy()
+    
+    # Add cellular obs from celltable
+    non_channels = [x for x in celltable.columns if x not in expected_channels]
+    for col in non_channels:
+        adata.obs[col] = celltable[col].tolist()
+    
+    # Add metadata from metadata.csv
+    metadata = pd.read_csv(metadata_folder / 'metadata.csv', index_col='unstacked_data_folder')
+    adata.obs['ROI'] = adata.obs['ROI'].astype('category')
+    adata.obs['ROI_name'] = adata.obs['ROI'].map(metadata['description'].to_dict())
+    adata.obs['ROI_width'] = adata.obs['ROI'].map(metadata['width_um'].to_dict())
+    adata.obs['ROI_height'] = adata.obs['ROI'].map(metadata['height_um'].to_dict())
+    
+    if 'mcd' in metadata.columns:
+        adata.obs['MCD_file'] = adata.obs['ROI'].map(metadata['mcd'].to_dict())
+    elif 'source_file' in metadata.columns:
+        adata.obs['Source_file'] = adata.obs['ROI'].map(metadata['source_file'].to_dict())
+        adata.obs['File_type'] = adata.obs['ROI'].map(metadata['file_type'].to_dict())
+    
+    # Add spatial coordinates
+    adata.obsm['spatial'] = celltable[['X_loc', 'Y_loc']].to_numpy()
+    
+    # Process dictionary for additional metadata
+    from .segmentation import convert_to_boolean
+    dictionary_path = metadata_folder / 'dictionary.csv'
+    if dictionary_path.exists():
+        dictionary_file = pd.read_csv(dictionary_path, index_col='ROI')
+        dictionary_file = convert_to_boolean(dictionary_file)
+        
+        cols = [x for x in dictionary_file.columns if 'Example' not in x and 'description' not in x]
+        
+        if len(cols) > 0:
+            logging.info(f'Dictionary file found with columns: {cols}')
+            adata.obs = adata.obs.copy()
+            
+            for c in cols:
+                mapped_data = adata.obs['ROI'].map(dictionary_file[c].to_dict())
+                adata.obs[c] = mapped_data.astype(dictionary_file[c].dtype)
+            
+            adata.obs = convert_to_boolean(adata.obs)
+        else:
+            logging.info('Dictionary file found but was empty')
+    else:
+        logging.info('No dictionary file found')
+    
+    # Remove specified channels
+    if remove_channels:
+        remove_channels_list = [
+            channel for channel in adata.var_names
+            if any(substring in channel for substring in remove_channels)
+        ]
+        if remove_channels_list:
+            logging.info(f'Removing channels: {remove_channels_list}')
+            keep_mask = [x not in remove_channels_list for x in adata.var_names]
+            adata = adata[:, keep_mask]
+    
+    logging.info('AnnData created successfully with layers: %s', list(adata.layers.keys()))
+    return adata
 
 
 def _predict_fovs_shape_guard(
@@ -501,6 +673,7 @@ def main() -> None:
         checkpoint=nimbus_config.checkpoint,
     )
 
+    # Run Nimbus predictions
     nimbus_df = _prepare_nimbus_output(
         _predict_fovs_shape_guard(
             nimbus=nimbus,
@@ -512,7 +685,11 @@ def main() -> None:
             test_time_augmentation=nimbus_config.test_time_augmentation,
         )
     )
+    
+    # Build mask features
     mask_features = _build_mask_features(mask_lookup, valid_rois)
+    
+    # Merge Nimbus predictions with mask features
     merged_celltable, predicted_channels = _merge_with_masks(
         mask_features, nimbus_df, expected_channels, channels_for_model, seg_config.allow_missing_channels
     )
@@ -523,6 +700,20 @@ def main() -> None:
         len(valid_rois),
         len(predicted_channels),
     )
+    
+    # Extract classic mean intensities if requested
+    classic_intensities = None
+    if nimbus_config.extract_classic_intensities:
+        logging.info("Extracting classic mean intensities over masks")
+        classic_intensities = _extract_classic_intensities(
+            mask_lookup=mask_lookup,
+            rois=valid_rois,
+            channel_paths=channel_paths,
+            expected_channels=expected_channels,
+        )
+        logging.info(f"Classic extraction complete for {len(classic_intensities)} cells")
+    else:
+        logging.info("Skipping classic intensity extraction per config")
 
     roi_output_dir = Path(general_config.celltable_folder)
     if nimbus_config.roi_table_subfolder:
@@ -550,16 +741,20 @@ def main() -> None:
         if not anndata_path.is_absolute():
             anndata_path = Path(nimbus_config.output_dir) / anndata_path
 
-        adata = create_anndata(
-            merged_celltable,
-            metadata_folder=general_config.metadata_folder,
-        normalisation=seg_config.marker_normalisation,
-        store_raw=seg_config.store_raw_marker_data,
-        remove_channels=seg_config.remove_channels_list,
-    )
+        # Create AnnData with layers for both Nimbus and classic data
+        adata = _create_anndata_with_layers(
+            celltable=merged_celltable,
+            classic_intensities=classic_intensities,
+            metadata_folder=metadata_folder,
+            normalisation=seg_config.marker_normalisation,
+            remove_channels=seg_config.remove_channels_list,
+            expected_channels=expected_channels,
+        )
+        
         anndata_path.parent.mkdir(parents=True, exist_ok=True)
         adata.write_h5ad(anndata_path)
-        logging.info("Saved Nimbus AnnData to %s", anndata_path)
+        logging.info("Saved AnnData to %s", anndata_path)
+        logging.info("AnnData structure: .X (normalized Nimbus), layers: %s", list(adata.layers.keys()))
     else:
         logging.info("Skipping AnnData creation per config")
 
