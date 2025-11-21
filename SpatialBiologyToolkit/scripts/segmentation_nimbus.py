@@ -15,6 +15,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
 import cv2
 import numpy as np
 import pandas as pd
+import scanpy as sc
 from alpineer import io_utils
 from skimage import io
 from skimage.measure import regionprops, regionprops_table
@@ -60,6 +61,7 @@ class ToolkitNimbusDataset(MultiplexDataset):
         suffix: str = ".tiff",
         magnification: int = 20,
         output_dir: str = "nimbus_output",
+        qc_folder: str = "QC",
         normalization_jobs: int = 1,
         clip_values: Sequence[float] = (0.0, 2.0),
         suffix_match: Optional[str] = None,
@@ -67,6 +69,7 @@ class ToolkitNimbusDataset(MultiplexDataset):
         self._channels = sorted(channels)
         self._channel_paths = channel_paths
         self._mask_lookup = mask_lookup
+        self.qc_folder = qc_folder
         self.normalization_n_jobs = max(1, int(normalization_jobs))
         self.clip_values = tuple(clip_values)
         self._suffix_match = suffix_match or suffix
@@ -178,9 +181,9 @@ class ToolkitNimbusDataset(MultiplexDataset):
                 json.dump(norm_str, handle)
 
         # QC: histograms of raw norms and cell-level positivity, plus gallery of normalized images
-        os.makedirs(os.path.join(self.output_dir, "normalization_qc"), exist_ok=True)
-        norm_hist_dir = os.path.join(self.output_dir, "normalization_qc", "norm_hists")
-        pos_hist_dir = os.path.join(self.output_dir, "normalization_qc", "cellpos_hists")
+        os.makedirs(os.path.join(self.qc_folder, "nimbus_normalization_qc"), exist_ok=True)
+        norm_hist_dir = os.path.join(self.qc_folder, "nimbus_normalization_qc", "norm_hists")
+        pos_hist_dir = os.path.join(self.qc_folder, "nimbus_normalization_qc", "cellpos_hists")
         os.makedirs(norm_hist_dir, exist_ok=True)
         os.makedirs(pos_hist_dir, exist_ok=True)
 
@@ -259,7 +262,7 @@ class ToolkitNimbusDataset(MultiplexDataset):
                     img = np.clip(img, 0, upper_clip)
                     img = img * mask_bool  # zero background for display
                     scaled = (img / upper_clip * 255.0).astype(np.uint8)
-                    qc_dir = os.path.join(self.output_dir, "normalization_qc", ch)
+                    qc_dir = os.path.join(self.qc_folder, "nimbus_normalization_qc", ch)
                     os.makedirs(qc_dir, exist_ok=True)
                     io.imsave(os.path.join(qc_dir, f"{safe_fov}.png"), scaled, check_contrast=False)
 
@@ -735,6 +738,7 @@ def main() -> None:
         suffix=".tiff",
         magnification=nimbus_config.dataset_magnification,
         output_dir=nimbus_config.output_dir,
+        qc_folder=general_config.qc_folder,
         normalization_jobs=nimbus_config.normalization_jobs,
         clip_values=clip_values,
     )
