@@ -71,7 +71,16 @@ def update_config_with_defaults(config_file: str = 'config.yaml', backup: bool =
     # Count changes
     changes_made = 0
     sections_added = []
+    sections_removed = []
     params_added = {}
+    params_removed = {}
+    
+    # Remove sections not in defaults
+    for section in list(existing_config.keys()):
+        if section not in defaults:
+            del existing_config[section]
+            sections_removed.append(section)
+            changes_made += 1
     
     # Merge defaults into existing config
     for section, default_values in defaults.items():
@@ -81,6 +90,16 @@ def update_config_with_defaults(config_file: str = 'config.yaml', backup: bool =
             changes_made += len(default_values)
         else:
             params_added[section] = []
+            params_removed[section] = []
+            
+            # Remove parameters not in defaults
+            for key in list(existing_config[section].keys()):
+                if key not in default_values:
+                    del existing_config[section][key]
+                    params_removed[section].append(key)
+                    changes_made += 1
+            
+            # Add missing parameters from defaults
             for key, value in default_values.items():
                 if key not in existing_config[section]:
                     existing_config[section][key] = value
@@ -95,14 +114,23 @@ def update_config_with_defaults(config_file: str = 'config.yaml', backup: bool =
         logging.info(f"\n{'='*60}")
         logging.info(f"Config file updated successfully!")
         logging.info(f"{'='*60}")
-        logging.info(f"Total parameters added: {changes_made}")
+        logging.info(f"Total changes made: {changes_made}")
         
         if sections_added:
             logging.info(f"\nNew sections added: {', '.join(sections_added)}")
         
+        if sections_removed:
+            logging.info(f"\nObsolete sections removed: {', '.join(sections_removed)}")
+        
         for section, params in params_added.items():
             if params:
                 logging.info(f"\n[{section}] - Added {len(params)} parameter(s):")
+                for param in params:
+                    logging.info(f"  - {param}")
+        
+        for section, params in params_removed.items():
+            if params:
+                logging.info(f"\n[{section}] - Removed {len(params)} obsolete parameter(s):")
                 for param in params:
                     logging.info(f"  - {param}")
         
