@@ -64,6 +64,7 @@ class ToolkitNimbusDataset(MultiplexDataset):
         qc_folder: str = "QC",
         normalization_jobs: int = 1,
         clip_values: Sequence[float] = (0.0, 2.0),
+        normalization_min_value: float = 2.0,
         suffix_match: Optional[str] = None,
     ) -> None:
         self._channels = sorted(channels)
@@ -72,6 +73,7 @@ class ToolkitNimbusDataset(MultiplexDataset):
         self.qc_folder = qc_folder
         self.normalization_n_jobs = max(1, int(normalization_jobs))
         self.clip_values = tuple(clip_values)
+        self.normalization_min_value = float(normalization_min_value)
         self._suffix_match = suffix_match or suffix
 
         def _seg_lookup(fov_path: str) -> Path:
@@ -171,9 +173,10 @@ class ToolkitNimbusDataset(MultiplexDataset):
             self.normalization_dict = {}
             for ch, vals in norm_vals.items():
                 if vals:
-                    self.normalization_dict[ch] = float(np.mean(vals))
+                    computed_val = float(np.mean(vals))
+                    self.normalization_dict[ch] = max(computed_val, self.normalization_min_value)
                 else:
-                    self.normalization_dict[ch] = 1e-8
+                    self.normalization_dict[ch] = self.normalization_min_value
 
             norm_str = {k: str(v) for k, v in self.normalization_dict.items()}
             os.makedirs(self.output_dir, exist_ok=True)
@@ -741,6 +744,7 @@ def main() -> None:
         qc_folder=general_config.qc_folder,
         normalization_jobs=nimbus_config.normalization_jobs,
         clip_values=clip_values,
+        normalization_min_value=nimbus_config.normalization_min_value,
     )
 
     dataset.prepare_normalization_dict(
