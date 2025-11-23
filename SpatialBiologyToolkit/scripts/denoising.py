@@ -311,9 +311,8 @@ def denoise_batch(
                     if not is_load_weights:
                         print('Starting training...')
                         logging.info('Starting model training.')
-                        # Train the DeepSNF classifier (verbose controlled by config)
-                        keras_verbose = 1 if denoise_config.verbose_training else 0
-                        train_loss, val_loss = deepsnf.train(generated_patches, verbose=keras_verbose)
+                        # Train the DeepSNF classifier
+                        train_loss, val_loss = deepsnf.train(generated_patches)
                         logging.info('Model training completed.')
                     else:
                         print(f'Using weights file: {weights_name}')
