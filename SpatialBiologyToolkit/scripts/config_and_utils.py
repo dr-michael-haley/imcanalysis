@@ -57,8 +57,8 @@ class DenoisingConfig:
     truncated_max_rate: float = 0.99999
     # Parameter scanning
     run_parameter_scan: bool = False
-    scan_parameter: Optional[str] = None  # Name of parameter to scan (e.g., 'train_epochs', 'lambda_HF')
-    scan_values: Optional[List[Any]] = None  # List of values to test for the scan parameter
+    scan_parameter: Optional[str] = 'truncated_max_rate'  # Name of parameter to scan (e.g., 'train_epochs', 'lambda_HF')
+    scan_values: Optional[List[Any]] = field(default_factory=lambda: [0.99, 0.999, 0.99999])  # List of values to test for the scan parameter
     # Training verbosity
     verbose_training: bool = False  # Show detailed TensorFlow/Keras training output (progress bars, epoch details)
     # Parameters for QC images
