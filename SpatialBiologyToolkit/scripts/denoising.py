@@ -114,6 +114,11 @@ def denoise_batch(
     """
     Denoise images in batch using the specified method from the DenoisingConfig.
     """
+    # Configure TensorFlow/Keras training output verbosity
+    if not denoise_config.verbose_training:
+        os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TensorFlow logging
+        tf.get_logger().setLevel('ERROR')  # Only show errors
+    
     logging.info('Starting denoise_batch function.')
     logging.info(f'DenoisingConfig parameters: {denoise_config}')
     logging.info(f'GeneralConfig parameters: {general_config}')
@@ -306,8 +311,9 @@ def denoise_batch(
                     if not is_load_weights:
                         print('Starting training...')
                         logging.info('Starting model training.')
-                        # Train the DeepSNF classifier
-                        train_loss, val_loss = deepsnf.train(generated_patches)
+                        # Train the DeepSNF classifier (verbose controlled by config)
+                        keras_verbose = 1 if denoise_config.verbose_training else 0
+                        train_loss, val_loss = deepsnf.train(generated_patches, verbose=keras_verbose)
                         logging.info('Model training completed.')
                     else:
                         print(f'Using weights file: {weights_name}')

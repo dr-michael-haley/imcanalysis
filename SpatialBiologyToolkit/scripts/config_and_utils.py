@@ -59,6 +59,8 @@ class DenoisingConfig:
     run_parameter_scan: bool = False
     scan_parameter: Optional[str] = None  # Name of parameter to scan (e.g., 'train_epochs', 'lambda_HF')
     scan_values: Optional[List[Any]] = None  # List of values to test for the scan parameter
+    # Training verbosity
+    verbose_training: bool = False  # Show detailed TensorFlow/Keras training output (progress bars, epoch details)
     # Parameters for QC images
     run_QC: bool = True
     colourmap: str = "jet"
