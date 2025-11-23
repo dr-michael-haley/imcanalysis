@@ -48,14 +48,15 @@ from IMC_Denoise.IMC_Denoise_main.DeepSNiF import DeepSNiF
 # Additional imports
 import tensorflow as tf
 
-def load_single_img(filename):
+def load_single_img(filename, quiet=True):
     """
     Load a single image from a file.
     """
     filename = str(filename)
     if filename.endswith('.tiff') or filename.endswith('.tif'):
         img_in = tp.imread(filename).astype('float32')
-        logging.debug(f'Loaded image: {filename}')
+        if not quiet:
+            logging.debug(f'Loaded image: {filename}')
     else:
         logging.error(f'File {filename} does not end with .tiff or .tif')
         raise ValueError('Raw file should end with .tiff or .tif!')
@@ -64,7 +65,7 @@ def load_single_img(filename):
         raise ValueError('Single image should be 2D!')
     return img_in
 
-def load_imgs_from_directory(load_directory, channel_name, quiet=False):
+def load_imgs_from_directory(load_directory, channel_name, quiet=True):
     """
     Load images for a specific channel from a directory.
     """
@@ -85,11 +86,11 @@ def load_imgs_from_directory(load_directory, channel_name, quiet=False):
         for img_file in img_list:
             if channel_name.lower() in img_file.lower():
                 img_path = os.path.join(sub_img_folder, img_file)
-                img_read = load_single_img(img_path)
+                img_read = load_single_img(img_path, quiet=quiet)
 
                 if not quiet:
                     print(img_path)
-                logging.debug(f'Loaded image for channel {channel_name}: {img_path}')
+                    logging.debug(f'Loaded image for channel {channel_name}: {img_path}')
 
                 img_file_list.append(img_file)
                 img_collect.append(img_read)
