@@ -39,6 +39,8 @@ class DenoisingConfig:
     intelligent_patch_size: bool = True
     intelligent_patch_size_threshold: float = 0.3  # e.g., 20%
     intelligent_patch_size_minimum: int = 40
+    intelligent_patch_size_min_patches: int = 5000  # Minimum number of patches required
+    intelligent_patch_size_max_patches: Optional[int] = None  # Maximum number of patches (None = no limit)
     # DeepSNIF
     train_epochs: int = 75
     train_initial_lr: float = 0.001
@@ -52,6 +54,11 @@ class DenoisingConfig:
     is_load_weights: bool = False
     lambda_HF: float = 3e-6
     network_size: str = "small"
+    truncated_max_rate: float = 0.99999
+    # Parameter scanning
+    run_parameter_scan: bool = False
+    scan_parameter: Optional[str] = None  # Name of parameter to scan (e.g., 'train_epochs', 'lambda_HF')
+    scan_values: Optional[List[Any]] = None  # List of values to test for the scan parameter
     # Parameters for QC images
     run_QC: bool = True
     colourmap: str = "jet"
