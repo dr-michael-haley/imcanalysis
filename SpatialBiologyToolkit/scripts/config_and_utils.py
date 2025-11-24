@@ -153,7 +153,7 @@ class NimbusConfig:
     allow_raw_fallback: bool = True
     mask_extensions: List[str] = field(default_factory=lambda: ['.tiff', '.tif'])
     test_time_augmentation: bool = True
-    batch_size: int = 4
+    batch_size: int = 10
     model_magnification: int = 10
     dataset_magnification: int = 10
     checkpoint: str = 'latest'
@@ -164,7 +164,7 @@ class NimbusConfig:
     normalization_clip: List[float] = field(default_factory=lambda: [0.0, 2.0])
     normalization_min_value: float = 3.0  # Minimum normalization value to avoid background noise
     save_prediction_maps: bool = False
-    overwrite_existing_outputs: bool = False
+    overwrite_existing_outputs: bool = True
     extract_classic_intensities: bool = True  # Extract classic mean intensities over masks
 
 @dataclass
