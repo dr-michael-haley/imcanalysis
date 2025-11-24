@@ -163,6 +163,7 @@ class NimbusConfig:
     normalization_jobs: int = 1
     normalization_clip: List[float] = field(default_factory=lambda: [0.0, 2.0])
     normalization_min_value: float = 3.0  # Minimum normalization value to avoid background noise
+    reuse_saved_normalization: bool = False  # Reuse existing normalization_dict.json if found (allows manual tweaking)
     save_prediction_maps: bool = False
     overwrite_existing_outputs: bool = True
     extract_classic_intensities: bool = True  # Extract classic mean intensities over masks

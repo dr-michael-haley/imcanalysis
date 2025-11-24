@@ -144,20 +144,26 @@ class ToolkitNimbusDataset(MultiplexDataset):
         clip_values: Sequence[float] = (0, 2),
         n_subset: int = 10,
         multiprocessing: bool = False,  # kept for API compatibility
-        overwrite: bool = False,
+        reuse_saved: bool = False,
     ):
         """
         Compute per-channel normalization using ALL FOVs and only in-mask pixels.
         Also writes a QC gallery and QC histograms.
+        
+        If reuse_saved=True and a normalization_dict.json exists, it will be loaded and reused
+        (allowing manual tweaking). QC plots will still be generated with the loaded values.
         """
         self.clip_values = tuple(clip_values)
         self.normalization_dict_path = os.path.join(self.output_dir, "normalization_dict.json")
 
-        if os.path.exists(self.normalization_dict_path) and not overwrite:
+        if os.path.exists(self.normalization_dict_path) and reuse_saved:
+            logging.info(f"Found existing normalization dictionary at {self.normalization_dict_path}")
+            logging.info("Reusing saved normalization values (reuse_saved_normalization=True)")
             with open(self.normalization_dict_path, "r", encoding="utf-8") as handle:
                 data = json.load(handle)
             # Apply minimum value constraint to loaded values
             self.normalization_dict = {k: max(float(v), self.normalization_min_value) for k, v in data.items()}
+            logging.info(f"Loaded {len(self.normalization_dict)} channel normalization values")
         else:
             norm_vals: Dict[str, List[float]] = {ch: [] for ch in self._channels}
             for fov in self.fovs:
@@ -264,11 +270,19 @@ class ToolkitNimbusDataset(MultiplexDataset):
                     norm = self.normalization_dict.get(ch, 1.0) or 1.0
                     img = self.get_channel(fov, ch).astype(float) / norm
                     img = np.clip(img, 0, upper_clip)
-                    img = img * mask_bool  # zero background for display
-                    scaled = (img / upper_clip * 255.0).astype(np.uint8)
-                    qc_dir = os.path.join(self.qc_folder, "nimbus_normalization_qc", ch)
-                    os.makedirs(qc_dir, exist_ok=True)
-                    io.imsave(os.path.join(qc_dir, f"{safe_fov}.png"), scaled, check_contrast=False)
+                    
+                    # Save masked version (cells only)
+                    img_masked = img * mask_bool
+                    scaled_masked = (img_masked / upper_clip * 255.0).astype(np.uint8)
+                    qc_dir_masked = os.path.join(self.qc_folder, "nimbus_normalization_qc", f"{ch}_masked")
+                    os.makedirs(qc_dir_masked, exist_ok=True)
+                    io.imsave(os.path.join(qc_dir_masked, f"{safe_fov}.png"), scaled_masked, check_contrast=False)
+                    
+                    # Save unmasked version (entire image)
+                    scaled_unmasked = (img / upper_clip * 255.0).astype(np.uint8)
+                    qc_dir_unmasked = os.path.join(self.qc_folder, "nimbus_normalization_qc", f"{ch}_unmasked")
+                    os.makedirs(qc_dir_unmasked, exist_ok=True)
+                    io.imsave(os.path.join(qc_dir_unmasked, f"{safe_fov}.png"), scaled_unmasked, check_contrast=False)
 
 
 def _load_panel(metadata_folder: Path) -> pd.DataFrame:
@@ -753,7 +767,7 @@ def main() -> None:
         clip_values=clip_values,
         n_subset=nimbus_config.normalization_subset,
         multiprocessing=nimbus_config.normalization_jobs > 1,
-        overwrite=nimbus_config.overwrite_existing_outputs,
+        reuse_saved=nimbus_config.reuse_saved_normalization,
     )
 
     nimbus = Nimbus(
