@@ -418,8 +418,8 @@ def make_images(
         else:
             out_dir = Path(output_folder)
             if save_subfolder:
-            out_dir = out_dir / save_subfolder
-            out_dir.mkdir(parents=True, exist_ok=True)
+                out_dir = out_dir / save_subfolder
+                out_dir.mkdir(parents=True, exist_ok=True)
         save_path = out_dir / f'{filename}.png'
 
     # Suppress low contrast warnings when saving images
