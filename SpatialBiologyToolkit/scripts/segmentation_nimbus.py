@@ -156,7 +156,8 @@ class ToolkitNimbusDataset(MultiplexDataset):
         if os.path.exists(self.normalization_dict_path) and not overwrite:
             with open(self.normalization_dict_path, "r", encoding="utf-8") as handle:
                 data = json.load(handle)
-            self.normalization_dict = {k: float(v) for k, v in data.items()}
+            # Apply minimum value constraint to loaded values
+            self.normalization_dict = {k: max(float(v), self.normalization_min_value) for k, v in data.items()}
         else:
             norm_vals: Dict[str, List[float]] = {ch: [] for ch in self._channels}
             for fov in self.fovs:
