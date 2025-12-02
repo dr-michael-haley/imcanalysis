@@ -161,7 +161,7 @@ class NimbusConfig:
     normalization_quantile: float = 0.999
     normalization_subset: int = 10
     normalization_jobs: int = 1
-    normalization_clip: List[float] = field(default_factory=lambda: [0.0, 1.5])
+    normalization_clip: List[float] = field(default_factory=lambda: [0.0, 1.0])
     normalization_min_value: float = 3.0  # Minimum normalization value to avoid background noise
     reuse_saved_normalization: bool = False  # Reuse existing normalization_dict.json if found (allows manual tweaking)
     norm_dict_qc_only: bool = False  # If True, stop after normalization dict computation and QC generation
