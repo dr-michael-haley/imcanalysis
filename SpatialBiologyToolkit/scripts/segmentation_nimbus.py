@@ -272,8 +272,8 @@ class ToolkitNimbusDataset(MultiplexDataset):
             for ch in self._channels:
                 norm = self.normalization_dict.get(ch, 1.0) or 1.0
                 
-                # Create figure with 3 columns (unmasked, masked, clip diagnostic) and one row per FOV
-                fig, axs = plt.subplots(len(qc_fovs), 3, figsize=(15, 5 * len(qc_fovs)), dpi=100)
+                # Create figure with 4 columns (raw, normalized unmasked, normalized masked, clip diagnostic) and one row per FOV
+                fig, axs = plt.subplots(len(qc_fovs), 4, figsize=(20, 5 * len(qc_fovs)), dpi=100)
                 
                 # Handle single ROI case (axs won't be 2D)
                 if len(qc_fovs) == 1:
@@ -287,24 +287,34 @@ class ToolkitNimbusDataset(MultiplexDataset):
                     img = np.clip(img_raw / norm, 0, upper_clip)
                     img_masked = img * mask_bool
                     
-                    # Left column: unmasked
-                    im1 = axs[row_idx, 0].imshow(img, vmin=0, vmax=upper_clip, cmap='gray')
-                    divider1 = make_axes_locatable(axs[row_idx, 0])
-                    cax1 = divider1.append_axes('right', size='5%', pad=0.05)
-                    fig.colorbar(im1, cax=cax1, orientation='vertical')
+                    # Column 0: Raw image (before normalization)
+                    # Use 99th percentile for display scaling to handle outliers
+                    raw_vmax = np.percentile(img_raw, 99) if np.any(img_raw > 0) else 1.0
+                    im0 = axs[row_idx, 0].imshow(img_raw, vmin=0, vmax=raw_vmax, cmap='gray')
+                    divider0 = make_axes_locatable(axs[row_idx, 0])
+                    cax0 = divider0.append_axes('right', size='5%', pad=0.05)
+                    fig.colorbar(im0, cax=cax0, orientation='vertical')
                     axs[row_idx, 0].set_ylabel(fov, fontsize=8)
                     if row_idx == 0:
-                        axs[row_idx, 0].set_title('Unmasked', fontsize=10)
+                        axs[row_idx, 0].set_title('Raw', fontsize=10)
                     
-                    # Middle column: masked
-                    im2 = axs[row_idx, 1].imshow(img_masked, vmin=0, vmax=upper_clip, cmap='gray')
-                    divider2 = make_axes_locatable(axs[row_idx, 1])
+                    # Column 1: Normalized unmasked
+                    im1 = axs[row_idx, 1].imshow(img, vmin=0, vmax=upper_clip, cmap='gray')
+                    divider1 = make_axes_locatable(axs[row_idx, 1])
+                    cax1 = divider1.append_axes('right', size='5%', pad=0.05)
+                    fig.colorbar(im1, cax=cax1, orientation='vertical')
+                    if row_idx == 0:
+                        axs[row_idx, 1].set_title('Normalized', fontsize=10)
+                    
+                    # Column 2: Normalized masked
+                    im2 = axs[row_idx, 2].imshow(img_masked, vmin=0, vmax=upper_clip, cmap='gray')
+                    divider2 = make_axes_locatable(axs[row_idx, 2])
                     cax2 = divider2.append_axes('right', size='5%', pad=0.05)
                     fig.colorbar(im2, cax=cax2, orientation='vertical')
                     if row_idx == 0:
-                        axs[row_idx, 1].set_title('Masked (cells only)', fontsize=10)
+                        axs[row_idx, 2].set_title('Normalized + Masked', fontsize=10)
                     
-                    # Right column: clipping diagnostic
+                    # Column 3: Clipping diagnostic
                     # Create RGB image: grayscale base, red for clipped (max), blue for zeros
                     img_normalized = img / upper_clip  # Normalize to 0-1 for display
                     clip_diag = np.stack([img_normalized, img_normalized, img_normalized], axis=-1)
@@ -318,24 +328,24 @@ class ToolkitNimbusDataset(MultiplexDataset):
                     # Set zero pixels to blue (R=0, G=0, B=1)
                     clip_diag[zero_mask] = [0.0, 0.0, 1.0]
                     
-                    axs[row_idx, 2].imshow(clip_diag)
-                    axs[row_idx, 2].set_xticks([])
-                    axs[row_idx, 2].set_yticks([])
+                    axs[row_idx, 3].imshow(clip_diag)
+                    axs[row_idx, 3].set_xticks([])
+                    axs[row_idx, 3].set_yticks([])
                     
-                    # Add text overlay with clip value and counts
+                    # Add text overlay with normalization value, clip value, and counts
                     n_clipped = np.sum(clipped_mask)
                     n_zero = np.sum(zero_mask)
                     pct_clipped = 100.0 * n_clipped / img.size
                     pct_zero = 100.0 * n_zero / img.size
-                    overlay_text = f'clip={upper_clip:.2f}\nred(clip): {pct_clipped:.1f}%\nblue(zero): {pct_zero:.1f}%'
-                    axs[row_idx, 2].text(
+                    overlay_text = f'norm={norm:.2f}\nclip={upper_clip:.2f}\nred(clip): {pct_clipped:.1f}%\nblue(zero): {pct_zero:.1f}%'
+                    axs[row_idx, 3].text(
                         0.02, 0.98, overlay_text,
-                        transform=axs[row_idx, 2].transAxes,
+                        transform=axs[row_idx, 3].transAxes,
                         fontsize=8, verticalalignment='top',
                         bbox=dict(boxstyle='round', facecolor='white', alpha=0.8)
                     )
                     if row_idx == 0:
-                        axs[row_idx, 2].set_title('Clip Diagnostic\n(red=clipped, blue=zero)', fontsize=10)
+                        axs[row_idx, 3].set_title('Clip Diagnostic\n(red=clipped, blue=zero)', fontsize=10)
                 
                 fig.suptitle(f'{ch} (norm={norm:.3g})', fontsize=12, fontweight='bold')
                 plt.tight_layout()
