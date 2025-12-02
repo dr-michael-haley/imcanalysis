@@ -257,32 +257,92 @@ class ToolkitNimbusDataset(MultiplexDataset):
                 title=f"{ch} cell positivity per ROI",
             )
 
-        # QC gallery: use up to n_subset FOVs to save normalized images per channel
+        # QC gallery: create side-by-side comparison images (unmasked left, masked right) per channel
+        # Similar to qc_check_side_by_side from denoising.py
         if n_subset and n_subset > 0:
+            from mpl_toolkits.axes_grid1 import make_axes_locatable
+            
             qc_fovs = list(self.fovs)
             if len(qc_fovs) > n_subset:
                 qc_fovs = random.sample(qc_fovs, n_subset)
-            for fov in qc_fovs:
-                mask = self.get_segmentation(fov)
-                mask_bool = mask > 0
-                safe_fov = re.sub(r"[^A-Za-z0-9._-]", "_", fov)
-                for ch in self._channels:
-                    norm = self.normalization_dict.get(ch, 1.0) or 1.0
-                    img = self.get_channel(fov, ch).astype(float) / norm
-                    img = np.clip(img, 0, upper_clip)
+            
+            qc_gallery_dir = os.path.join(self.qc_folder, "nimbus_normalization_qc", "channel_galleries")
+            os.makedirs(qc_gallery_dir, exist_ok=True)
+            
+            for ch in self._channels:
+                norm = self.normalization_dict.get(ch, 1.0) or 1.0
+                
+                # Create figure with 3 columns (unmasked, masked, clip diagnostic) and one row per FOV
+                fig, axs = plt.subplots(len(qc_fovs), 3, figsize=(15, 5 * len(qc_fovs)), dpi=100)
+                
+                # Handle single ROI case (axs won't be 2D)
+                if len(qc_fovs) == 1:
+                    axs = np.array([axs])
+                
+                for row_idx, fov in enumerate(qc_fovs):
+                    mask = self.get_segmentation(fov)
+                    mask_bool = mask > 0
                     
-                    # Save masked version (cells only)
+                    img_raw = self.get_channel(fov, ch).astype(float)
+                    img = np.clip(img_raw / norm, 0, upper_clip)
                     img_masked = img * mask_bool
-                    scaled_masked = (img_masked / upper_clip * 255.0).astype(np.uint8)
-                    qc_dir_masked = os.path.join(self.qc_folder, "nimbus_normalization_qc", f"{ch}_masked")
-                    os.makedirs(qc_dir_masked, exist_ok=True)
-                    io.imsave(os.path.join(qc_dir_masked, f"{safe_fov}.png"), scaled_masked, check_contrast=False)
                     
-                    # Save unmasked version (entire image)
-                    scaled_unmasked = (img / upper_clip * 255.0).astype(np.uint8)
-                    qc_dir_unmasked = os.path.join(self.qc_folder, "nimbus_normalization_qc", f"{ch}_unmasked")
-                    os.makedirs(qc_dir_unmasked, exist_ok=True)
-                    io.imsave(os.path.join(qc_dir_unmasked, f"{safe_fov}.png"), scaled_unmasked, check_contrast=False)
+                    # Left column: unmasked
+                    im1 = axs[row_idx, 0].imshow(img, vmin=0, vmax=upper_clip, cmap='gray')
+                    divider1 = make_axes_locatable(axs[row_idx, 0])
+                    cax1 = divider1.append_axes('right', size='5%', pad=0.05)
+                    fig.colorbar(im1, cax=cax1, orientation='vertical')
+                    axs[row_idx, 0].set_ylabel(fov, fontsize=8)
+                    if row_idx == 0:
+                        axs[row_idx, 0].set_title('Unmasked', fontsize=10)
+                    
+                    # Middle column: masked
+                    im2 = axs[row_idx, 1].imshow(img_masked, vmin=0, vmax=upper_clip, cmap='gray')
+                    divider2 = make_axes_locatable(axs[row_idx, 1])
+                    cax2 = divider2.append_axes('right', size='5%', pad=0.05)
+                    fig.colorbar(im2, cax=cax2, orientation='vertical')
+                    if row_idx == 0:
+                        axs[row_idx, 1].set_title('Masked (cells only)', fontsize=10)
+                    
+                    # Right column: clipping diagnostic
+                    # Create RGB image: grayscale base, red for clipped (max), blue for zeros
+                    img_normalized = img / upper_clip  # Normalize to 0-1 for display
+                    clip_diag = np.stack([img_normalized, img_normalized, img_normalized], axis=-1)
+                    
+                    # Identify clipped pixels (at or very close to upper_clip) and zero pixels
+                    clipped_mask = img >= (upper_clip - 1e-6)
+                    zero_mask = img <= 1e-6
+                    
+                    # Set clipped pixels to red (R=1, G=0, B=0)
+                    clip_diag[clipped_mask] = [1.0, 0.0, 0.0]
+                    # Set zero pixels to blue (R=0, G=0, B=1)
+                    clip_diag[zero_mask] = [0.0, 0.0, 1.0]
+                    
+                    axs[row_idx, 2].imshow(clip_diag)
+                    axs[row_idx, 2].set_xticks([])
+                    axs[row_idx, 2].set_yticks([])
+                    
+                    # Add text overlay with clip value and counts
+                    n_clipped = np.sum(clipped_mask)
+                    n_zero = np.sum(zero_mask)
+                    pct_clipped = 100.0 * n_clipped / img.size
+                    pct_zero = 100.0 * n_zero / img.size
+                    overlay_text = f'clip={upper_clip:.2f}\nred(clip): {pct_clipped:.1f}%\nblue(zero): {pct_zero:.1f}%'
+                    axs[row_idx, 2].text(
+                        0.02, 0.98, overlay_text,
+                        transform=axs[row_idx, 2].transAxes,
+                        fontsize=8, verticalalignment='top',
+                        bbox=dict(boxstyle='round', facecolor='white', alpha=0.8)
+                    )
+                    if row_idx == 0:
+                        axs[row_idx, 2].set_title('Clip Diagnostic\n(red=clipped, blue=zero)', fontsize=10)
+                
+                fig.suptitle(f'{ch} (norm={norm:.3g})', fontsize=12, fontweight='bold')
+                plt.tight_layout()
+                fig.savefig(os.path.join(qc_gallery_dir, f'{ch}.png'), bbox_inches='tight')
+                plt.close(fig)
+                
+            logging.info(f"Normalization QC galleries saved to: {qc_gallery_dir}")
 
 
 def _load_panel(metadata_folder: Path) -> pd.DataFrame:
@@ -760,6 +820,13 @@ def main() -> None:
         multiprocessing=nimbus_config.normalization_jobs > 1,
         reuse_saved=nimbus_config.reuse_saved_normalization,
     )
+
+    # Early exit if only normalization dict and QC are requested
+    if nimbus_config.norm_dict_qc_only:
+        logging.info("norm_dict_qc_only=True: Stopping after normalization dictionary and QC generation.")
+        logging.info(f"Normalization dictionary saved to: {dataset.normalization_dict_path}")
+        logging.info(f"QC images saved to: {general_config.qc_folder}/nimbus_normalization_qc/")
+        return
 
     nimbus = Nimbus(
         dataset=dataset,
