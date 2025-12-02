@@ -445,7 +445,8 @@ def create_marker_umaps(adata, qc_umap_dir, viz_config):
     """
     try:
         markers = adata.var_names.tolist()
-        logging.info(f'Creating UMAP plots for {len(markers)} markers.')
+        colormap = getattr(viz_config, 'umap_marker_colormap', 'viridis')
+        logging.info(f'Creating UMAP plots for {len(markers)} markers using colormap: {colormap}')
         for marker in markers:
             if marker in adata.var_names:
                 logging.info(f'Creating UMAP for marker: {marker}')
@@ -455,6 +456,7 @@ def create_marker_umaps(adata, qc_umap_dir, viz_config):
                         color=marker,
                         size=10,
                         use_raw=False,  # Use processed data
+                        cmap=colormap,
                         return_fig=True
                     )
                     fig_path = qc_umap_dir / f'UMAP_marker_{marker}.{viz_config.figure_format}'

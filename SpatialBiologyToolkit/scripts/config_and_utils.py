@@ -282,6 +282,7 @@ class VisualizationConfig:
     include_metadata_matrix_plots: bool = True  # Include metadata columns in MatrixPlots
     include_marker_umaps: bool = True  # Include marker expression UMAPs
     max_categories: int = 50  # Maximum number of unique categories for population/metadata columns
+    umap_marker_colormap: str = 'viridis'  # Colormap for marker expression UMAPs (e.g., 'viridis', 'plasma', 'inferno', 'magma', 'cividis')
     
     # Backgating assessment settings
     backgating_cells_per_group: int = 50  # Number of cells to sample per population for backgating

@@ -514,8 +514,8 @@ def _create_anndata_with_layers(
     Create AnnData object with multiple layers:
     - .X: normalized Nimbus data (default)
     - .layers['nimbus_raw']: raw Nimbus predictions
-    - .layers['classic_raw']: raw classic mean intensities (if available)
-    - .layers['classic_normalized']: normalized classic mean intensities (if available)
+    - .layers['mean_intensities_raw']: raw classic mean intensities (if available)
+    - .layers['mean_intensities_normalized']: normalized classic mean intensities (if available)
     """
     
     # Get available channels in celltable
@@ -534,19 +534,10 @@ def _create_anndata_with_layers(
     
     # Store raw Nimbus data in layer
     adata.layers['nimbus_raw'] = nimbus_raw.copy()
-    
-    # Normalize Nimbus data for .X
-    if normalisation:
-        adata.X = normalise_markers(
-            pd.DataFrame(adata.X, columns=adata.var_names), normalisation
-        ).values
-        logging.info(f'Nimbus data normalized: {normalisation}')
-    else:
-        logging.info('Nimbus data not normalized in .X')
-    
+        
     # Add classic intensities if available
     if classic_intensities is not None:
-        logging.info('Adding classic mean intensity measurements to AnnData layers')
+        logging.info('Adding mean intensity over cell mask measurements to AnnData layers')
         
         # Merge classic data with celltable to ensure same cell order
         classic_merged = celltable[['ROI', 'ObjectNumber']].merge(
@@ -554,18 +545,18 @@ def _create_anndata_with_layers(
         )
         
         # Extract classic raw data for available channels
-        classic_raw_data = classic_merged.loc[:, available_channels].values
-        adata.layers['classic_raw'] = classic_raw_data
+        mean_intensities_raw_data = classic_merged.loc[:, available_channels].values
+        adata.layers['mean_intensities_raw'] = mean_intensities_raw_data
         
         # Normalize classic data
         if normalisation:
-            classic_normalized = normalise_markers(
-                pd.DataFrame(classic_raw_data, columns=available_channels), normalisation
+            mean_intensities_normalized = normalise_markers(
+                pd.DataFrame(mean_intensities_raw_data, columns=available_channels), normalisation
             ).values
-            adata.layers['classic_normalized'] = classic_normalized
-            logging.info(f'Classic data normalized: {normalisation}')
+            adata.layers['mean_intensities_normalized'] = mean_intensities_normalized
+            logging.info(f'Mean intensities data normalized: {normalisation}')
         else:
-            adata.layers['classic_normalized'] = classic_raw_data.copy()
+            adata.layers['mean_intensities_normalized'] = mean_intensities_raw_data.copy()
     
     # Add cellular obs from celltable
     non_channels = [x for x in celltable.columns if x not in expected_channels]
