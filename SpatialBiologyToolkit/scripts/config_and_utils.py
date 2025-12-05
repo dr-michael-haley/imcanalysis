@@ -316,7 +316,7 @@ class VisualizationConfig:
     backgating_population_overlay_outline_width: int = 1  # Width of contour outlines in population overlay visualizations
     
     # MatrixPlot settings
-    matrixplot_vmax: float = 0.8  # Maximum value for non-scaled matrix plots
+    matrixplot_vmax: float = 0.5  # Maximum value for non-scaled matrix plots
     
     # General visualization settings
     save_high_res: bool = True  # Save high-resolution figures (300 DPI)
