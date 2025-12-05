@@ -925,6 +925,31 @@ def main() -> None:
             expected_channels=expected_channels,
         )
         
+        # Handle remove_and_store_markers: separate suboptimal markers into separate AnnData
+        if seg_config.remove_and_store_markers:
+            # Filter markers that actually exist in the dataset
+            markers_to_remove = [m for m in seg_config.remove_and_store_markers if m in adata.var_names]
+            
+            if markers_to_remove:
+                logging.info(f"Separating {len(markers_to_remove)} markers into separate AnnData: {markers_to_remove}")
+                
+                # Create a subset AnnData with only the markers to be removed
+                adata_removed = adata[:, markers_to_remove].copy()
+                
+                # Save the removed markers AnnData
+                removed_path = Path(seg_config.removed_markers_anndata_path)
+                removed_path.parent.mkdir(parents=True, exist_ok=True)
+                adata_removed.write_h5ad(removed_path)
+                logging.info(f"Saved removed markers AnnData to {removed_path}")
+                logging.info(f"Removed markers AnnData contains {adata_removed.n_obs} cells × {adata_removed.n_vars} markers")
+                
+                # Remove these markers from the main AnnData
+                keep_markers = [m for m in adata.var_names if m not in markers_to_remove]
+                adata = adata[:, keep_markers].copy()
+                logging.info(f"Removed {len(markers_to_remove)} markers from main AnnData. Remaining: {adata.n_vars} markers")
+            else:
+                logging.info("No markers from remove_and_store_markers list found in dataset")
+        
         anndata_path.parent.mkdir(parents=True, exist_ok=True)
         adata.write_h5ad(anndata_path)
         logging.info("Saved AnnData to %s", anndata_path)

@@ -136,6 +136,8 @@ class SegmentationConfig:
     marker_normalisation: List[str] = field(default_factory=lambda: ["q0.999"])
     store_raw_marker_data: bool = False
     remove_channels_list: List[str] = field(default_factory=lambda: ['DNA1', 'DNA3'])
+    remove_and_store_markers: List[str] = field(default_factory=list)  # Markers to remove from main AnnData and store separately
+    removed_markers_anndata_path: str = 'anndata_removed.h5ad'  # Path for AnnData containing removed markers
     anndata_save_path: str = 'anndata.h5ad'
     create_roi_cell_tables: bool = True
     create_master_cell_table: bool = True
