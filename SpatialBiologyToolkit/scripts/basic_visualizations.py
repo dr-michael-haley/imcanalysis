@@ -705,13 +705,13 @@ def create_population_analysis(adata, population_columns, metadata_columns, qc_b
                         save_table=str(pop_analysis_subdir / f"{metadata_col}_proportions.csv")
                     )
                     
-                    # 3. Stacked plot for better comparison
+                    # 3. Stacked plot for better comparison (proportions, bars add up to 1)
                     logging.info(f"Creating stacked plot for {population_col} by {metadata_col}...")
                     sbt_plotting.grouped_graph(
                         adata,
                         group_by_obs=population_col,
                         x_axis=metadata_col,
-                        proportions=False,
+                        proportions=True,
                         stacked=True,
                         log_scale=False,
                         fig_size=(max(8, n_categories * 0.8), 6),
