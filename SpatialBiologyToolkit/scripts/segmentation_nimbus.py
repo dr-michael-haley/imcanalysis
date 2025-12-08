@@ -527,6 +527,125 @@ def _extract_classic_intensities(
     return pd.concat(frames, ignore_index=True)
 
 
+def _process_roi_expansion(
+    roi: str,
+    mask_path: Path,
+    roi_channel_paths: Dict[str, Path],
+    expected_channels: List[str],
+    expansion_pixels: int,
+) -> pd.DataFrame:
+    """
+    Process a single ROI for expansion intensity extraction.
+    This function is designed to be called in parallel.
+    """
+    from scipy.ndimage import binary_dilation
+    
+    mask = io.imread(mask_path)
+    
+    # Get unique cell labels
+    unique_labels = np.unique(mask)
+    unique_labels = unique_labels[unique_labels > 0]  # Exclude background
+    
+    # Pre-load all channel images for this ROI
+    channel_images = {}
+    for channel in expected_channels:
+        if channel in roi_channel_paths:
+            try:
+                img = io.imread(roi_channel_paths[channel])
+                img = np.squeeze(img)
+                if img.ndim == 3:
+                    img = img[..., 0]
+                channel_images[channel] = img
+            except Exception as e:
+                logging.warning(f"Error loading {channel} for {roi}: {e}")
+    
+    # Process each cell: expand mask and measure intensities
+    cell_data = []
+    for label in unique_labels:
+        cell_mask = (mask == label)
+        # Expand the mask by dilation
+        expanded_mask = binary_dilation(cell_mask, iterations=expansion_pixels)
+        
+        # Measure intensities for this cell across all channels
+        cell_intensities = {"ObjectNumber": label}
+        for channel in expected_channels:
+            if channel in channel_images:
+                cell_intensities[channel] = np.mean(channel_images[channel][expanded_mask])
+            else:
+                cell_intensities[channel] = np.nan
+        
+        cell_data.append(cell_intensities)
+    
+    # Create DataFrame for this ROI
+    roi_df = pd.DataFrame(cell_data)
+    roi_df["ROI"] = roi
+    return roi_df
+
+
+def _extract_expansion_intensities(
+    mask_lookup: Dict[str, Path],
+    rois: List[str],
+    channel_paths: Dict[str, Dict[str, Path]],
+    expected_channels: List[str],
+    expansion_pixels: int,
+    n_jobs: int = 1,
+) -> pd.DataFrame:
+    """
+    Extract mean intensities by expanding each cell mask by a specified number of pixels.
+    Memory-efficient approach: processes one cell at a time without storing all expanded masks.
+    Supports parallel processing at the ROI level.
+    
+    Parameters:
+    -----------
+    n_jobs : int
+        Number of parallel jobs. 1 = sequential, -1 = use all CPUs, >1 = specific number
+    
+    Returns:
+    --------
+    DataFrame with ROI, ObjectNumber, and channel intensities.
+    """
+    from multiprocessing import Pool, cpu_count
+    
+    # Determine number of processes
+    if n_jobs == -1:
+        n_processes = cpu_count()
+    elif n_jobs > 1:
+        n_processes = min(n_jobs, len(rois), cpu_count())
+    else:
+        n_processes = 1
+    
+    if n_processes > 1:
+        logging.info(f"Processing {len(rois)} ROIs with {n_processes} parallel workers")
+        
+        # Prepare arguments for parallel processing
+        args_list = [
+            (roi, mask_lookup[roi], channel_paths.get(roi, {}), expected_channels, expansion_pixels)
+            for roi in rois
+        ]
+        
+        # Process ROIs in parallel
+        with Pool(processes=n_processes) as pool:
+            frames = list(tqdm(
+                pool.starmap(_process_roi_expansion, args_list),
+                total=len(rois),
+                desc="Expansion intensity extraction"
+            ))
+    else:
+        # Sequential processing
+        frames = []
+        for roi in tqdm(rois, desc="Expansion intensity extraction"):
+            roi_df = _process_roi_expansion(
+                roi=roi,
+                mask_path=mask_lookup[roi],
+                roi_channel_paths=channel_paths.get(roi, {}),
+                expected_channels=expected_channels,
+                expansion_pixels=expansion_pixels,
+            )
+            frames.append(roi_df)
+    
+    return pd.concat(frames, ignore_index=True)
+
+
 def _prepare_nimbus_output(cell_table: pd.DataFrame) -> pd.DataFrame:
     if cell_table is None or cell_table.empty:
         raise ValueError("Nimbus returned an empty cell table")
@@ -575,6 +694,7 @@ def _save_roi_tables(cell_df: pd.DataFrame, output_dir: Path, prefix: str) -> No
 def _create_anndata_with_layers(
     celltable: pd.DataFrame,
     classic_intensities: Optional[pd.DataFrame],
+    expansion_intensities: Optional[pd.DataFrame],
     metadata_folder: Path,
     normalisation: Optional[List[str]],
     remove_channels: Optional[List[str]],
@@ -586,6 +706,8 @@ def _create_anndata_with_layers(
     - .layers['nimbus_raw']: raw Nimbus predictions
     - .layers['mean_intensities_raw']: raw classic mean intensities (if available)
     - .layers['mean_intensities_normalized']: normalized classic mean intensities (if available)
+    - .layers['expansion_intensities_raw']: raw expansion intensities (if available)
+    - .layers['expansion_intensities_normalized']: normalized expansion intensities (if available)
     """
     
     # Get available channels in celltable
@@ -627,6 +749,29 @@ def _create_anndata_with_layers(
             logging.info(f'Mean intensities data normalized: {normalisation}')
         else:
             adata.layers['mean_intensities_normalized'] = mean_intensities_raw_data.copy()
+    
+    # Add expansion intensities if available
+    if expansion_intensities is not None:
+        logging.info('Adding expansion intensity measurements to AnnData layers')
+        
+        # Merge expansion data with celltable to ensure same cell order
+        expansion_merged = celltable[['ROI', 'ObjectNumber']].merge(
+            expansion_intensities, on=['ROI', 'ObjectNumber'], how='left'
+        )
+        
+        # Extract expansion raw data for available channels
+        expansion_intensities_raw_data = expansion_merged.loc[:, available_channels].values
+        adata.layers['expansion_intensities_raw'] = expansion_intensities_raw_data
+        
+        # Normalize expansion data
+        if normalisation:
+            expansion_intensities_normalized = normalise_markers(
+                pd.DataFrame(expansion_intensities_raw_data, columns=available_channels), normalisation
+            ).values
+            adata.layers['expansion_intensities_normalized'] = expansion_intensities_normalized
+            logging.info(f'Expansion intensities data normalized: {normalisation}')
+        else:
+            adata.layers['expansion_intensities_normalized'] = expansion_intensities_raw_data.copy()
     
     # Add cellular obs from celltable
     non_channels = [x for x in celltable.columns if x not in expected_channels]
@@ -890,6 +1035,22 @@ def main() -> None:
         logging.info(f"Classic extraction complete for {len(classic_intensities)} cells")
     else:
         logging.info("Skipping classic intensity extraction per config")
+    
+    # Extract expansion intensities if requested
+    expansion_intensities = None
+    if nimbus_config.extract_expansion_intensities:
+        logging.info(f"Extracting expansion intensities with {nimbus_config.expansion_pixels} pixel expansion")
+        expansion_intensities = _extract_expansion_intensities(
+            mask_lookup=mask_lookup,
+            rois=valid_rois,
+            channel_paths=channel_paths,
+            expected_channels=expected_channels,
+            expansion_pixels=nimbus_config.expansion_pixels,
+            n_jobs=nimbus_config.expansion_jobs,
+        )
+        logging.info(f"Expansion extraction complete for {len(expansion_intensities)} cells")
+    else:
+        logging.info("Skipping expansion intensity extraction per config")
 
     roi_output_dir = Path(general_config.celltable_folder)
     if nimbus_config.roi_table_subfolder:
@@ -915,10 +1076,11 @@ def main() -> None:
     if seg_config.create_anndata:
         anndata_path = Path(nimbus_config.anndata_output or seg_config.anndata_save_path)
 
-        # Create AnnData with layers for both Nimbus and classic data
+        # Create AnnData with layers for Nimbus, classic, and expansion data
         adata = _create_anndata_with_layers(
             celltable=merged_celltable,
             classic_intensities=classic_intensities,
+            expansion_intensities=expansion_intensities,
             metadata_folder=metadata_folder,
             normalisation=seg_config.marker_normalisation,
             remove_channels=seg_config.remove_channels_list,
