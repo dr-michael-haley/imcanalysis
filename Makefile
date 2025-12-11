@@ -1,5 +1,7 @@
 SHELL := /bin/bash
 
+.PHONY: install uninstall update
+
 install:
 	@echo "🚀 Running installer..."
 	@bash install/setup.sh
