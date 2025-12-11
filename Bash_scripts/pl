@@ -1,0 +1,353 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Directory where your job scripts live by default
+JOBDIR=${PIPELINE_DIR:-"$HOME/slurm_pipelines"}
+
+# Central config mapping stage -> script
+CONFIG=${PIPELINE_CONFIG:-"$JOBDIR/pipeline.conf"}
+
+# Local log file (in the directory where you run 'pipeline')
+LOGFILE="./pipeline_log.log"
+
+# Dependency type between stages (can override with env var)
+DEP_TYPE=${PIPELINE_DEP_TYPE:-afterok}
+
+# Colours (only if stdout is a TTY)
+if [[ -t 1 ]]; then
+    BOLD=$'\e[1m'
+    GREEN=$'\e[32m'
+    YELLOW=$'\e[33m'
+    RED=$'\e[31m'
+    BLUE=$'\e[34m'
+    RESET=$'\e[0m'
+else
+    BOLD=""
+    GREEN=""
+    YELLOW=""
+    RED=""
+    BLUE=""
+    RESET=""
+fi
+
+usage() {
+    cat <<EOF
+Usage:
+  $0 [--name NAME] [--dry-run] stage1 [stage2 ...]
+  $0 --list [stage1 stage2 ...]
+
+Run a pipeline:
+  --name, -n NAME     Prefix all Slurm job names with NAME_
+                      (e.g. NAME_stage1, NAME_stage2, ...)
+  --dry-run           Show what would be submitted, but do not call sbatch
+                      or write to the log file.
+
+List available stages (no jobs submitted):
+  --list              List stages and their scripts / metadata.
+                      With no stages, lists all stages from the config.
+                      With stages, lists only the ones you name.
+
+Environment:
+  PIPELINE_DIR        Default job script directory (default: \$HOME/slurm_pipelines)
+  PIPELINE_CONFIG     Path to config file (default: \$PIPELINE_DIR/pipeline.conf)
+  PIPELINE_DEP_TYPE   Slurm dependency type between stages (default: afterok)
+
+Job script metadata (optional):
+  Lines in job scripts starting with these prefixes will be shown by --list:
+
+    #@DESC:   short description of what this job does
+    #@IN:     description of inputs
+    #@OUT:    description of outputs
+    #@CONFIG: extra config info
+
+  You can have multiple #@IN, #@OUT and #@CONFIG lines.
+EOF
+    exit 1
+}
+
+# Helper: look up script for a given stage from config, with fallback
+get_script_for_stage() {
+    local stage="$1"
+    local line key value
+
+    # Try config file
+    if [[ -f "$CONFIG" ]]; then
+        while IFS= read -r line; do
+            # skip empty lines and comments
+            [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+
+            IFS='=' read -r key value <<< "$line"
+            # trim whitespace
+            key="${key#"${key%%[![:space:]]*}"}"   # ltrim
+            key="${key%"${key##*[![:space:]]}"}"   # rtrim
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+
+            [[ "$key" == "$stage" ]] || continue
+
+            if [[ -z "$value" ]]; then
+                break
+            fi
+
+            if [[ "$value" = /* ]]; then
+                echo "$value"
+            else
+                echo "$JOBDIR/$value"
+            fi
+            return 0
+        done < "$CONFIG"
+    fi
+
+    # Fallback: <JOBDIR>/<stage>.sbatch
+    echo "$JOBDIR/${stage}.sbatch"
+}
+
+# Helper: get all stage names from config
+get_all_stages_from_config() {
+    local line key value
+    if [[ ! -f "$CONFIG" ]]; then
+        return 0
+    fi
+
+    while IFS= read -r line; do
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        IFS='=' read -r key value <<< "$line"
+        key="${key#"${key%%[![:space:]]*}"}"
+        key="${key%"${key##*[![:space:]]}"}"
+        [[ -z "$key" ]] && continue
+        echo "$key"
+    done < "$CONFIG"
+}
+
+describe_stage() {
+    local stage="$1"
+    local script desc_line in_line out_line config_line
+    local desc=""
+    local inputs=()
+    local outputs=()
+    local configs=()
+
+    script=$(get_script_for_stage "$stage")
+
+    echo "${BOLD}Stage:${RESET}  $stage"
+    echo "${BOLD}Script:${RESET} $script"
+
+    if [[ ! -f "$script" ]]; then
+        echo "  ${RED}(script not found)${RESET}"
+        echo
+        return
+    fi
+
+    # Parse metadata lines starting with #@
+    while IFS= read -r line; do
+        case "$line" in
+            '#@DESC:'*)
+                desc="${line#\#@DESC: }"
+                ;;
+            '#@IN:'*)
+                inputs+=("${line#\#@IN: }")
+                ;;
+            '#@OUT:'*)
+                outputs+=("${line#\#@OUT: }")
+                ;;
+            '#@CONFIG:'*)
+                configs+=("${line#\#@CONFIG: }")
+                ;;
+        esac
+    done < "$script"
+
+    if [[ -n "$desc" ]]; then
+        echo "  ${BOLD}Description:${RESET}"
+        echo "    $desc"
+    fi
+
+    if (( ${#inputs[@]} > 0 )); then
+        echo "  ${BOLD}Inputs:${RESET}"
+        for in_line in "${inputs[@]}"; do
+            echo "    - $in_line"
+        done
+    fi
+
+    if (( ${#outputs[@]} > 0 )); then
+        echo "  ${BOLD}Outputs:${RESET}"
+        for out_line in "${outputs[@]}"; do
+            echo "    - $out_line"
+        done
+    fi
+
+    if (( ${#configs[@]} > 0 )); then
+        echo "  ${BOLD}Config:${RESET}"
+        for config_line in "${configs[@]}"; do
+            echo "    - $config_line"
+        done
+    fi
+
+    if [[ -z "$desc" && ${#inputs[@]} -eq 0 && ${#outputs[@]} -eq 0 && ${#configs[@]} -eq 0 ]]; then
+        echo "  (no metadata #@DESC/#@IN/#@OUT/#@CONFIG found)"
+    fi
+
+    echo
+}
+
+trap 'echo "Pipeline script aborted unexpectedly" >&2' ERR
+
+# Parse options
+pipeline_name=""
+list_mode=0
+dry_run=0
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --name|-n)
+            [[ $# -ge 2 ]] || { echo "${RED}Error:${RESET} --name requires an argument" >&2; usage; }
+            pipeline_name="$2"
+            shift 2
+            ;;
+        --name=*)
+            pipeline_name="${1#*=}"
+            shift
+            ;;
+        --list)
+            list_mode=1
+            shift
+            ;;
+        --dry-run)
+            dry_run=1
+            shift
+            ;;
+        --help|-h)
+            usage
+            ;;
+        --) # end of options
+            shift
+            break
+            ;;
+        -*)
+            echo "${RED}Unknown option:${RESET} $1" >&2
+            usage
+            ;;
+        *)
+            break
+            ;;
+    esac
+done
+
+if (( list_mode == 1 )); then
+    # LIST MODE: no jobs submitted, no git-all, no logging
+    if [[ $# -eq 0 ]]; then
+        # No specific stages given: list all from config
+        mapfile -t stages < <(get_all_stages_from_config)
+        if [[ ${#stages[@]} -eq 0 ]]; then
+            echo "No stages found in config: $CONFIG"
+            exit 0
+        fi
+    else
+        # Use remaining args as stages
+        stages=("$@")
+    fi
+
+    for stage in "${stages[@]}"; do
+        describe_stage "$stage"
+    done
+    exit 0
+fi
+
+# Normal pipeline mode (possibly dry-run)
+if [[ $# -lt 1 ]]; then
+    echo "${RED}Error:${RESET} at least one stage is required." >&2
+    usage
+fi
+
+stages=("$@")
+
+# --- Validation pass: resolve scripts and ensure all exist ---
+declare -A stage_to_script=()
+
+echo "${BLUE}[pipeline] Validating stages...${RESET}"
+for stage in "${stages[@]}"; do
+    script=$(get_script_for_stage "$stage")
+    stage_to_script["$stage"]="$script"
+    if [[ ! -f "$script" ]]; then
+        echo "${RED}Error:${RESET} job script '$script' not found for stage '$stage'" >&2
+        exit 1
+    fi
+done
+echo "${GREEN}[pipeline] All scripts found.${RESET}"
+
+# Run git-all only if we're actually going to submit real jobs
+if (( dry_run == 0 )); then
+    if command -v git-all >/dev/null 2>&1; then
+        echo "${BLUE}[pipeline] Running git-all before submitting jobs...${RESET}"
+        git-all
+        echo "${GREEN}[pipeline] git-all finished.${RESET}"
+    else
+        echo "${YELLOW}[pipeline] Warning: git-all not found on PATH, skipping repo update.${RESET}"
+    fi
+else
+    echo "${YELLOW}[pipeline] Dry-run mode: skipping git-all and log writes.${RESET}"
+fi
+
+# Logging header (only for real runs)
+if (( dry_run == 0 )); then
+    timestamp=$(date +"%Y-%m-%d %H:%M:%S")
+    echo "[$timestamp] pipeline ${pipeline_name:-<no-name>} stages: ${stages[*]}" >> "$LOGFILE"
+fi
+
+prev_jobid=""
+
+echo
+if (( dry_run == 1 )); then
+    echo "${BOLD}DRY RUN:${RESET} showing planned submissions (no jobs will be submitted):"
+else
+    echo "${BOLD}Submitting pipeline:${RESET}"
+fi
+
+for stage in "${stages[@]}"; do
+    script="${stage_to_script[$stage]}"
+
+    # Build sbatch arguments
+    sbatch_args=(--parsable)
+
+    if [[ -n "$prev_jobid" ]]; then
+        sbatch_args+=(--dependency="${DEP_TYPE}:${prev_jobid}")
+    fi
+
+    if [[ -n "$pipeline_name" ]]; then
+        sbatch_args+=(--job-name="${pipeline_name}_${stage}")
+    fi
+
+    sbatch_args+=("$script")
+
+    dep_desc=""
+    if [[ -n "$prev_jobid" ]]; then
+        dep_desc=" (dep=${DEP_TYPE}:${prev_jobid})"
+    fi
+
+    if (( dry_run == 1 )); then
+        # Simulate a job ID for display / chaining
+        jobid="DRYRUN_${stage}"
+        printf "  ${YELLOW}%-15s${RESET} -> %s %s%s\n" \
+            "$stage" "sbatch" "${sbatch_args[*]}" "$dep_desc"
+        # No logging in dry-run
+    else
+        if ! jobid=$(sbatch "${sbatch_args[@]}"); then
+            echo "${RED}Error:${RESET} submitting $script for stage '$stage'" >&2
+            exit 1
+        fi
+
+        printf "  ${GREEN}%-15s${RESET} -> %s%s\n" "$stage" "$jobid" "$dep_desc"
+
+        # Log plain text (no colours) for this stage
+        echo "$(printf '  %-15s -> %s%s' "$stage" "$jobid" "$dep_desc")" >> "$LOGFILE"
+    fi
+
+    prev_jobid="$jobid"
+done
+
+if (( dry_run == 1 )); then
+    echo
+    echo "${BOLD}Dry-run complete.${RESET} No jobs were submitted and no log was written."
+else
+    echo "  final job id: $prev_jobid" >> "$LOGFILE"
+    echo "Log written to: $LOGFILE"
+fi

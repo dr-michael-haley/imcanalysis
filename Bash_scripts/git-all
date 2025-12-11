@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+# Usage:
+#   update-git-repos.sh            # scans your home directory
+#   update-git-repos.sh /path/dir  # scans a specific directory
+
+set -u  # treat unset variables as an error
+
+BASE_DIR="${1:-$HOME}"
+
+echo "Scanning for Git repos under: $BASE_DIR"
+echo
+
+# Find .git directories up to a reasonable depth and pull each repo
+find "$BASE_DIR" -maxdepth 4 -type d -name ".git" 2>/dev/null | while IFS= read -r gitdir; do
+    repo_dir="$(dirname "$gitdir")"
+    echo "=== Repo: $repo_dir ==="
+
+    # Try to pull, but don't stop if one repo fails
+    (
+        cd "$repo_dir" || { echo "  Could not enter directory"; exit 0; }
+        # Show the current branch for context
+        current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+        echo "  Branch: $current_branch"
+        git pull --ff-only
+    ) || echo "  (Pull failed in $repo_dir)"
+    
+    echo
+done
+
+echo "Done."
+

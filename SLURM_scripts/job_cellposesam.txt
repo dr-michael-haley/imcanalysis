@@ -1,0 +1,26 @@
+#! /bin/bash --login
+#SBATCH -p gpuA 
+#SBATCH -G 1
+#SBATCH -t 2-0
+#SBATCH -n 6
+
+#SBATCH --mail-user=michael.haley@manchester.ac.uk
+#SBATCH --mail-type=ALL
+
+#@DESC: Cell mask creation using CellPose-SAM
+#@IN:   processed/
+#@OUT:  anndata_processed.h5ad, /QC/BioBatchNet/
+
+
+echo "CellPose-SAM job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
+
+module load gcc/13.3.0
+export MPLBACKEND="Agg"
+export QT_QPA_PLATFORM="offscreen"
+unset DISPLAY
+
+conda activate segmentation
+python -m SpatialBiologyToolkit.scripts.preprocess_dna
+
+conda activate cellposesam
+python -m SpatialBiologyToolkit.scripts.cellpose_sam

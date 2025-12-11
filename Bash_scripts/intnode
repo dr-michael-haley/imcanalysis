@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+srun -p interactive -t 0-1 --pty bash

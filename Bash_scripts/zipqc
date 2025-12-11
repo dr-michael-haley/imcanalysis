@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+
+# --------------------------------------------------
+#  Folder/file sets (you can edit/add more below)
+# --------------------------------------------------
+declare -A FOLDER_SETS
+
+# Default set (your original)
+FOLDER_SETS[default]="
+QC/BasicProcess_QC/Matrixplots/
+QC/BasicProcess_QC/UMAPs/
+QC/BasicProcess_QC/Population_Analyis_Figures/
+QC/BasicProcess_QC/Population_images/
+QC/BasicProcess_QC/Color_legends/
+QC/denoising/
+QC/nimbus_normalization_qc/channel_galleries/
+"
+
+# Example: only some subfolders (edit as you like)
+FOLDER_SETS[basic]="
+QC/BasicProcess_QC/Matrixplots/
+QC/BasicProcess_QC/UMAPs/
+"
+
+# Example: denoising only
+FOLDER_SETS[denoise_only]="
+QC/denoising/
+"
+
+# --------------------------------------------------
+#  Help / usage
+# --------------------------------------------------
+print_help() {
+    cat <<EOF
+Usage: $(basename "$0") [SET_NAME]
+
+Create a zip archive of QC outputs (folders, files, and glob patterns).
+
+SET_NAME selects which path set to use. If omitted, 'default' is used.
+
+Available sets:
+$(for k in "${!FOLDER_SETS[@]}"; do echo "  - $k"; done)
+
+Examples:
+  $(basename "$0")
+  $(basename "$0") basic
+  $(basename "$0") denoise_only
+
+You can edit FOLDER_SETS in this script to add/remove sets or paths.
+Each set can contain directories, files, or glob patterns like:
+  QC/*.png
+  QC/*/Matrixplots/
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+    print_help
+    exit 0
+fi
+
+# --------------------------------------------------
+#  Determine which set to use
+# --------------------------------------------------
+SET_NAME="${1:-default}"
+
+if [[ -z "${FOLDER_SETS[$SET_NAME]+_}" ]]; then
+    echo "Unknown folder set: '$SET_NAME'"
+    echo "Available sets:"
+    for k in "${!FOLDER_SETS[@]}"; do
+        echo "  - $k"
+    done
+    exit 1
+fi
+
+echo "Using path set: '$SET_NAME'"
+echo
+
+# Convert selected set into an array (one entry per line)
+readarray -t PATH_SPECS <<< "${FOLDER_SETS[$SET_NAME]}"
+
+# --------------------------------------------------
+#  Compute output zip name
+# --------------------------------------------------
+CURRENT_DIR_NAME=$(basename "$PWD")
+DATE=$(date +%Y-%m-%d)
+ZIPFILE="${CURRENT_DIR_NAME}_${SET_NAME}_${DATE}.zip"
+
+echo "Creating zip file: $ZIPFILE"
+echo
+
+# --------------------------------------------------
+#  Resolve paths (files, dirs, glob patterns)
+# --------------------------------------------------
+EXISTING=()
+declare -A SEEN  # to avoid duplicates
+
+for spec in "${PATH_SPECS[@]}"; do
+    # Skip empty lines
+    [[ -z "$spec" ]] && continue
+
+    # Use compgen to expand glob patterns safely (handles spaces)
+    mapfile -t matches < <(compgen -G "$spec" 2>/dev/null || true)
+
+    if (( ${#matches[@]} == 0 )); then
+        echo "No match (skipped): $spec"
+        continue
+    fi
+
+    for m in "${matches[@]}"; do
+        # Check that path really exists
+        if [[ -e "$m" ]]; then
+            # Deduplicate
+            if [[ -z "${SEEN[$m]+_}" ]]; then
+                SEEN["$m"]=1
+                echo "Including: $m"
+                EXISTING+=("$m")
+            fi
+        fi
+    done
+done
+
+echo
+
+if (( ${#EXISTING[@]} == 0 )); then
+    echo "No existing files or folders matched — nothing to zip. Exiting."
+    exit 0
+fi
+
+# --------------------------------------------------
+#  Zip everything
+# --------------------------------------------------
+# -r : recurse into directories
+# (zip will just add files directly; recursion only matters for dirs)
+zip -r "$ZIPFILE" "${EXISTING[@]}"
+
+echo "Done: $ZIPFILE"
+

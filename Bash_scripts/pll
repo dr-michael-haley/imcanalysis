@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Directory where your job scripts live by default (same as pipeline)
+JOBDIR=${PIPELINE_DIR:-"$HOME/slurm_pipelines"}
+
+# Central config mapping stage -> script (same as pipeline)
+CONFIG=${PIPELINE_CONFIG:-"$JOBDIR/pipeline.conf"}
+
+usage() {
+    cat <<EOF
+Usage:
+  $(basename "$0") stage [args...]
+
+Run the code from a single stage's job script locally,
+using the same stage aliases defined in pipeline.conf.
+
+This version "cheats" by running the script in an interactive bash,
+so your ~/.bashrc (and thus 'conda init') is loaded first.
+
+Examples:
+  $(basename "$0") nimbus
+  $(basename "$0") bbn --debug
+
+Environment:
+  PIPELINE_DIR      Default job script directory (default: \$HOME/slurm_pipelines)
+  PIPELINE_CONFIG   Path to config file (default: \$PIPELINE_DIR/pipeline.conf)
+EOF
+    exit 1
+}
+
+if [[ $# -lt 1 ]]; then
+    echo "Error: stage name is required." >&2
+    usage
+fi
+
+stage="$1"
+shift  # remaining args passed to the underlying script
+
+# Helper: look up script for a given stage from config, with fallback
+get_script_for_stage() {
+    local stage="$1"
+    local line key value
+
+    # Try config file
+    if [[ -f "$CONFIG" ]]; then
+        while IFS= read -r line; do
+            # skip empty lines and comments
+            [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+
+            IFS='=' read -r key value <<< "$line"
+            # trim whitespace
+            key="${key#"${key%%[![:space:]]*}"}"   # ltrim
+            key="${key%"${key##*[![:space:]]}"}"   # rtrim
+            value="${value#"${value%%[![:space:]]*}"}"
+            value="${value%"${value##*[![:space:]]}"}"
+
+            [[ "$key" == "$stage" ]] || continue
+
+            if [[ -z "$value" ]]; then
+                break
+            fi
+
+            if [[ "$value" = /* ]]; then
+                echo "$value"
+            else
+                echo "$JOBDIR/$value"
+            fi
+            return 0
+        done < "$CONFIG"
+    fi
+
+    # Fallback: <JOBDIR>/<stage>.sbatch
+    echo "$JOBDIR/${stage}.sbatch"
+}
+
+script=$(get_script_for_stage "$stage")
+
+if [[ ! -f "$script" ]]; then
+    echo "Error: job script '$script' not found for stage '$stage'" >&2
+    exit 1
+fi
+
+echo "[pipeline-local] Stage:  $stage"
+echo "[pipeline-local] Script: $script"
+echo "[pipeline-local] Running locally in an interactive bash (so conda is available)..."
+
+# Hack:
+# -bash -i → interactive shell, so ~/.bashrc (with conda init) is loaded
+# -c "cmd" → run our script with any extra args
+#
+# We build a tiny command string that calls the script with quoted args.
+cmd=( "$script" "$@" )
+
+# Safely build the command line: printf %q quotes each arg for bash
+cmd_string=$(printf ' %q' "${cmd[@]}")
+cmd_string=${cmd_string:1}  # remove leading space
+
+bash -i -c "$cmd_string"

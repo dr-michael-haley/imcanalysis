@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Default log file (same as pipeline)
+LOGFILE=${PIPELINE_LOGFILE:-"./pipeline_log.log"}
+
+# Colours if stdout is a TTY
+if [[ -t 1 ]]; then
+    BOLD=$'\e[1m'
+    GREEN=$'\e[32m'
+    YELLOW=$'\e[33m'
+    RED=$'\e[31m'
+    BLUE=$'\e[34m'
+    RESET=$'\e[0m'
+else
+    BOLD=""
+    GREEN=""
+    YELLOW=""
+    RED=""
+    BLUE=""
+    RESET=""
+fi
+
+usage() {
+    cat <<EOF
+Usage: $(basename "$0")
+
+Shows the status of the most recent pipeline submitted by 'pipeline',
+based on the log file:
+
+  $LOGFILE
+
+You can override the log path by setting PIPELINE_LOGFILE:
+
+  PIPELINE_LOGFILE=/path/to/pipeline.log $(basename "$0")
+EOF
+    exit 1
+}
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+    usage
+fi
+
+if [[ ! -f "$LOGFILE" ]]; then
+    echo "${RED}Error:${RESET} log file '$LOGFILE' not found." >&2
+    exit 1
+fi
+
+# Find the last pipeline header line
+last_line_num=$(grep -n 'pipeline ' "$LOGFILE" | tail -n1 | cut -d: -f1 || true)
+
+if [[ -z "$last_line_num" ]]; then
+    echo "${RED}Error:${RESET} no pipeline entries found in '$LOGFILE'." >&2
+    exit 1
+fi
+
+# Extract from that line to EOF as the last run block
+run_block=$(tail -n +"$last_line_num" "$LOGFILE")
+
+# First line is the header, rest are stages / final summary
+header_line=$(printf '%s\n' "$run_block" | head -n1)
+stage_lines=$(printf '%s\n' "$run_block" | awk '/^  [^ ].*->/ {print}')
+
+if [[ -z "$stage_lines" ]]; then
+    echo "${RED}Error:${RESET} could not find any stage lines in the last pipeline block." >&2
+    exit 1
+fi
+
+echo "${BOLD}Last pipeline run:${RESET}"
+echo "  $header_line"
+echo
+
+echo "${BOLD}Stages and job IDs:${RESET}"
+printf '%s\n' "$stage_lines"
+echo
+
+# Extract job IDs from stage lines (3rd field, strip any '(...)')
+jobids=$(printf '%s\n' "$stage_lines" \
+    | sed -E 's/.*->[[:space:]]*([^[:space:]]*).*/\1/' \
+    | tr '\n' ',' \
+    | sed 's/,$//')
+
+if [[ -z "$jobids" ]]; then
+    echo "${RED}Error:${RESET} could not extract job IDs from stage lines." >&2
+    exit 1
+fi
+
+echo "${BOLD}Slurm status for jobs:${RESET} $jobids"
+echo
+
+if command -v sacct >/dev/null 2>&1; then
+    # Use sacct for detailed accounting info
+    sacct -j "$jobids" -o JobID,JobName%30,Partition,State,ExitCode -n
+elif command -v squeue >/dev/null 2>&1; then
+    # Fallback to squeue (only shows pending/running)
+    squeue -j "$jobids"
+else
+    echo "${YELLOW}Warning:${RESET} neither 'sacct' nor 'squeue' found on PATH." >&2
+    exit 1
+fi
+

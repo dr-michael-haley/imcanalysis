@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+
+# Change directory into ~/scratch/<user> using case-insensitive prefix matching.
+
+prefix="$1"
+
+if [[ -z "${prefix}" ]]; then
+    echo "Usage: cds <prefix>"
+    return 1 2>/dev/null || exit 1
+fi
+
+base_dir="$HOME/scratch"
+
+if [[ ! -d "$base_dir" ]]; then
+    echo "Error: $base_dir does not exist"
+    return 1 2>/dev/null || exit 1
+fi
+
+# Case-insensitive matching
+shopt -s nocasematch
+
+matches=()
+for dir in "$base_dir"/*; do
+    dname=$(basename "$dir")
+    if [[ "$dname" == ${prefix}* ]]; then
+        matches+=( "$dir" )
+    fi
+done
+
+shopt -u nocasematch
+
+# No matches
+if (( ${#matches[@]} == 0 )); then
+    echo "No matches for prefix '$prefix' in $base_dir"
+    return 1 2>/dev/null || exit 1
+fi
+
+# Multiple matches
+if (( ${#matches[@]} > 1 )); then
+    echo "Multiple matches:"
+    for m in "${matches[@]}"; do
+        echo "  $(basename "$m")"
+    done
+    echo "Be more specific."
+    return 1 2>/dev/null || exit 1
+fi
+
+target="${matches[0]}"
+
+echo "cd → $target"
+cd "$target"
+
