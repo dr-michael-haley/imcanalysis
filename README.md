@@ -189,16 +189,3 @@ Understanding how the kernel works will help you troubleshoot and run your noteb
 ## 🧼 Preprocessing Scripts for University of Manchester CSF3
 
 Scripts for preprocessing IMC data on CSF3 (a command-line cloud computing platform used at the University of Manchester) are available in the `CSF3` folder. These scripts are designed to work with SLURM-based systems or similar HPC environments.
-
-
-## 🌟 IMC_Denoise (Updated November 2024)
-
-This notebook has largerly been superceded by CSF3-compatible denoising scripts. The original notebook implementation of [IMC Denoise](https://github.com/PENGLU-WashU/IMC_Denoise/)—designed to integrate with the Bodenmiller pipeline—is still available in the repo, but we now recommend running denoising on CSF3 for best results.
-
-## 🧬 REDSEA (Cell Segmentation Overlap Correction)
-
-This tool is adapted from the original [REDSEA implementation](https://github.com/labsyspharm/redseapy) by Artem Sokolov, reworked for better integration with the Bodenmiller pipeline. Our testing indicates that it doesn't work particularly well, often losing so much positive signal that the signal to noise ratio is barely improved. Still, I've left it here just in case.
-
-> [!CAUTION]  
-> This code has not been thoroughly tested or maintained recently. Use with caution.  
-> **Last update:** November 4th, 2022.
