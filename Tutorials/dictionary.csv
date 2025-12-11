@@ -1,0 +1,50 @@
+ROI,description,Example_1,Example_2,Example_3
+2023-12-05 Deepak Slide Control_acq_0,ROI_001,Example_info,1,True
+2023-12-05 Deepak Slide GCD001-6_acq_0,ROI_001,Example_info,1,True
+2023-12-05 Deepak Slide GCD001-6_acq_1,ROI_002,Example_info,1,True
+2023-12-05 Deepak Slide GCD001-6_acq_2,ROI_003,Example_info,1,True
+2023-12-05 Deepak Slide GCD001-6_acq_3,ROI_004,Example_info,1,True
+2024_02_15_CTL001_MSHB1281_acq_0,ROI_001,Example_info,1,True
+2024_02_15_CTL001_MSHB1281_acq_1,ROI_002,Example_info,1,True
+2024_02_15_CTL002_MSHB1267_acq_0,ROI_001,Example_info,1,True
+2024_02_15_CTL002_MSHB1267_acq_1,ROI_002,Example_info,1,True
+2024_02_15_GCD002_acq_0,ROI_001,Example_info,1,True
+2024_02_15_GCD002_acq_1,ROI_002,Example_info,1,True
+2024_02_15_GCD002_acq_2,ROI_003,Example_info,1,True
+2024_02_15_GCD003_acq_0,ROI_001,Example_info,1,True
+2024_02_15_GCD003_acq_1,ROI_002,Example_info,1,True
+2024_02_15_GCD003_acq_2,ROI_003,Example_info,1,True
+2024_02_15_GCD004_acq_0,ROI_001,Example_info,1,True
+2024_02_15_GCD004_acq_1,ROI_002,Example_info,1,True
+2024_02_15_GCD004_acq_2,ROI_003,Example_info,1,True
+2024_02_15_GCD005_acq_0,ROI_001,Example_info,1,True
+2024_02_15_GCD005_acq_1,ROI_002,Example_info,1,True
+2024_02_15_GCD005_acq_2,ROI_003,Example_info,1,True
+2024_02_15_GCD005_acq_3,ROI_004,Example_info,1,True
+2024_02_15_GCD006_acq_0,ROI_002,Example_info,1,True
+2024_02_15_GCD006_acq_1,ROI_004,Example_info,1,True
+2024_02_15_GCD006_acq_2,ROI_005,Example_info,1,True
+2024_02_15_GCD006_acq_3,ROI_006,Example_info,1,True
+2024_02_15_GCD007_acq_0,ROI_001,Example_info,1,True
+2024_02_15_GCD007_acq_1,ROI_002,Example_info,1,True
+2024_02_15_GCD007_acq_2,ROI_003,Example_info,1,True
+2024_02_15_GCD008_acq_0,ROI_004,Example_info,1,True
+2024_02_15_GCD008_acq_1,ROI_005,Example_info,1,True
+2024_02_15_GCD008_acq_2,ROI_006,Example_info,1,True
+2024_02_15_GCD008_acq_3,ROI_007,Example_info,1,True
+2024_02_15_GCD009_acq_0,ROI_001,Example_info,1,True
+2024_02_15_GCD009_acq_1,ROI_002,Example_info,1,True
+2024_02_15_GCD009_acq_2,ROI_003,Example_info,1,True
+2024_02_15_GCD009_acq_3,ROI_004,Example_info,1,True
+2024_02_15_GCD010_acq_0,ROI_001,Example_info,1,True
+2024_02_15_GCD010_acq_1,ROI_002,Example_info,1,True
+2024_02_15_GCD010_acq_2,ROI_003,Example_info,1,True
+2024_02_15_GCD010_acq_3,ROI_004,Example_info,1,True
+Denis S_CWB255_HuNS 1_acq_0,ROI_001,Example_info,1,True
+Denis S_CWB259_HuNS 1_acq_0,ROI_001,Example_info,1,True
+Denis S_CWB307_HuNS 1_acq_0,ROI_001,Example_info,1,True
+Denis S_CWB308_HuNS 1_acq_0,ROI_001,Example_info,1,True
+Denis S_CWB343_NS 1_acq_0,ROI_001,Example_info,1,True
+Denis S_CWB344_NS 1_acq_0,ROI_001,Example_info,1,True
+Denis S_CWB345_NS 1_acq_0,ROI_001,Example_info,1,True
+Denis S_MSHB 1465_HuNS 1_acq_0,ROI_001,Example_info,1,True
