@@ -4,19 +4,16 @@
 #SBATCH -t 2-0
 #SBATCH -n 12
 
-#SBATCH --mail-user=michael.haley@manchester.ac.uk
+#SBATCH --mail-user=${IMC_EMAIL}
 #SBATCH --mail-type=ALL
 
 #@DESC: Denoising using IMC_Denoise
 #@IN:   tiffs
 #@OUT:  processed, /QC/denoising/
 
-echo "Denoising job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
+source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
-module load gcc/13.3.0
-export MPLBACKEND="Agg"
-export QT_QPA_PLATFORM="offscreen"
-unset DISPLAY
+echo "Denoising job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 
 conda activate imc_denoise_new
 python -m SpatialBiologyToolkit.scripts.denoising

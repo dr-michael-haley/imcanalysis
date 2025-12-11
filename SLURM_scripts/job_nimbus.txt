@@ -4,21 +4,17 @@
 #SBATCH -t 2-0
 #SBATCH -n 6
 
-#SBATCH --mail-user=michael.haley@manchester.ac.uk
+#SBATCH --mail-user=${IMC_EMAIL}
 #SBATCH --mail-type=ALL
 
 #@DESC: Produces single-cell measurements using the Nimbus package, replacing regular segmentation
 #@IN:   masks, processed
 #@OUT:  anndata.h5ad, /nimbus_output/, QC/nimbus_normalization_qc/
 
+source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
+
 echo "Job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 
-module load gcc/13.3.0
 conda activate segmentation
-
-export OPENAI_API_KEY="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"
-export MPLBACKEND="Agg"
-export QT_QPA_PLATFORM="offscreen"
-unset DISPLAY
 
 python -m SpatialBiologyToolkit.scripts.segmentation_nimbus

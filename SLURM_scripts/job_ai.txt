@@ -3,22 +3,19 @@
 #SBATCH -t 2-0
 #SBATCH -n 2
 
-#SBATCH --mail-user=michael.haley@manchester.ac.uk
+#SBATCH --mail-user=${IMC_EMAIL}
 #SBATCH --mail-type=ALL
 
 #@DESC: AI labelling of Leiden populations
 #@IN:   anndata_processed.h5ad
 #@OUT:  anndata_processed.h5ad, /QC/AI_Interpretation/
 
-echo "AI interpretation job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
+source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
-module load gcc/13.3.0
-export MPLBACKEND="Agg"
-export QT_QPA_PLATFORM="offscreen"
-unset DISPLAY
-export OPENAI_API_KEY="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"
+echo "AI interpretation job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 
 conda activate segmentation
 
 # AI interpretation (optional, adds *_AIlabel columns)
+
 python -m SpatialBiologyToolkit.scripts.ai_interpretation

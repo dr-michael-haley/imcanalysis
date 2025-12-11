@@ -2,7 +2,7 @@
 #SBATCH -p serial 
 #SBATCH -t 2-0
 
-#SBATCH --mail-user=michael.haley@manchester.ac.uk
+#SBATCH --mail-user=${IMC_EMAIL}
 #SBATCH --mail-type=ALL
 
 #@DESC: ZIPs up directories ready for download
