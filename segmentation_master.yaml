@@ -1,0 +1,25 @@
+name: segmentation
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+
+dependencies:
+  - python=3.11
+  - leidenalg
+  - python-igraph
+  - readimc
+  - scanpy
+  - scikit-image
+  - bbknn
+  - pyyaml
+  - shapely
+  - ipython
+  - psutil
+  - pip
+
+  - pip:
+      - cellpose==3.1.0
+      - Nimbus-Inference==0.0.4
+      - openai==2.7.1
+      - SpatialDM==0.3.1
