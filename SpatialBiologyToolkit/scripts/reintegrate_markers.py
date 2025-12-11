@@ -149,7 +149,7 @@ def main() -> None:
     
     # Output path: add "_reintegrated" suffix
     output_path = main_adata_path.with_name(
-        f"{main_adata_path.stem}_reintegrated{main_adata_path.suffix}"
+        f"{main_adata_path.stem}{main_adata_path.suffix}"
     )
     
     # Check if files exist
