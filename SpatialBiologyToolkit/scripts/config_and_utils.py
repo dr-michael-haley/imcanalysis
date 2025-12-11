@@ -171,8 +171,8 @@ class NimbusConfig:
     overwrite_existing_outputs: bool = True
     extract_classic_intensities: bool = True  # Extract classic mean intensities over masks
     extract_expansion_intensities: bool = True  # Extract mean intensities from expanded masks
-    expansion_pixels: int = 10  # Number of pixels to expand masks for expansion intensities
-    expansion_jobs: int = 6  # Number of parallel jobs for expansion extraction (1=sequential, -1=all CPUs)
+    expansion_pixels: int = 2  # Number of pixels to expand masks for expansion intensities
+    expansion_jobs: int = 1  # Number of parallel jobs for expansion extraction (1=sequential, -1=all CPUs)
 
 @dataclass
 class BasicProcessConfig:

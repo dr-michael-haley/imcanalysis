@@ -606,6 +606,9 @@ def _extract_expansion_intensities(
     """
     from multiprocessing import Pool, cpu_count
     
+    # Ensure n_jobs is an integer (handle config string values)
+    n_jobs = int(n_jobs)
+    
     # Determine number of processes
     if n_jobs == -1:
         n_processes = cpu_count()

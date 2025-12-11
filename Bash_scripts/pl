@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Directory where your job scripts live by default
-JOBDIR=${PIPELINE_DIR:-"$HOME/slurm_pipelines"}
+JOBDIR=${PIPELINE_DIR:-"$HOME/imcanalysis/SLURM_scripts"}
 
 # Central config mapping stage -> script
 CONFIG=${PIPELINE_CONFIG:-"$JOBDIR/pipeline.conf"}
