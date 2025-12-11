@@ -50,7 +50,7 @@ echo "✔ Added alias 'cds'."
 if [[ ! -f "$CONFIG" ]]; then
     echo "Creating configuration file: $CONFIG"
     read -p "Enter SLURM notification email: " email
-    read -p "Enter OpenAI API key: " openai_key
+    read -p "Enter OpenAI API key (or leave blank): " openai_key
 
     cat <<EOF > "$CONFIG"
 export IMC_EMAIL="$email"
@@ -72,8 +72,29 @@ append_if_missing "$SRC_LINE" "$HOME/.bashrc"
 
 echo "✔ Enabled automatic loading of ~/.imc_config."
 
+#######################################
+# 7. Ensure ~/.bash_profile sources profile + bashrc
+#######################################
+BASH_PROFILE="$HOME/.bash_profile"
+
+BP_LINE_PROFILE='[ -f "$HOME/.profile" ] && source "$HOME/.profile"'
+BP_LINE_BASHRC='[ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc"'
+
+touch "$BASH_PROFILE"
+
+if ! grep -Fxq "$BP_LINE_PROFILE" "$BASH_PROFILE"; then
+    echo "$BP_LINE_PROFILE" >> "$BASH_PROFILE"
+    echo "✔ Added sourcing of ~/.profile to ~/.bash_profile"
+fi
+
+if ! grep -Fxq "$BP_LINE_BASHRC" "$BASH_PROFILE"; then
+    echo "$BP_LINE_BASHRC" >> "$BASH_PROFILE"
+    echo "✔ Added sourcing of ~/.bashrc to ~/.bash_profile"
+fi
+
+
 ###############################################
 # Finish
 ###############################################
 echo "🎉 IMC Analysis successfully installed!"
-echo "➡️  Run: source ~/.profile && source ~/.bashrc"
+echo "➡️  Run: source ~/.profile && source ~/.bashrc, OR just log out and back in again."
