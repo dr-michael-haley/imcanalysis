@@ -1,0 +1,53 @@
+name: sbt
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+dependencies:
+  - vispy
+  - mofapy2
+  - readimc
+  - python=3.12
+  - pip
+  - geopandas
+  - geojson
+  - readfcs
+  - lightgbm
+  - ipykernel
+  - holoviews
+  - seaborn
+  - h5py
+  - statsmodels
+  - pyqt
+  - scikit-image
+  - spatialdata
+  - squidpy
+  - spatialdata-io
+  - scipy
+  - shapely
+  - sphinx
+  - muon
+  - cmake
+  - scikit-learn
+  - scanpy
+  - tiffslide
+  - bbknn
+  - spatialdata-plot
+  - colorcet
+  - simpleitk
+  - lifelines
+  - napari-spatialdata
+  - umap-learn
+  - git
+  - ipywidgets
+  - plotly
+  - nbformat
+  - python-kaleido
+  - decoupler-py
+  - numpy=2.2
+  - anndata2ri
+  - esda
+  - pysal
+  - scyjava
+  - customtkinter
+prefix: C:\Anaconda3\envs\sbt

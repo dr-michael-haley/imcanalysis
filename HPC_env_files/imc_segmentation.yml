@@ -1,4 +1,4 @@
-name: segmentation
+name: imc_segmentation
 channels:
   - conda-forge
   - bioconda

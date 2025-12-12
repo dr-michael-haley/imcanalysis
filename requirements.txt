@@ -1,0 +1,44 @@
+﻿# Core data structures and analysis
+numpy
+pandas
+scipy
+anndata
+scanpy
+bbknn
+harmonypy
+umap-learn
+scikit-learn
+statsmodels
+lifelines
+colorcet
+sc3s
+readimc
+pyyaml
+
+# Plotting and spatial tools
+matplotlib
+seaborn
+tifffile
+shapely
+networkx
+squidpy
+scikit-image
+ipython
+
+# Deep learning / segmentation / denoising
+torch
+tensorflow
+cellpose
+opencv-python
+psutil
+# IMC_Denoise is vendor code; install from source (External_and_old_code/IMC_Denoise)
+
+# Interactive viewers
+napari
+magicgui
+qtpy
+vispy
+
+# Utilities
+alpineer
+tqdm

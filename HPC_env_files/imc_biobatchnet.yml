@@ -1,0 +1,30 @@
+name: imc_biobatchnet
+channels:
+  - conda-forge
+  - pytorch
+  - nvidia
+  - defaults
+
+dependencies:
+  - python=3.9
+  - pytorch>=2.0.0
+  - pytorch-cuda=11.8
+  - torchaudio
+  - torchvision
+  - python-igraph
+  - leidenalg
+  - numpy
+  - pandas
+  - scikit-learn
+  - scipy
+  - tqdm
+  - pyyaml
+  - anndata
+  - scanpy
+  - matplotlib
+  - seaborn
+  - h5py
+
+  - pip
+  - pip:
+      - git+https://github.com/UoM-HealthAI/BioBatchNet.git
