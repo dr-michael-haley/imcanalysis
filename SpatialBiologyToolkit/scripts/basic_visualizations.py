@@ -19,7 +19,8 @@ from pathlib import Path
 import scanpy as sc
 import anndata as ad
 import matplotlib
-matplotlib.use("Agg")  # must be before importing pyplot/scanpy that plots
+# Note: Backend is set to "Agg" only when run as main script (see __main__ section)
+# This allows interactive plotting when importing functions from this module
 
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -677,8 +678,15 @@ def create_population_analysis(adata, population_columns, metadata_columns, qc_b
                     continue
                 
                 try:
+                    # Ensure subdirectory exists before saving
+                    pop_analysis_subdir.mkdir(parents=True, exist_ok=True)
+                    
                     # 1. Raw counts plot
                     logging.info(f"Creating raw counts plot for {population_col} by {metadata_col}...")
+                    raw_counts_graph = pop_analysis_subdir / f"{metadata_col}_raw_counts.png"
+                    raw_counts_table = pop_analysis_subdir / f"{metadata_col}_raw_counts.csv"
+                    raw_counts_graph.parent.mkdir(parents=True, exist_ok=True)
+                    
                     sbt_plotting.grouped_graph(
                         adata,
                         group_by_obs=population_col,
@@ -687,12 +695,16 @@ def create_population_analysis(adata, population_columns, metadata_columns, qc_b
                         log_scale=True,
                         fig_size=(max(8, n_categories * 0.8), 6),
                         display_tables=False,
-                        save_graph=str(pop_analysis_subdir / f"{metadata_col}_raw_counts.png"),
-                        save_table=str(pop_analysis_subdir / f"{metadata_col}_raw_counts.csv")
+                        save_graph=str(raw_counts_graph),
+                        save_table=str(raw_counts_table)
                     )
                     
                     # 2. Proportions plot  
                     logging.info(f"Creating proportions plot for {population_col} by {metadata_col}...")
+                    proportions_graph = pop_analysis_subdir / f"{metadata_col}_proportions.png"
+                    proportions_table = pop_analysis_subdir / f"{metadata_col}_proportions.csv"
+                    proportions_graph.parent.mkdir(parents=True, exist_ok=True)
+                    
                     sbt_plotting.grouped_graph(
                         adata,
                         group_by_obs=population_col,
@@ -701,12 +713,16 @@ def create_population_analysis(adata, population_columns, metadata_columns, qc_b
                         log_scale=False,
                         fig_size=(max(8, n_categories * 0.8), 6),
                         display_tables=False,
-                        save_graph=str(pop_analysis_subdir / f"{metadata_col}_proportions.png"),
-                        save_table=str(pop_analysis_subdir / f"{metadata_col}_proportions.csv")
+                        save_graph=str(proportions_graph),
+                        save_table=str(proportions_table)
                     )
                     
                     # 3. Stacked plot for better comparison (proportions, bars add up to 1)
                     logging.info(f"Creating stacked plot for {population_col} by {metadata_col}...")
+                    stacked_graph = pop_analysis_subdir / f"{metadata_col}_stacked.png"
+                    stacked_table = pop_analysis_subdir / f"{metadata_col}_stacked.csv"
+                    stacked_graph.parent.mkdir(parents=True, exist_ok=True)
+                    
                     sbt_plotting.grouped_graph(
                         adata,
                         group_by_obs=population_col,
@@ -716,8 +732,8 @@ def create_population_analysis(adata, population_columns, metadata_columns, qc_b
                         log_scale=False,
                         fig_size=(max(8, n_categories * 0.8), 6),
                         display_tables=False,
-                        save_graph=str(pop_analysis_subdir / f"{metadata_col}_stacked.png"),
-                        save_table=str(pop_analysis_subdir / f"{metadata_col}_stacked.csv")
+                        save_graph=str(stacked_graph),
+                        save_table=str(stacked_table)
                     )
                     
                 except Exception as e:
@@ -730,6 +746,9 @@ def create_population_analysis(adata, population_columns, metadata_columns, qc_b
 
 
 if __name__ == "__main__":
+    # Set matplotlib to non-interactive backend for batch processing
+    matplotlib.use("Agg")
+    
     # Set up logging
     pipeline_stage = 'Visualizations'
     config = process_config_with_overrides()

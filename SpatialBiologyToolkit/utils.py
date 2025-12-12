@@ -18,6 +18,9 @@ import matplotlib.pyplot as plt
 import scanpy as sc
 from skimage.measure import regionprops
 import scipy
+from scipy.sparse import issparse
+import scipy.spatial.distance as ssd
+import scipy.cluster.hierarchy as sch
 
 
 def compare_lists(L1: List[Any], L2: List[Any], L1_name: str, L2_name: str, return_error: bool = True) -> None:
@@ -770,3 +773,218 @@ def update_sample_metadata(adata, dictionary_path="metadata/dictionary.csv"):
         dictionary_file['Example_2'] = 1
         dictionary_file['Example_3'] = True
         dictionary_file.to_csv(dictionary_path)
+
+
+def reorder_vars_by_expression(
+    adata: ad.AnnData,
+    vars_of_interest: List[str],
+    distance_metric: str = 'euclidean',
+    linkage_method: str = 'ward'
+) -> List[str]:
+    """
+    Reorder variables (genes/markers) by hierarchical clustering based on expression patterns.
+    
+    This function performs hierarchical clustering on a subset of variables to determine
+    their optimal ordering based on expression similarity across cells. Useful for
+    organizing heatmaps and visualizations.
+    
+    Parameters
+    ----------
+    adata : AnnData
+        Annotated data matrix containing expression data.
+    vars_of_interest : list of str
+        List of variable names (genes/markers) to cluster and reorder.
+    distance_metric : str, optional
+        Distance metric for clustering. Options include 'euclidean', 'correlation',
+        'cosine', etc. See scipy.spatial.distance.pdist for all options.
+        Default is 'euclidean'.
+    linkage_method : str, optional
+        Linkage method for hierarchical clustering. Options include 'ward', 'single',
+        'complete', 'average', etc. See scipy.cluster.hierarchy.linkage for all options.
+        Default is 'ward'.
+    
+    Returns
+    -------
+    list of str
+        Ordered list of variable names based on hierarchical clustering.
+    
+    Examples
+    --------
+    >>> markers = ['CD3', 'CD4', 'CD8', 'CD20', 'CD68']
+    >>> ordered_markers = reorder_vars_by_expression(adata, markers)
+    >>> # Use ordered markers for plotting
+    >>> sc.pl.heatmap(adata, ordered_markers, groupby='leiden')
+    """
+    # Subset the data to include only the vars of interest
+    adata_subset = adata[:, vars_of_interest]
+
+    # Extract the expression matrix for the vars of interest
+    expression_matrix = adata_subset.X
+    if issparse(expression_matrix):
+        expression_matrix = expression_matrix.toarray()
+
+    # Calculate the distance matrix
+    distance_matrix = ssd.pdist(expression_matrix.T, metric=distance_metric)
+
+    # Perform hierarchical clustering
+    linkage_matrix = sch.linkage(distance_matrix, method=linkage_method)
+
+    # Get the order of the vars based on the clustering
+    dendrogram = sch.dendrogram(linkage_matrix, no_plot=True)
+    ordered_var_indices = dendrogram['leaves']
+    ordered_vars = adata_subset.var_names[ordered_var_indices]
+
+    return ordered_vars.tolist()
+
+
+def leiden_on_subset(
+    adata: ad.AnnData,
+    restrict_to: Optional[Tuple[str, List[Any]]] = None,
+    *,
+    genes: Optional[List[str]] = None,
+    gene_layer: Optional[str] = None,
+    subset_key_name: str = "leiden_subset",
+    base_label_key: Optional[str] = None,
+    leiden_resolution: float = 1.0,
+    neighbors_kwargs: Optional[dict] = None,
+    leiden_kwargs: Optional[dict] = None,
+    use_rep: Optional[str] = None,
+    copy: bool = False,
+) -> ad.AnnData:
+    """
+    Run Leiden clustering on a cell subset and/or gene subset and merge labels back.
+    
+    This function allows you to perform Leiden clustering on a specific subset of cells
+    and/or using a specific subset of genes, then integrates the results back into the
+    full dataset. Cells outside the subset can retain existing labels or be marked separately.
+
+    Parameters
+    ----------
+    adata : AnnData
+        Full AnnData object containing the complete dataset.
+    restrict_to : tuple of (str, list), optional
+        Tuple of (obs_key, values) defining the cell subset to analyze.
+        For example, ('cell_type', ['T cells', 'B cells']) to restrict analysis
+        to only T cells and B cells. Default is None (use all cells).
+    genes : list of str, optional
+        List of gene/marker names to subset for analysis (adata[:, genes]).
+        If provided, only these variables will be used for neighborhood graph
+        construction. Default is None (use all genes).
+    gene_layer : str, optional
+        Layer name to use instead of X when genes are provided.
+        Useful for using raw counts or other alternative data representations.
+        Default is None (use X).
+    subset_key_name : str, optional
+        Name for the new obs column containing the merged labels.
+        Default is 'leiden_subset'.
+    base_label_key : str, optional
+        Existing obs column with labels for non-subset cells.
+        If None, non-subset cells are labeled as 'outside_subset'.
+        Default is None.
+    leiden_resolution : float, optional
+        Resolution parameter for Leiden clustering. Higher values produce
+        more clusters. Default is 1.0.
+    neighbors_kwargs : dict, optional
+        Additional keyword arguments passed to sc.pp.neighbors().
+        Default is None.
+    leiden_kwargs : dict, optional
+        Additional keyword arguments passed to sc.tl.leiden().
+        Default is None.
+    use_rep : str, optional
+        Representation to use for neighbors computation (e.g., 'X_pca').
+        MUST be None or 'X' if genes parameter is not None.
+        Default is None.
+    copy : bool, optional
+        If True, return a copy of the AnnData object. If False, modify in place.
+        Default is False.
+    
+    Returns
+    -------
+    AnnData
+        Modified AnnData object with new clustering labels in obs[subset_key_name].
+        Subset cells are labeled as 'subset_0', 'subset_1', etc.
+        Non-subset cells retain their base labels or are marked as 'outside_subset'.
+    
+    Raises
+    ------
+    ValueError
+        If the cell subset is empty after applying restrictions.
+    KeyError
+        If specified genes are not found in the dataset.
+    
+    Examples
+    --------
+    >>> # Cluster only T cells using all genes
+    >>> leiden_on_subset(adata, restrict_to=('cell_type', ['T cells']))
+    
+    >>> # Cluster all cells but only using specific markers
+    >>> markers = ['CD3', 'CD4', 'CD8']
+    >>> leiden_on_subset(adata, genes=markers, subset_key_name='tcell_leiden')
+    
+    >>> # Cluster specific cells with specific genes
+    >>> leiden_on_subset(
+    ...     adata,
+    ...     restrict_to=('tissue', ['tumor']),
+    ...     genes=['CD68', 'CD163', 'HLA-DR'],
+    ...     leiden_resolution=0.5,
+    ...     subset_key_name='tumor_macrophage_clusters'
+    ... )
+    """
+
+    if copy:
+        adata = adata.copy()
+
+    # ---- Cell mask ----
+    mask = pd.Series(True, index=adata.obs_names)
+
+    if restrict_to is not None:
+        obs_key, values = restrict_to
+        mask &= adata.obs[obs_key].isin(values)
+
+    if mask.sum() == 0:
+        raise ValueError("Cell subset is empty.")
+
+    # ---- Subset cells ----
+    adata_sub = adata[mask].copy()
+
+    # ---- Subset genes ----
+    if genes is not None:
+        missing = set(genes) - set(adata_sub.var_names)
+        if missing:
+            raise KeyError(f"Genes not found: {missing}")
+
+        adata_sub = adata_sub[:, genes].copy()
+        use_rep = None  # force raw X usage
+
+        if gene_layer is not None:
+            adata_sub.X = adata_sub.layers[gene_layer]
+
+    # ---- Neighbors ----
+    sc.pp.neighbors(
+        adata_sub,
+        use_rep=use_rep,
+        **(neighbors_kwargs or {})
+    )
+
+    # ---- Leiden ----
+    sc.tl.leiden(
+        adata_sub,
+        resolution=leiden_resolution,
+        key_added="_leiden_subset_tmp",
+        **(leiden_kwargs or {})
+    )
+
+    # ---- Merge labels back ----
+    merged = (
+        adata.obs[base_label_key].astype(str)
+        if base_label_key is not None
+        else pd.Series("outside_subset", index=adata.obs_names)
+    )
+
+    merged.loc[adata_sub.obs_names] = (
+        "subset_" + adata_sub.obs["_leiden_subset_tmp"].astype(str)
+    ).values
+
+    adata.obs[subset_key_name] = merged
+
+    return adata
