@@ -1,6 +1,7 @@
 name: imc_segmentation
 channels:
   - conda-forge
+  - nvidia
   - bioconda
   - defaults
 
