@@ -11,3 +11,5 @@ dependencies:
   - tqdm
   - pyyaml
   - pip
+  - pip:
+      - cellpose==4.0.7
