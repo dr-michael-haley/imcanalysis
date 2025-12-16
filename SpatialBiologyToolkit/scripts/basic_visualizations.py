@@ -759,9 +759,12 @@ if __name__ == "__main__":
     process_config = BasicProcessConfig(**filter_config_for_dataclass(config.get('process', {}), BasicProcessConfig))
     viz_config = VisualizationConfig(**filter_config_for_dataclass(config.get('visualization', {}), VisualizationConfig))
 
+    # Determine which AnnData to load
+    adata_path = viz_config.input_adata_path if viz_config.input_adata_path is not None else process_config.output_adata_path
+    
     # Load processed AnnData
-    logging.info(f'Loading processed AnnData from {process_config.output_adata_path}.')
-    adata = ad.read_h5ad(process_config.output_adata_path)
+    logging.info(f'Loading processed AnnData from {adata_path}.')
+    adata = ad.read_h5ad(adata_path)
     logging.info('AnnData loaded successfully.')
 
     # Set up QC output folder

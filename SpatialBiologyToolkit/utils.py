@@ -850,7 +850,8 @@ def leiden_on_subset(
     leiden_kwargs: Optional[dict] = None,
     use_rep: Optional[str] = None,
     copy: bool = False,
-) -> ad.AnnData:
+    return_new_names: bool = False,
+) -> Union[ad.AnnData, Tuple[ad.AnnData, List[str]]]:
     """
     Run Leiden clustering on a cell subset and/or gene subset and merge labels back.
     
@@ -897,13 +898,19 @@ def leiden_on_subset(
     copy : bool, optional
         If True, return a copy of the AnnData object. If False, modify in place.
         Default is False.
+    return_new_names : bool, optional
+        If True, return a tuple of (adata, new_population_names) where new_population_names
+        is a sorted list of the newly created population labels for subset cells.
+        Default is False.
     
     Returns
     -------
-    AnnData
+    AnnData or tuple of (AnnData, list of str)
         Modified AnnData object with new clustering labels in obs[subset_key_name].
-        Subset cells are labeled as 'subset_0', 'subset_1', etc.
+        Subset cells are labeled as '{base_label}_{leiden_number}', e.g., 'Tumor_0', 'Tumor_1'.
+        If base_label_key is None, subset cells are labeled as 'cluster_{leiden_number}'.
         Non-subset cells retain their base labels or are marked as 'outside_subset'.
+        If return_new_names=True, returns a tuple of (adata, new_population_names).
     
     Raises
     ------
@@ -917,18 +924,24 @@ def leiden_on_subset(
     >>> # Cluster only T cells using all genes
     >>> leiden_on_subset(adata, restrict_to=('cell_type', ['T cells']))
     
-    >>> # Cluster all cells but only using specific markers
+    >>> # Cluster all cells but only using specific markers, return new names
     >>> markers = ['CD3', 'CD4', 'CD8']
-    >>> leiden_on_subset(adata, genes=markers, subset_key_name='tcell_leiden')
+    >>> adata, new_pops = leiden_on_subset(
+    ...     adata, genes=markers, subset_key_name='tcell_leiden',
+    ...     return_new_names=True
+    ... )
+    >>> print(new_pops)  # ['cluster_0', 'cluster_1', 'cluster_2']
     
-    >>> # Cluster specific cells with specific genes
+    >>> # Cluster specific cells with specific genes, preserving base labels
     >>> leiden_on_subset(
     ...     adata,
     ...     restrict_to=('tissue', ['tumor']),
     ...     genes=['CD68', 'CD163', 'HLA-DR'],
+    ...     base_label_key='cell_type',
     ...     leiden_resolution=0.5,
     ...     subset_key_name='tumor_macrophage_clusters'
     ... )
+    >>> # Results in labels like 'Macrophage_0', 'Macrophage_1', 'Dendritic_0', etc.
     """
 
     if copy:
@@ -981,10 +994,382 @@ def leiden_on_subset(
         else pd.Series("outside_subset", index=adata.obs_names)
     )
 
-    merged.loc[adata_sub.obs_names] = (
-        "subset_" + adata_sub.obs["_leiden_subset_tmp"].astype(str)
-    ).values
+    # Create new labels by combining base label with leiden cluster number
+    if base_label_key is not None:
+        # Use existing labels as prefix
+        base_labels_subset = adata.obs.loc[adata_sub.obs_names, base_label_key].astype(str)
+    else:
+        # Use "cluster" as default prefix when no base label exists
+        base_labels_subset = pd.Series("cluster", index=adata_sub.obs_names)
+    
+    new_labels = (
+        base_labels_subset + "_" + adata_sub.obs["_leiden_subset_tmp"].astype(str)
+    )
+    
+    merged.loc[adata_sub.obs_names] = new_labels.values
 
     adata.obs[subset_key_name] = merged
 
+    if return_new_names:
+        # Get unique new population names created for the subset, sorted
+        new_population_names = sorted(new_labels.unique().tolist())
+        return adata, new_population_names
+    
     return adata
+
+
+def run_population_subclustering(
+    adata,
+    populations=None,
+    resolutions=(0.3,),
+    base_label_key="population",
+    use_rep="X_biobatchnet",
+    genes=None,
+    show_figures=True,
+    save_figures=True,
+    figure_dir="Figures",
+    remap_csv_path="subcluster_to_final_population.csv",
+    umap_dot_size=1,
+    matrixplot_vmax=0.3,
+    save_individual_umaps=True,
+):
+    """
+    Run Leiden subclustering on population subsets and generate remapping CSV.
+    
+    Performs Leiden clustering on specific cell populations at multiple resolutions,
+    generates comprehensive visualizations (UMAPs, matrixplots), and creates a CSV
+    file for mapping subclusters to final population annotations.
+    
+    Parameters
+    ----------
+    adata : AnnData
+        Annotated data matrix containing expression data and population labels.
+    populations : list of str, optional
+        List of populations (from base_label_key) to subcluster. If None, all unique
+        populations in base_label_key will be subclustered. Default is None.
+    resolutions : float or tuple of float, optional
+        Leiden resolution(s) to test. Higher values produce more clusters.
+        Can be a single float or iterable of floats. Default is (0.3,).
+    base_label_key : str, optional
+        Column in adata.obs containing base population labels. Default is 'population'.
+    use_rep : str, optional
+        Representation to use for neighborhood graph (e.g., 'X_pca', 'X_biobatchnet').
+        Default is 'X_biobatchnet'.
+    genes : list of str, optional
+        Subset of genes/markers to use for subclustering. If None, uses all genes.
+        Default is None.
+    show_figures : bool, optional
+        Whether to display figures interactively. Default is True.
+    save_figures : bool, optional
+        Whether to save figures to disk. Default is True.
+    figure_dir : str, optional
+        Directory to save figures. Created if it doesn't exist. Default is 'Figures'.
+    remap_csv_path : str, optional
+        Path to save the remapping CSV file. Default is 'subcluster_to_final_population.csv'.
+    umap_dot_size : int or float, optional
+        Point size for UMAP plots. Default is 1.
+    matrixplot_vmax : float, optional
+        Maximum value for matrixplot color scale. Default is 0.3.
+    save_individual_umaps : bool, optional
+        Whether to save individual UMAP plots highlighting each subcluster.
+        Creates a subdirectory structure: figure_dir/umap_individual/subcluster_col/cluster.png.
+        Each plot shows one subcluster in red with all others in grey. Default is True.
+    
+    Returns
+    -------
+    adata : AnnData
+        Modified AnnData with new subcluster columns added to obs. Each column is named
+        '{base_label_key}_res{resolution}_subset_{population}' and contains labels like
+        '{population}_0', '{population}_1', etc.
+    remap_df : pd.DataFrame
+        DataFrame mapping subclusters to final populations with columns:
+        - subcluster_column: Name of the obs column containing subclusters
+        - parent_population: Original population that was subclustered
+        - resolution: Leiden resolution used
+        - subcluster: Subcluster label (e.g., 'Tumor_0')
+        - final_population: Final population name (initially same as subcluster)
+    new_pops_dict : dict
+        Dictionary mapping subcluster column names to lists of new population labels.
+        Keys are column names, values are sorted lists of population labels.
+    
+    Notes
+    -----
+    The function generates three types of visualizations:
+    1. Combined UMAP showing all subclusters colored by cluster assignment
+    2. Matrixplot showing marker expression across subclusters with dendrogram
+    3. Individual UMAP plots (if save_individual_umaps=True) highlighting each subcluster
+    
+    The remapping CSV can be manually edited to assign meaningful final population names,
+    then applied using apply_subcluster_remap().
+    
+    Examples
+    --------
+    >>> # Subcluster T cells at multiple resolutions
+    >>> adata, remap_df, new_pops = run_population_subclustering(
+    ...     adata,
+    ...     populations=['T cells'],
+    ...     resolutions=[0.3, 0.5, 0.7],
+    ...     base_label_key='population',
+    ...     use_rep='X_pca'
+    ... )
+    
+    >>> # Subcluster all populations using specific markers
+    >>> markers = ['CD3', 'CD4', 'CD8', 'CD20', 'CD68']
+    >>> adata, remap_df, new_pops = run_population_subclustering(
+    ...     adata,
+    ...     genes=markers,
+    ...     save_individual_umaps=True
+    ... )
+    """
+
+    def _ensure_iterable(x):
+        if isinstance(x, str):
+            return [x]
+        if isinstance(x, Iterable):
+            return list(x)
+        return [x]
+
+    if populations is None:
+        populations = adata.obs[base_label_key].unique().tolist()
+    else:
+        populations = _ensure_iterable(populations)
+
+    resolutions = _ensure_iterable(resolutions)
+
+    if genes is None:
+        genes = adata.var_names
+
+    if save_figures:
+        os.makedirs(figure_dir, exist_ok=True)
+
+    # directory for individual subcluster UMAPs
+    if save_figures and save_individual_umaps:
+        indiv_umap_dir = os.path.join(figure_dir, "umap_individual")
+        os.makedirs(indiv_umap_dir, exist_ok=True)
+
+    new_pops_dict = {}
+    remap_rows = []
+
+    for pop in populations:
+        for resolution in resolutions:
+
+            subcluster_col = f"{base_label_key}_res{resolution}_subset_{pop}"
+
+            adata, new_pops = leiden_on_subset(
+                adata,
+                restrict_to=(base_label_key, [pop]),
+                base_label_key=base_label_key,
+                subset_key_name=subcluster_col,
+                use_rep=use_rep,
+                leiden_resolution=resolution,
+                genes=genes,
+                return_new_names=True,
+            )
+
+            new_pops_dict[subcluster_col] = copy(new_pops)
+
+            # ---- combined UMAP ----
+            if show_figures or save_figures:
+                sc.pl.umap(
+                    adata,
+                    color=subcluster_col,
+                    s=umap_dot_size,
+                    ncols=1,
+                    groups=new_pops,
+                    title=f"Subsetting on {pop}, res: {resolution}",
+                    show=show_figures,
+                    save=f"_{subcluster_col}_umap.png" if save_figures else None,
+                )
+
+                if not show_figures:
+                    plt.close()
+            
+            # ---- individual subcluster UMAPs ----
+            if save_figures and save_individual_umaps:
+                sub_dir = os.path.join(indiv_umap_dir, subcluster_col)
+                os.makedirs(sub_dir, exist_ok=True)
+            
+                for cl in new_pops:
+                    # Masks
+                    focus_mask = adata.obs[subcluster_col] == cl
+                    background_mask = ~focus_mask
+            
+                    # Sort order: background first, then focus
+                    sorted_adata = ad.concat(
+                        [adata[background_mask], adata[focus_mask]],
+                        axis=0,
+                        label="__temp__",
+                        keys=["background", "focus"],
+                        index_unique=None
+                    )
+            
+                    # Create color label column
+                    label_col = f"__highlight_{cl}"
+                    sorted_adata.obs[label_col] = sorted_adata.obs[subcluster_col].copy()
+            
+                    # Ensure we can assign "background" by adding it to the category list
+                    if isinstance(sorted_adata.obs[label_col].dtype, pd.CategoricalDtype):
+                        if "background" not in sorted_adata.obs[label_col].cat.categories:
+                            sorted_adata.obs[label_col] = sorted_adata.obs[label_col].cat.add_categories(["background"])
+            
+                    # Safely assign background label
+                    sorted_adata.obs.loc[sorted_adata.obs["__temp__"] == "background", label_col] = "background"
+            
+                    # Get all categories for the label column
+                    categories = sorted_adata.obs[label_col].cat.categories
+                    
+                    # Assign red to focus cluster, grey to everything else
+                    color_map = {
+                        cat: ("red" if cat == cl else "#d3d3d3")
+                        for cat in categories
+                    }
+
+                    # Plot
+                    sc.pl.umap(
+                        sorted_adata,
+                        color=label_col,
+                        palette=color_map,
+                        s=umap_dot_size,
+                        title=f"{cl}",
+                        show=False,
+                        legend_loc="none",  # hides the legend
+                    )
+            
+                    plt.savefig(
+                        os.path.join(sub_dir, f"{cl}.png"),
+                        dpi=300,
+                        bbox_inches="tight",
+                    )
+                    plt.close()
+
+            # ---- dendrogram + matrixplot ----
+            sc.tl.dendrogram(adata, groupby=subcluster_col)
+
+            mp = sc.pl.matrixplot(
+                adata[adata.obs[subcluster_col].isin(new_pops)],
+                var_names=reorder_vars_by_expression(adata, adata.var_names),
+                groupby=subcluster_col,
+                dendrogram=False,
+                vmax=matrixplot_vmax,
+                title=f"Subsetting on {pop}, res: {resolution}",
+                return_fig=True,
+                show=False,
+            )
+
+            mp.add_totals().style(edge_color="black")
+
+            if save_figures:
+                mp.savefig(
+                    os.path.join(
+                        figure_dir,
+                        f"{subcluster_col}_matrixplot.png",
+                    )
+                )
+
+            # ---- remap rows ----
+            for cl in new_pops:
+                remap_rows.append({
+                    "subcluster_column": subcluster_col,
+                    "parent_population": pop,
+                    "resolution": resolution,
+                    "subcluster": cl,
+                    "final_population": cl,
+                })
+
+    remap_df = (
+        pd.DataFrame(remap_rows)
+        .sort_values(["parent_population", "resolution", "subcluster"])
+    )
+
+    remap_df.to_csv(remap_csv_path, index=False)
+
+    return adata, remap_df, new_pops_dict
+
+def apply_subcluster_remap(
+    adata,
+    remap_csv_path="subcluster_to_final_population.csv",
+    base_label_key="population",
+    new_label_key="final_population",
+):
+    """
+    Apply subcluster-to-final-population mapping from edited CSV file.
+    
+    Reads a remapping CSV file (typically created and edited after running
+    run_population_subclustering) and applies the final population assignments
+    to create a new consolidated annotation column in adata.obs.
+    
+    Parameters
+    ----------
+    adata : AnnData
+        Annotated data matrix containing subcluster columns in obs.
+    remap_csv_path : str, optional
+        Path to the remapping CSV file. Should contain columns:
+        - subcluster_column: Name of the obs column with subclusters
+        - subcluster: Original subcluster label
+        - final_population: Desired final population name
+        Default is 'subcluster_to_final_population.csv'.
+    base_label_key : str, optional
+        Column in adata.obs containing base population labels. Used as fallback
+        for cells not assigned in any subcluster column. Default is 'population'.
+    new_label_key : str, optional
+        Name for the new column in adata.obs that will contain final population
+        assignments. Default is 'final_population'.
+    
+    Returns
+    -------
+    AnnData
+        Modified AnnData with new column obs[new_label_key] containing final
+        population assignments based on the remapping file.
+    
+    Notes
+    -----
+    The function prioritizes assignments in the order they appear in the CSV.
+    For each cell:
+    1. Checks all subcluster columns in order
+    2. If the cell has a non-null value in a subcluster column, looks up the
+       corresponding final population from the remapping CSV
+    3. If no mapping found or cell not in any subcluster, uses base_label_key value
+    
+    This allows you to manually curate subcluster names in the CSV before applying
+    them to the dataset.
+    
+    Examples
+    --------
+    >>> # Standard workflow
+    >>> adata, remap_df, _ = run_population_subclustering(adata)
+    >>> # Edit subcluster_to_final_population.csv manually
+    >>> # Then apply the edited mappings:
+    >>> adata = apply_subcluster_remap(adata)
+    >>> # Now adata.obs['final_population'] contains curated labels
+    
+    >>> # Custom file path and column names
+    >>> adata = apply_subcluster_remap(
+    ...     adata,
+    ...     remap_csv_path='my_custom_remap.csv',
+    ...     base_label_key='cell_type',
+    ...     new_label_key='refined_cell_type'
+    ... )
+    """
+
+    remap_df = pd.read_csv(remap_csv_path)
+
+    lookup = (
+        remap_df
+        .set_index(["subcluster_column", "subcluster"])
+        ["final_population"]
+        .to_dict()
+    )
+
+    subcluster_cols = remap_df["subcluster_column"].unique()
+
+    def assign_final(row):
+        for col in subcluster_cols:
+            v = row.get(col)
+            if pd.notna(v):
+                return lookup.get((col, v), row[base_label_key])
+        return row[base_label_key]
+
+    adata.obs[new_label_key] = adata.obs.apply(assign_final, axis=1)
+
+    return adata
+

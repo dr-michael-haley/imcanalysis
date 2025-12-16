@@ -270,6 +270,9 @@ class BasicProcessConfig:
 
 @dataclass
 class VisualizationConfig:
+    # Input data settings
+    input_adata_path: Optional[str] = None  # Path to AnnData file for visualization (None = use process_config.output_adata_path)
+    
     # AI interpretation settings
     enable_ai: bool = True  # Enable AI-powered cluster interpretation
     tissue: str = "Unknown tissue"  # Tissue type for AI interpretation context
