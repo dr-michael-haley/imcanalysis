@@ -113,8 +113,9 @@ def find_population_columns(adata, max_categories=50):
         # Louvain clustering columns
         elif 'louvain' in col.lower():
             population_columns.append(col)
-        # General cluster columns
-        elif col.lower() in ['cluster', 'clusters', 'population', 'populations']:
+        elif 'population' in col.lower():
+            population_columns.append(col)
+        elif 'cluster' in col.lower():
             population_columns.append(col)
         # Phenotype or cell type columns
         elif any(term in col.lower() for term in ['phenotype', 'celltype', 'cell_type', 'celltypes', 'cell_types']):
@@ -780,7 +781,12 @@ if __name__ == "__main__":
         p.mkdir(parents=True, exist_ok=True)
 
     # Find all population and metadata columns intelligently
-    population_columns = find_population_columns(adata, max_categories=viz_config.max_categories)
+    if viz_config.population_columns is not None:
+        population_columns = viz_config.population_columns
+        logging.info(f"Using population columns from config: {population_columns}")
+    else:
+        population_columns = find_population_columns(adata, max_categories=viz_config.max_categories)
+    
     metadata_columns = find_metadata_columns(adata, population_columns, general_config.metadata_folder, max_categories=viz_config.max_categories)
     
     logging.info("Starting comprehensive visualization suite...")
