@@ -168,6 +168,7 @@ class NimbusConfig:
     reuse_saved_normalization: bool = False  # Reuse existing normalization_dict.json if found (allows manual tweaking)
     norm_dict_qc_only: bool = False  # If True, stop after normalization dict computation and QC generation
     save_prediction_maps: bool = False
+    allow_prediction_resize: bool = False  # If True, fall back to resizing predictions when shapes mismatch
     overwrite_existing_outputs: bool = True
     extract_classic_intensities: bool = True  # Extract classic mean intensities over masks
     extract_expansion_intensities: bool = True  # Extract mean intensities from expanded masks
@@ -582,5 +583,4 @@ def cleanstring(data: Any) -> str:
     data = re.sub(r'^_+|_+$', '', data)
     data = re.sub(r'_+', '_', data)
     return data
-
 

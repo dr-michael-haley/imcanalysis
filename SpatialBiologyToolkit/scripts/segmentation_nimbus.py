@@ -832,10 +832,35 @@ def _create_anndata_with_layers(
             adata = adata[:, keep_mask]
     
     logging.info('AnnData created successfully with layers: %s', list(adata.layers.keys()))
+    
     return adata
 
 
-def _predict_fovs_shape_guard(
+def _calc_padding_to_multiple(shape: Tuple[int, int], multiple: int = 16) -> Tuple[int, int]:
+    """Return height/width padding needed to hit the requested multiple."""
+    height, width = shape
+    pad_y = (multiple - (height % multiple)) % multiple
+    pad_x = (multiple - (width % multiple)) % multiple
+    return pad_y, pad_x
+
+
+def _pad_2d(array: np.ndarray, pad_y: int, pad_x: int, *, mode: str = "reflect") -> np.ndarray:
+    """Pad a 2D array along Y/X axes."""
+    if pad_y == 0 and pad_x == 0:
+        return array
+    pad_width = ((0, pad_y), (0, pad_x))
+    if mode == "constant":
+        return np.pad(array, pad_width, mode=mode, constant_values=0)
+    return np.pad(array, pad_width, mode=mode)
+
+
+def _crop_to_shape(array: np.ndarray, shape: Tuple[int, int]) -> np.ndarray:
+    """Crop array back to the requested shape."""
+    target_y, target_x = shape
+    return array[:target_y, :target_x]
+
+
+def _predict_fovs_with_padding(
     nimbus,
     dataset,
     output_dir: str,
@@ -843,9 +868,11 @@ def _predict_fovs_shape_guard(
     save_predictions: bool = True,
     batch_size: int = 4,
     test_time_augmentation: bool = True,
+    allow_resize_on_mismatch: bool = False,
 ):
     """
-    Nimbus predict_fovs with a shape guard: if prediction and mask differ in shape, resize prediction to mask.
+    Run Nimbus predictions while padding/cropping arrays so the UNet's 16-pixel stride does not
+    truncate ROI boundaries. Optionally fall back to resizing if a mismatch still occurs.
     """
     fov_dict_list = []
     for fov_path, fov in zip(dataset.fov_paths, dataset.fovs):
@@ -853,10 +880,18 @@ def _predict_fovs_shape_guard(
         out_fov_path = os.path.join(os.path.normpath(output_dir), os.path.basename(fov_path).replace(suffix, ""))
         df_fov = pd.DataFrame()
         instance_mask = dataset.get_segmentation(fov)
+        mask_shape = instance_mask.shape
+        # Nimbus UNet downsamples four times (stride 16); pre-pad so nothing gets dropped.
+        pad_y, pad_x = _calc_padding_to_multiple(mask_shape, multiple=16)
+        padded_mask = _pad_2d(instance_mask, pad_y, pad_x, mode="constant")  # zero-pad preserves ids
         for channel_name in tqdm(dataset.channels, desc=f"{fov}", leave=False):
             mplex_img = dataset.get_channel_normalized(fov, channel_name)
-            input_data = prepare_input_data(mplex_img, instance_mask)
+            if pad_y or pad_x:
+                # Reflect-pad intensity image so Nimbus sees mirrored context at the border
+                mplex_img = _pad_2d(mplex_img, pad_y, pad_x, mode="reflect")
+            input_data = prepare_input_data(mplex_img, padded_mask)
             if dataset.magnification != nimbus.model_magnification:
+                # Nimbus expects its model_magnification; scale both channels of the input tensor
                 scale = nimbus.model_magnification / dataset.magnification
                 input_data = np.squeeze(input_data)
                 _, h, w = input_data.shape
@@ -864,6 +899,7 @@ def _predict_fovs_shape_guard(
                 binary_mask = cv2.resize(input_data[1], [int(w * scale), int(h * scale)], interpolation=0)
                 input_data = np.stack([img, binary_mask], axis=0)[np.newaxis, ...]
             if test_time_augmentation:
+                # Average predictions over flips/rotations for robustness
                 prediction = test_time_aug(
                     input_data,
                     channel_name,
@@ -878,26 +914,31 @@ def _predict_fovs_shape_guard(
                 prediction = prediction.cpu().numpy()
             prediction = np.squeeze(prediction)
             if dataset.magnification != nimbus.model_magnification:
+                # Return to the dataset magnification before removing padding
                 prediction = cv2.resize(prediction, (w, h), interpolation=cv2.INTER_NEAREST)
+            if pad_y or pad_x:
+                prediction = _crop_to_shape(prediction, mask_shape)  # drop Nimbus-only padding
             if prediction.shape != instance_mask.shape:
-                logging.info(
-                    "Prediction/mask shape mismatch for %s channel %s: %s vs %s -> resizing prediction",
-                    fov,
-                    channel_name,
-                    prediction.shape,
-                    instance_mask.shape,
+                msg = (
+                    f"Prediction/mask shape mismatch for {fov} channel {channel_name}: "
+                    f"{prediction.shape} vs {instance_mask.shape}"
                 )
-                prediction = cv2.resize(
-                    prediction,
-                    (instance_mask.shape[1], instance_mask.shape[0]),
-                    interpolation=cv2.INTER_NEAREST,
-                )
+                if allow_resize_on_mismatch:
+                    logging.warning("%s -> resizing prediction (Nimbus allow_prediction_resize=True)", msg)
+                    prediction = cv2.resize(
+                        prediction,
+                        (instance_mask.shape[1], instance_mask.shape[0]),
+                        interpolation=cv2.INTER_NEAREST,
+                    )
+                else:
+                    raise ValueError(msg)
             df = pd.DataFrame(segment_mean(instance_mask, prediction))
             if df_fov.empty:
                 df_fov["label"] = df["label"]
                 df_fov["fov"] = os.path.basename(fov_path)
             df_fov[channel_name] = df["intensity_mean"]
             if save_predictions:
+                # Persist per-channel confidence map for downstream QC
                 os.makedirs(out_fov_path, exist_ok=True)
                 pred_int = (prediction * 255.0).astype(np.uint8)
                 io.imsave(
@@ -999,7 +1040,7 @@ def main() -> None:
 
     # Run Nimbus predictions
     nimbus_df = _prepare_nimbus_output(
-        _predict_fovs_shape_guard(
+        _predict_fovs_with_padding(
             nimbus=nimbus,
             dataset=dataset,
             output_dir=nimbus_config.output_dir,
@@ -1007,6 +1048,7 @@ def main() -> None:
             save_predictions=nimbus_config.save_prediction_maps,
             batch_size=nimbus_config.batch_size,
             test_time_augmentation=nimbus_config.test_time_augmentation,
+            allow_resize_on_mismatch=nimbus_config.allow_prediction_resize,
         )
     )
     
@@ -1125,11 +1167,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-
-
-
-
-
-
 
