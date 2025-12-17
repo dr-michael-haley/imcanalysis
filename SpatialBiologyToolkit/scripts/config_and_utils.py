@@ -274,6 +274,7 @@ class VisualizationConfig:
     # Input data settings
     input_adata_path: Optional[str] = None  # Path to AnnData file for visualization (None = use process_config.output_adata_path)
     population_columns: Optional[List[str]] = None  # Specific population columns to visualize (None = auto-detect)
+    metadata_columns: Optional[List[str]] = None  # Specific metadata columns to visualize (None = auto-detect)
     
     # AI interpretation settings
     enable_ai: bool = True  # Enable AI-powered cluster interpretation

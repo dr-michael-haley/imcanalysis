@@ -787,7 +787,11 @@ if __name__ == "__main__":
     else:
         population_columns = find_population_columns(adata, max_categories=viz_config.max_categories)
     
-    metadata_columns = find_metadata_columns(adata, population_columns, general_config.metadata_folder, max_categories=viz_config.max_categories)
+    if viz_config.metadata_columns is not None:
+        metadata_columns = viz_config.metadata_columns
+        logging.info(f"Using metadata columns from config: {metadata_columns}")
+    else:
+        metadata_columns = find_metadata_columns(adata, population_columns, general_config.metadata_folder, max_categories=viz_config.max_categories)
     
     logging.info("Starting comprehensive visualization suite...")
     
