@@ -51,6 +51,9 @@ except Exception:
         sbt_backgating = None  # Will guard usage at runtime
 
 
+from SpatialBiologyToolkit import utils as sbt_utils
+ 
+
 def log_detailed_error(error, context="", logger=None):
     """
     Log detailed error information including traceback and context.
@@ -395,7 +398,7 @@ def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, v
                     logging.info(f'  Creating standard-scaled MatrixPlot for {cat_col}')
                     matrixplot_scaled = sc.pl.matrixplot(
                         adata,
-                        var_names=markers_to_plot,
+                        var_names=sbt_utils.reorder_vars_by_expression(adata, markers_to_plot),
                         groupby=cat_col,
                         standard_scale='var',
                         dendrogram=True,
@@ -411,7 +414,7 @@ def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, v
                     logging.info(f'  Creating vmax-capped MatrixPlot for {cat_col} (vmax={viz_config.matrixplot_vmax})')
                     matrixplot_vmax = sc.pl.matrixplot(
                         adata,
-                        var_names=markers_to_plot,
+                        var_names=sbt_utils.reorder_vars_by_expression(adata, markers_to_plot),
                         groupby=cat_col,
                         standard_scale=None,
                         dendrogram=True,
