@@ -367,7 +367,7 @@ def create_categorical_umaps(adata, categorical_columns, qc_umap_dir, qc_legend_
         log_detailed_error(e, f"{category_type.title()} UMAP visualization step")
 
 
-def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, viz_config, category_type="categorical"):
+def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, viz_config, category_type="categorical", remove_markers_list=None):
     """
     Create MatrixPlot summaries grouped by categorical columns (populations or metadata).
     Creates both standard-scaled and vmax-capped versions.
@@ -384,6 +384,8 @@ def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, v
         Visualization configuration
     category_type : str
         Type of categories for logging ('population', 'metadata', etc.)
+    remove_markers_list : list, optional
+        List of markers to exclude when creating filtered matrix plots
     """
     try:
         markers_to_plot = adata.var_names.tolist()
@@ -426,6 +428,49 @@ def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, v
                     matrixplot_vmax.savefig(fig_path_vmax, bbox_inches='tight', dpi=300 if viz_config.save_high_res else 150)
                     plt.close()
                     logging.info(f'  Vmax-capped MatrixPlot saved to {fig_path_vmax}')
+                    
+                    # 3. Create filtered matrix plots if remove_markers_list is provided
+                    if remove_markers_list and len(remove_markers_list) > 0:
+                        # Filter out the markers to remove
+                        filtered_markers = [m for m in markers_to_plot if m not in remove_markers_list]
+                        
+                        if filtered_markers:
+                            logging.info(f'  Creating filtered MatrixPlots for {cat_col} (excluding {len(remove_markers_list)} markers: {remove_markers_list})')
+                            
+                            # 3a. Create filtered standard-scaled matrixplot
+                            logging.info(f'    Creating filtered standard-scaled MatrixPlot for {cat_col}')
+                            matrixplot_scaled_filtered = sc.pl.matrixplot(
+                                adata,
+                                var_names=sbt_utils.reorder_vars_by_expression(adata, filtered_markers),
+                                groupby=cat_col,
+                                standard_scale='var',
+                                dendrogram=True,
+                                show=False,
+                                return_fig=True
+                            )
+                            fig_path_scaled_filtered = qc_matrix_dir / f'Matrixplot_{cat_col}_scaled_filtered.{viz_config.figure_format}'
+                            matrixplot_scaled_filtered.savefig(fig_path_scaled_filtered, bbox_inches='tight', dpi=300 if viz_config.save_high_res else 150)
+                            plt.close()
+                            logging.info(f'    Filtered standard-scaled MatrixPlot saved to {fig_path_scaled_filtered}')
+                            
+                            # 3b. Create filtered non-scaled matrixplot with vmax
+                            logging.info(f'    Creating filtered vmax-capped MatrixPlot for {cat_col} (vmax={viz_config.matrixplot_vmax})')
+                            matrixplot_vmax_filtered = sc.pl.matrixplot(
+                                adata,
+                                var_names=sbt_utils.reorder_vars_by_expression(adata, filtered_markers),
+                                groupby=cat_col,
+                                standard_scale=None,
+                                dendrogram=True,
+                                vmax=viz_config.matrixplot_vmax,
+                                show=False,
+                                return_fig=True
+                            )
+                            fig_path_vmax_filtered = qc_matrix_dir / f'Matrixplot_{cat_col}_vmax_filtered.{viz_config.figure_format}'
+                            matrixplot_vmax_filtered.savefig(fig_path_vmax_filtered, bbox_inches='tight', dpi=300 if viz_config.save_high_res else 150)
+                            plt.close()
+                            logging.info(f'    Filtered vmax-capped MatrixPlot saved to {fig_path_vmax_filtered}')
+                        else:
+                            logging.warning(f'  All markers would be filtered out for {cat_col}; skipping filtered plots.')
                     
                 except Exception as e:
                     log_detailed_error(e, f"creating MatrixPlot for {category_type} column '{cat_col}'")
@@ -762,6 +807,7 @@ if __name__ == "__main__":
     general_config = GeneralConfig(**filter_config_for_dataclass(config.get('general', {}), GeneralConfig))
     process_config = BasicProcessConfig(**filter_config_for_dataclass(config.get('process', {}), BasicProcessConfig))
     viz_config = VisualizationConfig(**filter_config_for_dataclass(config.get('visualization', {}), VisualizationConfig))
+    segmentation_config = SegmentationConfig(**filter_config_for_dataclass(config.get('segmentation', {}), SegmentationConfig))
 
     # Determine which AnnData to load
     adata_path = viz_config.input_adata_path if viz_config.input_adata_path is not None else process_config.output_adata_path
@@ -815,12 +861,15 @@ if __name__ == "__main__":
     # Create matrix plots for populations and metadata
     if viz_config.create_matrix_plots:
         logging.info("Creating MatrixPlot visualizations...")
+        # Get remove_and_store_markers list from segmentation config
+        remove_markers_list = segmentation_config.remove_and_store_markers if segmentation_config.remove_and_store_markers else None
+        
         # Population matrix plots
-        create_categorical_matrix_plots(adata, population_columns, qc_matrix_dir, viz_config, "population")
+        create_categorical_matrix_plots(adata, population_columns, qc_matrix_dir, viz_config, "population", remove_markers_list)
         
         # Metadata matrix plots (optional)
         if viz_config.include_metadata_matrix_plots:
-            create_categorical_matrix_plots(adata, metadata_columns, qc_matrix_dir, viz_config, "metadata")
+            create_categorical_matrix_plots(adata, metadata_columns, qc_matrix_dir, viz_config, "metadata", remove_markers_list)
     
     # Create tissue overlays for populations (metadata overlays would be similar but populations are more relevant)
     if viz_config.create_tissue_overlays:
