@@ -115,11 +115,13 @@ def bargraph(data: ad.AnnData | pd.DataFrame | str,
              mean_over: list = None,
              confidence_interval: int = 68,
              figsize: tuple = (5, 5),
+             ax: plt.Axes | None = None,
              crosstab_normalize: bool = False,
              cells_per_mm: bool = False,
              palette: dict = None,
              hide_grid: bool = False,
              legend: bool = True,
+             log_scale: bool = False,
              save_data: bool = True,
              save_figure: bool = False,
              return_data: bool = True,
@@ -151,6 +153,8 @@ def bargraph(data: ad.AnnData | pd.DataFrame | str,
         Confidence interval for error bars.
     figsize : tuple, optional
         Size of the figure.
+    ax : matplotlib.axes.Axes, optional
+        Existing axes to plot on. If provided, figsize is ignored.
     crosstab_normalize : bool, optional
         Whether, and how, to normalize crosstab results.
     cells_per_mm : bool, optional
@@ -161,6 +165,8 @@ def bargraph(data: ad.AnnData | pd.DataFrame | str,
         Whether to hide the grid.
     legend : bool, optional
         Whether to display the legend.
+    log_scale : bool, optional
+        Whether to use log scale for the y-axis.
     save_data : bool, optional
         Whether to save the raw data.
     save_figure : bool, optional
@@ -185,11 +191,11 @@ def bargraph(data: ad.AnnData | pd.DataFrame | str,
     if not levels and not mean_over:
         assert ROI_col_name in data.columns, f'{ROI_col_name} column not found in data'
         if case_col_name in data.columns:
-            levels = ['Case', 'ROI']
-            mean_over = ['Case', 'ROI']
+            levels = [case_col_name, ROI_col_name]
+            mean_over = [case_col_name, ROI_col_name]
         else:
-            levels = ['ROI']
-            mean_over = ['ROI']
+            levels = [ROI_col_name]
+            mean_over = [ROI_col_name]
     levels = _to_list(levels)
     mean_over = _to_list(mean_over)
     specify_populations = _to_list(specify_populations)
@@ -238,10 +244,18 @@ def bargraph(data: ad.AnnData | pd.DataFrame | str,
         except:
             pass
 
-    fig, ax = plt.subplots(figsize=figsize)
+    if ax is None:
+        fig, ax = plt.subplots(figsize=figsize)
+        created_fig = True
+    else:
+        fig = ax.figure
+        created_fig = False
     sb.barplot(data=plot_data, y=y_plot, x=x_plot, hue=hue, hue_order=hue_order, palette=palette, ax=ax)
     ax.set_xticklabels(ax.get_xticklabels(), rotation=rotate_x_labels)
 
+    if log_scale:
+        ax.set_yscale('log')
+    
     if hide_grid:
         ax.grid(False)
     if legend:
@@ -263,7 +277,7 @@ def bargraph(data: ad.AnnData | pd.DataFrame | str,
 
     if return_data:
         return plot_data
-    return fig
+    return fig if created_fig else ax
 
 def mlm_stats(data: pd.DataFrame, 
               pop_col: str, 
@@ -328,7 +342,7 @@ def mlm_stats(data: pd.DataFrame,
                 md = smf.mixedlm(formula=formula, data=subset, groups=subset[case_col])
             mdf = md.fit()
         warning_messages = [str(warn.message) for warn in w]
-        result = {pop_col: i, 'mlm_p_value': mdf.pvalues[1], 'mlm_warnings': str(warning_messages)}
+        result = {pop_col: i, 'mlm_p_value': mdf.pvalues.iloc[1], 'mlm_warnings': str(warning_messages)}
         if run_t_tests:
             if average_cases:
                 subset = subset.groupby([group_col, case_col], observed=True).mean(numeric_only=True).reset_index()
@@ -2271,7 +2285,14 @@ def create_population_overlay(
     output_path: str = None,
     contour_color: tuple = (255, 255, 255),  # White contours
     contour_width: int = 2,
-    verbose: bool = True
+    verbose: bool = True,
+    legend_markers: list[str] | None = None,
+    legend_colors: list[tuple[int, int, int]] | None = None,
+    legend_fontsize: int = 10,
+    legend_box_size: tuple[float, float] = (0.25, 0.18),
+    show_population_label: bool = True,
+    population_label_text: str | None = None,
+    population_label_fontsize: int | None = None
 ):
     """
     Create an overlay visualization showing all cells of a specific population
@@ -2290,6 +2311,10 @@ def create_population_overlay(
         contour_color: RGB color for cell contours (default: yellow)
         contour_width: Width of contour lines in pixels
         verbose: Whether to print status messages (default: True)
+        legend_markers: Optional list of marker names to show in a legend
+        legend_colors: Optional list of RGB tuples (0-255) matching legend_markers
+        legend_fontsize: Font size for legend text
+        legend_box_size: (width, height) as fraction of axes for the legend inset
         
     Returns:
         None. Saves overlay image to output_path if provided.
@@ -2380,10 +2405,159 @@ def create_population_overlay(
     # Remove ticks for cleaner look
     ax.set_xticks([])
     ax.set_yticks([])
+
+    renderer = None
+    try:
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+    except Exception:
+        renderer = None
+
+    # Optional legend showing marker colors used in the composite
+    if legend_markers and legend_colors and len(legend_markers) == len(legend_colors):
+        from matplotlib.transforms import Bbox
+
+        try:
+            from matplotlib import font_manager as fm
+
+            if renderer is None:
+                fig.canvas.draw()
+                renderer = fig.canvas.get_renderer()
+
+            padding_px = 15
+            margin_px = 20
+            gap_px = 15
+
+            labels = [str(l).strip() for l in legend_markers]
+            fontprops = fm.FontProperties(size=legend_fontsize)
+            sizes = [renderer.get_text_width_height_descent(lbl, fontprops, False)[:2] for lbl in labels]
+
+            if sizes:
+                max_w = max(w for w, _ in sizes)
+                total_h = sum(h for _, h in sizes) + gap_px * (len(sizes) - 1)
+            else:
+                max_w = total_h = 0
+
+            box_w_px = max_w + 2 * padding_px
+            box_h_px = total_h + 2 * padding_px
+
+            fig_w_px, fig_h_px = fig.get_size_inches() * fig.dpi
+
+            width_frac = max(box_w_px / fig_w_px, 0.02)
+            height_frac = max(box_h_px / fig_h_px, 0.02)
+
+            margin_x = margin_px / fig_w_px
+            margin_y = margin_px / fig_h_px
+
+            ax_pos = ax.get_position()
+            pos_x = max(0.0, ax_pos.x1 - width_frac - margin_x)
+            pos_y = max(0.0, ax_pos.y1 - height_frac - margin_y)
+
+            inset_ax = fig.add_axes([pos_x, pos_y, width_frac, height_frac])
+            inset_ax.set_facecolor((0, 0, 0, 1))
+            inset_ax.set_xticks([])
+            inset_ax.set_yticks([])
+            inset_ax.set_xlim(0, 1)
+            inset_ax.set_ylim(0, 1)
+            inset_ax.set_zorder(ax.get_zorder() + 1)
+
+            inset_w_px = box_w_px
+            inset_h_px = box_h_px
+            y_cursor = inset_h_px - padding_px
+            for (lbl, rgb), (w, h) in zip(zip(labels, legend_colors), sizes):
+                color = tuple(np.array(rgb) / 255.0)
+                y_cursor -= h / 2
+                inset_ax.text(padding_px / inset_w_px, y_cursor / inset_h_px, lbl,
+                              color=color, fontsize=legend_fontsize,
+                              va='center', ha='left')
+                y_cursor -= h / 2 + gap_px
+
+            for spine in inset_ax.spines.values():
+                spine.set_color('white')
+                spine.set_linewidth(0.5)
+        except Exception:
+            # Fallback: simple inset in axes coords
+            default_w, default_h = legend_box_size
+            inset_ax = ax.inset_axes([1 - default_w - 0.02, 1 - default_h - 0.02, default_w, default_h])
+            inset_ax.set_facecolor((0, 0, 0, 1))
+            inset_ax.set_xticks([])
+            inset_ax.set_yticks([])
+            inset_ax.set_xlim(0, 1)
+            inset_ax.set_ylim(0, 1)
+            for (lbl, rgb) in zip(legend_markers, legend_colors):
+                color = tuple(np.array(rgb) / 255.0)
+                inset_ax.text(0.05, 0.95 - 0.1 * legend_markers.index(lbl), str(lbl).strip(),
+                              color=color, fontsize=legend_fontsize, va='top', ha='left')
+
+    # Optional single-line population label in top-left
+    if show_population_label:
+        try:
+            from matplotlib import font_manager as fm
+
+            label_text = str(population_label_text) if population_label_text is not None else str(population)
+            if renderer is None:
+                fig.canvas.draw()
+                renderer = fig.canvas.get_renderer()
+
+            padding_px = 15
+            margin_px = 20
+
+            fontprops = fm.FontProperties(size=population_label_fontsize or legend_fontsize)
+            w, h = renderer.get_text_width_height_descent(label_text, fontprops, False)[:2]
+
+            box_w_px = w + 2 * padding_px
+            box_h_px = h + 2 * padding_px
+
+            fig_w_px, fig_h_px = fig.get_size_inches() * fig.dpi
+
+            width_frac = max(box_w_px / fig_w_px, 0.02)
+            height_frac = max(box_h_px / fig_h_px, 0.02)
+
+            margin_x = margin_px / fig_w_px
+            margin_y = margin_px / fig_h_px
+
+            ax_pos = ax.get_position()
+            pos_x = max(0.0, ax_pos.x0 + margin_x)
+            pos_y = max(0.0, ax_pos.y1 - height_frac - margin_y)
+
+            inset_ax = fig.add_axes([pos_x, pos_y, width_frac, height_frac])
+            inset_ax.set_facecolor((0, 0, 0, 1))
+            inset_ax.set_xticks([])
+            inset_ax.set_yticks([])
+            inset_ax.set_xlim(0, 1)
+            inset_ax.set_ylim(0, 1)
+            inset_ax.set_zorder(ax.get_zorder() + 1)
+
+            inset_ax.text(padding_px / box_w_px, 1 - padding_px / box_h_px,
+                          label_text, color='white', fontsize=population_label_fontsize or legend_fontsize,
+                          va='top', ha='left')
+
+            for spine in inset_ax.spines.values():
+                spine.set_color('white')
+                spine.set_linewidth(0.5)
+        except Exception:
+            # Fallback: simple inset in axes coords (top-left)
+            default_w, default_h = legend_box_size
+            inset_ax = ax.inset_axes([0.02, 1 - default_h - 0.02, default_w, default_h])
+            inset_ax.set_facecolor((0, 0, 0, 1))
+            inset_ax.set_xticks([])
+            inset_ax.set_yticks([])
+            inset_ax.set_xlim(0, 1)
+            inset_ax.set_ylim(0, 1)
+            inset_ax.text(0.05, 0.95, str(population_label_text or population),
+                          color='white', fontsize=population_label_fontsize or legend_fontsize,
+                          va='top', ha='left')
     
     # Save if output path provided
     if output_path:
-        plt.savefig(output_path, bbox_inches='tight', dpi=200, facecolor='white')
+        # Save tightly around the axes with no padding to avoid a white border
+        fig.savefig(
+            output_path,
+            bbox_inches='tight',
+            pad_inches=0,
+            dpi=200,
+            transparent=False,
+        )
         plt.close(fig)
     else:
         plt.show()

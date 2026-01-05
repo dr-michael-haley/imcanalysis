@@ -191,7 +191,7 @@ class BasicProcessConfig:
         'latent_dim': 20,
         'epochs': 100,
         'device': None,
-        'use_raw': True,
+        'use_raw': False,
         'extra_params': {
             'loss_weights': {
                 'recon_loss': 100.0,
@@ -304,8 +304,8 @@ class VisualizationConfig:
     backgating_mask_folder: str = 'masks'  # Folder containing segmentation masks
     
     # Backgating intensity and marker settings
-    backgating_minimum: float = 0.3  # Minimum intensity for backgating normalization
-    backgating_max_quantile: str = 'i0.96'  # Maximum quantile method for intensity scaling
+    backgating_minimum: float = 0.2  # Minimum intensity for backgating normalization
+    backgating_max_quantile: str = 'i0.99'  # Maximum quantile method for intensity scaling
     backgating_number_top_markers: int = 2  # Number of top markers to use for RGB channels
     backgating_specify_blue: Optional[str] = 'DNA1'  # Marker to use for blue channel
     backgating_specify_red: Optional[str] = None  # Marker to use for red channel (None = auto-select)
@@ -561,6 +561,47 @@ def process_config_with_overrides():
         logging.info(f'Configuration file "{args.config}" updated with overrides.')
 
     return config
+
+def create_config(config_class, **overrides):
+    """
+    Create a configuration object with defaults and optional overrides.
+    
+    This is useful for programmatically creating config objects when using
+    individual functions from the pipeline outside of the main scripts.
+    
+    Parameters
+    ----------
+    config_class : type
+        The configuration dataclass to instantiate (e.g., GeneralConfig, VisualizationConfig)
+    **overrides : dict
+        Keyword arguments to override default values
+    
+    Returns
+    -------
+    config object
+        Instance of the specified config class with applied overrides
+    
+    Examples
+    --------
+    >>> # Create a GeneralConfig with custom masks folder
+    >>> general_cfg = create_config(GeneralConfig, masks_folder='custom_masks')
+    
+    >>> # Create a VisualizationConfig with specific settings
+    >>> viz_cfg = create_config(
+    ...     VisualizationConfig,
+    ...     create_umaps=True,
+    ...     create_tissue_overlays=True,
+    ...     save_high_res=False
+    ... )
+    """
+    config = config_class()
+    for key, value in overrides.items():
+        if hasattr(config, key):
+            setattr(config, key, value)
+        else:
+            logging.warning(f"Unknown config field '{key}' for {config_class.__name__}. Ignoring.")
+    return config
+
 
 def cleanstring(data: Any) -> str:
     """

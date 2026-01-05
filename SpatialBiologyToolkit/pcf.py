@@ -642,9 +642,12 @@ def plot_paircorrelation_clustermap(
     condition: Optional[str] = None,
     populations: Optional[Sequence[str]] = None,
     percentile: float = 95.0,
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
     cmap: Union[str, "Colormap"] = "coolwarm",
     cluster: bool = True,
     figsize: Tuple[int, int] = (7, 5),
+    title: Optional[str] = None,
     cbar_kws: Optional[Dict[str, float]] = None,
 ) -> sns.matrix.ClusterGrid:
     """Plot a clustermap of g(r) with homotypic and significance annotations.
@@ -659,12 +662,19 @@ def plot_paircorrelation_clustermap(
         Optional ordered subset of populations to display on both axes.
     percentile
         Percentile (0-100) used to set vmin/vmax from off-diagonal g(r) values.
+        Ignored if vmin and vmax are explicitly provided.
+    vmin
+        Minimum value for colormap scale. If None, calculated from percentile.
+    vmax
+        Maximum value for colormap scale. If None, calculated from percentile.
     cmap
         Matplotlib colormap name or object. Defaults to ``"coolwarm"``.
     cluster
         Whether to allow seaborn to cluster rows/columns.
     figsize
         Tuple passed to seaborn for the resulting figure size.
+    title
+        Optional title for the plot. If None, no title is added.
     cbar_kws
         Extra colorbar keyword arguments (defaults mimic prior heatmaps).
 
@@ -680,10 +690,25 @@ def plot_paircorrelation_clustermap(
         raise ValueError(f"Summary table missing columns: {missing}")
 
     df = summary.copy()
-    if condition is not None:
-        df = df[df["condition"] == condition]
-        if df.empty:
-            raise ValueError(f"No rows found for condition '{condition}'.")
+    
+    # Check if condition column exists and handle multiple conditions
+    if "condition" in df.columns:
+        available_conditions = df["condition"].unique()
+        
+        if condition is not None:
+            df = df[df["condition"] == condition]
+            if df.empty:
+                raise ValueError(f"No rows found for condition '{condition}'.")
+        elif len(available_conditions) > 1:
+            raise ValueError(
+                f"Summary contains {len(available_conditions)} conditions: {list(available_conditions)}. "
+                f"Please specify which condition to plot using the 'condition' parameter."
+            )
+        else:
+            # Single condition, use it automatically
+            condition = available_conditions[0]
+            df = df[df["condition"] == condition]
+            print(f"[pcf] Plotting condition: {condition}")
 
     pivot_mean = df.pivot(index="cell_type_1", columns="cell_type_2", values="g_mean")
     pivot_min = df.pivot(index="cell_type_1", columns="cell_type_2", values="g_min")
@@ -697,15 +722,19 @@ def plot_paircorrelation_clustermap(
         pivot_min = pivot_min.reindex(index=order, columns=order)
         pivot_max = pivot_max.reindex(index=order, columns=order)
 
-    off_diag = df[df["cell_type_1"] != df["cell_type_2"]]["g_mean"].dropna()
-    if off_diag.empty:
-        off_diag = df["g_mean"].dropna()
-    if off_diag.empty:
-        raise ValueError("Cannot determine vmin/vmax; g_mean column is empty.")
+    # Calculate vmin/vmax from data if not provided
+    if vmin is None or vmax is None:
+        off_diag = df[df["cell_type_1"] != df["cell_type_2"]]["g_mean"].dropna()
+        if off_diag.empty:
+            off_diag = df["g_mean"].dropna()
+        if off_diag.empty:
+            raise ValueError("Cannot determine vmin/vmax; g_mean column is empty.")
 
-    lower_pct = max(0.0, 100.0 - percentile)
-    vmin = float(np.percentile(off_diag, lower_pct))
-    vmax = float(np.percentile(off_diag, percentile))
+        lower_pct = max(0.0, 100.0 - percentile)
+        if vmin is None:
+            vmin = float(np.percentile(off_diag, lower_pct))
+        if vmax is None:
+            vmax = float(np.percentile(off_diag, percentile))
 
     if isinstance(cmap, str):
         cmap = get_cmap(cmap)
@@ -738,6 +767,10 @@ def plot_paircorrelation_clustermap(
     _annotate_pcf_heatmap(clustergrid.ax_heatmap, clustergrid.data2d, reordered_min, reordered_max)
     clustergrid.ax_heatmap.set_xlabel("Cell Type 2")
     clustergrid.ax_heatmap.set_ylabel("Cell Type 1")
+    
+    if title is not None:
+        clustergrid.fig.suptitle(title, y=1.02)
+    
     return clustergrid
 
 

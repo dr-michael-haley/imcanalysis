@@ -6,8 +6,10 @@ from pathlib import Path
 import subprocess
 from types import ModuleType
 from typing import List, Union, Optional, Tuple, Any
+from collections.abc import Iterable
 import math
 import importlib.util
+from copy import copy
 
 # Third-Party Imports
 import anndata as ad
@@ -1151,6 +1153,8 @@ def run_population_subclustering(
     remap_rows = []
 
     for pop in populations:
+        print(f'Asessing population: {pop}')
+
         for resolution in resolutions:
 
             subcluster_col = f"{base_label_key}_res{resolution}_subset_{pop}"
@@ -1360,16 +1364,107 @@ def apply_subcluster_remap(
         .to_dict()
     )
 
-    subcluster_cols = remap_df["subcluster_column"].unique()
+    # Only consider subcluster columns that actually exist in adata.obs
+    all_subcluster_cols = remap_df["subcluster_column"].unique()
+    subcluster_cols = [col for col in all_subcluster_cols if col in adata.obs.columns]
 
     def assign_final(row):
         for col in subcluster_cols:
-            v = row.get(col)
+            v = row[col]
             if pd.notna(v):
-                return lookup.get((col, v), row[base_label_key])
+                # Look up the final population
+                final_pop = lookup.get((col, v))
+                if final_pop is not None:
+                    return final_pop
+        # If no mapping found in any subcluster column, fall back to base label
         return row[base_label_key]
 
     adata.obs[new_label_key] = adata.obs.apply(assign_final, axis=1)
 
     return adata
 
+
+def plot_umap_highlight_clusters(
+    adata,
+    subcluster_col,
+    focus_color="red",
+    background_color="#d3d3d3",
+    point_size=3,
+    legend_loc="none",
+    show=True,
+):
+    """
+    Plot UMAPs highlighting each cluster in `subcluster_col` one at a time.
+
+    Parameters
+    ----------
+    adata : anndata.AnnData
+        Annotated data matrix.
+    subcluster_col : str
+        Column in `adata.obs` containing cluster labels (categorical).
+    focus_color : str, optional
+        Color for the highlighted cluster (default: "red").
+    background_color : str, optional
+        Color for background points (default: light grey).
+    point_size : int or float, optional
+        Point size for UMAP plot (default: 3).
+    legend_loc : str, optional
+        Legend location passed to `sc.pl.umap` (default: "none").
+    show : bool, optional
+        Whether to show the plot immediately (default: True).
+    """
+
+    if subcluster_col not in adata.obs:
+        raise ValueError(f"{subcluster_col} not found in adata.obs")
+
+    if not isinstance(adata.obs[subcluster_col].dtype, pd.CategoricalDtype):
+        raise TypeError(f"{subcluster_col} must be a categorical column")
+
+    for cl in adata.obs[subcluster_col].cat.categories:
+        # Masks
+        focus_mask = adata.obs[subcluster_col] == cl
+        background_mask = ~focus_mask
+
+        # Sort order: background first, then focus
+        sorted_adata = ad.concat(
+            [adata[background_mask], adata[focus_mask]],
+            axis=0,
+            label="__temp__",
+            keys=["background", "focus"],
+            index_unique=None,
+        )
+
+        # Create color label column
+        label_col = f"__highlight_{cl}"
+        sorted_adata.obs[label_col] = sorted_adata.obs[subcluster_col].copy()
+
+        # Ensure "background" is a valid category
+        if isinstance(sorted_adata.obs[label_col].dtype, pd.CategoricalDtype):
+            if "background" not in sorted_adata.obs[label_col].cat.categories:
+                sorted_adata.obs[label_col] = (
+                    sorted_adata.obs[label_col]
+                    .cat.add_categories(["background"])
+                )
+
+        # Assign background label
+        sorted_adata.obs.loc[
+            sorted_adata.obs["__temp__"] == "background", label_col
+        ] = "background"
+
+        # Color map: highlight cluster vs background
+        categories = sorted_adata.obs[label_col].cat.categories
+        color_map = {
+            cat: (focus_color if cat == cl else background_color)
+            for cat in categories
+        }
+
+        # Plot
+        sc.pl.umap(
+            sorted_adata,
+            color=label_col,
+            palette=color_map,
+            s=point_size,
+            title=str(cl),
+            legend_loc=legend_loc,
+            show=show,
+        )

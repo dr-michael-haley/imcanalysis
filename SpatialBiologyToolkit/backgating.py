@@ -422,10 +422,11 @@ def make_images(
                 out_dir.mkdir(parents=True, exist_ok=True)
         save_path = out_dir / f'{filename}.png'
 
-    # Suppress low contrast warnings when saving images
-    with warnings.catch_warnings():
-        warnings.filterwarnings('ignore', message='.*is a low contrast image')
-        io.imsave(str(save_path), stack_ubyte)
+        # Suppress low contrast warnings when saving images per ROI
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore', message='.*is a low contrast image')
+            io.imsave(str(save_path), stack_ubyte)
+
 def backgating(
     adata,
     cell_index,
@@ -470,6 +471,7 @@ def backgating(
     training=False,
 ):
     """
+    UPDATED
     Visualize small patches around given cell(s) on top of optionally composite images.
     Optionally overlay segmentation masks.
 
@@ -669,9 +671,11 @@ def backgating(
     def in_range_func(row):
         x = row[x_loc_obs]
         y = row[y_loc_obs]
+        if pd.isna(row['x_max']) or pd.isna(row['y_max']) or row['x_max'] <= 0 or row['y_max'] <= 0:
+            return False
         return (
-            (x - radius >= 0) and (x + radius <= row['x_max']) and
-            (y - radius >= 0) and (y + radius <= row['y_max'])
+            (x - radius >= 0) and (x + radius < row['x_max']) and
+            (y - radius >= 0) and (y + radius < row['y_max'])
         )
 
     adata_obs_cells['in_range'] = adata_obs_cells.apply(in_range_func, axis=1)
@@ -1088,9 +1092,14 @@ def backgating_assessment(
     show_gallery_titles=True,
     # Output folder & overview
     output_folder: str = 'Backgating',
-    overview_images: bool = True,
+    overview_images: bool = False,
     population_overlays: bool = True,  # New parameter for population overlay visualizations
-    population_overlay_outline_width: int = 2,
+    population_overlay_outline_width: int = 1,
+    population_overlay_legend_fontsize: int = 15,
+    population_overlay_show_legend: bool = True,
+    population_overlay_show_population_label: bool = True,
+    population_overlay_label_text: str | None = None,
+    population_overlay_label_fontsize: int | None = None,
     # Intensity scaling
     minimum: float = 0.4,
     max_quantile: str = 'q0.98',
@@ -1146,6 +1155,11 @@ def backgating_assessment(
         overview_images:  Whether to save an ROI overview with bounding boxes.
         population_overlays: Whether to create population overlay visualizations showing all cells
                           of each population type with mask contours on composite images.
+        population_overlay_legend_fontsize: Font size for population overlay legend labels.
+        population_overlay_show_legend: Enable/disable legend on population overlay images.
+        population_overlay_show_population_label: Enable/disable top-left population label box.
+        population_overlay_label_text: Optional override for label text (defaults to population name).
+        population_overlay_label_fontsize: Optional override for label font size (defaults to legend size).
         show_gallery_titles:    Whether to show titles of ROIs and figure in cell gallery.
 
         minimum, max_quantile:
@@ -1436,12 +1450,31 @@ def backgating_assessment(
             
             # Get all ROIs that contain cells of this population
             pop_rois = adata.obs[adata.obs[pop_obs].astype(str) == str(pop)][roi_obs].unique()
-            logging.debug(f"Population '{pop}' found in ROIs: {pop_rois}")
+            logging.info(f"Population '{pop}' found in ROIs: {pop_rois}")
             pop_subfolder = Path(output_folder) / clean_text(pop)
             
             # Create population overlays subdirectory
             overlay_dir = pop_subfolder / 'population_overlays'
             overlay_dir.mkdir(parents=True, exist_ok=True)
+
+            # Build legend entries based on available channel assignments (optional)
+            legend_markers = []
+            legend_colors = []
+            if population_overlay_show_legend:
+                channel_palette = {
+                    'red': (255, 0, 0),
+                    'green': (0, 255, 0),
+                    'blue': (0, 0, 255),
+                }
+
+                for marker_name, channel_name in [
+                    (red_marker, 'red'),
+                    (green_marker, 'green'),
+                    (blue_marker, 'blue'),
+                ]:
+                    if marker_name:
+                        legend_markers.append(str(marker_name))
+                        legend_colors.append(channel_palette[channel_name])
             
         if population_overlays:
             for roi in pop_rois:
@@ -1479,7 +1512,13 @@ def backgating_assessment(
                         output_path=str(overlay_output_path),
                         contour_color=(255, 255, 255),  # White contours
                         contour_width=population_overlay_outline_width,
-                        verbose=False
+                        verbose=False,
+                        legend_markers=legend_markers if population_overlay_show_legend else None,
+                        legend_colors=legend_colors if population_overlay_show_legend else None,
+                        legend_fontsize=population_overlay_legend_fontsize,
+                        show_population_label=population_overlay_show_population_label,
+                        population_label_text=population_overlay_label_text or pop,
+                        population_label_fontsize=population_overlay_label_fontsize or population_overlay_legend_fontsize
                     )
                     
                 except Exception as e:
