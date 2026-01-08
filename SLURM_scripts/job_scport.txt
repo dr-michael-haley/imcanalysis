@@ -1,0 +1,29 @@
+#! /bin/bash --login
+#SBATCH --job-name=imc_scportrait
+#SBATCH -p gpuA 
+#SBATCH -G 1
+#SBATCH -t 2-0
+#SBATCH -n 6
+
+#SBATCH --mail-user=michael.haley@manchester.ac.uk
+#SBATCH --mail-type=ALL
+
+#@DESC: scPortrait
+#@IN:   denoised images, masks
+#@OUT:  single cell portraits
+
+
+echo "scPortrait job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
+
+set -euo pipefail
+
+conda activate scPortrait
+
+python ~/scPortrait_to_IMC/imc_to_single_cells.py \
+  --channels-dir processed \
+  --mask-dir masks \
+  --projects-root scPortrait \
+  --config ~/scPortrait_to_IMC/config_imc.yml \
+  --overwrite \
+  --mask-expand-px 0 \
+  --debug

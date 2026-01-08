@@ -3,6 +3,7 @@ import itertools
 import os
 import pickle  # For saving and loading
 from pathlib import Path
+from types import SimpleNamespace
 
 # Third-Party Imports
 import anndata as ad
@@ -291,6 +292,8 @@ def napari_imc_explorer(
     
     # Create the Napari viewer
     viewer = napari.Viewer()
+
+    # Avoid attaching custom attributes directly to viewer (raises ValueError in napari)
 
     # Function to get current layer names
     def get_layer_names(*args):
@@ -637,6 +640,10 @@ def napari_imc_explorer(
         """
         _add_images_from_list(x)
 
+    # Capture image selector widget for external access
+    image_select_widget = _image_selector
+    get_selected_images = lambda: _image_selector.x.value
+
     def _add_images_from_list(selected_images):
         """
         Add selected images to the viewer.
@@ -667,6 +674,10 @@ def napari_imc_explorer(
         GUI widget to select and add categorical observations as masks.
         """
         _add_obs_masks(x)
+
+    # Capture categorical obs selector for external access
+    obs_select_widget = _obs_selector
+    get_selected_obs_categories = lambda: _obs_selector.x.value
 
     def _add_obs_masks(obs_list):
         """
@@ -704,6 +715,10 @@ def napari_imc_explorer(
         GUI widget to select and add numerical observations or variables as overlays.
         """
         _add_quant_masks(x)
+
+    # Capture numeric selector for external access
+    quant_select_widget = _quant_selector
+    get_selected_numeric = lambda: _quant_selector.x.value
 
     def _add_quant_masks(quant_list):
         """
@@ -896,6 +911,25 @@ def napari_imc_explorer(
         
         print(f"Layers and camera settings have been loaded from '{folder_path}'.")
 
+    # Bundle exposed controls and helpers to avoid setting attributes on viewer
+    handles = SimpleNamespace(
+        roi_selector=roi_selector,
+        layer_resize_selector=resize_layers_widget,
+        layer_resize_target=resize_layers_widget.target_layer,
+        colormap_source_selector=transfer_colormap_widget,
+        colormap_source_choice=transfer_colormap_widget.source_layer,
+        mask_layer_selector=mask_layer_widget,
+        mask_layer_choice=mask_layer_widget.layer_to_mask,
+        image_select_widget=image_select_widget,
+        obs_select_widget=obs_select_widget,
+        quant_select_widget=quant_select_widget,
+        get_selected_roi=lambda: roi_selector.value,
+        get_selected_layer_name=lambda: (list(viewer.layers.selection)[0].name if viewer.layers.selection else None),
+        get_selected_images=get_selected_images,
+        get_selected_obs_categories=get_selected_obs_categories,
+        get_selected_numeric=get_selected_numeric,
+    )
+
     # Start the Napari event loop
     napari.run()
-    return viewer
+    return viewer, handles

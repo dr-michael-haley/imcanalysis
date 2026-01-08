@@ -515,76 +515,188 @@ def check_file_names_and_counts(directory_path: str, df: pd.DataFrame, column_na
     return True, names_not_in_df, names_not_in_folder
     
     
-def extract_single_cell(df: pd.DataFrame, images_folder: str, save_directory: str) -> None:
-    """
-    Analyze images to extract single cell data and save the results in separate CSV files for each ROI.
+def extract_single_cell(
+    df: pd.DataFrame | None,
+    images_folder: str,
+    save_directory: str,
+    *,
+    rois: list[str] | None = None,
+    masks_folder: str | None = None,
+    images_to_include: list[str] | str | None = None,
+    measurements: list[str] | str = "mean",
+) -> None:
+    """Extract single-cell intensities per ROI.
 
-    Parameters:
-        df (pd.DataFrame): DataFrame with columns 'ROI', 'Mask path' containing mask file paths.
-        images_folder (str): Directory containing folders of images named after each ROI.
-        save_directory (str): Directory to save the resulting CSV files.
+    This function saves one CSV per ROI, containing per-cell geometry from the ROI mask and
+    per-cell intensities from each image in the ROI's image folder.
+
+    Inputs
+    ------
+    You can provide either:
+    - ``df``: a DataFrame with at least ``ROI`` and ``Mask_path`` columns, OR
+    - ``rois`` + ``masks_folder``: ROI names and a folder containing ROI masks named
+      ``<ROI>.tif`` or ``<ROI>.tiff`` (auto-detected).
+
+    Parameters
+    ----------
+    df:
+        DataFrame with ROI/mask mapping. If provided, must contain columns ``ROI`` and
+        either ``Mask_path`` or ``Mask path``.
+    images_folder:
+        Directory containing one subfolder per ROI, with image files inside.
+    save_directory:
+        Output directory to write per-ROI CSV files.
+    rois:
+        List of ROI names (used when ``df`` is None).
+    masks_folder:
+        Folder containing masks named after each ROI (used when ``df`` is None).
+    images_to_include:
+        Optional list (or single string) of image names to include (matched by filename stem).
+        If None, all images in the ROI folder are used.
+    measurements:
+        Intensity measurements to extract per image. Defaults to ``"mean"``.
+        Supported keys: ``mean``, ``min``, ``max`` and also their regionprops equivalents
+        (e.g. ``mean_intensity``).
+        When a measurement is not mean, output columns are suffixed with ``_{measurement}``.
     """
     os.makedirs(save_directory, exist_ok=True)
-    
+
+    def _as_list(value):
+        if value is None:
+            return None
+        if isinstance(value, (list, tuple, set, pd.Index, np.ndarray)):
+            return list(value)
+        return [value]
+
+    def _normalize_measurement(measurement: str) -> tuple[str, str, bool]:
+        """Return (regionprops_attr, suffix_key, is_mean)."""
+        m = str(measurement).strip().lower()
+        if m in {"mean", "avg", "average", "mean_intensity"}:
+            return "mean_intensity", "mean", True
+        if m in {"min", "min_intensity"}:
+            return "min_intensity", m, False
+        if m in {"max", "max_intensity"}:
+            return "max_intensity", m, False
+        raise ValueError(
+            f"Unsupported measurement: {measurement!r}. "
+            "Use 'mean', 'min', 'max' (or 'mean_intensity', 'min_intensity', 'max_intensity')."
+        )
+
+    include_list = _as_list(images_to_include)
+    include_stems = None
+    if include_list is not None:
+        include_stems = {os.path.splitext(str(x))[0] for x in include_list}
+
+    measurement_list = _as_list(measurements) or ["mean"]
+    measurement_specs = [_normalize_measurement(m) for m in measurement_list]
+
     # Formula for circularity
     circ = lambda r: (4 * math.pi * r.area) / (r.perimeter * r.perimeter) if r.perimeter > 0 else 0
-    
-    for _, row in df.iterrows():
-        roi = row['ROI']
-        mask_path = row['Mask_path']
 
+    roi_mask_pairs: list[tuple[str, str]] = []
+    if df is not None:
+        if rois is not None or masks_folder is not None:
+            raise ValueError("Provide either df, or rois+masks_folder (not both).")
+
+        if "ROI" not in df.columns:
+            raise ValueError("df must contain a 'ROI' column")
+        mask_col = "Mask_path" if "Mask_path" in df.columns else "Mask path" if "Mask path" in df.columns else None
+        if mask_col is None:
+            raise ValueError("df must contain a 'Mask_path' or 'Mask path' column")
+
+        roi_mask_pairs = [(str(row["ROI"]), str(row[mask_col])) for _, row in df.iterrows()]
+    else:
+        if not rois or not masks_folder:
+            raise ValueError("When df is None, you must provide both rois and masks_folder")
+        for roi in rois:
+            roi_str = str(roi)
+            tif_path = os.path.join(masks_folder, f"{roi_str}.tif")
+            tiff_path = os.path.join(masks_folder, f"{roi_str}.tiff")
+            if os.path.isfile(tif_path):
+                roi_mask_pairs.append((roi_str, tif_path))
+            elif os.path.isfile(tiff_path):
+                roi_mask_pairs.append((roi_str, tiff_path))
+            else:
+                raise FileNotFoundError(
+                    f"No mask found for ROI {roi_str!r} in {masks_folder!r}. "
+                    "Expected '<ROI>.tif' or '<ROI>.tiff'."
+                )
+
+    panel_columns: list[str] | None = None
+
+    for roi, mask_path in roi_mask_pairs:
         # Load the mask as a skimage label object
         mask = io.imread(mask_path)
 
         # Get image file paths for the current ROI
         roi_folder = os.path.join(images_folder, roi)
-        image_files = [f for f in os.listdir(roi_folder) if f.endswith('.tiff')]
+        if not os.path.isdir(roi_folder):
+            raise FileNotFoundError(f"ROI folder not found: {roi_folder!r}")
+
+        image_files = [
+            f
+            for f in os.listdir(roi_folder)
+            if os.path.isfile(os.path.join(roi_folder, f))
+            and str(f).lower().endswith((".tif", ".tiff"))
+        ]
+        image_files.sort()
+
+        if include_stems is not None:
+            image_files = [f for f in image_files if os.path.splitext(f)[0] in include_stems]
 
         # Initialize a DataFrame to store results for the current ROI
         roi_df = pd.DataFrame()
-        roi_df['ROI'] = str(roi)  # Add the ROI name to the DataFrame first
+        roi_df["ROI"] = str(roi)
 
         # Add label numbers and centroid locations
-        props = regionprops(mask)
-        roi_df['Label'] = [prop.label for prop in props]
-        roi_df['X_loc'] = [prop.centroid[1] for prop in props]  # X-coordinate of the centroid
-        roi_df['Y_loc'] = [prop.centroid[0] for prop in props]  # Y-coordinate of the centroid
-        roi_df['mask_area'] = [prop.area for prop in props]  # Mask area
-        roi_df['mask_perimeter'] = [prop.perimeter for prop in props]  # Mask perimeter
-        roi_df['mask_circularity'] = [circ(prop) for prop in props]  # Mask circularity
+        props_geom = regionprops(mask)
+        roi_df["Label"] = [prop.label for prop in props_geom]
+        roi_df["X_loc"] = [prop.centroid[1] for prop in props_geom]  # X-coordinate of the centroid
+        roi_df["Y_loc"] = [prop.centroid[0] for prop in props_geom]  # Y-coordinate of the centroid
+        roi_df["mask_area"] = [prop.area for prop in props_geom]  # Mask area
+        roi_df["mask_perimeter"] = [prop.perimeter for prop in props_geom]  # Mask perimeter
+        roi_df["mask_circularity"] = [circ(prop) for prop in props_geom]  # Mask circularity
 
-        # Dictionary to hold mean intensities for each image
-        mean_intensities_dict = {}
-
+        # Add intensity measurements per image
+        image_columns_this_roi: list[str] = []
         for image_file in image_files:
             image_path = os.path.join(roi_folder, image_file)
             image = io.imread(image_path)
 
-            # Calculate mean intensity for each label
-            mean_intensities = [region.mean_intensity for region in regionprops(mask, image)]
+            props_intensity = regionprops(mask, intensity_image=image)
+            image_stem = os.path.splitext(image_file)[0]
 
-            # Remove extension from image name and add to dictionary
-            mean_intensities_dict[os.path.splitext(image_file)[0]] = mean_intensities
+            for attr, suffix_key, is_mean in measurement_specs:
+                col_name = image_stem if is_mean else f"{image_stem}_{suffix_key}"
+                if col_name in roi_df.columns:
+                    raise ValueError(
+                        f"Duplicate output column {col_name!r}. "
+                        "This can happen if measurements contain duplicates."
+                    )
 
-        # Add mean intensities to the DataFrame
-        for image_name, intensities in mean_intensities_dict.items():
-            roi_df[image_name] = intensities
+                try:
+                    values = [getattr(region, attr) for region in props_intensity]
+                except AttributeError as e:
+                    raise ValueError(
+                        f"Measurement attribute {attr!r} not available on skimage RegionProperties"
+                    ) from e
 
-        # Reorder columns to have image columns last
-        # image_columns = list(mean_intensities_dict.keys())
-        # non_image_columns = [col for col in roi_df.columns if col not in image_columns]
-        # roi_df = roi_df[non_image_columns + image_columns]
-        
+                roi_df[col_name] = values
+                image_columns_this_roi.append(col_name)
+
         # This was getting lost for some reason
-        roi_df['ROI'] = str(roi)
+        roi_df["ROI"] = str(roi)
 
         # Save the DataFrame to a CSV file
         csv_file_path = os.path.join(save_directory, f"{roi}.csv")
         roi_df.to_csv(csv_file_path, index=False)
         print(f"Results for {roi} saved to {csv_file_path}.")
 
-        if not os.path.isfile('panel.csv'):
-            pd.Series(image_columns, name='target').to_csv('panel.csv')
+        # Write panel.csv once, preserving legacy behavior (writes to CWD)
+        if panel_columns is None:
+            panel_columns = image_columns_this_roi
+        if not os.path.isfile("panel.csv") and panel_columns is not None:
+            pd.Series(panel_columns, name="target").to_csv("panel.csv", index=False)
 
 
 def create_celltable(input_directory: str = 'Celltables', output_file: str = 'celltable.csv') -> pd.DataFrame:
@@ -1392,6 +1504,9 @@ def plot_umap_highlight_clusters(
     point_size=3,
     legend_loc="none",
     show=True,
+    filter_obs=None,
+    filter_values=None,
+    clusters=None,
 ):
     """
     Plot UMAPs highlighting each cluster in `subcluster_col` one at a time.
@@ -1412,6 +1527,13 @@ def plot_umap_highlight_clusters(
         Legend location passed to `sc.pl.umap` (default: "none").
     show : bool, optional
         Whether to show the plot immediately (default: True).
+    filter_obs : str, optional
+        Optional obs column used to restrict which cells get highlighted (e.g., ROI/case).
+        Cells outside the filter remain as background.
+    filter_values : Union[list, Any], optional
+        Value or list of values from `filter_obs` to highlight. Required when `filter_obs` is set.
+    clusters : Union[list, Any], optional
+        Specific cluster label(s) in `subcluster_col` to plot. If None, plot all clusters.
     """
 
     if subcluster_col not in adata.obs:
@@ -1420,9 +1542,38 @@ def plot_umap_highlight_clusters(
     if not isinstance(adata.obs[subcluster_col].dtype, pd.CategoricalDtype):
         raise TypeError(f"{subcluster_col} must be a categorical column")
 
-    for cl in adata.obs[subcluster_col].cat.categories:
+    # Optional highlighting mask: keep all cells on UMAP, only restrict highlighted ones
+    if filter_obs is not None:
+        if filter_obs not in adata.obs:
+            raise ValueError(f"{filter_obs} not found in adata.obs")
+        if filter_values is None:
+            raise ValueError("filter_values must be provided when filter_obs is set")
+
+        allowed_values = _to_list(filter_values)
+        highlight_mask = adata.obs[filter_obs].isin(allowed_values)
+
+        if highlight_mask.sum() == 0:
+            raise ValueError(
+                f"No cells found for {filter_obs} with values {allowed_values}"
+            )
+    else:
+        highlight_mask = pd.Series(True, index=adata.obs_names)
+
+    categories_to_plot = adata.obs[subcluster_col].cat.categories
+
+    if clusters is not None:
+        requested = _to_list(clusters)
+        missing = [c for c in requested if c not in categories_to_plot]
+        if missing:
+            raise ValueError(f"Requested clusters not found in {subcluster_col}: {missing}")
+        # Preserve user-requested order
+        categories_to_plot = requested
+
+    for cl in categories_to_plot:
+        if ((adata.obs[subcluster_col] == cl) & highlight_mask).sum() == 0:
+            continue  # Skip categories absent in the filtered subset
         # Masks
-        focus_mask = adata.obs[subcluster_col] == cl
+        focus_mask = (adata.obs[subcluster_col] == cl) & highlight_mask
         background_mask = ~focus_mask
 
         # Sort order: background first, then focus
