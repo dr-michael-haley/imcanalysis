@@ -23,7 +23,6 @@ python ~/scPortrait_to_IMC/imc_to_single_cells.py \
   --channels-dir processed \
   --mask-dir masks \
   --projects-root scPortrait \
-  --config ~/scPortrait_to_IMC/config_imc.yml \
   --overwrite \
   --mask-expand-px 0 \
   --debug
