@@ -1169,9 +1169,12 @@ def run_population_subclustering(
     use_rep : str, optional
         Representation to use for neighborhood graph (e.g., 'X_pca', 'X_biobatchnet').
         Default is 'X_biobatchnet'.
-    genes : list of str, optional
-        Subset of genes/markers to use for subclustering. If None, uses all genes.
-        Default is None.
+    genes : list of str or dict, optional
+        Gene subset(s) to use for subclustering. You can pass:
+        - a list of genes applied to all populations, or
+        - a dict mapping population names (values of ``base_label_key``) to gene lists.
+          Include a "default" key for a fallback list; otherwise all genes are used
+          when a population key is missing. If None, uses all genes.
     show_figures : bool, optional
         Whether to display figures interactively. Default is True.
     save_figures : bool, optional
@@ -1243,16 +1246,22 @@ def run_population_subclustering(
             return list(x)
         return [x]
 
+    # Normalize gene input: support dict mapping population -> gene list
+    genes_map = None
+    if genes is None:
+        default_genes = list(adata.var_names)
+    elif isinstance(genes, dict):
+        genes_map = {str(k): _ensure_iterable(v) for k, v in genes.items()}
+        default_genes = genes_map.get("default", list(adata.var_names))
+    else:
+        default_genes = _ensure_iterable(genes)
+
     if populations is None:
         populations = adata.obs[base_label_key].unique().tolist()
     else:
         populations = _ensure_iterable(populations)
 
     resolutions = _ensure_iterable(resolutions)
-
-    if genes is None:
-        genes = adata.var_names
-
     if save_figures:
         os.makedirs(figure_dir, exist_ok=True)
 
@@ -1267,6 +1276,11 @@ def run_population_subclustering(
     for pop in populations:
         print(f'Asessing population: {pop}')
 
+        pop_key = str(pop)
+        pop_genes = genes_map.get(pop_key, default_genes) if genes_map is not None else default_genes
+        if pop_genes is None:
+            pop_genes = list(adata.var_names)
+
         for resolution in resolutions:
 
             subcluster_col = f"{base_label_key}_res{resolution}_subset_{pop}"
@@ -1278,7 +1292,7 @@ def run_population_subclustering(
                 subset_key_name=subcluster_col,
                 use_rep=use_rep,
                 leiden_resolution=resolution,
-                genes=genes,
+                genes=pop_genes,
                 return_new_names=True,
             )
 
@@ -1363,7 +1377,7 @@ def run_population_subclustering(
 
             mp = sc.pl.matrixplot(
                 adata[adata.obs[subcluster_col].isin(new_pops)],
-                var_names=reorder_vars_by_expression(adata, adata.var_names),
+                var_names=reorder_vars_by_expression(adata, pop_genes),
                 groupby=subcluster_col,
                 dendrogram=False,
                 vmax=matrixplot_vmax,
