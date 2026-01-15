@@ -4,7 +4,7 @@ Toolkit for analysing Imaging Mass Cytometry (IMC) and other spatial-omics data.
 
 ## Start here
 
-**Completely new to the command line / Python tooling?** Start with [README_NEW_USERS.md](README_NEW_USERS.md).
+**Completely new to the command line / Python tooling?** Start with [README_NEW_USERS.md](README_NEW_USERS.md), which goes through the absolute basics.
 
 **Beginners (recommended):** the majority of analyses are run on **HPC** via the scripted pipeline (headless jobs via SLURM), and a smaller minority are done **locally** afterwards in notebooks for bespoke exploration/figures.
 
@@ -31,8 +31,9 @@ For full details, follow [README_LOCAL.md](README_LOCAL.md). The shortest versio
 - [SLURM_scripts/](SLURM_scripts/README.md): job templates for running stages on HPC. The `pipeline.conf` file maps short names (like `preprocess`) to these scripts.
 - [Bash_scripts/](Bash_scripts/README.md): small helper commands (`pl`, `pll`, `pls`, `zipqc`, `cds`) that make it easy to submit or inspect the pipeline on HPC.
 - [Tutorials/](Tutorials/README.md): Jupyter notebooks for interactive, exploratory analysis when you want to go beyond the scripted pipeline.
-- [Conda_environments/](Conda_environments/README.md): environment specifications used to create the conda environments for the pipeline.
 - [install/](install/README.md): install/uninstall helpers used by `make install` (sets PATH, config file, and permissions on HPC).
+- [Local_envs/](Local_envs/): minimal environment for _local_ analysis using SpatialBiologyToolkit.
+- [HPC_env_files/](HPC_env_files/): environment specifications used to create the conda environments for the pipeline. Automatically installed using `make envs`
 - [docs/](docs/README.md): documentation sources (Sphinx); the built HTML is in `Documentation/`.
 - [External_and_old_code/](External_and_old_code/README.md): legacy or experimental code and notebooks. Useful for advanced users, but not tightly maintained.
 

@@ -2,6 +2,8 @@
 
 This guide is for running the **scripted pipeline on an HPC cluster** (via SLURM job scripts).
 
+An example HPC cluster is **CSF3 (University of Manchester)**, which can be accessed for free by University of Manchester staff/students and typically has all the compute resources you will need for this pipeline.
+
 If you’re new to the command line / conda / notebooks, skim the beginner explainers first:
 - [README_NEW_USERS.md](README_NEW_USERS.md)
 
@@ -10,20 +12,28 @@ If you want to run analyses locally (Jupyter, bespoke downstream work), use:
 
 ---
 
----
-
 ## 🚀 1. Requirements
 
 Before installing, ensure you have:
 
-- Access to an HPC login node  
-- A bash-compatible shell (`bash` or `zsh`)  
+- Access to an HPC login node (e.g. a CSF3 account)
+- Anaconda/Miniconda available in your CSF3 account (if it’s not already installed)
+	- If your cluster provides conda via “modules”, load it according to your cluster docs.
+	- Otherwise, install Miniconda/Anaconda into your home directory.
+	- Quick check (should print a version):
+
+```
+conda --version
+```
+
 - A clone of this repository inside your home directory:
 
 ```
-git clone <repo-url> ~/imcanalysis
+git clone <repo-url>
 cd ~/imcanalysis
 ```
+
+If the repository is private, use the clone URL provided by the maintainer (or configure SSH access) so you are not prompted for credentials repeatedly.
 
 ---
 
