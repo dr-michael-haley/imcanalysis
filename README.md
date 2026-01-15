@@ -6,9 +6,10 @@
 Toolkit for analysing Imaging Mass Cytometry (IMC) and other spatial-omics data. It combines a Python package (`SpatialBiologyToolkit`), CLI pipeline stages, SLURM job templates, tutorials, and HPC helper scripts.
 
 ## Start here
-- New to the repo or IMC analysis? Read [`README_NEW_USERS.md`](README_NEW_USERS.md).
+- Completely new to Python and IMC analyis? Read [`README_NEW_USERS.md`](README_NEW_USERS.md).
+- Running on UNIX-based HPC (e.g. University of Manchester CSF3)? Follow [`README_IMC_HPC.md`](README_IMC_HPC.md) plus the SLURM helper docs below. 
 - Running notebooks locally? See [`Tutorials/README.md`](Tutorials/README.md) and the `NEW - Population identification.ipynb` notebook.
-- Running on HPC? Follow [`README_IMC_HPC.md`](README_IMC_HPC.md) plus the SLURM helper docs below.
+
 
 ## Quick setup (local workstation)
 1. Create the conda env: `conda env create -f Conda_environments/conda_environment.yml`.
