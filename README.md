@@ -2,13 +2,17 @@
 
 Toolkit for analysing Imaging Mass Cytometry (IMC) and other spatial-omics data. It combines a Python package (`SpatialBiologyToolkit`), CLI pipeline stages, SLURM job templates, tutorials, and HPC helper scripts.
 
+![Overview](images/overview.png)
+
 ## Start here
 
 **Completely new to the command line / Python tooling?** Start with [README_NEW_USERS.md](README_NEW_USERS.md), which goes through the absolute basics.
 
-**Beginners (recommended):** the majority of analyses are run on **HPC** via the scripted pipeline (headless jobs via SLURM), and a smaller minority are done **locally** afterwards in notebooks for bespoke exploration/figures.
+**Recommended workflow:** this project is **HPC-first**. The majority of analyses are easiest to run on an HPC cluster via the scripted pipeline (headless SLURM jobs), taking you from raw data (i.e. a folder with MCD files) through standard preprocessing and analysis steps with minimal manual intervention. Afterwards, a smaller minority of work is typically done locally in notebooks for bespoke exploration and figures. Start with [README_IMC_HPC.md](README_IMC_HPC.md) plus [SLURM_scripts/README.md](SLURM_scripts/README.md). 
 
-**HPC pipeline (recommended for most users):** run the scripted pipeline on an HPC cluster first. The pipeline scripts are designed to take you from raw data (i.e. folder with MCD files) through standard preprocessing and analysis steps with minimal manual intervention. Start with [README_IMC_HPC.md](README_IMC_HPC.md) plus [SLURM_scripts/README.md](SLURM_scripts/README.md).
+![Overview2](images/overview2.png)
+
+![Command](images/command.png)
 
 **Local notebooks (usually after HPC):** use [README_LOCAL.md](README_LOCAL.md) and [Tutorials/README.md](Tutorials/README.md).
 
@@ -25,7 +29,7 @@ For full details, follow [README_LOCAL.md](README_LOCAL.md). The shortest versio
 3. Install the package editable (from the repo root): `pip install -e .`.
 4. Copy `Tutorials/` to an analysis folder outside the repo, then run `jupyter lab` from that analysis folder.
 
-## Components
+## Components of repository
 - [SpatialBiologyToolkit/](SpatialBiologyToolkit/README.md): the core Python package where the analysis logic lives (preprocessing, denoising, clustering, spatial stats, plotting). If you import anything in Python, it usually comes from here.
 - [SpatialBiologyToolkit/scripts/](SpatialBiologyToolkit/scripts/README.md): command-line “pipeline stages” that run the core steps in order. These read `config.yaml` from your dataset folder and are what the SLURM jobs call.
 - [SLURM_scripts/](SLURM_scripts/README.md): job templates for running stages on HPC. The `pipeline.conf` file maps short names (like `preprocess`) to these scripts.
@@ -36,10 +40,6 @@ For full details, follow [README_LOCAL.md](README_LOCAL.md). The shortest versio
 - [HPC_env_files/](HPC_env_files/): environment specifications used to create the conda environments for the pipeline. Automatically installed using `make envs`
 - [docs/](docs/README.md): documentation sources (Sphinx); the built HTML is in `Documentation/`.
 - [External_and_old_code/](External_and_old_code/README.md): legacy or experimental code and notebooks. Useful for advanced users, but not tightly maintained.
-
-## Typical workflows
-- **Local notebook workflow:** set up the env, install editable, copy `Tutorials/`, and work through the population identification notebook.
-- **HPC pipeline workflow:** `make install` to add the helper scripts, prepare a dataset folder with `config.yaml`, then submit stages with `pl preprocess denoise aiinter vis` (see `SLURM_scripts/README.md`).
 
 ## Issue tracking
 Please report bugs or questions in GitHub issues with details on the stage/notebook, environment file used, and any overrides in `config.yaml`.
