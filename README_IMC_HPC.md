@@ -1,7 +1,14 @@
-# IMC Analysis – HPC Installation Guide
+# IMC Analysis – HPC Setup (Scripted Pipeline)
 
-This document describes how to install, configure, and use the **IMC Analysis Toolkit** on an **HPC cluster environment**.  
-The installation system uses a robust `make install` workflow that ensures consistent setup across users and sessions, without manually editing shell configuration files.
+This guide is for running the **scripted pipeline on an HPC cluster** (via SLURM job scripts).
+
+If you’re new to the command line / conda / notebooks, skim the beginner explainers first:
+- [README_NEW_USERS.md](README_NEW_USERS.md)
+
+If you want to run analyses locally (Jupyter, bespoke downstream work), use:
+- [README_LOCAL.md](README_LOCAL.md)
+
+---
 
 ---
 
@@ -20,9 +27,9 @@ cd ~/imcanalysis
 
 ---
 
-## ⚙️ 2. Installation (Recommended for HPC Users)
+## ⚙️ 2. Install the helper commands (HPC)
 
-To install IMC analysis tools:
+Run this once on a login node:
 
 ```
 make install
@@ -40,7 +47,7 @@ This will:
 
 ---
 
-## 🐍 3. Conda Environments (Pipeline)
+## 🐍 3. Create the pipeline conda environments
 
 Set up the pipeline environments from pinned lockfiles:
 
@@ -53,6 +60,7 @@ This will:
 - Create (or skip) the pipeline envs from lockfiles
 - Record environment names in `~/.imc_config` for the SLURM jobs to use
 - Ensure SLURM job scripts are executable
+- Install `SpatialBiologyToolkit` into each env (editable, no dependencies)
 
 The following variables are written to `~/.imc_config` (defaults shown):
 
@@ -66,7 +74,7 @@ export IMC_ENV_SCPORTRAIT="scPortrait"
 
 ---
 
-## 🔐 4. Configuration File (`~/.imc_config`)
+## 🔐 4. Configuration file: `~/.imc_config`
 
 Generated during installation. Stores:
 
@@ -88,9 +96,11 @@ export IMC_ENV_SEGMENTATION="imc_segmentation"
 export IMC_ENV_DENOISE="imc_denoise"
 ```
 
+Tip: you can edit the `IMC_ENV_*` values later if you want the SLURM jobs to use different environment names.
+
 ---
 
-## 🔄 5. Updating IMC Analysis
+## 🔄 5. Updating the repo
 
 When repository updates arrive:
 
@@ -98,6 +108,12 @@ When repository updates arrive:
 cd ~/imcanalysis
 git pull
 make update
+```
+
+If you change environment lockfiles or want to re-apply permissions, re-run:
+
+```bash
+make envs
 ```
 
 ---
@@ -135,7 +151,7 @@ imcanalysis/
 
 ---
 
-## 🧪 8. Verify Installation
+## 🧪 8. Quick verification
 
 Reload environment:
 
@@ -163,6 +179,12 @@ echo $IMC_EMAIL
 echo $OPENAI_API_KEY
 ```
 
+List pipeline stages:
+
+```bash
+pl --list
+```
+
 ---
 
 ## 🧠 9. Troubleshooting
@@ -177,26 +199,40 @@ module load make
 
 ### PATH / aliases not updating
 
-```
+```bash
 source ~/.bashrc
 source ~/.profile
+```
 
 ### Permission denied running job scripts
-If you see `Permission denied` when running `pll` locally, ensure execute bits are set:
 
+If you see `Permission denied` when running `pll` locally, your SLURM job scripts are not executable.
+
+Fix it with either:
+
+```bash
+make envs
 ```
+
+or:
+
+```bash
 chmod +x ~/imcanalysis/SLURM_scripts/*.txt
-```
-Running `make envs` will also fix permissions.
 ```
 
 ---
 
-## ☑️ 10. Example Usage
+## ☑️ 10. Example usage
 
 ```
 cds mydataset
-submit_imc_job mydata.slurm
+pl config preprocess denoise dnqc nimbus bbn aiinter vis reint
+```
+
+You can run a single stage locally (useful for debugging):
+
+```bash
+pll config
 ```
 
 ---

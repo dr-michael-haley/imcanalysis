@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Repo root (assumes this script lives in <repo>/Bash_scripts/pl)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
 # Directory where your job scripts live by default
 JOBDIR=${PIPELINE_DIR:-"$HOME/imcanalysis/SLURM_scripts"}
 
@@ -191,6 +195,28 @@ describe_stage() {
 
 trap 'echo "Pipeline script aborted unexpectedly" >&2' ERR
 
+# Optional: keep the repo up-to-date automatically (useful on HPC)
+# - Best-effort: never abort the pipeline if update fails
+# - Safe by default: skips update if working tree has local changes
+# - Can be disabled by exporting PIPELINE_AUTO_UPDATE=0
+maybe_auto_update_repo() {
+    [[ "${PIPELINE_AUTO_UPDATE:-1}" == "1" ]] || return 0
+
+    command -v git >/dev/null 2>&1 || return 0
+    git -C "$REPO_ROOT" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+
+    # Don't update if there are local changes (to avoid merge conflicts)
+    if ! git -C "$REPO_ROOT" diff --quiet || ! git -C "$REPO_ROOT" diff --cached --quiet; then
+        echo "${YELLOW}Note:${RESET} repo has local changes; skipping auto-update (PIPELINE_AUTO_UPDATE=0 to silence)" >&2
+        return 0
+    fi
+
+    # Fast-forward only to avoid surprise merges
+    if ! git -C "$REPO_ROOT" pull --ff-only; then
+        echo "${YELLOW}Warning:${RESET} could not auto-update repo (continuing anyway)" >&2
+    fi
+}
+
 # Parse options
 pipeline_name=""
 list_mode=0
@@ -231,6 +257,8 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+maybe_auto_update_repo
 
 if (( list_mode == 1 )); then
     # LIST MODE: no jobs submitted, no git-all, no logging
