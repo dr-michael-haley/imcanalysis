@@ -2,7 +2,8 @@
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "$0")/../HPC_env_files" && pwd)"
-ENV_ROOT="$HOME/miniconda3/envs"
+CONDA_BASE="$(conda info --base)"
+ENV_ROOT="$CONDA_BASE/envs"
 
 # List of all environments
 ENVS=("imc_segmentation" "imc_denoise" "imc_cellposesam" "imc_biobatchnet")
@@ -74,9 +75,7 @@ create_env() {
 
     if [[ -f "$extras" ]]; then
         echo "📦 Installing pip extras for '$env'..."
-        source "$ENV_ROOT/$env/bin/activate"
-        pip install -r "$extras"
-        deactivate || true
+        conda run -n "$env" pip install -r "$extras"
     fi
 
     echo "✔ Finished environment: $env"
