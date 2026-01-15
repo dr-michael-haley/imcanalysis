@@ -1,5 +1,8 @@
 ﻿# imcanalysis
 
+> [!WARNING]  
+> The scripts for setting up the pipeline on a HPC cluster are a work in progress, primarily issues with automatic setup of environments.
+
 Toolkit for analysing Imaging Mass Cytometry (IMC) and other spatial-omics data. It combines a Python package (`SpatialBiologyToolkit`), CLI pipeline stages, SLURM job templates, tutorials, and HPC helper scripts.
 
 ## Start here
