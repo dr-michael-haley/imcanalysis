@@ -5,6 +5,7 @@ BASE_DIR="$(cd "$(dirname "$0")/../HPC_env_files" && pwd)"
 CONDA_BASE="$(conda info --base)"
 ENV_ROOT="$CONDA_BASE/envs"
 CONFIG_FILE="$HOME/.imc_config"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 # List of all environments
 ENVS=("imc_segmentation" "imc_denoise" "imc_cellposesam" "imc_biobatchnet")
@@ -98,6 +99,9 @@ create_env() {
     elif [[ -f "$extras" ]]; then
         echo "⏭️  Skipping pip extras for existing environment '$env'."
     fi
+
+    echo "📦 Installing SpatialBiologyToolkit into '$env' (editable, no deps)..."
+    conda run -n "$env" pip install --no-deps -e "$REPO_ROOT"
 
     echo "✔ Finished environment: $env"
     echo
