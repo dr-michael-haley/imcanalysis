@@ -6,6 +6,7 @@
 Toolkit for analysing Imaging Mass Cytometry (IMC) and other spatial-omics data. It combines a Python package (`SpatialBiologyToolkit`), CLI pipeline stages, SLURM job templates, tutorials, and HPC helper scripts.
 
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
 ## Start here
 - Completely new to Python and IMC analyis? Read [`README_NEW_USERS.md`](README_NEW_USERS.md).
 - Running on UNIX-based HPC (e.g. University of Manchester CSF3)? Follow [`README_IMC_HPC.md`](README_IMC_HPC.md) plus the SLURM helper docs below. 
@@ -15,6 +16,10 @@ Toolkit for analysing Imaging Mass Cytometry (IMC) and other spatial-omics data.
 **Preferred workflow (recommended for most users):** run the scripted pipeline on an HPC cluster first. The pipeline scripts are designed to take you from raw data through standard preprocessing and analysis steps with minimal manual intervention. See [README_IMC_HPC.md](README_IMC_HPC.md) and [SLURM_scripts/README.md](SLURM_scripts/README.md).
 >>>>>>> Stashed changes
 
+=======
+**Preferred workflow (recommended for most users):** run the scripted pipeline on an HPC cluster first. The pipeline scripts are designed to take you from raw data through standard preprocessing and analysis steps with minimal manual intervention. See [README_IMC_HPC.md](README_IMC_HPC.md) and [SLURM_scripts/README.md](SLURM_scripts/README.md).
+
+>>>>>>> Stashed changes
 **Local and advanced work:** advanced users can also run stages locally and will typically switch to local workflows after the scripted pipeline, when analyses become more bespoke. This is where Jupyter notebooks become the main interface for exploratory or novel analyses. Notebooks are listed in [Tutorials/README.md](Tutorials/README.md), and more will be folded into scripts over time.
 
 **Legacy material:** older or experimental code exists in [External_and_old_code/README.md](External_and_old_code/README.md). These are not tightly maintained and are best suited for advanced users who are comfortable troubleshooting.
