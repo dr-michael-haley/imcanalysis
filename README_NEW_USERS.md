@@ -110,7 +110,6 @@ git pull
 - **On HPC (e.g. CSF3):** the pipeline launcher will try to **auto-update to the latest GitHub version** before submitting jobs (a safe `git pull --ff-only`). This helps ensure bugfixes land in your next run without you needing to remember to update.
 - **Locally:** if a bug is reported and fixed in the repo, you’ll usually update your local copy by going into the repo folder and running `git pull`.
 
-(If you ever need to disable the auto-update behaviour, you can set `PIPELINE_AUTO_UPDATE=0`.)
 
 ---
 

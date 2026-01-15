@@ -2,7 +2,7 @@
 
 Toolkit for analysing Imaging Mass Cytometry (IMC) and other spatial-omics data. It combines a Python package (`SpatialBiologyToolkit`), CLI pipeline stages, SLURM job templates, tutorials, and HPC helper scripts.
 
-![Overview](images/overview.png)
+![Overview](images/overview.PNG)
 
 ## Start here
 
@@ -10,9 +10,9 @@ Toolkit for analysing Imaging Mass Cytometry (IMC) and other spatial-omics data.
 
 **Recommended workflow:** this project is **HPC-first**. The majority of analyses are easiest to run on an HPC cluster via the scripted pipeline (headless SLURM jobs), taking you from raw data (i.e. a folder with MCD files) through standard preprocessing and analysis steps with minimal manual intervention. Afterwards, a smaller minority of work is typically done locally in notebooks for bespoke exploration and figures. Start with [README_IMC_HPC.md](README_IMC_HPC.md) plus [SLURM_scripts/README.md](SLURM_scripts/README.md). 
 
-![Overview2](images/overview2.png)
+![Overview2](images/overview2.PNG)
 
-![Command](images/command.png)
+![Command](images/command.PNG)
 
 **Local notebooks (usually after HPC):** use [README_LOCAL.md](README_LOCAL.md) and [Tutorials/README.md](Tutorials/README.md).
 
