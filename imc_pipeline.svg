@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="900" viewBox="0 0 1100 900">
+  <defs>
+    <style>
+      .box { fill: #f6f8fa; stroke: #2f3b4a; stroke-width: 2; rx: 10; ry: 10; }
+      .box-alt { fill: #eef6ff; stroke: #2f3b4a; stroke-width: 2; rx: 10; ry: 10; }
+      .box-opt { fill: #fff4e6; stroke: #2f3b4a; stroke-width: 2; rx: 10; ry: 10; stroke-dasharray: 6 4; }
+      .title { font: 700 20px "Segoe UI", Arial, sans-serif; fill: #1f2937; }
+      .label { font: 600 16px "Segoe UI", Arial, sans-serif; fill: #1f2937; }
+      .sub { font: 12px "Segoe UI", Arial, sans-serif; fill: #4b5563; }
+      .arrow { stroke: #2f3b4a; stroke-width: 2; fill: none; }
+      .arrow-dashed { stroke: #2f3b4a; stroke-width: 2; fill: none; stroke-dasharray: 6 4; }
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,3 L0,6 Z" fill="#2f3b4a" />
+    </marker>
+  </defs>
+
+  <rect x="20" y="20" width="1060" height="860" fill="#ffffff" stroke="#e5e7eb" stroke-width="2" rx="14" ry="14" />
+  <text x="50" y="60" class="title">IMC Pipeline Overview (HPC stages)</text>
+
+  <!-- Main vertical flow -->
+  <rect class="box" x="60" y="90" width="460" height="58" />
+  <text x="80" y="118" class="label">Config (generate/update config.yaml)</text>
+  <text x="80" y="138" class="sub">job_config</text>
+
+  <rect class="box" x="60" y="165" width="460" height="58" />
+  <text x="80" y="193" class="label">Preprocess MCD → TIFFs + metadata</text>
+  <text x="80" y="213" class="sub">job_preprocess</text>
+
+  <rect class="box-opt" x="60" y="240" width="460" height="58" />
+  <text x="80" y="268" class="label">Edit panel.csv + dictionary.csv</text>
+  <text x="80" y="288" class="sub">manual step</text>
+
+  <rect class="box" x="60" y="315" width="460" height="58" />
+  <text x="80" y="343" class="label">Denoising (processed images)</text>
+  <text x="80" y="363" class="sub">job_denoising</text>
+
+  <rect class="box-alt" x="60" y="390" width="460" height="58" />
+  <text x="80" y="418" class="label">Denoising QC + panel checks</text>
+  <text x="80" y="438" class="sub">job_denoising_qc</text>
+
+  <rect class="box" x="60" y="465" width="460" height="58" />
+  <text x="80" y="493" class="label">Mask creation (preprocess DNA + CellPose-SAM)</text>
+  <text x="80" y="513" class="sub">job_cellposesam</text>
+
+  <rect class="box" x="60" y="540" width="460" height="58" />
+  <text x="80" y="568" class="label">Segmentation (Nimbus) → AnnData</text>
+  <text x="80" y="588" class="sub">job_nimbus (replaces classic segmentation)</text>
+
+  <rect class="box" x="60" y="615" width="460" height="58" />
+  <text x="80" y="643" class="label">Batch correction (BioBatchNet)</text>
+  <text x="80" y="663" class="sub">job_biobatchnet</text>
+
+  <rect class="box" x="60" y="690" width="460" height="58" />
+  <text x="80" y="718" class="label">AI interpretation of clusters</text>
+  <text x="80" y="738" class="sub">job_ai</text>
+
+  <rect class="box" x="60" y="765" width="460" height="58" />
+  <text x="80" y="793" class="label">Visualisations + QC outputs</text>
+  <text x="80" y="813" class="sub">job_visualisations</text>
+
+  <rect class="box" x="60" y="840" width="460" height="58" />
+  <text x="80" y="868" class="label">Reintegrate removed markers</text>
+  <text x="80" y="888" class="sub">job_reintegrate</text>
+
+  <!-- Optional branches -->
+  <rect class="box-opt" x="580" y="510" width="460" height="58" />
+  <text x="600" y="538" class="label">scPortrait single-cell portraits</text>
+  <text x="600" y="558" class="sub">job_scport (uses processed + masks)</text>
+
+  <rect class="box-opt" x="580" y="780" width="460" height="58" />
+  <text x="600" y="808" class="label">ZIP QC bundles for download</text>
+  <text x="600" y="828" class="sub">job_zipqc</text>
+
+  <!-- Arrows (main flow) -->
+  <line class="arrow" x1="290" y1="148" x2="290" y2="165" marker-end="url(#arrow)" />
+  <line class="arrow" x1="290" y1="223" x2="290" y2="240" marker-end="url(#arrow)" />
+  <line class="arrow" x1="290" y1="298" x2="290" y2="315" marker-end="url(#arrow)" />
+  <line class="arrow" x1="290" y1="373" x2="290" y2="390" marker-end="url(#arrow)" />
+  <line class="arrow" x1="290" y1="448" x2="290" y2="465" marker-end="url(#arrow)" />
+  <line class="arrow" x1="290" y1="523" x2="290" y2="540" marker-end="url(#arrow)" />
+  <line class="arrow" x1="290" y1="598" x2="290" y2="615" marker-end="url(#arrow)" />
+  <line class="arrow" x1="290" y1="673" x2="290" y2="690" marker-end="url(#arrow)" />
+  <line class="arrow" x1="290" y1="748" x2="290" y2="765" marker-end="url(#arrow)" />
+  <line class="arrow" x1="290" y1="823" x2="290" y2="840" marker-end="url(#arrow)" />
+
+  <!-- Optional branch arrows -->
+  <path class="arrow-dashed" d="M520 494 C545 494, 555 525, 580 525" marker-end="url(#arrow)" />
+  <path class="arrow-dashed" d="M520 789 C545 789, 555 810, 580 810" marker-end="url(#arrow)" />
+</svg>
