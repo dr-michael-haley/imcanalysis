@@ -100,8 +100,12 @@ create_env() {
         echo "⏭️  Skipping pip extras for existing environment '$env'."
     fi
 
-    echo "📦 Installing SpatialBiologyToolkit into '$env' (editable, no deps)..."
-    conda run -n "$env" pip install --no-deps -e "$REPO_ROOT"
+    if conda run -n "$env" python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('SpatialBiologyToolkit') else 1)"; then
+        echo "⏭️  SpatialBiologyToolkit already installed in '$env' — skipping."
+    else
+        echo "📦 Installing SpatialBiologyToolkit into '$env' (editable, no deps)..."
+        conda run -n "$env" pip install --no-deps -e "$REPO_ROOT"
+    fi
 
     echo "✔ Finished environment: $env"
     echo
