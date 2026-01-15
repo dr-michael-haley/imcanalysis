@@ -36,9 +36,37 @@ This will:
 - Load config automatically in `.bashrc` and `.profile`  
 - Make scripts executable  
 
+> Note: `make install` does **not** create the conda environments. Use `make envs` for that.
+
 ---
 
-## 🔐 3. Configuration File (`~/.imc_config`)
+## 🐍 3. Conda Environments (Pipeline)
+
+Set up the pipeline environments from pinned lockfiles:
+
+```
+make envs
+```
+
+This will:
+
+- Create (or skip) the pipeline envs from lockfiles
+- Record environment names in `~/.imc_config` for the SLURM jobs to use
+- Ensure SLURM job scripts are executable
+
+The following variables are written to `~/.imc_config` (defaults shown):
+
+```
+export IMC_ENV_SEGMENTATION="imc_segmentation"
+export IMC_ENV_DENOISE="imc_denoise"
+export IMC_ENV_CELLPOSESAM="imc_cellposesam"
+export IMC_ENV_BIOBATCHNET="imc_biobatchnet"
+export IMC_ENV_SCPORTRAIT="scPortrait"
+```
+
+---
+
+## 🔐 4. Configuration File (`~/.imc_config`)
 
 Generated during installation. Stores:
 
@@ -56,11 +84,13 @@ Example:
 ```
 export IMC_EMAIL="your.email@domain.com"
 export OPENAI_API_KEY="sk-..."
+export IMC_ENV_SEGMENTATION="imc_segmentation"
+export IMC_ENV_DENOISE="imc_denoise"
 ```
 
 ---
 
-## 🔄 4. Updating IMC Analysis
+## 🔄 5. Updating IMC Analysis
 
 When repository updates arrive:
 
@@ -72,7 +102,7 @@ make update
 
 ---
 
-## 🗑️ 5. Uninstallation
+## 🗑️ 6. Uninstallation
 
 Clean removal:
 
@@ -89,7 +119,7 @@ Removes:
 
 ---
 
-## 📂 6. Directory Structure
+## 📂 7. Directory Structure
 
 ```
 imcanalysis/
@@ -105,7 +135,7 @@ imcanalysis/
 
 ---
 
-## 🧪 7. Verify Installation
+## 🧪 8. Verify Installation
 
 Reload environment:
 
@@ -135,7 +165,7 @@ echo $OPENAI_API_KEY
 
 ---
 
-## 🧠 8. Troubleshooting
+## 🧠 9. Troubleshooting
 
 ### `make: command not found`
 Load environment modules:
@@ -150,11 +180,19 @@ module load make
 ```
 source ~/.bashrc
 source ~/.profile
+
+### Permission denied running job scripts
+If you see `Permission denied` when running `pll` locally, ensure execute bits are set:
+
+```
+chmod +x ~/imcanalysis/SLURM_scripts/*.txt
+```
+Running `make envs` will also fix permissions.
 ```
 
 ---
 
-## ☑️ 9. Example Usage
+## ☑️ 10. Example Usage
 
 ```
 cds mydataset
@@ -163,7 +201,7 @@ submit_imc_job mydata.slurm
 
 ---
 
-## 🎉 10. Summary
+## 🎉 11. Summary
 
 The `make install` system provides:
 

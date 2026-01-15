@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="900" viewBox="0 0 1200 900">
+  <defs>
+    <style>
+      .box { fill: #f6f8fa; stroke: #2f3b4a; stroke-width: 2; rx: 10; ry: 10; }
+      .box-alt { fill: #eef6ff; stroke: #2f3b4a; stroke-width: 2; rx: 10; ry: 10; }
+      .box-opt { fill: #fff4e6; stroke: #2f3b4a; stroke-width: 2; rx: 10; ry: 10; stroke-dasharray: 6 4; }
+      .title { font: 700 20px "Segoe UI", Arial, sans-serif; fill: #1f2937; }
+      .label { font: 600 15px "Segoe UI", Arial, sans-serif; fill: #1f2937; }
+      .sub { font: 12px "Segoe UI", Arial, sans-serif; fill: #4b5563; }
+      .arrow { stroke: #2f3b4a; stroke-width: 2; fill: none; }
+      .arrow-dashed { stroke: #2f3b4a; stroke-width: 2; fill: none; stroke-dasharray: 6 4; }
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,3 L0,6 Z" fill="#2f3b4a" />
+    </marker>
+  </defs>
+
+  <rect x="20" y="20" width="1160" height="860" fill="#ffffff" stroke="#e5e7eb" stroke-width="2" rx="14" ry="14" />
+  <text x="50" y="60" class="title">IMC Pipeline Infrastructure – How Components Connect</text>
+
+  <!-- User / CLI -->
+  <rect class="box" x="60" y="90" width="360" height="70" />
+  <text x="80" y="120" class="label">User CLI (login node)</text>
+  <text x="80" y="142" class="sub">make install | make envs | pl / pll / pls</text>
+
+  <!-- Bash scripts -->
+  <rect class="box" x="60" y="180" width="360" height="80" />
+  <text x="80" y="210" class="label">Bash helper scripts</text>
+  <text x="80" y="232" class="sub">Bash_scripts/pl, pll, pls, zipqc, cds</text>
+  <text x="80" y="252" class="sub">Reads pipeline.conf + calls job_*.txt</text>
+
+  <!-- SLURM scripts -->
+  <rect class="box" x="60" y="280" width="360" height="80" />
+  <text x="80" y="310" class="label">SLURM job scripts</text>
+  <text x="80" y="332" class="sub">SLURM_scripts/job_*.txt (+ job_env.sh)</text>
+  <text x="80" y="352" class="sub">Activates conda env + runs python -m ...</text>
+
+  <!-- Python scripts -->
+  <rect class="box" x="60" y="380" width="360" height="80" />
+  <text x="80" y="410" class="label">Python pipeline stages</text>
+  <text x="80" y="432" class="sub">SpatialBiologyToolkit/scripts/*</text>
+  <text x="80" y="452" class="sub">Reads config.yaml and produces outputs</text>
+
+  <!-- Config files -->
+  <rect class="box-alt" x="480" y="140" width="660" height="140" />
+  <text x="500" y="170" class="label">Config files</text>
+  <text x="500" y="195" class="sub">~/.imc_config: env names + IMC_EMAIL + API key</text>
+  <text x="500" y="215" class="sub">pipeline.conf: stage alias → job_*.txt</text>
+  <text x="500" y="235" class="sub">config.yaml: dataset settings created/updated by python scripts</text>
+  <text x="500" y="255" class="sub">panel.csv / dictionary.csv: metadata from preprocess</text>
+
+  <!-- Conda envs -->
+  <rect class="box-alt" x="480" y="310" width="660" height="80" />
+  <text x="500" y="340" class="label">Conda environments</text>
+  <text x="500" y="362" class="sub">Created by install/setup_envs.sh from lockfiles</text>
+
+  <!-- Data outputs -->
+  <rect class="box" x="480" y="420" width="660" height="100" />
+  <text x="500" y="450" class="label">Data outputs (per dataset folder)</text>
+  <text x="500" y="472" class="sub">tiffs → processed → masks → anndata.h5ad → QC/</text>
+  <text x="500" y="494" class="sub">Outputs consumed by downstream stages</text>
+
+  <!-- Install scripts -->
+  <rect class="box-opt" x="60" y="500" width="360" height="90" />
+  <text x="80" y="530" class="label">Installer scripts</text>
+  <text x="80" y="552" class="sub">install/setup.sh: PATH, aliases, ~/.imc_config</text>
+  <text x="80" y="572" class="sub">install/setup_envs.sh: envs + permissions</text>
+
+  <!-- Arrows -->
+  <line class="arrow" x1="240" y1="160" x2="240" y2="180" marker-end="url(#arrow)" />
+  <line class="arrow" x1="240" y1="260" x2="240" y2="280" marker-end="url(#arrow)" />
+  <line class="arrow" x1="240" y1="360" x2="240" y2="380" marker-end="url(#arrow)" />
+
+  <path class="arrow" d="M420 210 C450 210, 450 190, 480 190" marker-end="url(#arrow)" />
+  <path class="arrow" d="M420 320 C450 320, 450 330, 480 330" marker-end="url(#arrow)" />
+  <path class="arrow" d="M420 420 C450 420, 450 450, 480 450" marker-end="url(#arrow)" />
+
+  <path class="arrow-dashed" d="M420 545 C450 545, 450 530, 480 530" marker-end="url(#arrow)" />
+  <path class="arrow" d="M820 280 C820 300, 820 310, 820 320" marker-end="url(#arrow)" />
+  <path class="arrow" d="M820 390 C820 405, 820 415, 820 420" marker-end="url(#arrow)" />
+
+  <!-- Notes -->
+  <text x="60" y="640" class="sub">Flow: User → Bash helpers → SLURM job → Python stage → dataset outputs</text>
+  <text x="60" y="660" class="sub">Configs feed into jobs (pipeline.conf, ~/.imc_config) and Python stages (config.yaml).</text>
+</svg>

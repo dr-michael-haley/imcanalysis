@@ -111,6 +111,14 @@ for env in "${ENVS[@]}"; do
 done
 
 ########################################
+# Ensure SLURM scripts are executable
+########################################
+SLURM_DIR="$BASE_DIR/../SLURM_scripts"
+if [[ -d "$SLURM_DIR" ]]; then
+    chmod +x "$SLURM_DIR"/*.txt "$SLURM_DIR"/job_env.sh 2>/dev/null || true
+fi
+
+########################################
 # Persist environment names to config
 ########################################
 update_config_var "IMC_ENV_SEGMENTATION" "imc_segmentation"
