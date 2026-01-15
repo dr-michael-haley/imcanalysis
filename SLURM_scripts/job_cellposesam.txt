@@ -15,8 +15,8 @@ source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 echo "CellPose-SAM job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 
-conda activate segmentation
+conda activate "${IMC_ENV_SEGMENTATION:-imc_segmentation}"
 python -m SpatialBiologyToolkit.scripts.preprocess_dna
 
-conda activate cellposesam
+conda activate "${IMC_ENV_CELLPOSESAM:-imc_cellposesam}"
 python -m SpatialBiologyToolkit.scripts.cellpose_sam

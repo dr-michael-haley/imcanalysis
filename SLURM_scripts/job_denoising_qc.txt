@@ -15,8 +15,8 @@ source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 echo "Job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 
-conda activate imc_denoise_new
+conda activate "${IMC_ENV_DENOISE:-imc_denoise}"
 python -m SpatialBiologyToolkit.scripts.denoising_qc
 
-conda activate segmentation
+conda activate "${IMC_ENV_SEGMENTATION:-imc_segmentation}"
 python -m SpatialBiologyToolkit.scripts.check_panel_consistency 
