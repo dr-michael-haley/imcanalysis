@@ -3,21 +3,16 @@
 Toolkit for analysing Imaging Mass Cytometry (IMC) and other spatial-omics data. It combines a Python package (`SpatialBiologyToolkit`), CLI pipeline stages, SLURM job templates, tutorials, and HPC helper scripts.
 
 ## Start here
-- Completely new to Python and IMC analyis? Read [`README_NEW_USERS.md`](README_NEW_USERS.md).
-- Running on UNIX-based HPC (e.g. University of Manchester CSF3)? Follow [`README_IMC_HPC.md`](README_IMC_HPC.md) plus the SLURM helper docs below. 
-- Running notebooks locally? See [`Tutorials/README.md`](Tutorials/README.md) and the `NEW - Population identification.ipynb` notebook.
 
+**Completely new to the command line / Python tooling?** Start with [README_NEW_USERS.md](README_NEW_USERS.md).
 
-**Preferred workflow (recommended for most users):** run the scripted pipeline on an HPC cluster first. The pipeline scripts are designed to take you from raw data through standard preprocessing and analysis steps with minimal manual intervention. See [README_IMC_HPC.md](README_IMC_HPC.md) and [SLURM_scripts/README.md](SLURM_scripts/README.md).
+**Beginners (recommended):** the majority of analyses are run on **HPC** via the scripted pipeline (headless jobs via SLURM), and a smaller minority are done **locally** afterwards in notebooks for bespoke exploration/figures.
 
-**Local and advanced work:** advanced users can also run stages locally and will typically switch to local workflows after the scripted pipeline, when analyses become more bespoke. This is where Jupyter notebooks become the main interface for exploratory or novel analyses. Notebooks are listed in [Tutorials/README.md](Tutorials/README.md), and more will be folded into scripts over time.
+**HPC pipeline (recommended for most users):** run the scripted pipeline on an HPC cluster first. The pipeline scripts are designed to take you from raw data (i.e. folder with MCD files) through standard preprocessing and analysis steps with minimal manual intervention. Start with [README_IMC_HPC.md](README_IMC_HPC.md) plus [SLURM_scripts/README.md](SLURM_scripts/README.md).
+
+**Local notebooks (usually after HPC):** use [README_LOCAL.md](README_LOCAL.md) and [Tutorials/README.md](Tutorials/README.md).
 
 **Legacy material:** older or experimental code exists in [External_and_old_code/README.md](External_and_old_code/README.md). These are not tightly maintained and are best suited for advanced users who are comfortable troubleshooting.
-
-## Start here
-- Completely new to the command line / Python tooling? Start with [README_NEW_USERS.md](README_NEW_USERS.md).
-- Doing local analyses (Jupyter notebooks on your laptop/workstation)? Start with [README_LOCAL.md](README_LOCAL.md) then [Tutorials/README.md](Tutorials/README.md).
-- Running the scripted pipeline on HPC (recommended)? Start with [README_IMC_HPC.md](README_IMC_HPC.md) plus [SLURM_scripts/README.md](SLURM_scripts/README.md).
 
 ## Quick setup (advanced: local workstation, using SpatialBiologyToolkit in your own analysis)
 
