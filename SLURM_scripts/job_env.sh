@@ -2,6 +2,7 @@
 
 # This was causing a crash
 # module load gcc/13.3.0
+module purge
 
 export MPLBACKEND="Agg"
 export QT_QPA_PLATFORM="offscreen"
