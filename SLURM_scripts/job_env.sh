@@ -1,6 +1,7 @@
 # Environment used by IMC analysis jobs
 
-module load gcc/13.3.0
+# This was causing a crash
+# module load gcc/13.3.0
 
 export MPLBACKEND="Agg"
 export QT_QPA_PLATFORM="offscreen"
