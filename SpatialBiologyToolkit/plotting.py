@@ -15,6 +15,7 @@ import seaborn as sb
 import skimage.io as io
 from matplotlib import cm
 from matplotlib.colors import Normalize, to_hex
+from matplotlib.cm import ScalarMappable
 from matplotlib.lines import Line2D
 from scipy import stats
 from shapely.geometry import MultiPoint, Point, Polygon
@@ -110,7 +111,7 @@ def bargraph(data: ad.AnnData | pd.DataFrame | str,
              value_col: str = None,
              hue: str = None,
              hue_order: list = None,
-             specify_populations: list = [],
+             specify_populations: list | None = None,
              levels: list = None,
              mean_over: list = None,
              confidence_interval: int = 68,
@@ -119,7 +120,11 @@ def bargraph(data: ad.AnnData | pd.DataFrame | str,
              crosstab_normalize: bool = False,
              cells_per_mm: bool = False,
              palette: dict = None,
+             x_palette: dict = None,
+             bar_edgecolor: str | None = None,
+             bar_linewidth: float | None = None,
              hide_grid: bool = False,
+             despine: bool = True,
              legend: bool = True,
              log_scale: bool = False,
              save_data: bool = True,
@@ -161,8 +166,16 @@ def bargraph(data: ad.AnnData | pd.DataFrame | str,
         Normalize values by mm².
     palette : dict, optional
         Color palette.
+    x_palette : dict, optional
+        Dictionary mapping x-axis values to colors, applied after plotting.
+    bar_edgecolor : str, optional
+        Edge color for bars (e.g., "black").
+    bar_linewidth : float, optional
+        Edge line width for bars.
     hide_grid : bool, optional
         Whether to hide the grid.
+    despine : bool, optional
+        Whether to remove top/right axes spines.
     legend : bool, optional
         Whether to display the legend.
     log_scale : bool, optional
@@ -185,8 +198,7 @@ def bargraph(data: ad.AnnData | pd.DataFrame | str,
     DataFrame or Figure
         The data used to create the figure or the figure itself.
     '''
-    from pandas.api.types import is_numeric_dtype
-
+    adata = data if isinstance(data, ad.AnnData) else None
     data = _check_input_type(data)
     if not levels and not mean_over:
         assert ROI_col_name in data.columns, f'{ROI_col_name} column not found in data'
@@ -198,7 +210,7 @@ def bargraph(data: ad.AnnData | pd.DataFrame | str,
             mean_over = [ROI_col_name]
     levels = _to_list(levels)
     mean_over = _to_list(mean_over)
-    specify_populations = _to_list(specify_populations)
+    specify_populations = _to_list(specify_populations) if specify_populations else []
 
     if specify_populations:
         data = data[data[pop_col].isin(specify_populations)]
@@ -208,40 +220,29 @@ def bargraph(data: ad.AnnData | pd.DataFrame | str,
     if hue and hue not in mean_over:
         mean_over.append(hue)
 
-    if not palette:
-        if hue:
-            try:
-                palette = adata.uns[f'{hue}_colormap']
-            except:
-                pass
-        else:
-            try:
-                palette = adata.uns[f'{pop_col}_colormap']
-            except:
-                pass
+    if not palette and adata is not None:
+        color_key = f'{hue}_colormap' if hue else f'{pop_col}_colormap'
+        palette = adata.uns.get(color_key, palette)
 
-    if pop_col and value_col:
+    if value_col:
         _, long_form_data = _count_summary(data, pop_col, levels, mean_over, crosstab_normalize, 'numeric')
         plot_data = long_form_data.reset_index()
-        y_plot, x_plot = value_col, pop_col
-    elif not pop_col and value_col:
-        _, long_form_data = _count_summary(data, pop_col, levels, mean_over, crosstab_normalize, 'numeric')
-        plot_data = long_form_data.reset_index()
-        y_plot, x_plot = value_col, levels[-1]
-    elif pop_col and not value_col:
+        y_plot = value_col
+        x_plot = pop_col if pop_col else levels[-1]
+    else:
         _, long_form_data = _count_summary(data, pop_col, levels, mean_over, crosstab_normalize)
         long_form_data.rename(columns={'value': 'Cells'}, inplace=True)
         plot_data = long_form_data
         y_plot, x_plot = 'Cells', pop_col
 
-    if cells_per_mm:
+    if cells_per_mm and adata is not None:
         try:
             size_dict = adata.uns['sample']['mm2'].to_dict()
-            plot_data['mm2'] = plot_data['ROI'].map(size_dict)
+            plot_data['mm2'] = plot_data[ROI_col_name].map(size_dict)
             new_y = f'{y_plot} per mm²'
             plot_data[new_y] = plot_data[y_plot] / plot_data['mm2']
             y_plot = new_y
-        except:
+        except Exception:
             pass
 
     if ax is None:
@@ -250,7 +251,37 @@ def bargraph(data: ad.AnnData | pd.DataFrame | str,
     else:
         fig = ax.figure
         created_fig = False
-    sb.barplot(data=plot_data, y=y_plot, x=x_plot, hue=hue, hue_order=hue_order, palette=palette, ax=ax)
+    sb.barplot(
+        data=plot_data,
+        y=y_plot,
+        x=x_plot,
+        hue=hue,
+        hue_order=hue_order,
+        palette=palette,
+        ax=ax,
+        errorbar=("ci", confidence_interval),
+    )
+
+    if x_palette:
+        x_labels = [t.get_text() for t in ax.get_xticklabels()]
+        x_ticks = np.asarray(ax.get_xticks())
+        for patch in ax.patches:
+            if len(x_ticks) == 0:
+                continue
+            x_center = patch.get_x() + patch.get_width() / 2
+            idx = int(np.argmin(np.abs(x_ticks - x_center)))
+            if 0 <= idx < len(x_labels):
+                x_val = x_labels[idx]
+                if x_val in x_palette:
+                    patch.set_facecolor(x_palette[x_val])
+
+    if bar_edgecolor is not None or bar_linewidth is not None:
+        for patch in ax.patches:
+            if bar_edgecolor is not None:
+                patch.set_edgecolor(bar_edgecolor)
+            if bar_linewidth is not None:
+                patch.set_linewidth(bar_linewidth)
+                    
     ax.set_xticklabels(ax.get_xticklabels(), rotation=rotate_x_labels)
 
     if log_scale:
@@ -258,6 +289,8 @@ def bargraph(data: ad.AnnData | pd.DataFrame | str,
     
     if hide_grid:
         ax.grid(False)
+    if despine:
+        sb.despine(ax=ax)
     if legend:
         ax.legend(bbox_to_anchor=(1.01, 1))
     else:
@@ -2848,3 +2881,654 @@ def population_backgating(
     print(f"Output folder: {output_path}")
     
     return summary_info
+
+
+def umap_marker_gallery(
+    adata,
+    markers=None,
+    ncols=5,
+    point_size=2,
+    panel_scale=1.3,
+    title_size=6,
+    tight_pad=0.25,
+    vmax=None,
+    cmap="viridis",
+    add_colorbar=False,
+    colorbar_label=None,
+    colorbar_rect=(0.85, 0.5, 0.015, 0.4),  # (x, y, width, height)
+    colorbar_orientation="vertical",
+    colorbar_tick_size=None,
+    colorbar_label_size=None,
+    show=True,
+    save=None,
+    dpi=300
+):
+    """
+    Plot a gallery of UMAPs coloured by marker expression, with an optional
+    single shared colourbar.
+
+    Parameters
+    ----------
+    adata : AnnData
+        AnnData object containing UMAP embedding.
+    markers : list[str] or None
+        Markers to plot. If None, uses adata.var_names.
+    ncols : int
+        Number of columns in the gallery.
+    point_size : float
+        Marker size for UMAP points.
+    panel_scale : float
+        Inches per panel (controls overall figure size).
+    title_size : int
+        Font size for each panel title.
+    tight_pad : float
+        Padding for tight_layout.
+    vmax : float or None
+        Maximum value for colour scaling (shared across panels).
+    cmap : str
+        Matplotlib colormap.
+    add_colorbar : bool
+        Whether to add a single shared colourbar.
+    colorbar_label : str or None
+        Label for the colourbar.
+    colorbar_rect : tuple
+        (x, y, width, height) in figure fraction coordinates.
+    colorbar_orientation : {"vertical", "horizontal"}
+        Orientation of the colourbar.
+    colorbar_tick_size : int or None
+        Tick label font size for colourbar.
+    colorbar_label_size : int or None
+        Label font size for colourbar.
+    show : bool
+        Whether to show the plot.
+    save : str
+        Save path.
+    dpi : int
+        DPI for saved figure.
+
+    Returns
+    -------
+    fig : matplotlib.figure.Figure
+    """
+
+    if markers is None:
+        markers = adata.var_names.tolist()
+
+    nrows = int(np.ceil(len(markers) / ncols))
+
+    # ---- Plot first (Scanpy creates the figure)
+    sc.pl.umap(
+        adata,
+        color=markers,
+        ncols=ncols,
+        s=point_size,
+        vmax=vmax,
+        cmap=cmap,
+        colorbar_loc=None,  # disable Scanpy colourbars
+        show=False,
+    )
+
+    # ---- Grab Scanpy-created figure
+    fig = plt.gcf()
+
+    # ---- Resize figure AFTER creation
+    fig.set_size_inches(
+        ncols * panel_scale,
+        nrows * panel_scale,
+    )
+
+    # ---- Clean axes + titles
+    for ax, marker in zip(fig.axes, markers):
+        ax.set_axis_off()
+        ax.set_title(marker, fontsize=title_size)
+
+    # ---- Optional shared colourbar
+    if add_colorbar:
+        norm = Normalize(vmin=0, vmax=vmax)
+        sm = ScalarMappable(norm=norm, cmap=cmap)
+        sm.set_array([])
+
+        cax = fig.add_axes(colorbar_rect)
+
+        cbar = fig.colorbar(
+            sm,
+            cax=cax,
+            orientation=colorbar_orientation,
+        )
+
+        # Tick font size
+        if colorbar_tick_size is not None:
+            cbar.ax.tick_params(labelsize=colorbar_tick_size)
+
+        # Label
+        if colorbar_label is not None:
+            cbar.set_label(
+                colorbar_label,
+                fontsize=colorbar_label_size or title_size,
+            )
+
+    # ---- Tight layout (leave room for colourbar if present)
+    right = 0.9 if add_colorbar else 1.0
+    plt.tight_layout(pad=tight_pad, rect=[0, 0, right, 1])
+
+    if show:
+        plt.show()
+
+    if save:
+        fig.savefig(save, dpi=300, bbox_inches='tight')
+
+    return fig
+
+
+import anndata as ad
+import scanpy as sc
+import pandas as pd
+import numpy as np
+
+import seaborn as sns
+from copy import copy
+import os
+from collections.abc import Iterable
+from pathlib import Path
+import matplotlib.pyplot as plt
+# plt.switch_backend('module://ipympl.backend_nbagg')
+sc.settings.verbosity = 3 
+
+import warnings
+warnings.simplefilter(action='ignore', category=FutureWarning)
+
+def roi_counts(adata,
+               obs = ['Case', 'Group'],
+               roi_obs = 'ROI'):
+
+    roi_counts = (
+        adata.obs
+        .groupby(obs, observed=True)[roi_obs]
+        .nunique()
+        .reset_index(name='n_ROIs')
+    )
+    
+    return roi_counts
+
+
+def barplot_by_subgroup_roi_case_averaged(
+    adata,
+    marker,
+    layer=None,
+    subgroup_key=None,
+    case_key='Case',
+    roi_key='ROI',
+    subgroup_values=None,
+    subgroup_filter=None,
+    estimator='mean',          # 'mean' or 'median'
+    error='sem',               # 'sem' or 'std'
+    average_over_roi=True,
+    average_over_case=True,
+    figsize=(5, 4),
+    palette='tab10',
+    ylim=None,
+    title=None,
+    ylabel=None,
+    rotate_xticks=30,
+    order=None,
+    return_df = False
+):
+    """
+    Bar plot of marker intensity with optional averaging over ROI and Case.
+    """
+
+    # Subset data
+    adata_sub = adata
+    if subgroup_filter is not None:
+        adata_sub = adata_sub[
+            adata_sub.obs[subgroup_key].str.contains(subgroup_filter)
+        ]
+
+    marker_idx = adata_sub.var_names.tolist().index(marker)
+
+    # Build tidy dataframe at cell level
+    df = pd.DataFrame({
+        subgroup_key: adata_sub.obs[subgroup_key].values,
+        case_key: adata_sub.obs[case_key].values,
+        roi_key: adata_sub.obs[roi_key].values,
+        'value': np.asarray(
+            adata_sub.layers[layer][:, marker_idx]
+        ).flatten()
+    }).dropna()
+
+    # Enforce subgroup order early
+    if subgroup_values is not None:
+        df[subgroup_key] = pd.Categorical(
+            df[subgroup_key],
+            categories=subgroup_values,
+            ordered=True
+        )
+
+    # Helper for aggregation
+    def agg_fn(x):
+        return x.mean() if estimator == 'mean' else x.median()
+
+    # === Optional averaging steps ===
+
+    # 1) Average within ROI
+    if average_over_roi:
+        df = (
+            df.groupby([subgroup_key, case_key, roi_key], observed=True)
+              ['value']
+              .apply(agg_fn)
+              .reset_index()
+        )
+
+    # 2) Average ROIs within each Case
+    if average_over_case:
+        df = (
+            df.groupby([subgroup_key, case_key], observed=True)
+              ['value']
+              .mean()
+              .reset_index()
+        )
+
+    # Plot
+    plt.figure(figsize=figsize)
+    ax = sns.barplot(
+        data=df,
+        x=subgroup_key,
+        y='value',
+        palette=palette,
+        errorbar=error,
+        capsize=0.15,
+        order=order
+    )
+
+    # Labels
+    if ylabel is None:
+        if average_over_roi and average_over_case:
+            ylabel = f'{marker} (ROI → Case averaged)'
+        elif average_over_roi:
+            ylabel = f'{marker} (ROI averaged)'
+        elif average_over_case:
+            ylabel = f'{marker} (Case averaged)'
+        else:
+            ylabel = f'{marker} (cell level)'
+    ax.set_ylabel(ylabel)
+
+    if title is None:
+        title = f'{marker} by {subgroup_key}'
+    ax.set_title(title)
+
+    if ylim is not None:
+        ax.set_ylim(ylim)
+
+    ax.set_xlabel('')
+    plt.xticks(rotation=rotate_xticks, ha='right')
+    sns.despine()
+
+    plt.tight_layout()
+    
+    if not return_df:
+        return a
+    else:
+        return ax, df
+
+def stacked_kde_by_subgroup(
+    adata,
+    marker,
+    layer=None,
+    subgroup_key=None,
+    subgroup_values=None,
+    subgroup_filter=None,
+    figsize=(6, 8),
+    palette='tab10',
+    fill=False,
+    alpha=0.3,
+    linewidth=2,
+    bw_adjust=1.0,
+    sharex=True,
+    xlim=None,
+    title=None,
+    xlabel=None,
+    ylabel='Density',
+    ylim=None,
+    despine=True,
+):
+    """
+    Plot stacked KDEs (one axis per subgroup) with a shared x-axis.
+
+    Parameters
+    ----------
+    adata : AnnData
+        AnnData object containing expression data.
+    marker : str
+        Marker / feature name (must be in adata.var_names).
+    layer : str
+        Layer name to pull values from.
+    subgroup_key : str
+        obs column defining subgroups.
+    subgroup_values : list or None
+        Explicit order of subgroup values. If None, inferred from data.
+    subgroup_filter : str or None
+        If provided, only subgroups containing this string are used.
+    figsize : tuple
+        Figure size.
+    palette : str or list
+        Seaborn palette name or list of colors.
+    fill : bool
+        Whether to fill KDE curves.
+    alpha : float
+        Transparency for filled KDEs.
+    linewidth : float
+        Line width of KDE curves.
+    bw_adjust : float
+        Bandwidth adjustment for KDE.
+    sharex : bool
+        Share x-axis across subplots.
+    xlim : tuple or None
+        Explicit x-axis limits (min, max).
+    title : str or None
+        Figure title. Defaults to "<marker> KDE by subgroup".
+    xlabel : str or None
+        X-axis label. Defaults to "<marker> (normalized intensity)".
+    ylabel : str
+        Y-axis label (applied to each subplot).
+    despine : bool
+        Remove top/right spines.
+
+    Returns
+    -------
+    fig, axes
+        Matplotlib figure and axes.
+    """
+
+    # Subset data
+    adata_sub = adata
+    if subgroup_filter is not None:
+        adata_sub = adata_sub[
+            adata_sub.obs[subgroup_key].str.contains(subgroup_filter)
+        ]
+
+    # Marker index
+    marker_idx = adata_sub.var_names.tolist().index(marker)
+
+    # Determine subgroup order
+    if subgroup_values is None:
+        subgroup_values = (
+            adata_sub.obs[subgroup_key]
+            .dropna()
+            .unique()
+            .tolist()
+        )
+
+    # Colors
+    colors = sns.color_palette(palette, n_colors=len(subgroup_values))
+
+    # Create figure
+    fig, axes = plt.subplots(
+        nrows=len(subgroup_values),
+        ncols=1,
+        figsize=figsize,
+        sharex=sharex
+    )
+
+    if len(subgroup_values) == 1:
+        axes = [axes]
+
+    # Global x-limits if not provided
+    if xlim is None:
+        all_vals = np.asarray(
+            adata_sub.layers[layer][:, marker_idx]
+        ).flatten()
+        all_vals = all_vals[~np.isnan(all_vals)]
+        xlim = (all_vals.min(), all_vals.max())
+
+    # Plot
+    for ax, sg, color in zip(axes, subgroup_values, colors):
+        mask = adata_sub.obs[subgroup_key] == sg
+        
+        if layer:
+            values = np.asarray(
+                adata_sub[mask].layers[layer][:, marker_idx]
+            ).flatten()
+        else:
+            values = np.asarray(
+                adata_sub[mask].X[:, marker_idx]
+            ).flatten()            
+        
+        values = values[~np.isnan(values)]
+
+        if len(values) > 1:
+            sns.kdeplot(
+                values,
+                ax=ax,
+                color=color,
+                fill=fill,
+                alpha=alpha if fill else None,
+                linewidth=linewidth,
+                bw_adjust=bw_adjust,
+            )
+
+        ax.set_ylabel(ylabel, fontsize=9)
+        ax.set_title(sg, fontsize=9, loc='left')
+        ax.set_xlim(xlim)
+
+        if ylim:
+            ax.set_ylim(ylim)
+            
+        if despine:
+            sns.despine(ax=ax)
+
+    # Labels and title
+    if xlabel is None:
+        xlabel = f'{marker} (normalized intensity)'
+    axes[-1].set_xlabel(xlabel, fontsize=10)
+
+    if title is None:
+        title = f'{marker} KDE by {subgroup_key}'
+    fig.suptitle(title, fontsize=12)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.96])
+
+    return fig, axes
+
+def barplot_thresholded_cell_counts(
+    adata,
+    thresholds,
+    layer=None,
+    subgroup_key=None,
+    case_key='Case',
+    roi_key='ROI',
+    subgroup_filter=None,
+    plot_populations=('pos',),
+    average_over_roi=True,
+    average_over_case=True,
+    plot_type='bar',          # 'bar' or 'scatter'
+    scatter_level='case',     # 'case' or 'roi'
+    error='se',
+    figsize=(4, 3),
+    palette='tab10',
+    order=None,
+    title=None,
+    ylabel=None,
+    jitter=0.15,
+):
+    """
+    Plot thresholded cell counts as bar or scatter plots.
+    """
+
+    import numpy as np
+    import pandas as pd
+    import seaborn as sns
+    import matplotlib.pyplot as plt
+
+    # --- Build base dataframe ---
+    df = adata.obs[[subgroup_key, case_key, roi_key]].copy()
+
+    for m, rule in thresholds.items():
+        idx = adata.var_names.tolist().index(m)
+        vals = np.asarray(adata.layers[layer][:, idx]).flatten()
+
+        if 'pos' in rule:
+            df[f'{m}_pos'] = vals > rule['pos']
+        if 'neg' in rule:
+            df[f'{m}_neg'] = vals < rule['neg']
+
+    # Combine marker rules (AND logic)
+    pop_mask = np.ones(len(df), dtype=bool)
+    for col in df.columns:
+        if col.endswith(('_pos', '_neg')):
+            pop_mask &= df[col]
+
+    df['population'] = np.where(pop_mask, 'pos', 'neg')
+    df = df[df['population'].isin(plot_populations)]
+
+    if subgroup_filter is not None:
+        df = df[df[subgroup_key].str.contains(subgroup_filter)]
+
+    # --- Count cells per ROI ---
+    df_counts = (
+        df.groupby([subgroup_key, case_key, roi_key, 'population'], observed=True)
+          .size()
+          .reset_index(name='n_cells')
+    )
+
+    # --- Aggregate ---
+    if average_over_roi:
+        df_counts = (
+            df_counts.groupby([subgroup_key, case_key, 'population'], observed=True)
+                     ['n_cells']
+                     .mean()
+                     .reset_index()
+        )
+
+    if average_over_case:
+        df_counts = (
+            df_counts.groupby([subgroup_key, 'population'], observed=True)
+                     ['n_cells']
+                     .mean()
+                     .reset_index()
+        )
+
+    # --- Plot ---
+    plt.figure(figsize=figsize)
+
+    if plot_type == 'bar':
+        ax = sns.barplot(
+            data=df_counts,
+            x=subgroup_key,
+            y='n_cells',
+            hue='population' if len(plot_populations) > 1 else None,
+            palette=palette,
+            errorbar=error,
+            order=order,
+            capsize=0.15
+        )
+
+    elif plot_type == 'scatter':
+        # Choose level for scatter
+        if scatter_level == 'case' and not average_over_case:
+            raise ValueError("scatter_level='case' requires average_over_case=True")
+        if scatter_level == 'roi' and not average_over_roi:
+            raise ValueError("scatter_level='roi' requires average_over_roi=True")
+
+        ax = sns.stripplot(
+            data=df_counts,
+            x=subgroup_key,
+            y='n_cells',
+            hue='population' if len(plot_populations) > 1 else None,
+            palette=palette,
+            order=order,
+            dodge=len(plot_populations) > 1,
+            jitter=jitter,
+            alpha=0.8
+        )
+
+    else:
+        raise ValueError("plot_type must be 'bar' or 'scatter'")
+
+    if ylabel is None:
+        ylabel = 'Cell count'
+    ax.set_ylabel(ylabel)
+
+    if title is not None:
+        ax.set_title(title)
+
+    ax.set_xlabel('')
+    sns.despine()
+    plt.tight_layout()
+
+    return ax, df_counts
+
+
+# Build color map with alphabetical categories and optional abundance-ordered colors
+def set_adata_categorical_colors(
+    adata,
+    obs_key='population',
+    uns_key=None,
+    order_colors_by_abundance=False,
+    palette=None,
+    reuse_existing_colors=False
+ ):
+    """
+    Set categorical order and colors for an AnnData obs column.
+
+    Categories are always set to alphabetical order. Colors can optionally be
+    assigned by abundance order, then re-mapped onto alphabetical categories.
+
+    Args:
+        adata: AnnData object to modify in-place.
+        obs_key: Column in ``adata.obs`` containing the categories.
+        uns_key: Key in ``adata.uns`` to store colors (defaults to
+            f"{obs_key}_colors").
+        order_colors_by_abundance: If True, assign colors by descending
+            abundance, then map them onto alphabetical categories; otherwise,
+            assign colors in alphabetical order.
+        palette: Optional list of colors to use instead of Scanpy defaults.
+        reuse_existing_colors: If True, map existing colors (if present) to the
+            new alphabetical order; otherwise refresh colors from the chosen palette.
+
+    Returns:
+        The input ``adata`` (modified in-place).
+    """
+    if uns_key is None:
+        uns_key = f"{obs_key}_colors"
+
+    # Keep original categories/colors if present
+    old_cats = None
+    old_colors = None
+    if isinstance(adata.obs[obs_key].dtype, pd.CategoricalDtype):
+        old_cats = adata.obs[obs_key].cat.categories.astype(str).tolist()
+        old_colors = list(adata.uns.get(uns_key, []))
+        if len(old_colors) != len(old_cats):
+            old_colors = None
+
+    # Convert to str and set alphabetical category order
+    series = adata.obs[obs_key].astype(str)
+    cat_order = sorted(series.unique().tolist())
+    adata.obs[obs_key] = pd.Categorical(series, categories=cat_order, ordered=True)
+
+    # Determine color assignment order
+    if order_colors_by_abundance:
+        color_order = series.value_counts().index.tolist()
+    else:
+        color_order = cat_order
+
+    # Choose palette
+    if palette is not None:
+        colors = palette
+    else:
+        n = len(color_order)
+        if n <= 20:
+            colors = sc.pl.palettes.default_20[:n]
+        elif n <= 28:
+            colors = sc.pl.palettes.default_28[:n]
+        else:
+            colors = sc.pl.palettes.default_102[:n]
+
+    # Optionally reuse old colors where possible
+    if reuse_existing_colors and old_cats is not None and old_colors is not None:
+        color_map = dict(zip(old_cats, old_colors))
+        colors = [color_map.get(cat, colors[i]) for i, cat in enumerate(color_order)]
+
+    # Map colors to alphabetical categories
+    color_map = dict(zip(color_order, colors))
+    adata.uns[uns_key] = [color_map.get(cat) for cat in cat_order]
+    return adata

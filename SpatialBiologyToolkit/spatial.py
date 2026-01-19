@@ -2327,6 +2327,7 @@ def squidpy_subregion_interactions(
     adata: AnnData,
     population_obs: str,
     subregion: str,
+    subregion_suffix: str = '_subregion',
     radius: Tuple[int, int] = (0, 20),
     n_permutations: int = 1000
 ) -> Dict[str, Dict[str, pd.DataFrame]]:
@@ -2352,10 +2353,10 @@ def squidpy_subregion_interactions(
         Dictionary containing neighborhood enrichment results for each subregion.
     """
     # If unique subregions haven't already been calculated, then do it now
-    if f'{subregion}_subregion' not in adata.obs:
+    if f'{subregion}{subregion_suffix}' not in adata.obs:
         create_subregions(adata.obs, group_col='histannot_niches')
     else:
-        print(f'{subregion}_subregion found in AnnData.obs - assuming subregions already calculated')
+        print(f'{subregion}{subregion_suffix} found in AnnData.obs - assuming subregions already calculated')
 
     subregion_list = adata.obs[subregion].unique().dropna().tolist()
 
@@ -2364,27 +2365,33 @@ def squidpy_subregion_interactions(
 
     for s in subregion_list:
         print(f'Calculating for {s}...')
+        try:
+            # Remove cells which were not in a subregion
+            adata_sub = adata[~adata.obs[f'{subregion}{subregion_suffix}'].isna()].copy()
 
-        # Remove cells which were not in a subregion
-        adata_sub = adata[~adata.obs[f'{subregion}_subregion'].isna()].copy()
+            # Only look at specific subregion
+            adata_sub = adata_sub[adata_sub.obs[subregion] == s]
 
-        # Only look at specific subregion
-        adata_sub = adata_sub[adata_sub.obs[subregion] == s]
+            # Skip if no cells left after filtering
+            if adata_sub.n_obs == 0:
+                print(f'Skipping {s}: no cells after filtering')
+                continue
 
-        # Make sure they are categorical
-        adata_sub.obs[f'{subregion}_subregion'] = adata_sub.obs[f'{subregion}_subregion'].astype('category')
+            # Make sure they are categorical
+            adata_sub.obs[f'{subregion}{subregion_suffix}'] = adata_sub.obs[f'{subregion}{subregion_suffix}'].astype('category')
 
-        sq.gr.spatial_neighbors(adata_sub, library_key=f'{subregion}_subregion', coord_type='generic', radius=radius)
-        sq.gr.nhood_enrichment(adata_sub, cluster_key=population_obs, n_perms=n_permutations)
+            sq.gr.spatial_neighbors(adata_sub, library_key=f'{subregion}{subregion_suffix}', coord_type='generic', radius=radius)
+            sq.gr.nhood_enrichment(adata_sub, cluster_key=population_obs, n_perms=n_permutations)
 
-        #results[str(s)] = adata_sub.uns[f'{population_obs}_nhood_enrichment'].copy()
+            pops = pd.Categorical(adata_sub.obs[population_obs].cat.categories)
 
-        pops = pd.Categorical(adata_sub.obs[population_obs].cat.categories)
-
-        for x in ['zscore', 'count']:
-            array = adata_sub.uns[f'{population_obs}_nhood_enrichment'][x]
-            df = pd.DataFrame(data=array, index=pops, columns=pops, dtype=array.dtype)
-            results[x][s] = df.copy()
+            for x in ['zscore', 'count']:
+                array = adata_sub.uns[f'{population_obs}_nhood_enrichment'][x]
+                df = pd.DataFrame(data=array, index=pops, columns=pops, dtype=array.dtype)
+                results[x][s] = df.copy()
+        except Exception as exc:
+            print(f'Error processing subregion {s}: {exc}')
+            continue
 
     return results
 

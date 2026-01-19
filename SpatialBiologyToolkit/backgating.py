@@ -26,6 +26,10 @@ from .plotting import create_population_overlay
 
 def clean_text(text: str) -> str:
     """Remove special characters to produce safe filenames."""
+    if text is None:
+        return ""
+    # Ensure text is a string (e.g., when population labels are ints)
+    text = str(text)
     for ch in ['\\', '`', '*', '_', '{', '}', '[', ']', '(', ')', '>', '#', '+',
                '-', '.', '!', '$', '\'', ',', ' ', '/', '"']:
         text = text.replace(ch, '')

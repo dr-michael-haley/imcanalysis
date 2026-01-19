@@ -649,6 +649,8 @@ def plot_paircorrelation_clustermap(
     figsize: Tuple[int, int] = (7, 5),
     title: Optional[str] = None,
     cbar_kws: Optional[Dict[str, float]] = None,
+    row_colors: Optional[Union[Dict[str, str], pd.Series, pd.DataFrame]] = None,
+    col_colors: Optional[Union[Dict[str, str], pd.Series, pd.DataFrame]] = None,
 ) -> sns.matrix.ClusterGrid:
     """Plot a clustermap of g(r) with homotypic and significance annotations.
 
@@ -677,6 +679,10 @@ def plot_paircorrelation_clustermap(
         Optional title for the plot. If None, no title is added.
     cbar_kws
         Extra colorbar keyword arguments (defaults mimic prior heatmaps).
+    row_colors
+        Row annotation colors (dict, Series, or DataFrame) passed to seaborn.
+    col_colors
+        Column annotation colors (dict, Series, or DataFrame) passed to seaborn.
 
     Returns
     -------
@@ -755,6 +761,8 @@ def plot_paircorrelation_clustermap(
         cbar_kws=default_cbar,
         row_cluster=cluster,
         col_cluster=cluster,
+        row_colors=row_colors,
+        col_colors=col_colors,
     )
 
     reordered_min = pivot_min.reindex(
