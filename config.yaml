@@ -1,0 +1,63 @@
+createmasks:
+  cellpose_cell_diameter: 10.0
+  dna_image_name: DNA1
+  expand_masks: 1
+  max_cell_area: 200
+  min_cell_area: 15
+  perform_qc: true
+  specific_rois: null
+  upscale_ratio: 1.7
+denoising:
+  channels: []
+  is_load_weights: false
+  lambda_HF: 3.0e-06
+  loss_function: I_divergence
+  loss_name: null
+  metadata_directory: metadata
+  method: deep_snf
+  n_iter: 3
+  n_neighbours: 4
+  network_size: normal
+  patch_step_size: 100
+  pixel_mask_percent: 0.2
+  processed_output_dir: processed
+  raw_directory: tiffs
+  train_batch_size: 200
+  train_epochs: 75
+  train_initial_lr: 0.001
+  val_set_percent: 0.15
+  weights_save_directory: null
+  window_size: 3
+general:
+  celltable_folder: cell_tables
+  denoised_images_folder: processed
+  masks_folder: masks
+  mcd_files_folder: MCD_files
+  metadata_folder: metadata
+  qc_folder: QC
+  raw_images_folder: tiffs
+  tiff_stacks_folder: tiff_stacks
+logging:
+  level: INFO
+  log_file: pipeline.log
+  to_console: true
+process:
+  batch_correction_method: null
+  batch_correction_obs: null
+  input_adata_path: anndata.h5ad
+  leiden_resolutions_list:
+  - 0.3
+  - 1.0
+  n_for_pca: null
+  output_adata_path: anndata_processed.h5ad
+  umap_min_dist: 0.5
+segmentation:
+  anndata_save_path: anndata.h5ad
+  celltable_output: celltable.csv
+  extra_mask_analyses: true
+  marker_normalisation:
+  - q0.999
+  remove_channels_list:
+  - DNA1
+  - DNA3
+  store_raw_marker_data: false
