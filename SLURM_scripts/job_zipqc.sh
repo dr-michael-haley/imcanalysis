@@ -8,8 +8,6 @@
 #@DESC: ZIPs up directories ready for download
 #@IN:   Several QC directories
 #@OUT:  zip file
-#@ENV: None
-#@MODULE: None
 
 echo "ZIP folder job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 
