@@ -9,6 +9,8 @@
 #@DESC: AI labelling of Leiden populations
 #@IN:   anndata_processed.h5ad
 #@OUT:  anndata_processed.h5ad, /QC/AI_Interpretation/
+#@ENV:  imc_segmentation
+#@MODULE:  SpatialBiologyToolkit.scripts.ai_interpretation
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 

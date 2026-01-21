@@ -1,28 +1,84 @@
-imc_segmentation:
-  - numpy
-  - scipy
-  - sklearn
-  - llvmlite.binding
-  - numba
-  - scanpy
-  - anndata
-  - SpatialBiologyToolkit
-
-imc_cellposesam:
-  - numpy
-  - pandas
-  - skimage
-  - cellpose
-  - torch
-
 imc_biobatchnet:
-  - numpy
-  - torch
-  - sklearn
-  - leidenalg
-
+- SpatialBiologyToolkit
+- anndata
+- copy
+- csv
+- json
+- logging
+- matplotlib
+- numpy
+- pandas
+- pathlib
+- scanpy
+- typing
+imc_cellposesam:
+- SpatialBiologyToolkit
+- cellpose
+- dataclasses
+- logging
+- matplotlib
+- numpy
+- os
+- pandas
+- pathlib
+- scipy
+- seaborn
+- skimage
+- torch
+- tqdm
+- typing
+- warnings
 imc_denoise:
-  - numpy
-  - scipy
-  - tensorflow
-  - keras
+- SpatialBiologyToolkit
+- IMC_Denoise
+- argparse
+- config_and_utils
+- datetime
+- denoising
+- glob
+- logging
+- matplotlib
+- mpl_toolkits
+- numpy
+- os
+- pandas
+- pathlib
+- psutil
+- re
+- shutil
+- tensorflow
+- tifffile
+- tqdm
+- typing
+imc_segmentation:
+- SpatialBiologyToolkit
+- alpineer
+- anndata
+- config_and_utils
+- cv2
+- hashlib
+- json
+- logging
+- matplotlib
+- mpl_toolkits
+- numpy
+- os
+- pandas
+- pathlib
+- random
+- re
+- readimc
+- scanpy
+- scipy
+- seaborn
+- segmentation
+- shutil
+- skimage
+- sklearn
+- sys
+- tifffile
+- tqdm
+- traceback
+- typing
+- warnings
+- yaml

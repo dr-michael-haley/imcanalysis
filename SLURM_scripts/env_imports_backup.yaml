@@ -1,0 +1,28 @@
+imc_segmentation:
+  - numpy
+  - scipy
+  - sklearn
+  - llvmlite.binding
+  - numba
+  - scanpy
+  - anndata
+  - SpatialBiologyToolkit
+
+imc_cellposesam:
+  - numpy
+  - pandas
+  - skimage
+  - cellpose
+  - torch
+
+imc_biobatchnet:
+  - numpy
+  - torch
+  - sklearn
+  - leidenalg
+
+imc_denoise:
+  - numpy
+  - scipy
+  - tensorflow
+  - keras

@@ -10,6 +10,8 @@
 #@DESC: Cell mask creation using CellPose-SAM
 #@IN:   processed/
 #@OUT:  anndata_processed.h5ad, /QC/BioBatchNet/
+#@ENV:  imc_cellposesam
+#@MODULE:  SpatialBiologyToolkit.scripts.cellpose_sam
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 

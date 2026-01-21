@@ -10,6 +10,8 @@
 #@DESC: Batch correction using BioBatchNet
 #@IN:   anndata.h5ad
 #@OUT:  anndata_processed.h5ad, /QC/BioBatchNet/
+#@ENV:  imc_biobatchnet
+#@MODULE:  SpatialBiologyToolkit.scripts.basic_process_biobatchnet
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
