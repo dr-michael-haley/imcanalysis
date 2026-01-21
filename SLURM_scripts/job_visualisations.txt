@@ -14,47 +14,6 @@ source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 echo "Visualisations job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 
-source ~/miniconda3/etc/profile.d/conda.sh
 conda activate "${IMC_ENV_SEGMENTATION:-imc_segmentation}"
-
-echo "========== DEBUG: AFTER ACTIVATE =========="
-echo "CONDA_DEFAULT_ENV=$CONDA_DEFAULT_ENV"
-echo "CONDA_PREFIX=$CONDA_PREFIX"
-echo "which python: $(command -v python)"
-python -V
-echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH:-<unset>}"
-echo "LD_PRELOAD=${LD_PRELOAD:-<unset>}"
-echo "=========================================="
-
-echo "========== DEBUG: LDD (conda context) =========="
-ldd "$CONDA_PREFIX/lib/python3.11/site-packages/llvmlite/binding/libllvmlite.so" \
-  | egrep "libstdc\+\+|libgcc|libz|libtinfo|libffi" || true
-echo "==============================================="
-
-echo "========== DEBUG: WHAT PYTHON ACTUALLY LOADS =========="
-python - <<'PY'
-import os, sys, subprocess, ctypes
-print("sys.executable:", sys.executable)
-# force-load libllvmlite as the process would
-import llvmlite.binding as ll
-print("llvmlite import OK")
-# now ask the kernel what shared libs are mapped
-with open("/proc/self/maps", "r") as f:
-    maps = f.read()
-hits = [line for line in maps.splitlines() if "libstdc++.so.6" in line]
-print("libstdc++.so.6 mappings:")
-for h in hits[:20]:
-    print(" ", h)
-PY
-echo "======================================================="
-
-echo "========== POST-ACTIVATION CHECK =========="
-echo "CONDA_DEFAULT_ENV=$CONDA_DEFAULT_ENV"
-echo "CONDA_PREFIX=$CONDA_PREFIX"
-which python
-python -c "import sys; print('sys.executable:', sys.executable)"
-echo "Checking GLIBCXX symbol:"
-strings "$CONDA_PREFIX/lib/libstdc++.so.6" | grep -F "GLIBCXX_3.4.30" | tail -n 3 || echo "MISSING GLIBCXX_3.4.30"
-echo "=========================================="
 
 python -m SpatialBiologyToolkit.scripts.basic_visualizations
