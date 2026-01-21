@@ -1,17 +1,21 @@
 #! /bin/bash --login
-#SBATCH -p serial 
+#SBATCH -p serial
 #SBATCH -t 2-0
 #SBATCH --job-name=imc_env_test
 #SBATCH --output=imc_env_test_%j.out
 
-#@DESC: Runs debugging on all the environments
-#@IN:   Nones
+#@DESC: Runs debugging on all the environments and job scripts
+#@IN:   None
 #@OUT:  imc_env_test_%j.out
 
 set -euo pipefail
 
+BASE_DIR="$HOME/imcanalysis"
+JOB_DIR="$BASE_DIR/SLURM_scripts"
+IMPORT_MAP="$JOB_DIR/env_imports.yaml"
+
 echo "=============================================="
-echo " IMC ENVIRONMENT DIAGNOSTIC"
+echo " IMC JOB + ENVIRONMENT DIAGNOSTIC"
 echo " Host: $(hostname)"
 echo " Date: $(date)"
 echo "=============================================="
@@ -31,23 +35,17 @@ export QT_QPA_PLATFORM="offscreen"
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
 
 ############################################
-# Environments to test
+# Helper: test a single job
 ############################################
-ENVS=(
-  imc_segmentation
-  imc_cellposesam
-  imc_biobatchnet
-  imc_denoise
-)
-
-############################################
-# Helper function
-############################################
-test_env () {
-    local ENV_NAME="$1"
+test_job () {
+    local JOB_FILE="$1"
+    local ENV_NAME="$2"
+    local MODULE_NAME="$3"
 
     echo "----------------------------------------------"
-    echo "▶ Testing environment: $ENV_NAME"
+    echo "▶ Job: $(basename "$JOB_FILE")"
+    echo "  ENV: $ENV_NAME"
+    echo "  MODULE: $MODULE_NAME"
     echo "----------------------------------------------"
 
     if ! conda env list | awk '{print $1}' | grep -Fxq "$ENV_NAME"; then
@@ -57,7 +55,7 @@ test_env () {
     fi
 
     ############################################
-    # Activate
+    # Activate env
     ############################################
     conda activate "$ENV_NAME"
 
@@ -69,24 +67,24 @@ test_env () {
     fi
 
     ############################################
-    # Critical HPC fix
+    # Critical HPC fix (ctypes / llvmlite)
     ############################################
     export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
 
     ############################################
-    # Basic identity checks
+    # Identity checks
     ############################################
     echo "CONDA_PREFIX=$CONDA_PREFIX"
     echo "Python: $(command -v python)"
     python -V
 
     ############################################
-    # Check libstdc++
+    # libstdc++ sanity
     ############################################
     echo
-    echo "Checking libstdc++ resolution:"
+    echo "Checking libstdc++ ABI:"
     if [[ ! -f "$CONDA_PREFIX/lib/libstdc++.so.6" ]]; then
-        echo "❌ libstdc++.so.6 missing from env"
+        echo "❌ libstdc++.so.6 missing"
     else
         strings "$CONDA_PREFIX/lib/libstdc++.so.6" | grep -F "GLIBCXX_3.4.30" >/dev/null \
             && echo "✔ GLIBCXX_3.4.30 present" \
@@ -97,102 +95,75 @@ test_env () {
     # Runtime linker truth
     ############################################
     echo
-    echo "Runtime libstdc++ mapping (Python process):"
+    echo "Runtime libstdc++ mapping:"
     python - <<'PY'
-import os
 import sys
-print("sys.executable:", sys.executable)
 maps = open("/proc/self/maps").read().splitlines()
-hits = [l for l in maps if "libstdc++.so.6" in l]
-for h in hits[:10]:
-    print(" ", h)
+for l in maps:
+    if "libstdc++.so.6" in l:
+        print(" ", l)
 PY
 
     ############################################
-    # Import tests (env-specific)
+    # Python import tests (env + job specific)
     ############################################
     echo
-    echo "Import tests:"
+    echo "Import tests (from env_imports.yaml):"
 
-    python - <<'PY'
-import sys
-env = sys.prefix
+    python - <<PY
+import yaml, importlib, sys
 
-def ok(msg):
-    print(f"✔ {msg}")
+env = "$ENV_NAME"
+module = "$MODULE_NAME"
+import_map_file = "$IMPORT_MAP"
 
-def fail(msg):
-    print(f"❌ {msg}")
+def ok(msg): print(f"✔ {msg}")
+def fail(msg): print(f"❌ {msg}")
 
+with open(import_map_file) as f:
+    import_map = yaml.safe_load(f)
+
+# Test job entry point
+print("\\n--- Job entry point ---")
 try:
-    import numpy
-    ok("numpy")
+    importlib.import_module(module)
+    ok(module)
 except Exception as e:
-    fail(f"numpy: {e}")
+    fail(f"{module}: {e}")
 
-try:
-    import scipy
-    ok("scipy")
-except Exception as e:
-    fail(f"scipy: {e}")
-
-try:
-    import sklearn
-    ok("scikit-learn")
-except Exception as e:
-    fail(f"scikit-learn: {e}")
-
-# numba / llvmlite (biggest troublemaker)
-try:
-    import llvmlite.binding
-    ok("llvmlite")
-except Exception as e:
-    fail(f"llvmlite: {e}")
-
-try:
-    import numba
-    ok("numba")
-except Exception as e:
-    fail(f"numba: {e}")
-
-# scanpy stack
-try:
-    import scanpy
-    ok("scanpy")
-except Exception as e:
-    print("(scanpy not present or failed)")
-
-# torch stack
-try:
-    import torch
-    print("torch:", torch.__version__)
-    ok("torch")
-except Exception:
-    print("(torch not present)")
-
-# tensorflow stack
-try:
-    import tensorflow as tf
-    print("tensorflow:", tf.__version__)
-    ok("tensorflow")
-except Exception:
-    print("(tensorflow not present)")
+# Test env-level imports
+print("\\n--- Environment imports ---")
+for pkg in import_map.get(env, []):
+    try:
+        importlib.import_module(pkg)
+        ok(pkg)
+    except Exception as e:
+        fail(f"{pkg}: {e}")
 PY
 
     ############################################
-    # Clean up
+    # Cleanup
     ############################################
     conda deactivate
     echo
 }
 
 ############################################
-# Run tests
+# Loop through job scripts
 ############################################
-for ENV in "${ENVS[@]}"; do
-    test_env "$ENV"
+for JOB in "$JOB_DIR"/*.sh; do
+    ENV=$(grep '^#@ENV:' "$JOB" | cut -d':' -f2 | xargs || true)
+    MODULE=$(grep '^#@MODULE:' "$JOB" | cut -d':' -f2 | xargs || true)
+
+    if [[ -z "$ENV" || -z "$MODULE" ]]; then
+        echo "⚠ Skipping $(basename "$JOB") (missing #@ENV or #@MODULE)"
+        echo
+        continue
+    fi
+
+    test_job "$JOB" "$ENV" "$MODULE"
 done
 
 echo "=============================================="
-echo " IMC ENVIRONMENT TEST COMPLETE"
+echo " IMC JOB DIAGNOSTIC COMPLETE"
 echo "=============================================="

@@ -9,6 +9,8 @@
 #@DESC: Produces visualisations for populations
 #@IN:   anndata_processed.h5ad, masks, processed
 #@OUT:  QC/BasicProcess_QC
+#@ENV: imc_segmentation
+#@MODULE: SpatialBiologyToolkit.scripts.basic_visualizations
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 

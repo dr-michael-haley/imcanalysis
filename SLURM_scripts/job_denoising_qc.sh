@@ -10,6 +10,8 @@
 #@DESC: Produces QC plots and analyses for denoisinng
 #@IN:   processed
 #@OUT:  QC/denoising/
+#@ENV:  imc_denoise
+#@MODULE:  SpatialBiologyToolkit.scripts.denoising_qc 
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 

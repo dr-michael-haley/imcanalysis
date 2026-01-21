@@ -9,6 +9,8 @@
 #@DESC: Extracts TIFFs from MCD files and sets up metadata folders, including panel file
 #@IN:   /MCD_files/
 #@OUT:  /tiffs, /tiff_stacks, /metadata, /metadata/dictionary.csv, /metadata/panel.csv
+#@ENV:  imc_segmentation
+#@MODULE:  SpatialBiologyToolkit.scripts.preprocess
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 

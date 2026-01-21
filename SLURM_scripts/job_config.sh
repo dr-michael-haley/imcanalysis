@@ -9,6 +9,8 @@
 #@DESC: Updates the config file 
 #@IN:   config.yaml
 #@OUT:  config.yaml
+#@ENV:  imc_segmentation
+#@MODULE:  SpatialBiologyToolkit.scripts.update_config
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 

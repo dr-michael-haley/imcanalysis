@@ -10,6 +10,8 @@
 #@DESC: Denoising using IMC_Denoise
 #@IN:   tiffs
 #@OUT:  processed, /QC/denoising/
+#@ENV:  imc_denoise
+#@MODULE:  SpatialBiologyToolkit.scripts.denoising
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 

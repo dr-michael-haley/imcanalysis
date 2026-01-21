@@ -9,6 +9,8 @@
 #@DESC: Reintegrates markers removed prior to clustering etc
 #@IN:   anndata_processed.h5ad, anndata_removed.h5ad
 #@OUT:  anndata_processed.h5ad
+#@ENV:  imc_segmentation
+#@MODULE:  SpatialBiologyToolkit.scripts.reintegrate_markers
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 

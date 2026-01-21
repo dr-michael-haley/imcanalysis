@@ -10,6 +10,9 @@
 #@DESC: Produces single-cell measurements using the Nimbus package, replacing regular segmentation
 #@IN:   masks, processed
 #@OUT:  anndata.h5ad, /nimbus_output/, QC/nimbus_normalization_qc/
+#@ENV:  imc_segmentation
+#@MODULE:  SpatialBiologyToolkit.scripts.segmentation_nimbus
+
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
