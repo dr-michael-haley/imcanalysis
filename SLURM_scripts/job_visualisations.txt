@@ -48,5 +48,13 @@ for h in hits[:20]:
 PY
 echo "======================================================="
 
+echo "========== POST-ACTIVATION CHECK =========="
+echo "CONDA_DEFAULT_ENV=$CONDA_DEFAULT_ENV"
+echo "CONDA_PREFIX=$CONDA_PREFIX"
+which python
+python -c "import sys; print('sys.executable:', sys.executable)"
+echo "Checking GLIBCXX symbol:"
+strings "$CONDA_PREFIX/lib/libstdc++.so.6" | grep -F "GLIBCXX_3.4.30" | tail -n 3 || echo "MISSING GLIBCXX_3.4.30"
+echo "=========================================="
 
 python -m SpatialBiologyToolkit.scripts.basic_visualizations
