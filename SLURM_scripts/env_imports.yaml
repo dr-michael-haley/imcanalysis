@@ -32,9 +32,7 @@ imc_denoise:
 - SpatialBiologyToolkit
 - IMC_Denoise
 - argparse
-- config_and_utils
 - datetime
-- denoising
 - glob
 - logging
 - matplotlib
@@ -54,7 +52,6 @@ imc_segmentation:
 - SpatialBiologyToolkit
 - alpineer
 - anndata
-- config_and_utils
 - cv2
 - hashlib
 - json
@@ -71,7 +68,6 @@ imc_segmentation:
 - scanpy
 - scipy
 - seaborn
-- segmentation
 - shutil
 - skimage
 - sklearn
