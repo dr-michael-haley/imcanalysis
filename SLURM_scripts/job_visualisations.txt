@@ -16,4 +16,6 @@ echo "Visualisations job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DE
 
 conda activate "${IMC_ENV_SEGMENTATION:-imc_segmentation}"
 
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
+
 python -m SpatialBiologyToolkit.scripts.basic_visualizations
