@@ -651,6 +651,7 @@ def plot_paircorrelation_clustermap(
     cbar_kws: Optional[Dict[str, float]] = None,
     row_colors: Optional[Union[Dict[str, str], pd.Series, pd.DataFrame]] = None,
     col_colors: Optional[Union[Dict[str, str], pd.Series, pd.DataFrame]] = None,
+    **clustermap_kws,
 ) -> sns.matrix.ClusterGrid:
     """Plot a clustermap of g(r) with homotypic and significance annotations.
 
@@ -683,6 +684,8 @@ def plot_paircorrelation_clustermap(
         Row annotation colors (dict, Series, or DataFrame) passed to seaborn.
     col_colors
         Column annotation colors (dict, Series, or DataFrame) passed to seaborn.
+    **clustermap_kws
+        Additional keyword arguments forwarded to ``seaborn.clustermap``.
 
     Returns
     -------
@@ -763,6 +766,7 @@ def plot_paircorrelation_clustermap(
         col_cluster=cluster,
         row_colors=row_colors,
         col_colors=col_colors,
+        **clustermap_kws,
     )
 
     reordered_min = pivot_min.reindex(
@@ -779,6 +783,159 @@ def plot_paircorrelation_clustermap(
     if title is not None:
         clustergrid.fig.suptitle(title, y=1.02)
     
+    return clustergrid
+
+
+def plot_paircorrelation_population_by_condition(
+    summary: pd.DataFrame,
+    *,
+    population: str,
+    conditions: Optional[Sequence[str]] = None,
+    populations: Optional[Sequence[str]] = None,
+    percentile: float = 95.0,
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+    cmap: Union[str, "Colormap"] = "coolwarm",
+    cluster: bool = True,
+    figsize: Tuple[int, int] = (7, 5),
+    title: Optional[str] = None,
+    cbar_kws: Optional[Dict[str, float]] = None,
+    row_colors: Optional[Union[Dict[str, str], pd.Series, pd.DataFrame]] = None,
+    col_colors: Optional[Union[Dict[str, str], pd.Series, pd.DataFrame]] = None,
+    **clustermap_kws,
+) -> sns.matrix.ClusterGrid:
+    """Plot a clustermap of g(r) for one population across conditions.
+
+    Rows are conditions, columns are populations (cell_type_2). The selected
+    ``population`` is fixed as cell_type_1.
+
+    Parameters
+    ----------
+    summary
+        Output table from ``run_paircorrelation_at_distance`` (multi-condition).
+    population
+        Population to fix on the rows of the pair (cell_type_1).
+    conditions
+        Optional ordered subset of conditions to display on the rows.
+    populations
+        Optional ordered subset of populations to display on the columns.
+    percentile
+        Percentile (0-100) used to set vmin/vmax from g(r) values.
+        Ignored if vmin and vmax are explicitly provided.
+    vmin
+        Minimum value for colormap scale. If None, calculated from percentile.
+    vmax
+        Maximum value for colormap scale. If None, calculated from percentile.
+    cmap
+        Matplotlib colormap name or object. Defaults to ``"coolwarm"``.
+    cluster
+        Whether to allow seaborn to cluster rows/columns.
+    figsize
+        Tuple passed to seaborn for the resulting figure size.
+    title
+        Optional title for the plot. If None, no title is added.
+    cbar_kws
+        Extra colorbar keyword arguments (defaults mimic prior heatmaps).
+    row_colors
+        Row annotation colors (dict, Series, or DataFrame) passed to seaborn.
+    col_colors
+        Column annotation colors (dict, Series, or DataFrame) passed to seaborn.
+    **clustermap_kws
+        Additional keyword arguments forwarded to ``seaborn.clustermap``.
+
+    Returns
+    -------
+    seaborn.matrix.ClusterGrid
+        The clustermap object for further customization or saving.
+    """
+
+    required_cols = {"condition", "cell_type_1", "cell_type_2", "g_mean", "g_min", "g_max"}
+    missing = required_cols.difference(summary.columns)
+    if missing:
+        raise ValueError(f"Summary table missing columns: {missing}")
+
+    df = summary.copy()
+    df = df[df["cell_type_1"] == population]
+    if df.empty:
+        raise ValueError(f"No rows found for population '{population}'.")
+
+    if conditions:
+        missing_conditions = [c for c in conditions if c not in df["condition"].unique()]
+        if missing_conditions:
+            raise ValueError(f"Conditions not found: {missing_conditions}")
+        df = df[df["condition"].isin(conditions)]
+
+    pivot_mean = df.pivot(index="condition", columns="cell_type_2", values="g_mean")
+    pivot_min = df.pivot(index="condition", columns="cell_type_2", values="g_min")
+    pivot_max = df.pivot(index="condition", columns="cell_type_2", values="g_max")
+
+    if conditions:
+        pivot_mean = pivot_mean.reindex(index=list(conditions))
+        pivot_min = pivot_min.reindex(index=list(conditions))
+        pivot_max = pivot_max.reindex(index=list(conditions))
+
+    if populations:
+        order = [pop for pop in populations if pop in pivot_mean.columns]
+        if not order:
+            raise ValueError("None of the requested populations are present.")
+        pivot_mean = pivot_mean.reindex(columns=order)
+        pivot_min = pivot_min.reindex(columns=order)
+        pivot_max = pivot_max.reindex(columns=order)
+
+    # Calculate vmin/vmax from data if not provided
+    if vmin is None or vmax is None:
+        off_diag = df[df["cell_type_2"] != population]["g_mean"].dropna()
+        if off_diag.empty:
+            off_diag = df["g_mean"].dropna()
+        if off_diag.empty:
+            raise ValueError("Cannot determine vmin/vmax; g_mean column is empty.")
+
+        lower_pct = max(0.0, 100.0 - percentile)
+        if vmin is None:
+            vmin = float(np.percentile(off_diag, lower_pct))
+        if vmax is None:
+            vmax = float(np.percentile(off_diag, percentile))
+
+    if isinstance(cmap, str):
+        cmap = get_cmap(cmap)
+
+    norm = TwoSlopeNorm(vmin=vmin, vcenter=1, vmax=vmax)
+    default_cbar = {"fraction": 0.046, "pad": 0.04}
+    if cbar_kws:
+        default_cbar.update(cbar_kws)
+
+    clustergrid = sns.clustermap(
+        pivot_mean,
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+        norm=norm,
+        square=True,
+        figsize=figsize,
+        cbar_kws=default_cbar,
+        row_cluster=cluster,
+        col_cluster=cluster,
+        row_colors=row_colors,
+        col_colors=col_colors,
+        **clustermap_kws,
+    )
+
+    reordered_min = pivot_min.reindex(
+        index=clustergrid.data2d.index, columns=clustergrid.data2d.columns
+    )
+    reordered_max = pivot_max.reindex(
+        index=clustergrid.data2d.index, columns=clustergrid.data2d.columns
+    )
+
+    _annotate_pcf_condition_heatmap(
+        clustergrid.ax_heatmap, clustergrid.data2d, reordered_min, reordered_max
+    )
+    clustergrid.ax_heatmap.set_xlabel("Cell Type 2")
+    clustergrid.ax_heatmap.set_ylabel("Condition")
+
+    if title is not None:
+        clustergrid.fig.suptitle(title, y=1.02)
+
     return clustergrid
 
 
@@ -807,6 +964,39 @@ def _annotate_pcf_heatmap(ax, mean_data, min_data, max_data):
                     color="black",
                     alpha=0.75,
                 )
+
+            star_needed = False
+            if mean_val < 1 and max_val < 1:
+                star_needed = True
+            elif mean_val > 1 and min_val > 1:
+                star_needed = True
+
+            if star_needed:
+                ax.text(
+                    x,
+                    y,
+                    "*",
+                    ha="center",
+                    va="center",
+                    fontsize=11,
+                    color="black",
+                    fontweight="bold",
+                )
+
+
+def _annotate_pcf_condition_heatmap(ax, mean_data, min_data, max_data):
+    """Overlay significance symbols onto a condition-by-population clustermap."""
+
+    for i in range(mean_data.shape[0]):
+        for j in range(mean_data.shape[1]):
+            mean_val = mean_data.iloc[i, j]
+            min_val = min_data.iloc[i, j] if min_data is not None else np.nan
+            max_val = max_data.iloc[i, j] if max_data is not None else np.nan
+            if pd.isna(mean_val):
+                continue
+
+            x = j + 0.5
+            y = i + 0.5
 
             star_needed = False
             if mean_val < 1 and max_val < 1:

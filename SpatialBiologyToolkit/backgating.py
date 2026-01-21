@@ -1116,6 +1116,7 @@ def backgating_assessment(
     de_method: str = 'wilcoxon',
     min_logfc_threshold: float = 0.5,
     max_pval_adj: float = 0.05,
+    verbose: bool = True,
     # Modes
     mode: str = 'full',  # 'full', 'save_markers', 'load_markers'
     specify_red=None,
@@ -1325,7 +1326,7 @@ def backgating_assessment(
                         n_top_markers=number_top_markers,
                         min_logfc_threshold=min_logfc_threshold,
                         max_pval_adj=max_pval_adj,
-                        verbose=True
+                        verbose=verbose
                     )
                 else:
                     # Fallback to mean expression (original method)
