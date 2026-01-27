@@ -5,7 +5,7 @@ import warnings
 from pathlib import Path
 from glob import glob
 from itertools import compress
-from typing import List, Union, Tuple, Optional
+from typing import Dict, List, Union, Tuple, Optional
 from math import ceil
 from IPython.display import display
 
@@ -1093,7 +1093,7 @@ def backgating_assessment(
     exclude_rois_without_mask=True,
     # Subplot spacing for the final "Cells.png":
     cell_plot_spacing=(0.1, 0.1),
-    show_gallery_titles=True,
+    show_gallery_titles=False,
     # Output folder & overview
     output_folder: str = 'Backgating',
     overview_images: bool = False,
@@ -1533,3 +1533,118 @@ def backgating_assessment(
         logging.info(f"Population overlay visualizations completed for '{pop}'.")
 
     logging.info("Backgating assessment complete.")
+
+
+def update_settings_from_marker_dict(
+    settings_path: Union[str, Path],
+    marker_settings: Optional[Dict[str, Union[str, float, Tuple[float, Union[str, float]]]]] = None,
+    generate_dict: bool = False,
+) -> Union[pd.DataFrame, Dict[str, Union[str, float, Tuple[float, Union[str, float]]]]]:
+    """
+    Update backgating_settings.csv so any occurrence of a marker receives the
+    provided setting, regardless of population or RGB channel.
+
+    If generate_dict is True, return an example dictionary by scanning the
+    settings file for each marker. If the marker's settings are consistent
+    across all RGB channels, return that value; otherwise return "Inconsistent".
+
+    Args:
+        settings_path: Path to backgating_settings.csv.
+        marker_settings: Mapping of marker name to setting.
+            - If value is a (min, max) tuple, both *_min and *_max are updated.
+            - Otherwise, only the *_max value is updated.
+        generate_dict: If True, return an example dictionary built from the
+            settings file and do not modify the file.
+
+    Returns:
+        Updated settings DataFrame, or the generated example dictionary.
+    """
+    settings_path = Path(settings_path)
+    if not settings_path.is_file():
+        raise FileNotFoundError(f"Settings file not found: {settings_path}")
+
+    settings_df = pd.read_csv(settings_path, index_col=0)
+
+    if generate_dict:
+        example_dict: Dict[str, Union[str, float, Tuple[float, Union[str, float]]]] = {}
+        def _normalize_scalar(value):
+            if isinstance(value, np.generic):
+                return value.item()
+            return value
+
+        for color in ["Red", "Green", "Blue"]:
+            marker_col = color
+            min_col = f"{color}_min"
+            max_col = f"{color}_max"
+
+            if marker_col not in settings_df.columns:
+                continue
+
+            marker_series = settings_df[marker_col].astype(str)
+            for marker_name in marker_series.dropna().unique():
+                marker_name_str = str(marker_name).strip()
+                if not marker_name_str or marker_name_str.lower() == "nan":
+                    continue
+
+                mask = marker_series.str.lower() == marker_name_str.lower()
+                if not mask.any():
+                    continue
+
+                min_vals = settings_df.loc[mask, min_col] if min_col in settings_df.columns else pd.Series(dtype=object)
+                max_vals = settings_df.loc[mask, max_col] if max_col in settings_df.columns else pd.Series(dtype=object)
+
+                min_unique = [_normalize_scalar(v) for v in min_vals.dropna().unique()]
+                max_unique = [_normalize_scalar(v) for v in max_vals.dropna().unique()]
+
+                if min_unique and max_unique:
+                    min_val = min_unique[0] if len(min_unique) == 1 else "Inconsistent"
+                    max_val = max_unique[0] if len(max_unique) == 1 else "Inconsistent"
+                    setting_val: Union[str, float, Tuple[float, Union[str, float]]] = (min_val, max_val)
+                else:
+                    if len(max_unique) == 1:
+                        setting_val = max_unique[0]
+                    elif len(max_unique) == 0:
+                        continue
+                    else:
+                        setting_val = "Inconsistent"
+
+                if marker_name_str in example_dict and example_dict[marker_name_str] != setting_val:
+                    example_dict[marker_name_str] = "Inconsistent"
+                else:
+                    example_dict[marker_name_str] = setting_val
+
+        return example_dict
+
+    if marker_settings is None:
+        raise ValueError("marker_settings must be provided when generate_dict is False.")
+
+    for color in ["Red", "Green", "Blue"]:
+        marker_col = color
+        min_col = f"{color}_min"
+        max_col = f"{color}_max"
+
+        if marker_col not in settings_df.columns:
+            continue
+
+        marker_series = settings_df[marker_col].astype(str)
+
+        for marker_name, setting in marker_settings.items():
+            if marker_name is None:
+                continue
+            marker_name_str = str(marker_name).strip().lower()
+            if not marker_name_str:
+                continue
+
+            mask = marker_series.str.lower() == marker_name_str
+            if not mask.any():
+                continue
+
+            if isinstance(setting, (tuple, list)) and len(setting) == 2:
+                settings_df.loc[mask, min_col] = setting[0]
+                settings_df.loc[mask, max_col] = setting[1]
+            else:
+                settings_df.loc[mask, max_col] = setting
+
+    settings_df.to_csv(settings_path)
+    logging.info(f"Updated settings saved to: {settings_path}")
+    return settings_df

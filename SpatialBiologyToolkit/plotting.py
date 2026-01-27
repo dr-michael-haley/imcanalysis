@@ -2320,7 +2320,7 @@ def create_population_overlay(
     contour_width: int = 2,
     verbose: bool = True,
     legend_markers: list[str] | None = None,
-    legend_colors: list[tuple[int, int, int]] | None = None,
+    legend_colors: list[tuple[int, int, int] | str] | None = None,
     legend_fontsize: int = 10,
     legend_box_size: tuple[float, float] = (0.25, 0.18),
     show_population_label: bool = True,
@@ -2448,6 +2448,16 @@ def create_population_overlay(
 
     # Optional legend showing marker colors used in the composite
     if legend_markers and legend_colors and len(legend_markers) == len(legend_colors):
+        # Normalize legend colors to RGB tuples (0-255), allowing matplotlib color strings
+        from matplotlib.colors import to_rgb
+
+        normalized_colors = []
+        for color in legend_colors:
+            if isinstance(color, str):
+                rgb_float = to_rgb(color)
+                normalized_colors.append(tuple(int(round(c * 255)) for c in rgb_float))
+            else:
+                normalized_colors.append(color)
         from matplotlib.transforms import Bbox
 
         try:
@@ -2497,7 +2507,7 @@ def create_population_overlay(
             inset_w_px = box_w_px
             inset_h_px = box_h_px
             y_cursor = inset_h_px - padding_px
-            for (lbl, rgb), (w, h) in zip(zip(labels, legend_colors), sizes):
+            for (lbl, rgb), (w, h) in zip(zip(labels, normalized_colors), sizes):
                 color = tuple(np.array(rgb) / 255.0)
                 y_cursor -= h / 2
                 inset_ax.text(padding_px / inset_w_px, y_cursor / inset_h_px, lbl,
@@ -2517,7 +2527,7 @@ def create_population_overlay(
             inset_ax.set_yticks([])
             inset_ax.set_xlim(0, 1)
             inset_ax.set_ylim(0, 1)
-            for (lbl, rgb) in zip(legend_markers, legend_colors):
+            for (lbl, rgb) in zip(legend_markers, normalized_colors):
                 color = tuple(np.array(rgb) / 255.0)
                 inset_ax.text(0.05, 0.95 - 0.1 * legend_markers.index(lbl), str(lbl).strip(),
                               color=color, fontsize=legend_fontsize, va='top', ha='left')
@@ -2901,6 +2911,7 @@ def umap_marker_gallery(
     colorbar_label_size=None,
     show=True,
     save=None,
+    layer=None,
     dpi=300
 ):
     """
@@ -2966,6 +2977,7 @@ def umap_marker_gallery(
         cmap=cmap,
         colorbar_loc=None,  # disable Scanpy colourbars
         show=False,
+        layer=layer
     )
 
     # ---- Grab Scanpy-created figure
