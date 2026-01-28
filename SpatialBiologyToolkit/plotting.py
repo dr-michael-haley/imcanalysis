@@ -2363,7 +2363,7 @@ def create_population_overlay(
         population_label_text: Optional string or dict mapping ROI -> text.
         crop_size: Optional crop size (width, height) in pixels.
         crop_origin: Crop origin anchor: "upper_left", "upper_right",
-            "lower_left", "lower_right", or "center".
+            "lower_left", "lower_right", "center", or "intelligent".
         show_scale_bar: Whether to draw a scale bar in the bottom-right.
         scale_bar_length: Length of the scale bar in pixels.
         scale_bar_thickness: Line thickness in pixels.
@@ -2477,10 +2477,49 @@ def create_population_overlay(
         elif origin == "center":
             x_min = (w - crop_w) // 2
             y_min = (h - crop_h) // 2
+        elif origin == "intelligent":
+            # Default to center if we cannot compute a better crop
+            x_min = (w - crop_w) // 2
+            y_min = (h - crop_h) // 2
+
+            if 'X_loc' in roi_cells.columns and 'Y_loc' in roi_cells.columns:
+                coords = roi_cells[['X_loc', 'Y_loc']].dropna()
+                if not coords.empty and crop_w <= w and crop_h <= h:
+                    xs = coords['X_loc'].astype(float)
+                    ys = coords['Y_loc'].astype(float)
+
+                    xs_i = np.clip(np.round(xs).astype(int), 0, w - 1)
+                    ys_i = np.clip(np.round(ys).astype(int), 0, h - 1)
+
+                    counts = np.zeros((h, w), dtype=np.uint16)
+                    np.add.at(counts, (ys_i, xs_i), 1)
+
+                    integral = counts.cumsum(axis=0).cumsum(axis=1)
+                    integral = np.pad(integral, ((1, 0), (1, 0)), mode='constant', constant_values=0)
+
+                    sums = (
+                        integral[crop_h:, crop_w:]
+                        - integral[:-crop_h, crop_w:]
+                        - integral[crop_h:, :-crop_w]
+                        + integral[:-crop_h, :-crop_w]
+                    )
+
+                    max_val = sums.max()
+                    y_idxs, x_idxs = np.where(sums == max_val)
+                    if len(x_idxs) > 0:
+                        centroid_x = float(xs.mean())
+                        centroid_y = float(ys.mean())
+
+                        win_center_x = x_idxs + crop_w / 2.0
+                        win_center_y = y_idxs + crop_h / 2.0
+                        d2 = (win_center_x - centroid_x) ** 2 + (win_center_y - centroid_y) ** 2
+                        best_idx = int(np.argmin(d2))
+                        x_min = int(x_idxs[best_idx])
+                        y_min = int(y_idxs[best_idx])
         else:
             raise ValueError(
                 "crop_origin must be one of 'upper_left', 'upper_right', "
-                "'lower_left', 'lower_right', or 'center'."
+                "'lower_left', 'lower_right', 'center', or 'intelligent'."
             )
 
         x_min = max(0, min(x_min, w - crop_w))

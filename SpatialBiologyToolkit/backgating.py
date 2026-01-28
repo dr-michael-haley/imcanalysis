@@ -129,7 +129,7 @@ def load_rescale_images(
     marker: str,
     minimum: float,
     max_val: Union[float, str]
-) -> Tuple[List[np.ndarray], List[str]]:
+) -> Tuple[List[np.ndarray], List[str], List[float]]:
     """
     Helper function that:
       1) Loads images for a given marker across provided samples.
@@ -149,9 +149,10 @@ def load_rescale_images(
           Example: 'q0.97' => Use mean of the 97th percentile for all images.
 
     Returns:
-        Tuple[List[np.ndarray], List[str]]:
+        Tuple[List[np.ndarray], List[str], List[float]]:
             - List of images (each rescaled/clipped)
             - Matching list of ROI names
+            - List of max values used per ROI (same order)
     """
     # Interpret the user-specified max_val mode
     mode = 'value'
@@ -173,7 +174,7 @@ def load_rescale_images(
     # Load the images (quiet=True to suppress prints)
     loaded = load_imgs_from_directory(image_folder, marker, quiet=True)
     if not loaded:
-        return [], []
+        return [], [], []
 
     image_list, _, folder_list = loaded
 
@@ -188,7 +189,7 @@ def load_rescale_images(
     if not image_list:
         # If nothing is loaded after filtering, return.
         logging.warning(f"No images found for marker {marker} matching {samples_list}.")
-        return [], []
+        return [], [], []
 
     # Compute maximum intensities
     if mode in ('mean_quantile', 'minimum_quantile', 'max_quantile'):
@@ -207,6 +208,7 @@ def load_rescale_images(
         logging.debug(f"Marker={marker} | Mode={mode_str} | Min={minimum:.3f} | "
                       f"Calculated max={max_value:.3f}")
         image_list = [im.clip(minimum, max_value) for im in image_list]
+        max_values = [max_value] * len(image_list)
 
     elif mode == 'individual_quantile':
         # Each image is clipped to its own quantile
@@ -222,11 +224,12 @@ def load_rescale_images(
         logging.debug(f"Marker={marker} | Using numeric min={minimum}, max={max_val}")
         max_value = float(max_val)
         image_list = [im.clip(minimum, max_value) for im in image_list]
+        max_values = [max_value] * len(image_list)
 
     # Rescale intensities to [0..1]
     image_list = [exposure.rescale_intensity(i) for i in image_list]
 
-    return image_list, roi_list
+    return image_list, roi_list, max_values
 
 
 def make_images(
@@ -252,8 +255,10 @@ def make_images(
     white_range: Optional[Tuple[float, Union[str, float]]] = None,
     roi_folder_save: bool = False,
     simple_file_names: bool = False,
-    save_subfolder: str = ''
-) -> None:
+    save_subfolder: str = '',
+    save_rescale_csv: bool = True,
+    rescale_csv_name: str = 'rescale_values.csv'
+) -> pd.DataFrame | None:
     """
     Create composite RGB images from up to seven channels. Each channel can be
     mapped onto red/green/blue/magenta/cyan/yellow/white in an additive manner
@@ -274,7 +279,7 @@ def make_images(
         save_subfolder (str): Subdirectory under output_folder for saving images.
 
     Returns:
-        None. Saves .png images to disk.
+        DataFrame of rescaling values if save_rescale_csv is True, else None.
     """
 
     # Create output folder if it doesn't exist
@@ -294,6 +299,7 @@ def make_images(
     # For each color channel, load images & ROI lists
     loaded_images = {}  # color -> list of scaled images
     loaded_rois = {}    # color -> list of ROI names
+    rescale_rows = []
 
     for color_name, (marker_name, color_range) in color_configs.items():
         if marker_name is not None:
@@ -303,7 +309,7 @@ def make_images(
             else:
                 ch_min, ch_max = (minimum, max_quantile)
 
-            imgs, rois = load_rescale_images(
+            imgs, rois, max_values = load_rescale_images(
                 image_folder, samples_list,
                 marker=marker_name,
                 minimum=ch_min,
@@ -311,6 +317,15 @@ def make_images(
             )
             loaded_images[color_name] = imgs
             loaded_rois[color_name] = rois
+            if rois and max_values:
+                for roi_name, max_used in zip(rois, max_values):
+                    rescale_rows.append({
+                        'roi': str(roi_name),
+                        'channel': str(color_name),
+                        'marker': str(marker_name),
+                        'min_used': ch_min,
+                        'max_used': max_used,
+                    })
         else:
             # This color not used
             loaded_images[color_name] = []
@@ -431,6 +446,17 @@ def make_images(
             warnings.filterwarnings('ignore', message='.*is a low contrast image')
             io.imsave(str(save_path), stack_ubyte)
 
+    if save_rescale_csv and rescale_rows:
+        rescale_df = pd.DataFrame(rescale_rows)
+        rescale_dir = Path(output_folder)
+        if save_subfolder:
+            rescale_dir = rescale_dir / save_subfolder
+            rescale_dir.mkdir(parents=True, exist_ok=True)
+        rescale_df.to_csv(rescale_dir / rescale_csv_name, index=False)
+        return rescale_df
+
+    return None
+
 def backgating(
     adata,
     cell_index,
@@ -471,6 +497,10 @@ def backgating(
     # intensity scaling
     minimum=0.2,
     max_quantile='q0.97',
+    # ROI scope for downstream plotting
+    roi_list=None,
+    # image generation scope
+    image_samples_list=None,
     # optional interactive training
     training=False,
 ):
@@ -522,6 +552,14 @@ def backgating(
         overview_images (bool):
             If True, saves an “overview” with bounding boxes for each cell.
 
+        roi_list (list or None):
+            If provided, restrict downstream backgating to these ROIs.
+
+        image_samples_list (list or None):
+            If provided, make_images will be run for these ROIs (e.g., all ROIs)
+            to normalize composites consistently. Downstream plotting still uses
+            only ROIs with the selected cells.
+
         minimum, max_quantile (float or str):
             Global clipping parameters for channels, used by `make_images`.
 
@@ -540,7 +578,18 @@ def backgating(
 
     # Subset to just the cells of interest
     adata_obs_cells = adata.obs.loc[adata.obs[cell_index_obs].isin(cell_index)].copy()
-    roi_list = adata_obs_cells[roi_obs].unique().tolist()
+    
+    # List of specific ROIs to process that contain these cells, potentially filtered by user
+    if roi_list is None:
+        roi_list = adata_obs_cells[roi_obs].unique().tolist()
+    else:
+        adata_obs_cells = adata_obs_cells[adata_obs_cells[roi_obs].isin(roi_list)]
+        roi_list = adata_obs_cells[roi_obs].unique().tolist()
+
+    # Get all ROIs in the dataset for image generation
+    all_roi_list = adata.obs[roi_obs].unique().tolist()
+    if image_samples_list is None:
+        image_samples_list = all_roi_list
 
     logging.info(f"Backgating on {len(adata_obs_cells)} cells across {len(roi_list)} ROIs.")
 
@@ -548,9 +597,10 @@ def backgating(
     # 2) Build composite images for each ROI (from your existing function)
     # ----------------------------------------------------------------
     logging.info("Creating composite images via `make_images` ...")
+
     make_images(
         image_folder=image_folder,
-        samples_list=roi_list,
+        samples_list=image_samples_list,
         output_folder=output_folder,
         simple_file_names=True,
         minimum=minimum,
@@ -1099,19 +1149,19 @@ def backgating_assessment(
     overview_images: bool = False,
     population_overlays: bool = True,  # New parameter for population overlay visualizations
     population_overlay_outline_width: int = 1,
-    population_overlay_legend_fontsize: int = 15,
+    population_overlay_legend_fontsize: int = 24,
     population_overlay_show_legend: bool = True,
     population_overlay_show_label: bool = True,
     population_overlay_show_population_label: bool = True,
     population_overlay_label_text: str | dict | None = None,
     population_overlay_label_fontsize: int | None = None,
-    population_overlay_crop_size: tuple[int, int] | None = None,
-    population_overlay_crop_origin: str = "center",
-    population_overlay_show_scale_bar: bool = False,
-    population_overlay_scale_bar_length: int = 25,
+    population_overlay_crop_size: tuple[int, int] | None = (300,300),
+    population_overlay_crop_origin: str = "intelligent",
+    population_overlay_show_scale_bar: bool = True,
+    population_overlay_scale_bar_length: int = 50,
     population_overlay_scale_bar_thickness: int = 3,
     population_overlay_scale_bar_color: str = "white",
-    population_overlay_scale_bar_outline_thickness: int = 2,
+    population_overlay_scale_bar_outline_thickness: int = 3,
     population_overlay_scale_bar_text: str | None = None,
     population_overlay_scale_bar_text_size: int = 10,
     # Intensity scaling
@@ -1434,6 +1484,8 @@ def backgating_assessment(
         logging.info(f"  -> Green={green_marker}, range={green_range}")
         logging.info(f"  -> Blue={blue_marker}, range={blue_range}")
 
+        all_rois_for_images = adata.obs[roi_obs].astype(str).unique().tolist()
+
         # Call your backgating function
         # Make sure it supports the new parameters: mask_folder, exclude_rois_without_mask, cell_plot_spacing
         backgating(
@@ -1467,7 +1519,9 @@ def backgating_assessment(
             save_subfolder=clean_text(pop),
             # Clipping
             minimum=minimum,
-            max_quantile=max_quantile
+            max_quantile=max_quantile,
+            # Image generation scope
+            image_samples_list=all_rois_for_images,
         )
 
         # Create population overlay visualizations for all cells of this type in each ROI
@@ -1562,6 +1616,62 @@ def backgating_assessment(
                     continue
         
         logging.info(f"Population overlay visualizations completed for '{pop}'.")
+
+    # ----------------------------------------------------------------
+    # 7) Summarize rescaling values into settings-format CSV
+    # ----------------------------------------------------------------
+    def _summarize_values(values):
+        if len(values) == 0:
+            return None
+        # Normalize numeric values with tolerance
+        try:
+            vals = np.asarray(values, dtype=float)
+            vals = vals[~np.isnan(vals)]
+            if len(vals) == 0:
+                return None
+            if np.allclose(vals, vals[0], rtol=0, atol=1e-6):
+                return float(vals[0])
+            return 'Variable'
+        except Exception:
+            unique_vals = pd.Series(values).dropna().unique()
+            return unique_vals[0] if len(unique_vals) == 1 else 'Variable'
+
+    rescale_summary = settings_df[[
+        'Red', 'Green', 'Blue',
+        'Red_min', 'Red_max',
+        'Green_min', 'Green_max',
+        'Blue_min', 'Blue_max'
+    ]].copy()
+
+    for pop in pop_categories:
+        pop_key = str(pop)
+        rescale_csv = Path(output_folder) / clean_text(pop_key) / 'rescale_values.csv'
+        if not rescale_csv.exists():
+            continue
+
+        rescale_df = pd.read_csv(rescale_csv)
+        if rescale_df.empty:
+            continue
+
+        for color in ['Red', 'Green', 'Blue']:
+            marker_name = rescale_summary.loc[pop, color] if pop in rescale_summary.index else None
+            if marker_name is None or (isinstance(marker_name, float) and pd.isna(marker_name)):
+                continue
+
+            channel_mask = rescale_df['channel'].astype(str).str.lower() == color.lower()
+            marker_mask = rescale_df['marker'].astype(str) == str(marker_name)
+            subset = rescale_df[channel_mask & marker_mask]
+            if subset.empty:
+                continue
+
+            min_val = _summarize_values(subset['min_used'].tolist())
+            max_val = _summarize_values(subset['max_used'].tolist())
+
+            rescale_summary.loc[pop, f"{color}_min"] = min_val
+            rescale_summary.loc[pop, f"{color}_max"] = max_val
+
+    rescale_summary_path = Path(output_folder) / f"rescale_summary_{Path(backgating_settings_file).name}"
+    rescale_summary.to_csv(rescale_summary_path)
 
     logging.info("Backgating assessment complete.")
 
