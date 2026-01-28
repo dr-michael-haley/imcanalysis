@@ -641,7 +641,6 @@ def create_backgating_assessment(adata, population_columns, viz_config, general_
                         exclude_rois_without_mask=True,
                         # Output settings
                         output_folder=str(backgating_output),
-                        overview_images=True,
                         # Intensity scaling
                         minimum=viz_config.backgating_minimum,
                         max_quantile=viz_config.backgating_max_quantile,
