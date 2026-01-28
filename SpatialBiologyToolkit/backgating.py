@@ -99,12 +99,15 @@ def load_imgs_from_directory(
             channel_lower = channel_name.lower()
             
             # Split filename by common separators and check for exact match
-            import re
             # Split on common separators: underscore, dash, dot, space
             filename_tokens = re.split(r'[_\-\.\s]+', filename_lower)
-            
-            # Check if channel name matches any token exactly
-            if channel_lower in filename_tokens:
+
+            # Allow matching single tokens or two-token pairs joined by underscore
+            token_pairs = [f"{filename_tokens[i]}_{filename_tokens[i + 1]}"
+                           for i in range(len(filename_tokens) - 1)]
+
+            # Check if channel name matches any token or token-pair exactly
+            if channel_lower in filename_tokens or channel_lower in token_pairs:
                 img_read = load_single_img(os.path.join(subfolder, candidate_file))
                 if not quiet:
                     logging.debug(os.path.join(subfolder, candidate_file))
