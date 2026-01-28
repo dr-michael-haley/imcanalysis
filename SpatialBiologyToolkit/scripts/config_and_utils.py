@@ -323,6 +323,12 @@ class VisualizationConfig:
     
     # Population overlay visualization settings
     backgating_population_overlay_outline_width: int = 1  # Width of contour outlines in population overlay visualizations
+    backgating_population_overlay_legend_fontsize: int = 24  # Font size for overlay legend labels
+    backgating_population_overlay_crop_size: Optional[List[int]] = field(default_factory=lambda: [300, 300])  # Crop size [width, height] or None
+    backgating_population_overlay_crop_origin: str = 'intelligent'  # Crop anchor: upper_left/right, lower_left/right, center, intelligent
+    backgating_population_overlay_show_scale_bar: bool = True  # Whether to draw scale bar on overlays
+    backgating_population_overlay_scale_bar_length: int = 50  # Scale bar length in pixels
+    backgating_population_overlay_scale_bar_thickness: int = 3  # Scale bar thickness in pixels
     
     # MatrixPlot settings
     matrixplot_vmax: float = 0.5  # Maximum value for non-scaled matrix plots

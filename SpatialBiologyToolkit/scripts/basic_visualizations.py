@@ -647,6 +647,12 @@ def create_backgating_assessment(adata, population_columns, viz_config, general_
                         max_quantile=viz_config.backgating_max_quantile,
                         # Population overview setttings
                         population_overlay_outline_width=viz_config.backgating_population_overlay_outline_width,
+                        population_overlay_legend_fontsize=viz_config.backgating_population_overlay_legend_fontsize,
+                        population_overlay_crop_size=tuple(viz_config.backgating_population_overlay_crop_size) if viz_config.backgating_population_overlay_crop_size is not None else None,
+                        population_overlay_crop_origin=viz_config.backgating_population_overlay_crop_origin,
+                        population_overlay_show_scale_bar=viz_config.backgating_population_overlay_show_scale_bar,
+                        population_overlay_scale_bar_length=viz_config.backgating_population_overlay_scale_bar_length,
+                        population_overlay_scale_bar_thickness=viz_config.backgating_population_overlay_scale_bar_thickness,
                         # Marker selection and differential expression
                         markers_exclude=getattr(viz_config, 'backgating_markers_exclude', ['DNA1', 'DNA3']),
                         use_differential_expression=use_de,
