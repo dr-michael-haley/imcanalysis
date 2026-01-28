@@ -2323,9 +2323,19 @@ def create_population_overlay(
     legend_colors: list[tuple[int, int, int] | str] | None = None,
     legend_fontsize: int = 10,
     legend_box_size: tuple[float, float] = (0.25, 0.18),
+    show_label: bool = True,
     show_population_label: bool = True,
-    population_label_text: str | None = None,
-    population_label_fontsize: int | None = None
+    population_label_text: str | dict | None = None,
+    population_label_fontsize: int | None = None,
+    crop_size: tuple[int, int] | None = None,
+    crop_origin: str = "center",
+    show_scale_bar: bool = False,
+    scale_bar_length: int = 25,
+    scale_bar_thickness: int = 3,
+    scale_bar_color: str = "white",
+    scale_bar_outline_thickness: int = 2,
+    scale_bar_text: str | None = None,
+    scale_bar_text_size: int = 10
 ):
     """
     Create an overlay visualization showing all cells of a specific population
@@ -2348,6 +2358,19 @@ def create_population_overlay(
         legend_colors: Optional list of RGB tuples (0-255) matching legend_markers
         legend_fontsize: Font size for legend text
         legend_box_size: (width, height) as fraction of axes for the legend inset
+        show_label: Whether to show the top-left label box.
+        show_population_label: Whether to include the population label in the text.
+        population_label_text: Optional string or dict mapping ROI -> text.
+        crop_size: Optional crop size (width, height) in pixels.
+        crop_origin: Crop origin anchor: "upper_left", "upper_right",
+            "lower_left", "lower_right", or "center".
+        show_scale_bar: Whether to draw a scale bar in the bottom-right.
+        scale_bar_length: Length of the scale bar in pixels.
+        scale_bar_thickness: Line thickness in pixels.
+        scale_bar_color: Scale bar color (matplotlib color string).
+        scale_bar_outline_thickness: Black outline thickness in pixels.
+        scale_bar_text: Optional text displayed above the scale bar.
+        scale_bar_text_size: Font size for scale bar text.
         
     Returns:
         None. Saves overlay image to output_path if provided.
@@ -2385,9 +2408,9 @@ def create_population_overlay(
         
     # Create figure
     fig, ax = plt.subplots(figsize=(12, 10), dpi=150)
-    
+
     # Display composite image as background
-    ax.imshow(composite_img)
+    base_image = ax.imshow(composite_img)
     
     # If we have a mask, draw contours for cells of this population
     if mask is not None:
@@ -2435,9 +2458,97 @@ def create_population_overlay(
             ax.scatter(roi_cells['X_loc'], roi_cells['Y_loc'], 
                       c=[np.array(contour_color)/255], s=20, alpha=0.8, marker='o')
     
-    # Remove ticks for cleaner look
-    ax.set_xticks([])
-    ax.set_yticks([])
+    # Apply optional central crop AFTER overlays but BEFORE legends/labels
+    if crop_size is not None and composite_img is not None:
+        crop_w, crop_h = crop_size
+        h, w = composite_img.shape[:2]
+        crop_w = max(1, min(int(crop_w), w))
+        crop_h = max(1, min(int(crop_h), h))
+
+        origin = (crop_origin or "center").lower()
+        if origin == "upper_left":
+            x_min, y_min = 0, 0
+        elif origin == "upper_right":
+            x_min, y_min = w - crop_w, 0
+        elif origin == "lower_left":
+            x_min, y_min = 0, h - crop_h
+        elif origin == "lower_right":
+            x_min, y_min = w - crop_w, h - crop_h
+        elif origin == "center":
+            x_min = (w - crop_w) // 2
+            y_min = (h - crop_h) // 2
+        else:
+            raise ValueError(
+                "crop_origin must be one of 'upper_left', 'upper_right', "
+                "'lower_left', 'lower_right', or 'center'."
+            )
+
+        x_min = max(0, min(x_min, w - crop_w))
+        y_min = max(0, min(y_min, h - crop_h))
+        x_max = x_min + crop_w
+        y_max = y_min + crop_h
+
+        # Maintain image orientation (origin='upper')
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_max, y_min)
+
+    # Optional scale bar drawn into pixels AFTER crop (positioned bottom-left of cropped view)
+    scale_bar_text_pos = None
+    if show_scale_bar and composite_img is not None:
+        from matplotlib.colors import to_rgb
+
+        img_h, img_w = composite_img.shape[:2]
+        margin_px = 20
+        pad_px = max(0, int(scale_bar_outline_thickness))
+        bar_len = max(1, int(scale_bar_length))
+        bar_thick = max(1, int(scale_bar_thickness))
+
+        # Use current view limits to determine crop window
+        x_min, x_max = ax.get_xlim()
+        y_top, y_bottom = ax.get_ylim()  # origin='upper' -> y_top > y_bottom
+        x_min_i = int(round(min(x_min, x_max)))
+        x_max_i = int(round(max(x_min, x_max)))
+        y_min_i = int(round(min(y_top, y_bottom)))
+        y_max_i = int(round(max(y_top, y_bottom)))
+
+        # Clamp to image bounds
+        x_min_i = max(0, min(x_min_i, img_w - 1))
+        x_max_i = max(0, min(x_max_i, img_w))
+        y_min_i = max(0, min(y_min_i, img_h - 1))
+        y_max_i = max(0, min(y_max_i, img_h))
+
+        x0 = x_min_i + margin_px
+        x1 = min(x0 + bar_len - 1, x_max_i - margin_px - 1)
+        y1 = y_max_i - margin_px - 1
+        y0 = y1 - bar_thick + 1
+
+        x0p = max(0, x0 - pad_px)
+        x1p = min(img_w - 1, x1 + pad_px)
+        y0p = max(0, y0 - pad_px)
+        y1p = min(img_h - 1, y1 + pad_px)
+
+        rgb_bar = tuple(int(round(c * 255)) for c in to_rgb(scale_bar_color))
+        rgb_pad = (0, 0, 0)
+
+        def _apply_color(img, ys, xs, rgb):
+            if img.ndim == 2:
+                val = int(round(sum(rgb) / 3))
+                img[ys, xs] = np.clip(val, 0, 255)
+            else:
+                img[ys, xs, 0] = np.clip(rgb[0], 0, 255)
+                img[ys, xs, 1] = np.clip(rgb[1], 0, 255)
+                img[ys, xs, 2] = np.clip(rgb[2], 0, 255)
+            return img
+
+        if x1 > x0 and y1 > y0:
+            composite_img = _apply_color(composite_img, slice(y0p, y1p + 1), slice(x0p, x1p + 1), rgb_pad)
+            composite_img = _apply_color(composite_img, slice(y0, y1 + 1), slice(x0, x1 + 1), rgb_bar)
+
+            # Update the base image shown (keep current limits)
+            base_image.set_data(composite_img)
+
+            if scale_bar_text:
+                scale_bar_text_pos = ((x0 + x1) / 2, y0 - 6)
 
     renderer = None
     try:
@@ -2445,6 +2556,29 @@ def create_population_overlay(
         renderer = fig.canvas.get_renderer()
     except Exception:
         renderer = None
+
+    # Optional scale bar text (data coords, will crop naturally)
+    if show_scale_bar and scale_bar_text and scale_bar_text_pos is not None:
+        ax.text(
+            scale_bar_text_pos[0],
+            scale_bar_text_pos[1],
+            str(scale_bar_text),
+            color=scale_bar_color,
+            fontsize=scale_bar_text_size,
+            ha='center',
+            va='bottom'
+        )
+
+    # Remove ticks for cleaner look
+    ax.set_xticks([])
+    ax.set_yticks([])
+
+    if renderer is None:
+        try:
+            fig.canvas.draw()
+            renderer = fig.canvas.get_renderer()
+        except Exception:
+            renderer = None
 
     # Optional legend showing marker colors used in the composite
     if legend_markers and legend_colors and len(legend_markers) == len(legend_colors):
@@ -2532,12 +2666,34 @@ def create_population_overlay(
                 inset_ax.text(0.05, 0.95 - 0.1 * legend_markers.index(lbl), str(lbl).strip(),
                               color=color, fontsize=legend_fontsize, va='top', ha='left')
 
-    # Optional single-line population label in top-left
-    if show_population_label:
+    # Optional label in top-left
+    label_text = None
+    if show_label:
+        pop_label = str(population).strip() if show_population_label else None
+        extra_label = None
+        if isinstance(population_label_text, dict):
+            extra_label = population_label_text.get(roi_name)
+        elif population_label_text is not None:
+            extra_label = population_label_text
+
+        if extra_label is not None:
+            extra_label = str(extra_label).strip()
+            if extra_label == "":
+                extra_label = None
+
+        label_parts = []
+        if pop_label:
+            label_parts.append(pop_label)
+        if extra_label:
+            label_parts.append(extra_label)
+
+        if label_parts:
+            label_text = ". ".join(label_parts)
+
+    if label_text:
         try:
             from matplotlib import font_manager as fm
 
-            label_text = str(population_label_text) if population_label_text is not None else str(population)
             if renderer is None:
                 fig.canvas.draw()
                 renderer = fig.canvas.get_renderer()
@@ -2587,7 +2743,7 @@ def create_population_overlay(
             inset_ax.set_yticks([])
             inset_ax.set_xlim(0, 1)
             inset_ax.set_ylim(0, 1)
-            inset_ax.text(0.05, 0.95, str(population_label_text or population),
+            inset_ax.text(0.05, 0.95, label_text,
                           color='white', fontsize=population_label_fontsize or legend_fontsize,
                           va='top', ha='left')
     

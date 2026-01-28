@@ -1101,9 +1101,19 @@ def backgating_assessment(
     population_overlay_outline_width: int = 1,
     population_overlay_legend_fontsize: int = 15,
     population_overlay_show_legend: bool = True,
+    population_overlay_show_label: bool = True,
     population_overlay_show_population_label: bool = True,
-    population_overlay_label_text: str | None = None,
+    population_overlay_label_text: str | dict | None = None,
     population_overlay_label_fontsize: int | None = None,
+    population_overlay_crop_size: tuple[int, int] | None = None,
+    population_overlay_crop_origin: str = "center",
+    population_overlay_show_scale_bar: bool = False,
+    population_overlay_scale_bar_length: int = 25,
+    population_overlay_scale_bar_thickness: int = 3,
+    population_overlay_scale_bar_color: str = "white",
+    population_overlay_scale_bar_outline_thickness: int = 2,
+    population_overlay_scale_bar_text: str | None = None,
+    population_overlay_scale_bar_text_size: int = 10,
     # Intensity scaling
     minimum: float = 0.4,
     max_quantile: str = 'q0.98',
@@ -1162,9 +1172,20 @@ def backgating_assessment(
                           of each population type with mask contours on composite images.
         population_overlay_legend_fontsize: Font size for population overlay legend labels.
         population_overlay_show_legend: Enable/disable legend on population overlay images.
-        population_overlay_show_population_label: Enable/disable top-left population label box.
-        population_overlay_label_text: Optional override for label text (defaults to population name).
+        population_overlay_show_label: Enable/disable the top-left label box.
+        population_overlay_show_population_label: Include the population label text in the box.
+        population_overlay_label_text: Optional string or dict mapping ROI -> text.
         population_overlay_label_fontsize: Optional override for label font size (defaults to legend size).
+        population_overlay_crop_size: Optional crop size (width, height) in pixels for overlays.
+        population_overlay_crop_origin: Crop origin anchor: "upper_left", "upper_right",
+            "lower_left", "lower_right", or "center".
+        population_overlay_show_scale_bar: Whether to draw a scale bar in overlays.
+        population_overlay_scale_bar_length: Scale bar length in pixels.
+        population_overlay_scale_bar_thickness: Scale bar thickness in pixels.
+        population_overlay_scale_bar_color: Scale bar color.
+        population_overlay_scale_bar_outline_thickness: Scale bar outline thickness in pixels.
+        population_overlay_scale_bar_text: Optional text displayed above the scale bar.
+        population_overlay_scale_bar_text_size: Font size for scale bar text.
         show_gallery_titles:    Whether to show titles of ROIs and figure in cell gallery.
 
         minimum, max_quantile:
@@ -1521,9 +1542,19 @@ def backgating_assessment(
                         legend_markers=legend_markers if population_overlay_show_legend else None,
                         legend_colors=legend_colors if population_overlay_show_legend else None,
                         legend_fontsize=population_overlay_legend_fontsize,
+                        show_label=population_overlay_show_label,
                         show_population_label=population_overlay_show_population_label,
-                        population_label_text=population_overlay_label_text or pop,
-                        population_label_fontsize=population_overlay_label_fontsize or population_overlay_legend_fontsize
+                        population_label_text=population_overlay_label_text,
+                        population_label_fontsize=population_overlay_label_fontsize or population_overlay_legend_fontsize,
+                        crop_size=population_overlay_crop_size,
+                        crop_origin=population_overlay_crop_origin,
+                        show_scale_bar=population_overlay_show_scale_bar,
+                        scale_bar_length=population_overlay_scale_bar_length,
+                        scale_bar_thickness=population_overlay_scale_bar_thickness,
+                        scale_bar_color=population_overlay_scale_bar_color,
+                        scale_bar_outline_thickness=population_overlay_scale_bar_outline_thickness,
+                        scale_bar_text=population_overlay_scale_bar_text,
+                        scale_bar_text_size=population_overlay_scale_bar_text_size,
                     )
                     
                 except Exception as e:
