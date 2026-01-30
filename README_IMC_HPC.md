@@ -46,6 +46,14 @@ source "$HOME/miniconda3/bin/activate"
 conda init --all
 ```
 
+#### Install conda-lock in base
+
+After installing Miniconda, install `conda-lock` in the base environment (required for environment management):
+
+```bash
+conda install --channel=conda-forge --name=base conda-lock
+```
+
 - A clone of this repository inside your home directory:
 
 ```
