@@ -1,4 +1,4 @@
-> [!IMPORTANT]
+﻿> [!IMPORTANT]
 > **DISCLAIMER** I plan to add releases and tests in the future, but for now everything is provided “as is” with no guarantees.
 > I’ll do my best to respond to issues (see Reporting issues), but I’m a single developer and actively use this code in my own projects, so response times can vary.
 > Feedback and suggestions to improve any aspect of the repo are welcome and encouraged! If anything isn't clear then feel free to let me know.
