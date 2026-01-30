@@ -23,7 +23,6 @@ Before installing, ensure you have:
 > [Request a CSF3 account](https://pages.github.com/)
 
 - Anaconda/Miniconda available in your CSF3 account (if it’s not already installed)
-	- If your cluster provides conda via “modules”, load it according to your cluster docs.
 	- Otherwise, install Miniconda/Anaconda into your home directory (see below).
 	- Quick check (should print a version):
 
