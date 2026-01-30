@@ -19,11 +19,27 @@ Before installing, ensure you have:
 - Access to an HPC login node (e.g. a CSF3 account)
 - Anaconda/Miniconda available in your CSF3 account (if it’s not already installed)
 	- If your cluster provides conda via “modules”, load it according to your cluster docs.
-	- Otherwise, install Miniconda/Anaconda into your home directory.
+	- Otherwise, install Miniconda/Anaconda into your home directory (see below).
 	- Quick check (should print a version):
 
 ```
 conda --version
+```
+
+### Install Miniconda (macOS/Linux)
+
+Follow the official instructions here:
+https://www.anaconda.com/docs/getting-started/miniconda/install#macos-linux-installation:to-download-a-different-version
+
+Quick CLI install (silent) if you prefer the terminal installer:
+
+```bash
+curl -L https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -o miniconda.sh
+bash miniconda.sh -b -p $HOME/miniconda3
+
+# Initialize your shell
+source "$HOME/miniconda3/bin/activate"
+conda init --all
 ```
 
 - A clone of this repository inside your home directory:
