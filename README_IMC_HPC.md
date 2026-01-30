@@ -16,7 +16,12 @@ If you want to run analyses locally (Jupyter, bespoke downstream work), use:
 
 Before installing, ensure you have:
 
-- Access to an HPC login node (e.g. a CSF3 account)
+- Access to an HPC login node (e.g. a CSF3 account).
+
+> [!TIP]
+> University of Manchester users can request a free account on the CSF3 using this link - the help pages are also extremely useful and kept up to date by the Research IT Staff:
+> [Request a CSF3 account](https://pages.github.com/)
+
 - Anaconda/Miniconda available in your CSF3 account (if it’s not already installed)
 	- If your cluster provides conda via “modules”, load it according to your cluster docs.
 	- Otherwise, install Miniconda/Anaconda into your home directory.
