@@ -29,7 +29,7 @@ conda --version
 - A clone of this repository inside your home directory:
 
 ```
-git clone https://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@github.com/dr-michael-haley/imcanalysis.git
+git clone https://github.com/dr-michael-haley/imcanalysis.git
 cd ~/imcanalysis
 ```
 

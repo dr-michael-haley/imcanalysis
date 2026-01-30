@@ -84,7 +84,7 @@ These scripts were designed to do all the pre-processing for IMC data on the CSF
 
 # Installation and setup on CSF3	:computer:
 1. Login to CSF3 command line.
-2. Clone this repo into your home directory, you can use my access key: `git clone https://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@github.com/dr-michael-haley/imcanalysis.git`
+2. Clone this repo into your home directory: `git clone https://github.com/dr-michael-haley/imcanalysis.git`
 3. Install miniconda (if you don't already have it setup, anaconda should also work, but I've not tested it).
 4. Create the conda environments called `segmentation` using the YML file in this diretory (`conda env create -f segmentation.yml`)
 5. Create the environment for IMC Denoise. This is a very fiddly package to get working, and we can't just use a .yml file to create the environment. Instead, we have to create it manually using the following commands:
