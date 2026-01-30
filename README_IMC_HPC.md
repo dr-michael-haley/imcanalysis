@@ -1,3 +1,4 @@
+
 # IMC Analysis – HPC Setup (Scripted Pipeline)
 
 This guide is for running the **scripted pipeline on an HPC cluster** (via SLURM job scripts).
@@ -12,7 +13,7 @@ If you want to run analyses locally (Jupyter, bespoke downstream work), use:
 
 ---
 
-## 🚀 1. Requirements
+## 1. Requirements
 
 Before installing, ensure you have:
 
@@ -30,7 +31,7 @@ Before installing, ensure you have:
 conda --version
 ```
 
-### Install Miniconda (macOS/Linux)
+### 1.1 Install Miniconda (macOS/Linux)
 
 Follow the official instructions here:
 https://www.anaconda.com/docs/getting-started/miniconda/install#macos-linux-installation:to-download-a-different-version
@@ -46,7 +47,7 @@ source "$HOME/miniconda3/bin/activate"
 conda init --all
 ```
 
-#### Install conda-lock in base
+### 1.2 Install conda-lock in base
 
 After installing Miniconda, install `conda-lock` in the base environment (required for environment management):
 
@@ -65,7 +66,7 @@ If the repository is private, use the clone URL provided by the maintainer (or c
 
 ---
 
-## ⚙️ 2. Install the helper commands (HPC)
+## 2. Install the helper commands (HPC)
 
 Run this once on a login node:
 
@@ -85,7 +86,7 @@ This will:
 
 ---
 
-## 🐍 3. Create the pipeline conda environments
+## 3. Create the pipeline conda environments
 
 Set up the pipeline environments from pinned lockfiles:
 
@@ -112,7 +113,7 @@ export IMC_ENV_SCPORTRAIT="scPortrait"
 
 ---
 
-## 🔐 4. Configuration file: `~/.imc_config`
+## 4. Configuration file: ~/.imc_config
 
 Generated during installation. Stores:
 
@@ -138,7 +139,7 @@ Tip: you can edit the `IMC_ENV_*` values later if you want the SLURM jobs to use
 
 ---
 
-## 🔄 5. Updating the repo
+## 5. Updating the repo
 
 When repository updates arrive:
 
@@ -156,7 +157,7 @@ make envs
 
 ---
 
-## 🗑️ 6. Uninstallation
+## 6. Uninstallation
 
 Clean removal:
 
@@ -173,7 +174,7 @@ Removes:
 
 ---
 
-## 📂 7. Directory Structure
+## 7. Directory Structure
 
 ```
 imcanalysis/
@@ -189,7 +190,7 @@ imcanalysis/
 
 ---
 
-## 🧪 8. Quick verification
+## 8. Quick verification
 
 Reload environment:
 
@@ -225,9 +226,9 @@ pl --list
 
 ---
 
-## 🧠 9. Troubleshooting
+## 9. Troubleshooting
 
-### `make: command not found`
+### 9.1 `make: command not found`
 Load environment modules:
 
 ```
@@ -235,14 +236,14 @@ module load tools
 module load make
 ```
 
-### PATH / aliases not updating
+### 9.2 PATH / aliases not updating
 
 ```bash
 source ~/.bashrc
 source ~/.profile
 ```
 
-### Permission denied running job scripts
+### 9.3 Permission denied running job scripts
 
 If you see `Permission denied` when running `pll` locally, your SLURM job scripts are not executable.
 
@@ -260,7 +261,7 @@ chmod +x ~/imcanalysis/SLURM_scripts/*.txt
 
 ---
 
-## ☑️ 10. Example usage
+## 10. Example usage
 
 ```
 cds mydataset
@@ -275,7 +276,7 @@ pll config
 
 ---
 
-## 🎉 11. Summary
+## 11. Summary
 
 The `make install` system provides:
 
