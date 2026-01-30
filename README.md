@@ -1,5 +1,10 @@
 ﻿# imcanalysis
 
+> [!IMPORTANT]
+> **DISCLAIMER** I plan to add releases and tests in the future, but for now everything is provided “as is” with no guarantees.
+> I’ll do my best to respond to issues (see Reporting issues), but I’m a single developer and actively use this code in my own projects, so response times can vary.
+> Feedback and suggestions to improve any aspect of the repo are welcome and encouraged! If anything isn't clear then feel free to let me know.
+
 Toolkit for analysing Imaging Mass Cytometry (IMC) and other spatial-omics data. It combines a Python package (`SpatialBiologyToolkit`), CLI pipeline stages, SLURM job templates, tutorials, and HPC helper scripts.
 
 ![Overview](images/overview.PNG)
@@ -41,5 +46,11 @@ For full details, follow [README_LOCAL.md](README_LOCAL.md). The shortest versio
 - [docs/](docs/README.md): documentation sources (Sphinx); the built HTML is in `Documentation/`.
 - [External_and_old_code/](External_and_old_code/README.md): legacy or experimental code and notebooks. Useful for advanced users, but not tightly maintained.
 
-## Issue tracking
-Please report bugs or questions in GitHub issues with details on the stage/notebook, environment file used, and any overrides in `config.yaml`.
+## Reporting issues
+Please use GitHub Issues for bugs and questions. Include:
+- the pipeline stage or notebook name
+- the environment file used (e.g. `Local_envs/sbt_env.yml` or `HPC_env_files/...`)
+- any overrides in `config.yaml`
+- a short log/traceback snippet if available
+
+If you’re unsure whether something is a bug or a usage question, open an issue anyway and tag it as a question.
