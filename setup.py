@@ -1,64 +1,68 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='SpatialBiologyToolkit',
-    version='0.1',
+    name="SpatialBiologyToolkit",
+    version="0.1",
     packages=find_packages(),
+
     install_requires=[
-        # Core numerical stack
-        'numpy',            # array maths
-        'pandas',           # tabular data handling
-        'scipy',            # scientific routines and stats helpers
-        'pyyaml',           # config file parsing
-        'tqdm',             # progress bars
+        # ---- Core ----
+        "numpy",
+        "pandas",
+        "scipy",
+        "pyyaml",
+        "tqdm",
 
-        # Single-cell / spatial omics
-        'anndata',          # AnnData container
-        'scanpy',           # single-cell workflows
-        'bbknn',            # batch correction via BBKNN
-        'harmonypy',        # Harmony batch correction backend
-        'umap-learn',       # UMAP embeddings
-        'scikit-learn',     # machine learning utilities
-        'statsmodels',      # statistical models and tests
-        'lifelines',        # survival analysis
-        'colorcet',         # colour maps
-        'sc3s',             # clustering utilities
-        'ehrapy',           # healthcare/scRNA helpers
-        'squidpy',          # spatial omics tooling
-        'readimc',          # IMC file readers
+        "anndata",
+        "scanpy",
+        "bbknn",
+        "harmonypy",
+        "umap-learn",
+        "scikit-learn",
+        "statsmodels",
+        "lifelines",
+        "colorcet",
+        "sc3s",
+        "ehrapy",
+        "squidpy",
+        "readimc",
 
-        # Plotting and geometry
-        'matplotlib',       # plotting backend
-        'seaborn',          # statistical plots
-        'tifffile',         # TIFF IO
-        'shapely',          # geometric operations
-        'networkx',         # graph utilities
-        'scikit-image',     # image processing
-        'ipython',          # rich display utilities
+        "matplotlib",
+        "seaborn",
+        "tifffile",
+        "shapely",
+        "networkx",
+        "scikit-image",
 
-        # Deep learning / segmentation / denoising
-        'torch',            # PyTorch for segmentation
-        'tensorflow',       # TensorFlow for denoising models
-        'cellpose',         # cell segmentation
-        'opencv-python',    # computer vision utilities
-        'psutil',           # system resource monitoring
-        'alpineer',         # Nimbus segmentation helpers
+        # ---- Deep learning (skip if nodl) ----
+        "torch; extra != 'nodl'",
+        "tensorflow; extra != 'nodl'",
+        "cellpose; extra != 'nodl'",
+        "opencv-python; extra != 'nodl'",
+        "psutil; extra != 'nodl'",
+        "alpineer; extra != 'nodl'",
 
-        # Interactive viewers and GUI layers
-        'napari',           # interactive image viewer
-        'magicgui',         # GUI building for napari plugins
-        'qtpy',             # Qt abstraction layer
-        'vispy',            # GPU-accelerated visualization
+        # ---- Interactive / GUI (skip if headless) ----
+        "napari; extra != 'headless'",
+        "magicgui; extra != 'headless'",
+        "qtpy; extra != 'headless'",
+        "vispy; extra != 'headless'",
+        "ipython; extra != 'headless'",
+        "ipykernel; extra != 'headless'",
 
-        # Optional/IPython helpers
-        'ipykernel',        # Jupyter kernel support
-
-        # Docs/build tooling
-        'sphinx',           # documentation generator
-        'setuptools'        # packaging utilities
+        # ---- Docs/dev (skip if nodev) ----
+        "sphinx; extra != 'nodev'",
+        "setuptools; extra != 'nodev'",
     ],
-    description='A tool kit for analysing high dimensional spatial data',
-    author='Michael Haley',
-    author_email='mrmichaelhaley@gmail.com',
-    url='https://github.com/dr-michael-haley/imcanalysis',
+
+    extras_require={
+        "headless": [],
+        "nodl": [],
+        "nodev": [],
+    },
+
+    description="A tool kit for analysing high dimensional spatial data",
+    author="Michael Haley",
+    author_email="mrmichaelhaley@gmail.com",
+    url="https://github.com/dr-michael-haley/imcanalysis",
 )
