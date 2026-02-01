@@ -20,10 +20,10 @@ setup(
         "umap-learn",
         "scikit-learn",
         "statsmodels",
-        "lifelines",
+        #"lifelines",
         "colorcet",
         "sc3s",
-        "ehrapy",
+        #"ehrapy",
         "squidpy",
         "readimc",
 
