@@ -658,6 +658,38 @@ def _prepare_nimbus_output(cell_table: pd.DataFrame) -> pd.DataFrame:
     return renamed
 
 
+def _resolve_master_celltable_path(celltable_value: Optional[str], output_dir: str) -> Path:
+    value = celltable_value or ""
+    if not value:
+        raise ValueError("Master cell table path is empty")
+    path = Path(value)
+    if not path.is_absolute():
+        path = Path(output_dir) / path
+    return path
+
+
+def _load_existing_master_celltable(path: Path, label: str) -> Optional[pd.DataFrame]:
+    if not path.exists():
+        return None
+    try:
+        df = pd.read_csv(path)
+    except Exception as exc:
+        logging.warning("Failed to read existing %s master cell table at %s: %s", label, path, exc)
+        return None
+    if df.empty:
+        logging.warning("Existing %s master cell table at %s is empty; recomputing.", label, path)
+        return None
+    if "ROI" in df.columns:
+        df["ROI"] = df["ROI"].astype(str)
+    if "ObjectNumber" in df.columns:
+        try:
+            df["ObjectNumber"] = df["ObjectNumber"].astype(int)
+        except ValueError:
+            logging.warning("Could not coerce ObjectNumber to int for %s master cell table at %s.", label, path)
+    logging.info("Loaded existing %s master cell table from %s", label, path)
+    return df
+
+
 def _merge_with_masks(
     mask_features: pd.DataFrame,
     nimbus_df: pd.DataFrame,
@@ -1031,73 +1063,139 @@ def main() -> None:
         logging.info(f"QC images saved to: {general_config.qc_folder}/nimbus_normalization_qc/")
         return
 
-    nimbus = Nimbus(
-        dataset=dataset,
-        output_dir=nimbus_config.output_dir,
-        save_predictions=nimbus_config.save_prediction_maps,
-        batch_size=nimbus_config.batch_size,
-        test_time_aug=nimbus_config.test_time_augmentation,
-        model_magnification=nimbus_config.model_magnification,
-        device=nimbus_config.device,
-        checkpoint=nimbus_config.checkpoint,
+    master_path = _resolve_master_celltable_path(
+        nimbus_config.master_celltable or seg_config.celltable_output,
+        nimbus_config.output_dir,
     )
 
-    # Run Nimbus predictions
-    nimbus_df = _prepare_nimbus_output(
-        _predict_fovs_with_padding(
-            nimbus=nimbus,
+    merged_celltable: Optional[pd.DataFrame] = None
+    predicted_channels: List[str] = []
+
+    if nimbus_config.use_existing_master_celltables:
+        merged_celltable = _load_existing_master_celltable(master_path, "Nimbus")
+        if merged_celltable is None:
+            logging.info("Nimbus master cell table not found or invalid; running Nimbus inference.")
+        else:
+            predicted_channels = [c for c in expected_channels if c in merged_celltable.columns]
+            roi_count = merged_celltable["ROI"].nunique() if "ROI" in merged_celltable.columns else 0
+            logging.info(
+                "Using existing Nimbus master cell table with %d cells across %d ROI(s) and %d predicted channel(s)",
+                len(merged_celltable),
+                roi_count,
+                len(predicted_channels),
+            )
+
+    if merged_celltable is None:
+        nimbus = Nimbus(
             dataset=dataset,
             output_dir=nimbus_config.output_dir,
-            suffix=".tiff",
             save_predictions=nimbus_config.save_prediction_maps,
             batch_size=nimbus_config.batch_size,
-            test_time_augmentation=nimbus_config.test_time_augmentation,
-            allow_resize_on_mismatch=nimbus_config.allow_prediction_resize,
+            test_time_aug=nimbus_config.test_time_augmentation,
+            model_magnification=nimbus_config.model_magnification,
+            device=nimbus_config.device,
+            checkpoint=nimbus_config.checkpoint,
         )
-    )
-    
-    # Build mask features
-    mask_features = _build_mask_features(mask_lookup, valid_rois)
-    
-    # Merge Nimbus predictions with mask features
-    merged_celltable, predicted_channels = _merge_with_masks(
-        mask_features, nimbus_df, expected_channels, channels_for_model, seg_config.allow_missing_channels
-    )
 
-    logging.info(
-        "Nimbus produced %d cells across %d ROI(s) with %d predicted channel(s)",
-        len(merged_celltable),
-        len(valid_rois),
-        len(predicted_channels),
-    )
+        # Run Nimbus predictions
+        nimbus_df = _prepare_nimbus_output(
+            _predict_fovs_with_padding(
+                nimbus=nimbus,
+                dataset=dataset,
+                output_dir=nimbus_config.output_dir,
+                suffix=".tiff",
+                save_predictions=nimbus_config.save_prediction_maps,
+                batch_size=nimbus_config.batch_size,
+                test_time_augmentation=nimbus_config.test_time_augmentation,
+                allow_resize_on_mismatch=nimbus_config.allow_prediction_resize,
+            )
+        )
+        
+        # Build mask features
+        mask_features = _build_mask_features(mask_lookup, valid_rois)
+        
+        # Merge Nimbus predictions with mask features
+        merged_celltable, predicted_channels = _merge_with_masks(
+            mask_features, nimbus_df, expected_channels, channels_for_model, seg_config.allow_missing_channels
+        )
+
+        logging.info(
+            "Nimbus produced %d cells across %d ROI(s) with %d predicted channel(s)",
+            len(merged_celltable),
+            len(valid_rois),
+            len(predicted_channels),
+        )
+
+        if seg_config.create_master_cell_table:
+            master_path.parent.mkdir(parents=True, exist_ok=True)
+            merged_celltable.to_csv(master_path, index=False)
+            logging.info("Saved master Nimbus cell table to %s", master_path)
+        else:
+            logging.info("Skipping master cell table per config")
+    elif seg_config.create_master_cell_table:
+        logging.info("Using existing Nimbus master cell table; skipping save.")
     
     # Extract classic mean intensities if requested
     classic_intensities = None
     if nimbus_config.extract_classic_intensities:
-        logging.info("Extracting classic mean intensities over masks")
-        classic_intensities = _extract_classic_intensities(
-            mask_lookup=mask_lookup,
-            rois=valid_rois,
-            channel_paths=channel_paths,
-            expected_channels=expected_channels,
+        classic_master_path = _resolve_master_celltable_path(
+            nimbus_config.master_classic_celltable,
+            nimbus_config.output_dir,
         )
-        logging.info(f"Classic extraction complete for {len(classic_intensities)} cells")
+        if nimbus_config.use_existing_master_celltables:
+            classic_intensities = _load_existing_master_celltable(classic_master_path, "classic intensity")
+            if classic_intensities is None:
+                logging.info("Classic master cell table not found or invalid; running classic extraction.")
+        if classic_intensities is None:
+            logging.info("Extracting classic mean intensities over masks")
+            classic_intensities = _extract_classic_intensities(
+                mask_lookup=mask_lookup,
+                rois=valid_rois,
+                channel_paths=channel_paths,
+                expected_channels=expected_channels,
+            )
+            logging.info(f"Classic extraction complete for {len(classic_intensities)} cells")
+            if seg_config.create_master_cell_table:
+                classic_master_path.parent.mkdir(parents=True, exist_ok=True)
+                classic_intensities.to_csv(classic_master_path, index=False)
+                logging.info("Saved master classic intensity cell table to %s", classic_master_path)
+            else:
+                logging.info("Skipping master classic intensity cell table per config")
+        elif seg_config.create_master_cell_table:
+            logging.info("Using existing master classic intensity cell table; skipping save.")
     else:
         logging.info("Skipping classic intensity extraction per config")
     
     # Extract expansion intensities if requested
     expansion_intensities = None
     if nimbus_config.extract_expansion_intensities:
-        logging.info(f"Extracting expansion intensities with {nimbus_config.expansion_pixels} pixel expansion")
-        expansion_intensities = _extract_expansion_intensities(
-            mask_lookup=mask_lookup,
-            rois=valid_rois,
-            channel_paths=channel_paths,
-            expected_channels=expected_channels,
-            expansion_pixels=nimbus_config.expansion_pixels,
-            n_jobs=nimbus_config.expansion_jobs,
+        expansion_master_path = _resolve_master_celltable_path(
+            nimbus_config.master_expansion_celltable,
+            nimbus_config.output_dir,
         )
-        logging.info(f"Expansion extraction complete for {len(expansion_intensities)} cells")
+        if nimbus_config.use_existing_master_celltables:
+            expansion_intensities = _load_existing_master_celltable(expansion_master_path, "expansion intensity")
+            if expansion_intensities is None:
+                logging.info("Expansion master cell table not found or invalid; running expansion extraction.")
+        if expansion_intensities is None:
+            logging.info(f"Extracting expansion intensities with {nimbus_config.expansion_pixels} pixel expansion")
+            expansion_intensities = _extract_expansion_intensities(
+                mask_lookup=mask_lookup,
+                rois=valid_rois,
+                channel_paths=channel_paths,
+                expected_channels=expected_channels,
+                expansion_pixels=nimbus_config.expansion_pixels,
+                n_jobs=nimbus_config.expansion_jobs,
+            )
+            logging.info(f"Expansion extraction complete for {len(expansion_intensities)} cells")
+            if seg_config.create_master_cell_table:
+                expansion_master_path.parent.mkdir(parents=True, exist_ok=True)
+                expansion_intensities.to_csv(expansion_master_path, index=False)
+                logging.info("Saved master expansion intensity cell table to %s", expansion_master_path)
+            else:
+                logging.info("Skipping master expansion intensity cell table per config")
+        elif seg_config.create_master_cell_table:
+            logging.info("Using existing master expansion intensity cell table; skipping save.")
     else:
         logging.info("Skipping expansion intensity extraction per config")
 
@@ -1110,17 +1208,6 @@ def main() -> None:
         logging.info("Saved ROI-level Nimbus cell tables to %s", roi_output_dir)
     else:
         logging.info("Skipping ROI-level cell tables per config")
-
-    master_path = Path(nimbus_config.master_celltable or seg_config.celltable_output)
-    if not master_path.is_absolute():
-        master_path = Path(nimbus_config.output_dir) / master_path
-
-    if seg_config.create_master_cell_table:
-        master_path.parent.mkdir(parents=True, exist_ok=True)
-        merged_celltable.to_csv(master_path, index=False)
-        logging.info("Saved master Nimbus cell table to %s", master_path)
-    else:
-        logging.info("Skipping master cell table per config")
 
     if seg_config.create_anndata:
         anndata_path = Path(nimbus_config.anndata_output or seg_config.anndata_save_path)
