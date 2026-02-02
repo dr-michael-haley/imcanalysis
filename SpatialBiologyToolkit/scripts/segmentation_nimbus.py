@@ -781,18 +781,22 @@ def _create_anndata_with_layers(
     for col in non_channels:
         adata.obs[col] = celltable[col].tolist()
     
-    # Add metadata from metadata.csv
-    metadata = pd.read_csv(metadata_folder / 'metadata.csv', index_col='unstacked_data_folder')
-    adata.obs['ROI'] = adata.obs['ROI'].astype('category')
-    adata.obs['ROI_name'] = adata.obs['ROI'].map(metadata['description'].to_dict())
-    adata.obs['ROI_width'] = adata.obs['ROI'].map(metadata['width_um'].to_dict())
-    adata.obs['ROI_height'] = adata.obs['ROI'].map(metadata['height_um'].to_dict())
-    
-    if 'mcd' in metadata.columns:
-        adata.obs['MCD_file'] = adata.obs['ROI'].map(metadata['mcd'].to_dict())
-    elif 'source_file' in metadata.columns:
-        adata.obs['Source_file'] = adata.obs['ROI'].map(metadata['source_file'].to_dict())
-        adata.obs['File_type'] = adata.obs['ROI'].map(metadata['file_type'].to_dict())
+    # Add metadata from metadata.csv (optional)
+    metadata_path = metadata_folder / 'metadata.csv'
+    if metadata_path.exists():
+        metadata = pd.read_csv(metadata_path, index_col='unstacked_data_folder')
+        adata.obs['ROI'] = adata.obs['ROI'].astype('category')
+        adata.obs['ROI_name'] = adata.obs['ROI'].map(metadata['description'].to_dict())
+        adata.obs['ROI_width'] = adata.obs['ROI'].map(metadata['width_um'].to_dict())
+        adata.obs['ROI_height'] = adata.obs['ROI'].map(metadata['height_um'].to_dict())
+        
+        if 'mcd' in metadata.columns:
+            adata.obs['MCD_file'] = adata.obs['ROI'].map(metadata['mcd'].to_dict())
+        elif 'source_file' in metadata.columns:
+            adata.obs['Source_file'] = adata.obs['ROI'].map(metadata['source_file'].to_dict())
+            adata.obs['File_type'] = adata.obs['ROI'].map(metadata['file_type'].to_dict())
+    else:
+        logging.info("metadata.csv not found at %s; skipping ROI metadata enrichment.", metadata_path)
     
     # Add spatial coordinates
     adata.obsm['spatial'] = celltable[['X_loc', 'Y_loc']].to_numpy()
