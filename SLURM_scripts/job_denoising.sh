@@ -7,11 +7,14 @@
 #SBATCH --mail-user=${IMC_EMAIL}
 #SBATCH --mail-type=ALL
 
-#@DESC: Denoising using IMC_Denoise
-#@IN:   tiffs
-#@OUT:  processed, /QC/denoising/
+#@DESC: Denoise channel TIFFs and compute denoising QC metrics
+#@IN:   general.raw_images_folder (default tiffs/)
+#@IN:   general.metadata_folder/panel.csv
+#@OUT:  general.denoised_images_folder (default processed/)
+#@OUT:  general.qc_folder/denoised_pixel_qc*.csv and optional general.qc_folder/denoising/
 #@ENV:  imc_denoise
 #@MODULE:  SpatialBiologyToolkit.scripts.denoising
+#@CONFIG: general, denoising, logging
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 

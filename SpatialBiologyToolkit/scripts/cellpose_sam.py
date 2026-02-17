@@ -27,7 +27,7 @@ import os
 from pathlib import Path
 from skimage import io as skio
 from skimage.measure import regionprops
-from skimage.segmentation import expand_labels
+from skimage.segmentation import expand_labels, relabel_sequential
 from skimage.morphology import remove_small_objects
 from skimage.transform import resize
 from scipy.ndimage import binary_fill_holes
@@ -343,6 +343,10 @@ def segment_single_roi(
             final_mask[masks == region.label] = region.label
         else:
             excluded_mask[masks == region.label] = region.label
+
+    # Relabel to ensure continuous labels after filtering
+    if np.any(final_mask > 0):
+        final_mask, _, _ = relabel_sequential(final_mask)
     
     # Calculate density
     pixels_per_mm2 = 1e6  # Assuming 1 pixel = 1 μm

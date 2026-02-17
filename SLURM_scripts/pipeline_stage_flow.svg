@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1700" height="620" viewBox="0 0 1700 620" role="img" aria-labelledby="title desc">
+  <title id="title">IMC SLURM pipeline stage flow</title>
+  <desc id="desc">Flow diagram of the SLURM stages showing the main path, optional branch, and diagnostics stage.</desc>
+
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#4b5563"/>
+    </marker>
+    <style>
+      .box {
+        stroke-width: 2;
+        rx: 12;
+        ry: 12;
+      }
+      .main {
+        fill: #ecf9f0;
+        stroke: #2e8b57;
+      }
+      .dev {
+        fill: #fff4de;
+        stroke: #c27a00;
+      }
+      .diag {
+        fill: #eef4ff;
+        stroke: #4666b0;
+      }
+      .label {
+        font-family: Arial, sans-serif;
+        font-size: 18px;
+        fill: #1f2937;
+        text-anchor: middle;
+        dominant-baseline: middle;
+      }
+      .small {
+        font-family: Arial, sans-serif;
+        font-size: 14px;
+        fill: #4b5563;
+      }
+      .line {
+        stroke: #4b5563;
+        stroke-width: 2.5;
+        fill: none;
+        marker-end: url(#arrow);
+      }
+      .dashed {
+        stroke-dasharray: 8 6;
+      }
+    </style>
+  </defs>
+
+  <text x="850" y="34" class="label" style="font-size:24px;font-weight:700;">IMC SLURM Pipeline Stage Flow</text>
+
+  <!-- Main pipeline -->
+  <rect class="box main" x="40" y="220" width="120" height="64"/>
+  <text class="label" x="100" y="252">config</text>
+
+  <rect class="box main" x="190" y="220" width="120" height="64"/>
+  <text class="label" x="250" y="252">prep</text>
+
+  <rect class="box main" x="340" y="220" width="120" height="64"/>
+  <text class="label" x="400" y="252">denoise</text>
+
+  <rect class="box main" x="490" y="220" width="120" height="64"/>
+  <text class="label" x="550" y="252">dnqc</text>
+
+  <rect class="box main" x="640" y="220" width="120" height="64"/>
+  <text class="label" x="700" y="252">cellpose</text>
+
+  <rect class="box main" x="790" y="220" width="120" height="64"/>
+  <text class="label" x="850" y="252">nimbus</text>
+
+  <rect class="box main" x="940" y="220" width="120" height="64"/>
+  <text class="label" x="1000" y="252">bbn</text>
+
+  <rect class="box main" x="1090" y="220" width="120" height="64"/>
+  <text class="label" x="1150" y="252">aiinter</text>
+
+  <rect class="box main" x="1240" y="220" width="120" height="64"/>
+  <text class="label" x="1300" y="252">vis</text>
+
+  <rect class="box main" x="1390" y="220" width="120" height="64"/>
+  <text class="label" x="1450" y="252">reint</text>
+
+  <rect class="box main" x="1540" y="220" width="120" height="64"/>
+  <text class="label" x="1600" y="252">zipqc</text>
+
+  <!-- Main arrows -->
+  <path class="line" d="M 160 252 L 190 252"/>
+  <path class="line" d="M 310 252 L 340 252"/>
+  <path class="line" d="M 460 252 L 490 252"/>
+  <path class="line" d="M 610 252 L 640 252"/>
+  <path class="line" d="M 760 252 L 790 252"/>
+  <path class="line" d="M 910 252 L 940 252"/>
+  <path class="line" d="M 1060 252 L 1090 252"/>
+  <path class="line" d="M 1210 252 L 1240 252"/>
+  <path class="line" d="M 1360 252 L 1390 252"/>
+  <path class="line" d="M 1510 252 L 1540 252"/>
+
+  <!-- Optional scport branch -->
+  <rect class="box dev" x="610" y="380" width="180" height="72"/>
+  <text class="label" x="700" y="416">scport (dev)</text>
+
+  <path class="line dashed" d="M 400 284 L 400 416 L 610 416"/>
+  <path class="line dashed" d="M 700 284 L 700 380"/>
+
+  <!-- Debug stage -->
+  <rect class="box diag" x="40" y="90" width="120" height="64"/>
+  <text class="label" x="100" y="122">debug</text>
+  <path class="line dashed" d="M 100 154 L 100 220"/>
+
+  <!-- Notes -->
+  <text class="small" x="40" y="520">Solid arrows: main recommended run order</text>
+  <text class="small" x="40" y="546">Dashed arrows: optional/side stages (debug can run anytime; scport is in development)</text>
+  <text class="small" x="40" y="572">Status colors: green = stable pipeline stage, amber = development/example stage</text>
+</svg>

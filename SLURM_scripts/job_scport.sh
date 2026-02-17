@@ -5,12 +5,13 @@
 #SBATCH -t 2-0
 #SBATCH -n 6
 
-#SBATCH --mail-user=michael.haley@manchester.ac.uk
+#SBATCH --mail-user=${IMC_EMAIL}
 #SBATCH --mail-type=ALL
 
-#@DESC: scPortrait
-#@IN:   denoised images, masks
-#@OUT:  single cell portraits
+#@DESC: Generate single-cell portrait outputs via external scPortrait converter
+#@IN:   processed/ and masks/ (hard-coded CLI args in this job)
+#@OUT:  scPortrait/ project outputs (--projects-root scPortrait)
+#@CONFIG: none (does not read config.yaml)
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 

@@ -6,11 +6,14 @@
 #SBATCH --mail-user=${IMC_EMAIL}
 #SBATCH --mail-type=ALL
 
-#@DESC: AI labelling of Leiden populations
-#@IN:   anndata_processed.h5ad
-#@OUT:  anndata_processed.h5ad, /QC/AI_Interpretation/
+#@DESC: AI labeling of Leiden populations and writing *_AIlabel columns
+#@IN:   process.output_adata_path (default anndata_processed.h5ad) with Leiden columns
+#@IN:   OPENAI_API_KEY environment variable (if visualization.enable_ai=true)
+#@OUT:  process.output_adata_path (updated in place)
+#@OUT:  general.qc_folder/AI_Interpretation/
 #@ENV:  imc_segmentation
 #@MODULE:  SpatialBiologyToolkit.scripts.ai_interpretation
+#@CONFIG: general, visualization, process, logging
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 

@@ -7,11 +7,15 @@
 #SBATCH --mail-user=${IMC_EMAIL}
 #SBATCH --mail-type=ALL
 
-#@DESC: Cell mask creation using CellPose-SAM
-#@IN:   processed/
-#@OUT:  anndata_processed.h5ad, /QC/BioBatchNet/
+#@DESC: DNA preprocessing + CellPose-SAM mask generation
+#@IN:   general.denoised_images_folder ROI folders (default processed/)
+#@IN:   createmasks.dna_image_name channel (default DNA1)
+#@OUT:  createmasks.dna_preprocessing_output_folder_name/ (default preprocessed_dna/)
+#@OUT:  general.masks_folder/ (default masks/)
+#@OUT:  general.qc_folder/DNA_preprocessing_QC/ and general.qc_folder/CellposeSAM_QC/
 #@ENV:  imc_cellposesam
 #@MODULE:  SpatialBiologyToolkit.scripts.cellpose_sam
+#@CONFIG: general, createmasks, logging
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 

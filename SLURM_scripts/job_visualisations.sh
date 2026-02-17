@@ -6,11 +6,13 @@
 #SBATCH --mail-user=${IMC_EMAIL}
 #SBATCH --mail-type=ALL
 
-#@DESC: Produces visualisations for populations
-#@IN:   anndata_processed.h5ad, masks, processed
-#@OUT:  QC/BasicProcess_QC
-#@ENV: imc_segmentation
-#@MODULE: SpatialBiologyToolkit.scripts.basic_visualizations
+#@DESC: Generate UMAP/matrix/overlay/population visualization outputs
+#@IN:   visualization.input_adata_path or process.output_adata_path
+#@IN:   general.masks_folder, general.denoised_images_folder, general.metadata_folder
+#@OUT:  general.qc_folder/BasicProcess_QC/
+#@ENV:  imc_segmentation
+#@MODULE:  SpatialBiologyToolkit.scripts.basic_visualizations
+#@CONFIG: general, visualization, process, logging
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 

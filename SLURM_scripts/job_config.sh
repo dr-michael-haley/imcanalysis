@@ -6,11 +6,12 @@
 #SBATCH --mail-user=${IMC_EMAIL}
 #SBATCH --mail-type=ALL
 
-#@DESC: Updates the config file 
-#@IN:   config.yaml
-#@OUT:  config.yaml
+#@DESC: Update config.yaml by syncing all default config sections/keys
+#@IN:   config.yaml (created if missing)
+#@OUT:  config.yaml (updated in place)
 #@ENV:  imc_segmentation
 #@MODULE:  SpatialBiologyToolkit.scripts.update_config
+#@CONFIG: all blocks (sync defaults): general, preprocess, denoising, createmasks, segmentation, nimbus, process, visualization, logging
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
