@@ -341,6 +341,79 @@ class VisualizationConfig:
     figure_format: str = 'png'  # Default figure format ('png', 'pdf', 'svg')
 
 @dataclass
+class CellCharterConfig:
+    # Input/output
+    input_adata_path: Optional[str] = None  # If None: use process.output_adata_path, fallback to process.input_adata_path
+    output_adata_path: str = 'anndata_cellcharter.h5ad'
+    qc_output_subdir: str = 'CellCharter_QC'
+
+    # Spatial metadata
+    sample_key: str = 'ROI'
+    spatial_key: str = 'spatial'  # adata.obsm key for XY coordinates
+    x_coord_col: str = 'X_loc'     # fallback obs column if spatial_key is missing
+    y_coord_col: str = 'Y_loc'     # fallback obs column if spatial_key is missing
+
+    # Features
+    use_rep: Optional[str] = None      # For non-TRVAE mode: adata.obsm key for neighborhood aggregation
+    use_layer: Optional[str] = None    # For TRVAE or non-TRVAE mode: adata.layers key (None uses adata.X)
+    scale_by_sample: bool = True       # In TRVAE mode: scale TRVAE input per sample; otherwise scale aggregation input
+    scaled_rep_key: str = 'X_cellcharter_scaled'
+
+    # TRVAE dimensionality reduction (default path, per CellCharter tutorial)
+    use_trvae: bool = True
+    trvae_latent_key: str = 'X_trVAE'
+    trvae_condition_key: Optional[str] = 'dataset'
+    trvae_use_sample_key_fallback: bool = True
+    trvae_constant_condition_label: str = 'all'
+    trvae_load_path: Optional[str] = None  # Optional pretrained model directory
+    trvae_save_path: str = 'trvae_model'   # Relative paths are saved under QC/cellcharter.qc_output_subdir
+    trvae_map_location: str = 'cpu'
+    trvae_train: bool = True
+    trvae_train_early_stopping: bool = True
+    trvae_train_enable_progress_bar: bool = True
+    trvae_train_max_epochs: Optional[int] = None
+    trvae_hidden_layer_sizes: List[int] = field(default_factory=lambda: [128, 128])
+    trvae_latent_dim: int = 10
+    trvae_dr_rate: float = 0.05
+    trvae_use_mmd: bool = True
+    trvae_mmd_on: str = 'z'
+    trvae_mmd_boundary: Optional[int] = None
+    trvae_recon_loss: str = 'mse'
+    trvae_beta: float = 1.0
+    trvae_use_bn: bool = False
+    trvae_use_ln: bool = True
+
+    # Graph and neighborhood aggregation
+    delaunay: bool = True
+    remove_long_links: bool = True
+    distance_percentile: float = 99.0
+    n_layers: int = 3
+    aggregations: str = 'mean'         # 'mean' or list-like string via overrides
+    aggregated_rep_key: str = 'X_cellcharter'
+
+    # Clustering
+    n_clusters: int = 11
+    random_state: int = 12345
+    covariance_type: str = 'full'
+    batch_size: Optional[int] = None
+    trainer_accelerator: str = 'auto'
+    trainer_devices: Optional[int] = None
+    trainer_max_epochs: int = 100
+    cluster_key: str = 'spatial_cluster'
+
+    # Optional enrichment
+    run_enrichment: bool = True
+    enrichment_label_key: str = 'cell_type'
+    enrichment_with_pvalues: bool = False
+    enrichment_n_perms: int = 1000
+
+    # QC plotting
+    save_spatial_plots: bool = True
+    max_rois_for_plots: int = 12
+    point_size: float = 2.0
+    save_enrichment_heatmap: bool = True
+
+@dataclass
 class LoggingConfig:
     log_file: str = 'pipeline.log'
     level: str = 'INFO'
@@ -359,6 +432,7 @@ DEFAULT_CONFIG_CLASSES = {
     'nimbus': NimbusConfig,
     'process': BasicProcessConfig,
     'visualization': VisualizationConfig,
+    'cellcharter': CellCharterConfig,
     'logging': LoggingConfig,
 }
 

@@ -12,6 +12,7 @@ SLURM wrappers for the IMC pipeline (tested on CSF3). Each stage runs from a dat
 | `cellpose` | `job_cellposesam.sh` |
 | `nimbus` | `job_nimbus.sh` |
 | `bbn` | `job_biobatchnet.sh` |
+| `cchar` | `job_cellcharter.sh` |
 | `aiinter` | `job_ai.sh` |
 | `vis` | `job_visualisations.sh` |
 | `reint` | `job_reintegrate.sh` |
@@ -48,13 +49,14 @@ Traffic light status key:
 
 | Alias | Status | What it does | Conda env(s) used by SLURM job | Primary inputs | Primary outputs | Config blocks in `config.yaml` | Typical position |
 |---|---|---|---|---|---|---|---|
-| `config` | `🟢` | Runs `SpatialBiologyToolkit.scripts.update_config` to sync `config.yaml` with current dataclass defaults. Adds missing keys and removes obsolete sections/keys. | `${IMC_ENV_SEGMENTATION:-imc_segmentation}` | `config.yaml` (or creates one if missing). | Updated `config.yaml` (no backup unless script is run with `--backup`, which this job does not pass). | `general`, `preprocess`, `denoising`, `createmasks`, `segmentation`, `nimbus`, `process`, `visualization`, `logging` (sync/refresh) | Optional preflight before any compute-heavy stage. |
+| `config` | `🟢` | Runs `SpatialBiologyToolkit.scripts.update_config` to sync `config.yaml` with current dataclass defaults. Adds missing keys and removes obsolete sections/keys. | `${IMC_ENV_SEGMENTATION:-imc_segmentation}` | `config.yaml` (or creates one if missing). | Updated `config.yaml` (no backup unless script is run with `--backup`, which this job does not pass). | `general`, `preprocess`, `denoising`, `createmasks`, `segmentation`, `nimbus`, `process`, `visualization`, `cellcharter`, `logging` (sync/refresh) | Optional preflight before any compute-heavy stage. |
 | `prep` | `🟢` | Runs `SpatialBiologyToolkit.scripts.preprocess` to import IMC files (`.mcd`/`.txt`), export stacks, unstack channels, and build metadata/panel tables. | `${IMC_ENV_SEGMENTATION:-imc_segmentation}` | IMC source files in `general.imc_files_folder` (default `IMC_files/`; legacy fallback `MCD_files/`). | `tiff_stacks/`, `tiffs/` ROI folders, `metadata/metadata.csv`, `metadata/dictionary.csv`, `metadata/panel.csv` (or `panel_*.csv` + `panel_mapping.csv` if multiple unique panels). | `general`, `preprocess`, `logging` | First core stage. |
 | `denoise` | `🟢` | Runs `SpatialBiologyToolkit.scripts.denoising` (DeepSNF/DIMR flow) on channel TIFFs. Also supports outlier clipping and optional parameter scans via config. | `${IMC_ENV_DENOISE:-imc_denoise}` | `tiffs/` raw channels, `metadata/panel.csv`, denoising config block. | `processed/` denoised ROI/channel TIFFs, `QC/denoised_pixel_qc.csv` (or scan-suffixed variants), optional `QC/denoising/*.png`. | `general`, `denoising`, `logging` | After `prep`. |
 | `dnqc` | `🟢` | Runs two checks: (1) `SpatialBiologyToolkit.scripts.denoising_qc` side-by-side raw vs denoised QC images, then (2) `SpatialBiologyToolkit.scripts.check_panel_consistency` for panel/image consistency + pixel QC stats. | `${IMC_ENV_DENOISE:-imc_denoise}` then `${IMC_ENV_SEGMENTATION:-imc_segmentation}` | `tiffs/`, `processed/`, `metadata/panel.csv`, `config.yaml`. | `QC/denoising/` images; panel consistency CSV reports (timestamped `panel_consistency_report_*.csv`, plus optional `_pixel_qc.csv`). | `general`, `denoising`, `logging` (plus `check_panel_consistency` defaults) | Recommended QC checkpoint immediately after `denoise`. |
 | `cellpose` | `🟢` | Two-step mask workflow: first `SpatialBiologyToolkit.scripts.preprocess_dna` (DNA channel pre-processing), then `SpatialBiologyToolkit.scripts.cellpose_sam` (CellPose-SAM segmentation and mask QC). | `${IMC_ENV_SEGMENTATION:-imc_segmentation}` then `${IMC_ENV_CELLPOSESAM:-imc_cellposesam}` | `processed/` ROI folders, DNA channel defined by `createmasks.dna_image_name` (default `DNA1`), mask params from `createmasks`. | `preprocessed_dna/*.tiff`, `masks/*.tiff`, `QC/DNA_preprocessing_QC/`, `QC/CellposeSAM_QC/` and per-run CSV summaries. | `general`, `createmasks`, `logging` | After `denoise`; before `nimbus`. |
 | `nimbus` | `🟢` | Runs `SpatialBiologyToolkit.scripts.segmentation_nimbus`: aligns masks + image channels, computes cell-level intensities/tables, performs Nimbus normalization/prediction, and builds AnnData. | `${IMC_ENV_SEGMENTATION:-imc_segmentation}` | `masks/`, `metadata/panel.csv`, `metadata/metadata.csv`, `processed/` (or raw fallback), segmentation/nimbus config. | `nimbus_output/` master tables + normalization files, `cell_tables/nimbus_cell_tables/` ROI tables, `anndata.h5ad`, optional `anndata_removed.h5ad`, `QC/nimbus_normalization_qc/`. | `general`, `segmentation`, `nimbus`, `logging` | Core segmentation-to-AnnData stage; run after masks exist. |
-| `bbn` | `🟢` | Runs `SpatialBiologyToolkit.scripts.basic_process_biobatchnet`: BioBatchNet batch correction, neighbors/UMAP/Leiden, saves processed AnnData and QC UMAPs. | `${IMC_ENV_BIOBATCHNET:-imc_biobatchnet}` | `anndata.h5ad` (default `process.input_adata_path`), valid `process.batch_correction_obs` in `adata.obs`. | `anndata_processed.h5ad` (or scan-suffixed variants), `QC/BioBatchNet/` UMAPs + scan summary CSV. | `general`, `process`, `logging` | After `nimbus`; before `aiinter`/`vis`. |
+| `bbn` | `🟢` | Runs `SpatialBiologyToolkit.scripts.basic_process_biobatchnet`: BioBatchNet batch correction, neighbors/UMAP/Leiden, saves processed AnnData and QC UMAPs. | `${IMC_ENV_BIOBATCHNET:-imc_biobatchnet}` | `anndata.h5ad` (default `process.input_adata_path`), valid `process.batch_correction_obs` in `adata.obs`. | `anndata_processed.h5ad` (or scan-suffixed variants), `QC/BioBatchNet/` UMAPs + scan summary CSV. | `general`, `process`, `logging` | After `nimbus`; before `cchar`/`aiinter`/`vis`. |
+| `cchar` | `🟢` | Runs `SpatialBiologyToolkit.scripts.cellcharter_neighborhoods`: computes TRVAE latent embeddings by default (`cc.tl.TRVAE`), builds spatial neighbor graphs per ROI, aggregates neighborhood features, clusters cells into spatial neighborhoods, and optionally computes enrichment against a label column. | `${IMC_ENV_CELLCHARTER:-imc_cellcharter}` | AnnData from `cellcharter.input_adata_path` or fallback (`process.output_adata_path` then `process.input_adata_path`), ROI/sample key, and XY coordinates (`obsm['spatial']` or `X_loc`/`Y_loc`). | `cellcharter.output_adata_path` (default `anndata_cellcharter.h5ad`) plus `QC/CellCharter_QC/` tables and spatial plots. | `general`, `process`, `cellcharter`, `logging` | Optional spatial neighborhood stage, typically after `bbn` (or after `aiinter` if enrichment should use AI cell-type labels). |
 | `aiinter` | `🟢` | Runs `SpatialBiologyToolkit.scripts.ai_interpretation`: summarizes Leiden clusters and asks OpenAI model for cell-type labels, then writes `*_AIlabel` columns back into AnnData. | `${IMC_ENV_SEGMENTATION:-imc_segmentation}` | `anndata_processed.h5ad` with Leiden columns, `OPENAI_API_KEY`, visualization AI settings in config. | Updated `anndata_processed.h5ad`, `QC/AI_Interpretation/` prompt/raw JSON/TSV outputs. | `general`, `visualization`, `process`, `logging` | Optional, typically after `bbn` and before final visualization. |
 | `vis` | `🟢` | Runs `SpatialBiologyToolkit.scripts.basic_visualizations`: UMAPs, matrix plots, tissue overlays, metadata-vs-population analysis, color legends, optional backgating outputs. | `${IMC_ENV_SEGMENTATION:-imc_segmentation}` | Processed AnnData (`anndata_processed.h5ad`), `masks/`, image folders, metadata files (`dictionary.csv` etc.). | `QC/BasicProcess_QC/` (UMAPs, matrix plots, overlays, population analysis tables/figures, legends, optional backgating outputs). | `general`, `visualization`, `process`, `logging` | Final analysis reporting stage. |
 | `reint` | `🟢` | Runs `SpatialBiologyToolkit.scripts.reintegrate_markers`: merges removed markers back from `anndata_removed.h5ad` into the processed AnnData (including layers). | `${IMC_ENV_SEGMENTATION:-imc_segmentation}` | `anndata_processed.h5ad`, `anndata_removed.h5ad` (path from `segmentation.removed_markers_anndata_path`). | Overwrites/updates `anndata_processed.h5ad` with reintegrated marker variables/layers. | `general`, `segmentation`, `process`, `logging` | Optional post-processing, usually near the end. |
@@ -73,15 +75,16 @@ Traffic light status key:
 5. `cellpose`
 6. `nimbus`
 7. `bbn`
-8. `aiinter` (optional; requires `OPENAI_API_KEY`)
-9. `vis`
-10. `reint` (optional; only if removed-marker AnnData exists)
-11. `zipqc` (optional packaging)
+8. `cchar` (optional spatial neighborhood stage)
+9. `aiinter` (optional; requires `OPENAI_API_KEY`)
+10. `vis`
+11. `reint` (optional; only if removed-marker AnnData exists)
+12. `zipqc` (optional packaging)
 
 Example:
 
 ```bash
-pl config prep denoise dnqc cellpose nimbus bbn aiinter vis reint zipqc
+pl config prep denoise dnqc cellpose nimbus bbn cchar aiinter vis reint zipqc
 ```
 
 ### Optional side branch

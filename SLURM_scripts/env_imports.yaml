@@ -28,6 +28,21 @@ imc_cellposesam:
 - tqdm
 - typing
 - warnings
+imc_cellcharter:
+- SpatialBiologyToolkit
+- anndata
+- cellcharter
+- logging
+- matplotlib
+- numpy
+- pandas
+- pathlib
+- scanpy
+- scarches
+- scipy
+- squidpy
+- torch
+- typing
 imc_denoise:
 - SpatialBiologyToolkit
 - IMC_Denoise
