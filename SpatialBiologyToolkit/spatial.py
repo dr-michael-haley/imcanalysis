@@ -26,7 +26,7 @@ import scanpy as sc
 import seaborn as sns
 import squidpy as sq
 import tifffile as tp
-from IPython.display import display
+# from IPython.display import display # Not sure if this is actually used
 from matplotlib.colors import ListedColormap, Normalize, TwoSlopeNorm
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
@@ -36,7 +36,7 @@ from scipy.spatial import Voronoi, distance
 from scipy.spatial.distance import pdist
 from scipy.stats import kurtosis, skew
 from scipy import stats
-from shapely.geometry import MultiPoint, Point, Polygon
+#from shapely.geometry import MultiPoint, Point, Polygon # Not sure if this is actually used
 from skimage.draw import rectangle
 from skimage.feature import graycomatrix, graycoprops
 from skimage.io import imread, imsave
