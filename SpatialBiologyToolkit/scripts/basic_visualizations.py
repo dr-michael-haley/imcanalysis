@@ -388,6 +388,51 @@ def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, v
         List of markers to exclude when creating filtered matrix plots
     """
     try:
+        use_row_color_matrixplot = getattr(viz_config, 'matrixplot_use_row_colors', True)
+        if use_row_color_matrixplot:
+            if sbt_plotting is None or not hasattr(sbt_plotting, 'matrixplot_with_row_colors'):
+                logging.warning(
+                    "matrixplot_use_row_colors=True but plotting.matrixplot_with_row_colors is unavailable. "
+                    "Falling back to scanpy.pl.matrixplot."
+                )
+                use_row_color_matrixplot = False
+
+        save_dpi = 300 if viz_config.save_high_res else 150
+
+        def _create_and_save_matrixplot(
+            var_names,
+            groupby,
+            out_path,
+            standard_scale=None,
+            vmax=None,
+        ):
+            if use_row_color_matrixplot:
+                _, fig = sbt_plotting.matrixplot_with_row_colors(
+                    adata,
+                    marker_groups=var_names,
+                    groupby_key=groupby,
+                    out_path=str(out_path),
+                    reorder_var_by_expression=False,
+                    standard_scale=standard_scale,
+                    vmax=vmax,
+                    dendrogram=True,
+                    save_dpi=save_dpi,
+                )
+                plt.close(fig)
+            else:
+                matrixplot_obj = sc.pl.matrixplot(
+                    adata,
+                    var_names=var_names,
+                    groupby=groupby,
+                    standard_scale=standard_scale,
+                    dendrogram=True,
+                    vmax=vmax,
+                    show=False,
+                    return_fig=True,
+                )
+                matrixplot_obj.savefig(out_path, bbox_inches='tight', dpi=save_dpi)
+                plt.close()
+
         markers_to_plot = adata.var_names.tolist()
         for cat_col in categorical_columns:
             if cat_col in adata.obs.columns:
@@ -398,35 +443,27 @@ def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, v
                     
                     # 1. Create standard-scaled matrixplot
                     logging.info(f'  Creating standard-scaled MatrixPlot for {cat_col}')
-                    matrixplot_scaled = sc.pl.matrixplot(
-                        adata,
-                        var_names=sbt_utils.reorder_vars_by_expression(adata, markers_to_plot),
-                        groupby=cat_col,
-                        standard_scale='var',
-                        dendrogram=True,
-                        show=False,
-                        return_fig=True
-                    )
+                    ordered_markers = sbt_utils.reorder_vars_by_expression(adata, markers_to_plot)
                     fig_path_scaled = qc_matrix_dir / f'Matrixplot_{cat_col}_scaled.{viz_config.figure_format}'
-                    matrixplot_scaled.savefig(fig_path_scaled, bbox_inches='tight', dpi=300 if viz_config.save_high_res else 150)
-                    plt.close()
+                    _create_and_save_matrixplot(
+                        var_names=ordered_markers,
+                        groupby=cat_col,
+                        out_path=fig_path_scaled,
+                        standard_scale='var',
+                        vmax=None,
+                    )
                     logging.info(f'  Standard-scaled MatrixPlot saved to {fig_path_scaled}')
                     
                     # 2. Create non-scaled matrixplot with vmax
                     logging.info(f'  Creating vmax-capped MatrixPlot for {cat_col} (vmax={viz_config.matrixplot_vmax})')
-                    matrixplot_vmax = sc.pl.matrixplot(
-                        adata,
-                        var_names=sbt_utils.reorder_vars_by_expression(adata, markers_to_plot),
-                        groupby=cat_col,
-                        standard_scale=None,
-                        dendrogram=True,
-                        vmax=viz_config.matrixplot_vmax,
-                        show=False,
-                        return_fig=True
-                    )
                     fig_path_vmax = qc_matrix_dir / f'Matrixplot_{cat_col}_vmax.{viz_config.figure_format}'
-                    matrixplot_vmax.savefig(fig_path_vmax, bbox_inches='tight', dpi=300 if viz_config.save_high_res else 150)
-                    plt.close()
+                    _create_and_save_matrixplot(
+                        var_names=ordered_markers,
+                        groupby=cat_col,
+                        out_path=fig_path_vmax,
+                        standard_scale=None,
+                        vmax=viz_config.matrixplot_vmax,
+                    )
                     logging.info(f'  Vmax-capped MatrixPlot saved to {fig_path_vmax}')
                     
                     # 3. Create filtered matrix plots if remove_markers_list is provided
@@ -439,35 +476,27 @@ def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, v
                             
                             # 3a. Create filtered standard-scaled matrixplot
                             logging.info(f'    Creating filtered standard-scaled MatrixPlot for {cat_col}')
-                            matrixplot_scaled_filtered = sc.pl.matrixplot(
-                                adata,
-                                var_names=sbt_utils.reorder_vars_by_expression(adata, filtered_markers),
-                                groupby=cat_col,
-                                standard_scale='var',
-                                dendrogram=True,
-                                show=False,
-                                return_fig=True
-                            )
+                            ordered_filtered_markers = sbt_utils.reorder_vars_by_expression(adata, filtered_markers)
                             fig_path_scaled_filtered = qc_matrix_dir / f'Matrixplot_{cat_col}_scaled_filtered.{viz_config.figure_format}'
-                            matrixplot_scaled_filtered.savefig(fig_path_scaled_filtered, bbox_inches='tight', dpi=300 if viz_config.save_high_res else 150)
-                            plt.close()
+                            _create_and_save_matrixplot(
+                                var_names=ordered_filtered_markers,
+                                groupby=cat_col,
+                                out_path=fig_path_scaled_filtered,
+                                standard_scale='var',
+                                vmax=None,
+                            )
                             logging.info(f'    Filtered standard-scaled MatrixPlot saved to {fig_path_scaled_filtered}')
                             
                             # 3b. Create filtered non-scaled matrixplot with vmax
                             logging.info(f'    Creating filtered vmax-capped MatrixPlot for {cat_col} (vmax={viz_config.matrixplot_vmax})')
-                            matrixplot_vmax_filtered = sc.pl.matrixplot(
-                                adata,
-                                var_names=sbt_utils.reorder_vars_by_expression(adata, filtered_markers),
-                                groupby=cat_col,
-                                standard_scale=None,
-                                dendrogram=True,
-                                vmax=viz_config.matrixplot_vmax,
-                                show=False,
-                                return_fig=True
-                            )
                             fig_path_vmax_filtered = qc_matrix_dir / f'Matrixplot_{cat_col}_vmax_filtered.{viz_config.figure_format}'
-                            matrixplot_vmax_filtered.savefig(fig_path_vmax_filtered, bbox_inches='tight', dpi=300 if viz_config.save_high_res else 150)
-                            plt.close()
+                            _create_and_save_matrixplot(
+                                var_names=ordered_filtered_markers,
+                                groupby=cat_col,
+                                out_path=fig_path_vmax_filtered,
+                                standard_scale=None,
+                                vmax=viz_config.matrixplot_vmax,
+                            )
                             logging.info(f'    Filtered vmax-capped MatrixPlot saved to {fig_path_vmax_filtered}')
                         else:
                             logging.warning(f'  All markers would be filtered out for {cat_col}; skipping filtered plots.')
@@ -497,6 +526,26 @@ def create_marker_umaps(adata, qc_umap_dir, viz_config):
         markers = adata.var_names.tolist()
         colormap = getattr(viz_config, 'umap_marker_colormap', 'viridis')
         logging.info(f'Creating UMAP plots for {len(markers)} markers using colormap: {colormap}')
+
+        # Also create a gallery view of all markers, if available
+        if sbt_plotting is not None and hasattr(sbt_plotting, 'umap_marker_gallery'):
+            try:
+                gallery_path = qc_umap_dir / f'UMAP_marker_gallery.{viz_config.figure_format}'
+                gallery_fig = sbt_plotting.umap_marker_gallery(
+                    adata,
+                    markers=markers,
+                    cmap=colormap,
+                    show=False,
+                    save=str(gallery_path),
+                    dpi=300 if viz_config.save_high_res else 150,
+                )
+                plt.close(gallery_fig)
+                logging.info(f'Marker UMAP gallery saved to {gallery_path}')
+            except Exception as e:
+                log_detailed_error(e, "creating marker UMAP gallery")
+        else:
+            logging.warning('plotting.umap_marker_gallery unavailable; skipping marker gallery plot.')
+
         for marker in markers:
             if marker in adata.var_names:
                 logging.info(f'Creating UMAP for marker: {marker}')

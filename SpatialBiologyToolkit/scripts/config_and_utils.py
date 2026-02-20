@@ -335,6 +335,7 @@ class VisualizationConfig:
     
     # MatrixPlot settings
     matrixplot_vmax: float = 0.5  # Maximum value for non-scaled matrix plots
+    matrixplot_use_row_colors: bool = True  # Use plotting.matrixplot_with_row_colors when available for MatrixPlot generation
     
     # General visualization settings
     save_high_res: bool = True  # Save high-resolution figures (300 DPI)

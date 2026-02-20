@@ -110,6 +110,10 @@ def reintegrate_removed_markers(
         join='outer',  # Include all layers from both
         merge='first',  # Use metadata from first (main) AnnData for obs/uns/obsm/obsp
     )
+
+    # Ensure .uns from main AnnData is preserved
+    if hasattr(adata_main, "uns"):
+        adata_combined.uns = adata_main.uns.copy()
     
     logging.info(
         f"Reintegration complete: {adata_combined.n_obs} cells × {adata_combined.n_vars} markers "

@@ -61,3 +61,5 @@ segmentation:
   - DNA1
   - DNA3
   store_raw_marker_data: false
+visualization:
+  matrixplot_use_row_colors: true

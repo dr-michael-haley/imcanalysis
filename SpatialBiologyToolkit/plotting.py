@@ -1,6 +1,7 @@
 import os
 import warnings
 from pathlib import Path
+from collections.abc import Mapping, Sequence
 
 import anndata as ad
 import matplotlib.pyplot as plt
@@ -42,7 +43,7 @@ from IPython.display import display, HTML
 
 from .image_analysis import save_labelled_image, save_labelled_image_as_svg, map_pixel_values_to_colors
 from .utils import (_cleanstring, _save, _check_input_type, _to_list, subset,
-                    adlog, print_full, compare_lists)
+                    adlog, print_full, compare_lists, reorder_vars_by_expression)
 
 
 def _count_summary(data: ad.AnnData | pd.DataFrame | str,
@@ -3739,3 +3740,143 @@ def set_adata_categorical_colors(
     color_map = dict(zip(color_order, colors))
     adata.uns[uns_key] = [color_map.get(cat) for cat in cat_order]
     return adata
+
+
+def matrixplot_with_row_colors(
+    adata,
+    marker_groups=None,
+    groupby_key="population_grant",
+    out_path=None,
+    *,
+    reorder_var_by_expression=False,
+    cmap="viridis",
+    standard_scale=None,
+    vmax=0.5,
+    dendrogram=True,
+    var_group_rotation=0,
+    colorbar_title="Mean expression\nin group \n(Nimbus Score)",
+    x_labelsize=12,
+    y_labelsize=12,
+    y_pad=25,
+    gene_group_labelsize=12,
+    angled_label_indices=None,   # e.g. [0, 2, -1]
+    angled_label_rotation=45,
+    angled_label_dx=-0.5,
+    add_row_color_bar=True,
+    row_bar_gap=0.005,
+    row_bar_w=0.01,
+    row_bar_x=-1,
+    row_bar_width_data=1.75,
+    row_bar_edgecolor="black",
+    row_bar_linewidth=1,
+    save_dpi=300,
+):
+    def _resolve_var_names():
+        # Default: all genes
+        if marker_groups is None:
+            if reorder_var_by_expression:
+                return reorder_vars_by_expression(adata, adata.var_names)
+            return adata.var_names
+
+        # Dict form (grouped)
+        if isinstance(marker_groups, Mapping):
+            if reorder_var_by_expression:
+                raise ValueError(
+                    "reorder_var_by_expression=True is only supported when marker_groups is None or a list-like of genes."
+                )
+            return marker_groups
+
+        # List-like form
+        if isinstance(marker_groups, Sequence) and not isinstance(marker_groups, (str, bytes)):
+            genes = list(marker_groups)
+            if reorder_var_by_expression:
+                ordered_all = list(reorder_vars_by_expression(adata, adata.var_names))
+                gene_set = set(genes)
+                return [g for g in ordered_all if g in gene_set]
+            return genes
+
+        raise TypeError("marker_groups must be None, a dict, or a list-like of gene names.")
+
+    if angled_label_indices is None:
+        angled_label_indices = []
+
+    var_names = _resolve_var_names()
+
+    mp = sc.pl.matrixplot(
+        adata,
+        var_names=var_names,
+        groupby=groupby_key,
+        cmap=cmap,
+        dendrogram=dendrogram,
+        standard_scale=standard_scale,
+        vmax=vmax,
+        var_group_rotation=var_group_rotation,
+        colorbar_title=colorbar_title,
+        return_fig=True,
+        show=False,
+    )
+
+    axes = mp.get_axes()
+    ax = axes["mainplot_ax"]
+    fig = ax.figure
+
+    ax.tick_params(axis="x", labelsize=x_labelsize, length=0)
+    ax.tick_params(axis="y", labelsize=y_labelsize, length=0, left=False, pad=y_pad)
+
+    if "gene_group_ax" in axes:
+        gax = axes["gene_group_ax"]
+        texts = gax.texts
+        for t in texts:
+            t.set_fontsize(gene_group_labelsize)
+
+        for i in angled_label_indices:
+            if -len(texts) <= i < len(texts):
+                t = texts[i]
+                x, y = t.get_position()
+                t.set_position((x + angled_label_dx, y))
+                t.set_rotation(angled_label_rotation)
+                t.set_ha("left")
+                t.set_horizontalalignment("left")
+
+    if "color_legend_ax" in axes:
+        cax = axes["color_legend_ax"]
+        cax.title.set_fontsize(12)
+        cax.tick_params(labelsize=10)
+
+    if add_row_color_bar:
+        pos = ax.get_position()
+        row_ax = fig.add_axes([pos.x0 - row_bar_w - row_bar_gap, pos.y0, row_bar_w, pos.height])
+        row_ax.set_xlim(0, 1)
+        row_ax.set_ylim(ax.get_ylim())
+        row_ax.axis("off")
+
+        cat_order = adata.obs[groupby_key].cat.categories
+        cat_colors = adata.uns[f"{groupby_key}_colors"]
+        color_map = dict(zip(cat_order, cat_colors))
+
+        yticks = ax.get_yticks()
+        ylabels = [t.get_text() for t in ax.get_yticklabels()]
+        step = np.diff(yticks).min() if len(yticks) > 1 else 1
+
+        for y, lab in zip(yticks, ylabels):
+            color = color_map.get(lab)
+            if color is not None:
+                row_ax.add_patch(
+                    plt.Rectangle(
+                        (row_bar_x, y - step / 2),
+                        row_bar_width_data,
+                        step,
+                        facecolor=color,
+                        transform=row_ax.transData,
+                        clip_on=False,
+                        edgecolor=row_bar_edgecolor,
+                        linewidth=row_bar_linewidth,
+                    )
+                )
+
+    if out_path is not None:
+        out_path = Path(out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(out_path, dpi=save_dpi, bbox_inches="tight")
+
+    return mp, fig
