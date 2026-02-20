@@ -643,45 +643,19 @@ def _save_cellcharter_enrichment_plot(
 ) -> None:
     """Save CellCharter's native enrichment plot via cc.pl.enrichment."""
     out_path = qc_dir / "enrichment_cellcharter_plot.png"
-    fig = None
-
     try:
-        fig, ax = plt.subplots(figsize=(8, 6))
         cc.pl.enrichment(
             adata,
             group_key=cluster_key,
             label_key=label_key,
-            ax=ax,
-            show=False,
+            figsize=(8, 6),
+            dpi=240,
+            save=out_path,
         )
-    except TypeError:
-        plt.close("all")
-        try:
-            cc.pl.enrichment(
-                adata,
-                group_key=cluster_key,
-                label_key=label_key,
-                show=False,
-            )
-        except TypeError:
-            cc.pl.enrichment(
-                adata,
-                group_key=cluster_key,
-                label_key=label_key,
-            )
-        fig = plt.gcf()
     except Exception as exc:
         logging.warning("Could not generate CellCharter enrichment plot: %s", exc)
-        if fig is not None:
-            plt.close(fig)
-        return
-
-    if fig is None:
-        fig = plt.gcf()
-
-    fig.tight_layout()
-    fig.savefig(out_path, dpi=240, bbox_inches="tight")
-    plt.close(fig)
+    finally:
+        plt.close("all")
 
 
 def _save_roi_cluster_masks(
