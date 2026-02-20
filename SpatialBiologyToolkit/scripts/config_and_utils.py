@@ -359,7 +359,7 @@ class CellCharterConfig:
     # Features
     use_rep: Optional[str] = None      # For non-TRVAE mode: adata.obsm key for neighborhood aggregation
     use_layer: Optional[str] = None    # For TRVAE or non-TRVAE mode: adata.layers key (None uses adata.X)
-    scale_by_sample: bool = True       # In TRVAE mode: scale TRVAE input per sample; otherwise scale aggregation input
+    scale_by_sample: bool = False       # In TRVAE mode: scale TRVAE input per sample; otherwise scale aggregation input
     scaled_rep_key: str = 'X_cellcharter_scaled'
 
     # TRVAE dimensionality reduction (default path, per CellCharter tutorial)
@@ -370,9 +370,9 @@ class CellCharterConfig:
     trvae_constant_condition_label: str = 'all'
     trvae_load_path: Optional[str] = None  # Optional pretrained model directory
     trvae_save_path: str = 'trvae_model'   # Relative paths are saved under QC/cellcharter.qc_output_subdir
-    trvae_map_location: str = 'cpu'
+    trvae_map_location: str = 'gpu'
     trvae_train: bool = True
-    trvae_train_early_stopping: bool = True
+    trvae_train_early_stopping: bool = False
     trvae_train_enable_progress_bar: bool = True
     trvae_train_max_epochs: Optional[int] = None
     trvae_hidden_layer_sizes: List[int] = field(default_factory=lambda: [128, 128])
