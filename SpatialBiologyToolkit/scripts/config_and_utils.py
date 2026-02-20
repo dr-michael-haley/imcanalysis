@@ -423,7 +423,7 @@ class PairwiseSpatialConfig:
     output_subdir: str = 'Pairwise_Spatial'
 
     # Core metadata keys
-    population_obs: str = 'combined'
+    population_obs: str = 'population'  # Column in adata.obs with population labels
     groupby_obs: Optional[str] = None
     roi_obs: str = 'ROI'
     x_coord_obs: str = 'X_loc'
@@ -447,7 +447,7 @@ class PairwiseSpatialConfig:
     run_distance_bootstrap: bool = True
     distance_populations: Optional[List[str]] = None
     distance_roi_ids: Optional[List[str]] = None
-    distance_n_bootstraps: int = 250
+    distance_n_bootstraps: int = 1000
     distance_n_jobs: int = -1
     distance_ddof: int = 1
 
@@ -456,7 +456,7 @@ class PairwiseSpatialConfig:
     pcf_target_distance_um: float = 20.0
     pcf_max_radius_um: float = 100.0
     pcf_radius_step_um: float = 10.0
-    pcf_num_bootstrap: int = 999
+    pcf_num_bootstrap: int = 1000
     pcf_cluster_column: str = 'cluster'
     pcf_samples: Optional[List[str]] = None
 
@@ -472,7 +472,7 @@ class PairwiseSpatialConfig:
     heatmap_use_clustermap: bool = True
     heatmap_row_cluster: bool = True
     heatmap_col_cluster: bool = True
-    heatmap_figsize: List[float] = field(default_factory=lambda: [8.0, 6.0])
+    heatmap_figsize: List[float] = field(default_factory=lambda: [5.0, 5.0])
     heatmap_percentile: float = 95.0
     heatmap_cmap_interactions: str = 'coolwarm'
     heatmap_cmap_distance: str = 'coolwarm'

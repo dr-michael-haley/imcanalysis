@@ -719,11 +719,16 @@ def run_pairwise_spatial_analyses(
                 matrix.to_csv(distance_raw_dir / f"matrix_mean_{metric}.csv")
 
                 center = 0.0 if metric in {"delta", "zscore"} else None
+                distance_cmap = (
+                    pairwise_config.heatmap_cmap_counts
+                    if metric in {"observed", "bootmean"}
+                    else pairwise_config.heatmap_cmap_distance
+                )
                 _save_matrix_plot(
                     matrix,
                     out_path=matrix_dir / f"distance_{metric}_all{extension}",
                     title=f"Distance {metric} (all)",
-                    cmap=pairwise_config.heatmap_cmap_distance,
+                    cmap=distance_cmap,
                     center=center,
                     use_clustermap=pairwise_config.heatmap_use_clustermap,
                     row_cluster=pairwise_config.heatmap_row_cluster,
@@ -752,7 +757,7 @@ def run_pairwise_spatial_analyses(
                             out_path=matrix_dir
                             / f"distance_{metric}_{cleanstring(group_name)}{extension}",
                             title=f"Distance {metric} ({group_name})",
-                            cmap=pairwise_config.heatmap_cmap_distance,
+                            cmap=distance_cmap,
                             center=center,
                             use_clustermap=pairwise_config.heatmap_use_clustermap,
                             row_cluster=pairwise_config.heatmap_row_cluster,
