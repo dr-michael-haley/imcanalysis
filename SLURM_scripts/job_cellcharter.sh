@@ -2,7 +2,8 @@
 #SBATCH -p gpuA
 #SBATCH -G 1
 #SBATCH -t 2-0
-#SBATCH -n 6
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=6
 
 #SBATCH --mail-user=${IMC_EMAIL}
 #SBATCH --mail-type=ALL
