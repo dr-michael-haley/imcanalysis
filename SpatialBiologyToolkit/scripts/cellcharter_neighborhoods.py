@@ -49,6 +49,15 @@ from .config_and_utils import (
     setup_logging,
 )
 
+# Optional plotting import for ROI mask overlays
+try:
+    from SpatialBiologyToolkit import plotting as sbt_plotting
+except Exception:
+    try:
+        from .. import plotting as sbt_plotting  # type: ignore
+    except Exception:
+        sbt_plotting = None
+
 
 def _to_dense_matrix(matrix: Any) -> np.ndarray:
     """Return a dense NumPy array from sparse/dense matrix-like input."""
@@ -626,6 +635,100 @@ def _save_enrichment_outputs(
     plt.close(fig)
 
 
+def _save_cellcharter_enrichment_plot(
+    adata: ad.AnnData,
+    cluster_key: str,
+    label_key: str,
+    qc_dir: Path,
+) -> None:
+    """Save CellCharter's native enrichment plot via cc.pl.enrichment."""
+    out_path = qc_dir / "enrichment_cellcharter_plot.png"
+    fig = None
+
+    try:
+        fig, ax = plt.subplots(figsize=(8, 6))
+        cc.pl.enrichment(
+            adata,
+            group_key=cluster_key,
+            label_key=label_key,
+            ax=ax,
+            show=False,
+        )
+    except TypeError:
+        plt.close("all")
+        try:
+            cc.pl.enrichment(
+                adata,
+                group_key=cluster_key,
+                label_key=label_key,
+                show=False,
+            )
+        except TypeError:
+            cc.pl.enrichment(
+                adata,
+                group_key=cluster_key,
+                label_key=label_key,
+            )
+        fig = plt.gcf()
+    except Exception as exc:
+        logging.warning("Could not generate CellCharter enrichment plot: %s", exc)
+        if fig is not None:
+            plt.close(fig)
+        return
+
+    if fig is None:
+        fig = plt.gcf()
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=240, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _save_roi_cluster_masks(
+    adata: ad.AnnData,
+    sample_key: str,
+    cluster_key: str,
+    masks_folder: str,
+    qc_dir: Path,
+) -> None:
+    """Save one mask-style cluster plot per ROI using plotting.obs_to_mask."""
+    if sbt_plotting is None:
+        logging.warning("plotting module unavailable; skipping ROI obs_to_mask plots.")
+        return
+
+    if sample_key not in adata.obs.columns:
+        logging.warning(
+            "Sample key '%s' missing in adata.obs; skipping ROI obs_to_mask plots.",
+            sample_key,
+        )
+        return
+
+    roi_dir = qc_dir / "ROI_cluster_masks"
+    roi_dir.mkdir(parents=True, exist_ok=True)
+    rois = sorted(pd.unique(adata.obs[sample_key].astype(str)))
+
+    for roi in rois:
+        save_path = roi_dir / f"{cleanstring(roi)}.png"
+        try:
+            sbt_plotting.obs_to_mask(
+                adata=adata,
+                roi=str(roi),
+                roi_obs=sample_key,
+                cat_obs=cluster_key,
+                masks_folder=masks_folder,
+                save_path=str(save_path),
+                background_color="white",
+                separator_color="black",
+            )
+        except Exception as exc:
+            logging.warning(
+                "Could not create ROI mask plot for ROI '%s' using cluster key '%s': %s",
+                roi,
+                cluster_key,
+                exc,
+            )
+
+
 def run_cellcharter_neighborhoods(
     general_config: GeneralConfig,
     process_config: BasicProcessConfig,
@@ -790,6 +893,12 @@ def run_cellcharter_neighborhoods(
                 save_heatmap=cellcharter_config.save_enrichment_heatmap,
                 qc_dir=qc_dir,
             )
+            _save_cellcharter_enrichment_plot(
+                adata,
+                cluster_key=cellcharter_config.cluster_key,
+                label_key=cellcharter_config.enrichment_label_key,
+                qc_dir=qc_dir,
+            )
 
     _save_cluster_tables(
         adata,
@@ -808,6 +917,14 @@ def run_cellcharter_neighborhoods(
             max_samples=int(cellcharter_config.max_rois_for_plots),
             qc_dir=qc_dir,
         )
+
+    _save_roi_cluster_masks(
+        adata=adata,
+        sample_key=sample_key,
+        cluster_key=cellcharter_config.cluster_key,
+        masks_folder=general_config.masks_folder,
+        qc_dir=qc_dir,
+    )
 
     adata.uns["cellcharter_pipeline"] = {
         "input_adata_path": str(input_path),
