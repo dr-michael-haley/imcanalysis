@@ -38,6 +38,7 @@ imc_cellcharter:
 - pandas
 - pathlib
 - scanpy
+- seaborn
 - scarches
 - scipy
 - squidpy

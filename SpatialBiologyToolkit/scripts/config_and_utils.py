@@ -417,6 +417,73 @@ class CellCharterConfig:
     save_enrichment_heatmap: bool = True
 
 @dataclass
+class PairwiseSpatialConfig:
+    # Input/output
+    input_adata_path: Optional[str] = None  # If None: use process.output_adata_path, then process.input_adata_path
+    output_subdir: str = 'Pairwise_Spatial'
+
+    # Core metadata keys
+    population_obs: str = 'combined'
+    groupby_obs: Optional[str] = None
+    roi_obs: str = 'ROI'
+    x_coord_obs: str = 'X_loc'
+    y_coord_obs: str = 'Y_loc'
+    master_index_obs: str = 'Master_Index'
+    source_population_obs: Optional[str] = None  # If None: uses population_obs
+
+    # Metadata export controls
+    include_all_obs_metadata: bool = True
+    metadata_obs_columns: List[str] = field(default_factory=list)
+
+    # Squidpy neighborhood enrichment
+    run_squidpy_interactions: bool = True
+    squidpy_subregion_obs: Optional[str] = None  # If None: uses roi_obs
+    squidpy_subregion_suffix: str = ''
+    squidpy_radius_min_um: int = 0
+    squidpy_radius_max_um: int = 20
+    squidpy_n_permutations: int = 1000
+
+    # Distance bootstrap analysis
+    run_distance_bootstrap: bool = True
+    distance_populations: Optional[List[str]] = None
+    distance_roi_ids: Optional[List[str]] = None
+    distance_n_bootstraps: int = 250
+    distance_n_jobs: int = -1
+    distance_ddof: int = 1
+
+    # Pair-correlation function (PCF)
+    run_pcf: bool = True
+    pcf_target_distance_um: float = 20.0
+    pcf_max_radius_um: float = 100.0
+    pcf_radius_step_um: float = 10.0
+    pcf_num_bootstrap: int = 999
+    pcf_cluster_column: str = 'cluster'
+    pcf_samples: Optional[List[str]] = None
+
+    # Optional source-target population pairs
+    # Supports:
+    # 1) Direct mapping: {source_pop: [target_pop, ...]}
+    # 2) Nested by obs key: {population_obs: {source_pop: [target_pop, ...]}}
+    population_pairs: Dict[str, Any] = field(default_factory=dict)
+
+    # Plotting
+    make_matrix_plots: bool = True
+    make_pair_barplots: bool = True
+    heatmap_use_clustermap: bool = True
+    heatmap_row_cluster: bool = True
+    heatmap_col_cluster: bool = True
+    heatmap_figsize: List[float] = field(default_factory=lambda: [8.0, 6.0])
+    heatmap_percentile: float = 95.0
+    heatmap_cmap_interactions: str = 'coolwarm'
+    heatmap_cmap_distance: str = 'coolwarm'
+    heatmap_cmap_pcf: str = 'coolwarm'
+    heatmap_cmap_counts: str = 'viridis'
+    barplot_figsize: List[float] = field(default_factory=lambda: [3.0, 3.0])
+    barplot_add_points: bool = True
+    figure_extension: str = '.png'
+    figure_dpi: int = 300
+
+@dataclass
 class LoggingConfig:
     log_file: str = 'pipeline.log'
     level: str = 'INFO'
@@ -436,6 +503,7 @@ DEFAULT_CONFIG_CLASSES = {
     'process': BasicProcessConfig,
     'visualization': VisualizationConfig,
     'cellcharter': CellCharterConfig,
+    'pairwise_spatial': PairwiseSpatialConfig,
     'logging': LoggingConfig,
 }
 
