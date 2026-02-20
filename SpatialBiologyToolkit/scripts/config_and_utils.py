@@ -296,8 +296,10 @@ class VisualizationConfig:
     include_metadata_umaps: bool = True  # Include metadata columns in UMAP plots
     include_metadata_matrix_plots: bool = True  # Include metadata columns in MatrixPlots
     include_marker_umaps: bool = True  # Include marker expression UMAPs
+    umap_plot_individual_highlights: bool = True  # For population columns, create one UMAP per category via utils.plot_umap_highlight_clusters
     max_categories: int = 50  # Maximum number of unique categories for population/metadata columns
     umap_marker_colormap: str = 'viridis'  # Colormap for marker expression UMAPs (e.g., 'viridis', 'plasma', 'inferno', 'magma', 'cividis')
+    umap_marker_gallery_default_colorbar_label: str = 'Nimbus-Inference Score'  # Colorbar label for default-layer (adata.X) marker gallery
     
     # Backgating assessment settings
     backgating_cells_per_group: int = 50  # Number of cells to sample per population for backgating

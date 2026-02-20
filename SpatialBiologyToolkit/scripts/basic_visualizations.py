@@ -18,6 +18,7 @@ from pathlib import Path
 # Third-party library imports
 import scanpy as sc
 import anndata as ad
+import pandas as pd
 import matplotlib
 # Note: Backend is set to "Agg" only when run as main script (see __main__ section)
 # This allows interactive plotting when importing functions from this module
@@ -344,6 +345,7 @@ def create_categorical_umaps(adata, categorical_columns, qc_umap_dir, qc_legend_
         Type of categories for logging ('population', 'metadata', etc.)
     """
     try:
+        make_individual_highlights = getattr(viz_config, 'umap_plot_individual_highlights', True)
         for cat_col in categorical_columns:
             if cat_col in adata.obs.columns:
                 logging.info(f'Creating UMAP for {category_type} column: {cat_col}')
@@ -358,6 +360,28 @@ def create_categorical_umaps(adata, categorical_columns, qc_umap_dir, qc_legend_
                     fig_path = qc_umap_dir / f'UMAP_{cat_col}.{viz_config.figure_format}'
                     fig.savefig(fig_path, bbox_inches='tight', dpi=300 if viz_config.save_high_res else 150)
                     plt.close(fig)
+
+                    # Optional: for population columns, create one highlighted UMAP per category
+                    if make_individual_highlights and category_type == "population":
+                        try:
+                            if not isinstance(adata.obs[cat_col].dtype, pd.CategoricalDtype):
+                                logging.warning(
+                                    f"Skipping individual highlighted UMAPs for {cat_col}: column is not categorical."
+                                )
+                            else:
+                                highlight_dir = qc_umap_dir / 'Individual_Highlights' / cleanstring(cat_col)
+                                sbt_utils.plot_umap_highlight_clusters(
+                                    adata=adata,
+                                    subcluster_col=cat_col,
+                                    point_size=10,
+                                    legend_loc='none',
+                                    show=False,
+                                    save_dir=str(highlight_dir),
+                                    save_dpi=300 if viz_config.save_high_res else 150,
+                                )
+                                logging.info(f'Individual highlighted UMAPs saved to {highlight_dir}')
+                        except Exception as e:
+                            log_detailed_error(e, f"creating individual highlighted UMAPs for '{cat_col}'")
                     
                 except Exception as e:
                     log_detailed_error(e, f"creating UMAP for {category_type} column '{cat_col}'")
@@ -527,20 +551,48 @@ def create_marker_umaps(adata, qc_umap_dir, viz_config):
         colormap = getattr(viz_config, 'umap_marker_colormap', 'viridis')
         logging.info(f'Creating UMAP plots for {len(markers)} markers using colormap: {colormap}')
 
-        # Also create a gallery view of all markers, if available
+        # Also create gallery views of all markers (X and any available layers), if available
         if sbt_plotting is not None and hasattr(sbt_plotting, 'umap_marker_gallery'):
             try:
+                dpi = 300 if viz_config.save_high_res else 150
+                default_gallery_colorbar_label = getattr(
+                    viz_config,
+                    'umap_marker_gallery_default_colorbar_label',
+                    'Nimbus-Inference Score'
+                )
+
+                # 1) Gallery for default matrix (adata.X)
                 gallery_path = qc_umap_dir / f'UMAP_marker_gallery.{viz_config.figure_format}'
                 gallery_fig = sbt_plotting.umap_marker_gallery(
                     adata,
                     markers=markers,
                     cmap=colormap,
+                    add_colorbar=True,
+                    colorbar_label=default_gallery_colorbar_label,
                     show=False,
                     save=str(gallery_path),
-                    dpi=300 if viz_config.save_high_res else 150,
+                    dpi=dpi,
                 )
                 plt.close(gallery_fig)
                 logging.info(f'Marker UMAP gallery saved to {gallery_path}')
+
+                # 2) Galleries for each available layer
+                for layer_name in adata.layers.keys():
+                    safe_layer = cleanstring(layer_name)
+                    layer_gallery_path = qc_umap_dir / f'UMAP_marker_gallery_layer_{safe_layer}.{viz_config.figure_format}'
+                    layer_fig = sbt_plotting.umap_marker_gallery(
+                        adata,
+                        markers=markers,
+                        cmap=colormap,
+                        layer=layer_name,
+                        add_colorbar=True,
+                        colorbar_label=f'Expression ({layer_name})',
+                        show=False,
+                        save=str(layer_gallery_path),
+                        dpi=dpi,
+                    )
+                    plt.close(layer_fig)
+                    logging.info(f'Marker UMAP gallery for layer {layer_name} saved to {layer_gallery_path}')
             except Exception as e:
                 log_detailed_error(e, "creating marker UMAP gallery")
         else:

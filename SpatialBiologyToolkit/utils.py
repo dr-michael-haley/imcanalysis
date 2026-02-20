@@ -66,6 +66,8 @@ def print_full(x: pd.DataFrame) -> None:
     x : pd.DataFrame
         DataFrame to be printed.
     """
+    from IPython.display import display
+
     pd.set_option('display.max_rows', len(x))
     display(x)
     pd.reset_option('display.max_rows')
@@ -1521,6 +1523,8 @@ def plot_umap_highlight_clusters(
     filter_obs=None,
     filter_values=None,
     clusters=None,
+    save_dir: Optional[str] = None,
+    save_dpi: int = 300,
 ):
     """
     Plot UMAPs highlighting each cluster in `subcluster_col` one at a time.
@@ -1548,6 +1552,12 @@ def plot_umap_highlight_clusters(
         Value or list of values from `filter_obs` to highlight. Required when `filter_obs` is set.
     clusters : Union[list, Any], optional
         Specific cluster label(s) in `subcluster_col` to plot. If None, plot all clusters.
+    save_dir : str, optional
+        If provided, save one PNG per highlighted cluster into this directory.
+        Files are named `{subcluster_col}_{population_name}.png` using `_cleanstring`
+        to ensure filesystem-safe names. Directory is created automatically.
+    save_dpi : int, optional
+        DPI used when saving figures (default: 300).
     """
 
     if subcluster_col not in adata.obs:
@@ -1572,6 +1582,10 @@ def plot_umap_highlight_clusters(
             )
     else:
         highlight_mask = pd.Series(True, index=adata.obs_names)
+
+    save_path = Path(save_dir) if save_dir is not None else None
+    if save_path is not None:
+        save_path.mkdir(parents=True, exist_ok=True)
 
     categories_to_plot = adata.obs[subcluster_col].cat.categories
 
@@ -1633,3 +1647,12 @@ def plot_umap_highlight_clusters(
             legend_loc=legend_loc,
             show=show,
         )
+
+        if save_path is not None:
+            safe_subcluster_col = _cleanstring(subcluster_col)
+            safe_cluster = _cleanstring(cl)
+            out_file = save_path / f"{safe_subcluster_col}_{safe_cluster}.png"
+            plt.savefig(out_file, dpi=save_dpi, bbox_inches="tight")
+
+        if not show:
+            plt.close()
