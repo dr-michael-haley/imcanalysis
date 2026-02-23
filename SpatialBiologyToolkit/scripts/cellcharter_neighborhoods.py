@@ -651,8 +651,7 @@ def _save_cellcharter_enrichment_plot(
             group_key=cluster_key,
             label_key=label_key,
             figsize=(8, 6),
-            dpi=240,
-            save=out_path,
+            save=str(out_path),
         )
     except Exception as exc:
         logging.warning("Could not generate CellCharter enrichment plot: %s", exc)
@@ -666,7 +665,7 @@ def _ensure_categorical_obs(adata: ad.AnnData, key: str) -> bool:
         return False
 
     series = adata.obs[key]
-    if pd.api.types.is_categorical_dtype(series):
+    if isinstance(series.dtype, pd.CategoricalDtype):
         adata.obs[key] = series.cat.remove_unused_categories()
     else:
         adata.obs[key] = pd.Categorical(series.astype(str))
@@ -681,6 +680,120 @@ def _to_dataframe(matrix: Any) -> pd.DataFrame:
     if arr.ndim == 1:
         arr = arr[:, np.newaxis]
     return pd.DataFrame(arr)
+
+
+def _sanitize_h5ad_token(value: Any) -> Any:
+    """Replace HDF5 path separators in string labels used in AnnData uns payloads."""
+    if isinstance(value, str):
+        return value.replace("/", "_")
+    return value
+
+
+def _sanitize_index_for_h5ad(index: pd.Index) -> Tuple[pd.Index, int]:
+    """Sanitize HDF5-unsafe '/' characters in pandas Index and name."""
+    changes = 0
+
+    if isinstance(index, pd.MultiIndex):
+        sanitized_tuples = []
+        for values in index.to_list():
+            sanitized = tuple(_sanitize_h5ad_token(v) for v in values)
+            changes += sum(1 for old, new in zip(values, sanitized) if old != new)
+            sanitized_tuples.append(sanitized)
+        names = [_sanitize_h5ad_token(name) for name in index.names]
+        changes += sum(1 for old, new in zip(index.names, names) if old != new)
+        return pd.MultiIndex.from_tuples(sanitized_tuples, names=names), changes
+
+    values = index.to_list()
+    sanitized_values = [_sanitize_h5ad_token(v) for v in values]
+    changes += sum(1 for old, new in zip(values, sanitized_values) if old != new)
+    name = _sanitize_h5ad_token(index.name)
+    if name != index.name:
+        changes += 1
+    return pd.Index(sanitized_values, name=name), changes
+
+
+def _sanitize_dataframe_for_h5ad(df: pd.DataFrame) -> Tuple[pd.DataFrame, int]:
+    """Sanitize DataFrame row/column labels for safe H5AD serialization."""
+    new_index, index_changes = _sanitize_index_for_h5ad(df.index)
+    new_columns, column_changes = _sanitize_index_for_h5ad(df.columns)
+    total = index_changes + column_changes
+    if total == 0:
+        return df, 0
+    out = df.copy()
+    out.index = new_index
+    out.columns = new_columns
+    return out, total
+
+
+def _sanitize_series_for_h5ad(series: pd.Series) -> Tuple[pd.Series, int]:
+    """Sanitize Series index/name for safe H5AD serialization."""
+    new_index, index_changes = _sanitize_index_for_h5ad(series.index)
+    new_name = _sanitize_h5ad_token(series.name)
+    name_changes = 1 if new_name != series.name else 0
+    total = index_changes + name_changes
+    if total == 0:
+        return series, 0
+    out = series.copy()
+    out.index = new_index
+    out.name = new_name
+    return out, total
+
+
+def _sanitize_object_for_h5ad(obj: Any) -> Tuple[Any, int]:
+    """Recursively sanitize nested objects in adata.uns for h5ad compatibility."""
+    if isinstance(obj, pd.DataFrame):
+        return _sanitize_dataframe_for_h5ad(obj)
+
+    if isinstance(obj, pd.Series):
+        return _sanitize_series_for_h5ad(obj)
+
+    if isinstance(obj, dict):
+        changes = 0
+        sanitized: Dict[Any, Any] = {}
+        for key, value in obj.items():
+            new_key = _sanitize_h5ad_token(key)
+            if new_key != key:
+                changes += 1
+            if isinstance(new_key, str):
+                base_key = new_key
+                suffix = 1
+                while new_key in sanitized:
+                    new_key = f"{base_key}_{suffix}"
+                    suffix += 1
+                    changes += 1
+            new_value, new_changes = _sanitize_object_for_h5ad(value)
+            sanitized[new_key] = new_value
+            changes += new_changes
+        return sanitized, changes
+
+    if isinstance(obj, list):
+        changes = 0
+        out = []
+        for item in obj:
+            new_item, new_changes = _sanitize_object_for_h5ad(item)
+            out.append(new_item)
+            changes += new_changes
+        return out, changes
+
+    if isinstance(obj, tuple):
+        changes = 0
+        out = []
+        for item in obj:
+            new_item, new_changes = _sanitize_object_for_h5ad(item)
+            out.append(new_item)
+            changes += new_changes
+        return tuple(out), changes
+
+    return obj, 0
+
+
+def _sanitize_uns_for_h5ad_write(adata: ad.AnnData) -> int:
+    """Sanitize adata.uns labels/keys that are invalid in h5 path-like storage."""
+    sanitized, changes = _sanitize_object_for_h5ad(dict(adata.uns))
+    if changes > 0:
+        adata.uns.clear()
+        adata.uns.update(sanitized)
+    return changes
 
 
 def _save_matrix_heatmap(
@@ -800,9 +913,8 @@ def _run_nhood_enrichment(
                 adata,
                 cluster_key=cluster_key,
                 figsize=(8, 6),
-                dpi=240,
                 significance=cellcharter_config.nhood_enrichment_significance,
-                save=out_dir / "nhood_enrichment_cellcharter_plot.png",
+                save=str(out_dir / "nhood_enrichment_cellcharter_plot.png"),
             )
         except Exception as exc:
             logging.warning("Could not generate CellCharter nhood enrichment plot: %s", exc)
@@ -948,8 +1060,7 @@ def _run_diff_nhood_enrichment(
                 condition_groups=condition_groups,
                 ncols=int(cellcharter_config.diff_nhood_plot_ncols),
                 cmap="PRGn_r",
-                dpi=240,
-                save=out_dir / "diff_nhood_enrichment_cellcharter_plot.png",
+                save=str(out_dir / "diff_nhood_enrichment_cellcharter_plot.png"),
             )
         except Exception as exc:
             logging.warning("Could not generate CellCharter differential nhood plot: %s", exc)
@@ -1488,6 +1599,13 @@ def run_cellcharter_neighborhoods(
         "diff_nhood_enrichment": diff_nhood_details,
         "shape_characterisation": shape_details,
     }
+
+    sanitized_changes = _sanitize_uns_for_h5ad_write(adata)
+    if sanitized_changes > 0:
+        logging.warning(
+            "Sanitized %d HDF5-unsafe labels in adata.uns before write_h5ad (replaced '/' with '_').",
+            sanitized_changes,
+        )
 
     adata.write_h5ad(output_path)
     logging.info("Saved CellCharter AnnData output to %s", output_path)

@@ -1,11 +1,14 @@
+from __future__ import annotations
+
 # Standard Library Imports
 import datetime
 import os
 from os import getlogin
 from pathlib import Path
 import subprocess
+from dataclasses import dataclass
 from types import ModuleType
-from typing import List, Union, Optional, Tuple, Any
+from typing import List, Union, Optional, Tuple, Any, MutableMapping, Sequence
 from collections.abc import Iterable
 import math
 import importlib.util
@@ -23,6 +26,7 @@ import scipy
 from scipy.sparse import issparse
 import scipy.spatial.distance as ssd
 import scipy.cluster.hierarchy as sch
+
 
 
 def compare_lists(L1: List[Any], L2: List[Any], L1_name: str, L2_name: str, return_error: bool = True) -> None:
@@ -1656,3 +1660,404 @@ def plot_umap_highlight_clusters(
 
         if not show:
             plt.close()
+
+@dataclass
+class ResolvedIssue:
+    path: str
+    reason: str
+    action: str
+    original_type: str
+    original_preview: str
+
+
+def _preview(x: Any, maxlen: int = 140) -> str:
+    try:
+        s = repr(x)
+    except Exception:
+        s = f"<unreprable {type(x).__name__}>"
+    return s if len(s) <= maxlen else s[: maxlen - 3] + "..."
+
+
+def _is_pandas_na(x: Any) -> bool:
+    if pd is None:
+        return False
+    try:
+        if x is pd.NA or x is pd.NaT:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _is_numpy_masked(x: Any) -> bool:
+    try:
+        return x is np.ma.masked
+    except Exception:
+        return False
+
+
+def _contains_nulls_in_object_array(arr: np.ndarray) -> bool:
+    try:
+        for v in arr.ravel():
+            if v is None or _is_pandas_na(v) or _is_numpy_masked(v):
+                return True
+    except Exception:
+        return True
+    return False
+
+
+def _clean_obj_inplace(
+    obj: Any,
+    path: str,
+    resolved: List[ResolvedIssue],
+    *,
+    aggressive: bool,
+    max_depth: int,
+    _depth: int = 0,
+) -> bool:
+    """
+    Clean obj in-place if it's a mutable container.
+    Returns True if any change was made under this obj.
+    """
+    if _depth > max_depth:
+        resolved.append(
+            ResolvedIssue(
+                path=path,
+                reason=f"Max recursion depth exceeded ({max_depth}); leaving subtree as-is.",
+                action="warn_only",
+                original_type=type(obj).__name__,
+                original_preview=_preview(obj),
+            )
+        )
+        return False
+
+    changed = False
+
+    # --- dict-like ---
+    if isinstance(obj, MutableMapping):
+        keys = list(obj.keys())
+        for k in keys:
+            subpath = f"{path}/{k}" if path else str(k)
+            v = obj.get(k)
+
+            # remove obvious null-ish values
+            if v is None or _is_pandas_na(v) or _is_numpy_masked(v):
+                resolved.append(
+                    ResolvedIssue(
+                        path=subpath,
+                        reason="Value is None/NA/masked (often written with 'null' encoding); removed key.",
+                        action="removed_key",
+                        original_type=type(v).__name__,
+                        original_preview=_preview(v),
+                    )
+                )
+                try:
+                    del obj[k]
+                except Exception:
+                    obj.pop(k, None)
+                changed = True
+                continue
+
+            # numpy object arrays containing nulls -> remove key (safest)
+            if isinstance(v, np.ndarray) and v.dtype == object and _contains_nulls_in_object_array(v):
+                resolved.append(
+                    ResolvedIssue(
+                        path=subpath,
+                        reason="NumPy object array contains None/NA/masked; removed key.",
+                        action="removed_key",
+                        original_type="ndarray[object]",
+                        original_preview=f"shape={v.shape}, dtype={v.dtype}",
+                    )
+                )
+                try:
+                    del obj[k]
+                except Exception:
+                    obj.pop(k, None)
+                changed = True
+                continue
+
+            # pandas Series/DF with object dtype and NA -> drop or coerce (optional)
+            if pd is not None:
+                if isinstance(v, (pd.Series, pd.Index)):
+                    try:
+                        has_na = v.isna().any()
+                    except Exception:
+                        has_na = True
+                    if has_na and getattr(v.dtype, "name", "") == "object":
+                        if aggressive:
+                            v2 = v.astype("string").fillna("")
+                            obj[k] = v2
+                            resolved.append(
+                                ResolvedIssue(
+                                    path=subpath,
+                                    reason="Pandas Series/Index object dtype had NA/None; coerced to string and filled NA.",
+                                    action="coerced_to_string_and_filled",
+                                    original_type=type(v).__name__,
+                                    original_preview=f"len={len(v)}, dtype={v.dtype}",
+                                )
+                            )
+                            changed = True
+                        else:
+                            resolved.append(
+                                ResolvedIssue(
+                                    path=subpath,
+                                    reason="Pandas Series/Index object dtype had NA/None; removed key (most compatible).",
+                                    action="removed_key",
+                                    original_type=type(v).__name__,
+                                    original_preview=f"len={len(v)}, dtype={v.dtype}",
+                                )
+                            )
+                            try:
+                                del obj[k]
+                            except Exception:
+                                obj.pop(k, None)
+                            changed = True
+                        continue
+
+                if isinstance(v, pd.DataFrame):
+                    try:
+                        obj_cols = v.select_dtypes(include=["object"])
+                        has_problem = (not obj_cols.empty) and obj_cols.isna().any().any()
+                    except Exception:
+                        has_problem = True
+                    if has_problem:
+                        if aggressive:
+                            v2 = v.copy()
+                            try:
+                                obj_cols2 = v2.select_dtypes(include=["object"])
+                                v2[obj_cols2.columns] = obj_cols2.fillna("")
+                            except Exception:
+                                v2 = v2.fillna("")
+                            obj[k] = v2
+                            resolved.append(
+                                ResolvedIssue(
+                                    path=subpath,
+                                    reason="Pandas DataFrame had object cols with NA/None; filled NA with empty strings.",
+                                    action="filled_object_nas",
+                                    original_type="DataFrame",
+                                    original_preview=f"shape={v.shape}",
+                                )
+                            )
+                            changed = True
+                        else:
+                            resolved.append(
+                                ResolvedIssue(
+                                    path=subpath,
+                                    reason="Pandas DataFrame had object cols with NA/None; removed key (most compatible).",
+                                    action="removed_key",
+                                    original_type="DataFrame",
+                                    original_preview=f"shape={v.shape}",
+                                )
+                            )
+                            try:
+                                del obj[k]
+                            except Exception:
+                                obj.pop(k, None)
+                            changed = True
+                        continue
+
+            # recurse into nested containers
+            if isinstance(v, (MutableMapping, list, tuple)):
+                changed |= _clean_obj_inplace(
+                    v, subpath, resolved, aggressive=aggressive, max_depth=max_depth, _depth=_depth + 1
+                )
+
+        return changed
+
+    # --- list ---
+    if isinstance(obj, list):
+        i = 0
+        while i < len(obj):
+            v = obj[i]
+            subpath = f"{path}[{i}]"
+
+            if v is None or _is_pandas_na(v) or _is_numpy_masked(v):
+                resolved.append(
+                    ResolvedIssue(
+                        path=subpath,
+                        reason="List element is None/NA/masked; removed element.",
+                        action="removed_list_element",
+                        original_type=type(v).__name__,
+                        original_preview=_preview(v),
+                    )
+                )
+                obj.pop(i)
+                changed = True
+                continue
+
+            if isinstance(v, np.ndarray) and v.dtype == object and _contains_nulls_in_object_array(v):
+                resolved.append(
+                    ResolvedIssue(
+                        path=subpath,
+                        reason="List element is a NumPy object array containing None/NA/masked; removed element.",
+                        action="removed_list_element",
+                        original_type="ndarray[object]",
+                        original_preview=f"shape={v.shape}, dtype={v.dtype}",
+                    )
+                )
+                obj.pop(i)
+                changed = True
+                continue
+
+            if isinstance(v, (MutableMapping, list, tuple)):
+                changed |= _clean_obj_inplace(
+                    v, subpath, resolved, aggressive=aggressive, max_depth=max_depth, _depth=_depth + 1
+                )
+
+            i += 1
+
+        return changed
+
+    # --- tuple (immutable): we don't rewrite tuples in-place; we only clean nested mutables inside them.
+    if isinstance(obj, tuple):
+        for i, v in enumerate(obj):
+            if isinstance(v, (MutableMapping, list)):
+                changed |= _clean_obj_inplace(
+                    v, f"{path}[{i}]", resolved, aggressive=aggressive, max_depth=max_depth, _depth=_depth + 1
+                )
+        return changed
+
+    return False
+
+
+def _integrity_warnings(adata: Any) -> List[ResolvedIssue]:
+    issues: List[ResolvedIssue] = []
+
+    # Only checks we can do without forcing heavy materialization:
+    try:
+        x_shape = getattr(getattr(adata, "X", None), "shape", None)
+        n_obs = getattr(adata, "n_obs", None)
+        n_vars = getattr(adata, "n_vars", None)
+        var = getattr(adata, "var", None)
+        obs = getattr(adata, "obs", None)
+
+        if x_shape is not None:
+            if n_obs is not None and x_shape[0] != n_obs:
+                issues.append(
+                    ResolvedIssue(
+                        path="X",
+                        reason=f"Inconsistent shapes: X has {x_shape[0]} rows but adata.n_obs is {n_obs}.",
+                        action="warn_only",
+                        original_type=type(getattr(adata, "X", None)).__name__,
+                        original_preview=f"shape={x_shape}",
+                    )
+                )
+            if n_vars is not None and x_shape[1] != n_vars:
+                issues.append(
+                    ResolvedIssue(
+                        path="X",
+                        reason=f"Inconsistent shapes: X has {x_shape[1]} cols but adata.n_vars is {n_vars}.",
+                        action="warn_only",
+                        original_type=type(getattr(adata, "X", None)).__name__,
+                        original_preview=f"shape={x_shape}",
+                    )
+                )
+
+        if var is not None and x_shape is not None:
+            try:
+                var_len = len(var)
+                if var_len != x_shape[1]:
+                    issues.append(
+                        ResolvedIssue(
+                            path="var",
+                            reason=f"Invalid AnnData: var has {var_len} rows but X has {x_shape[1]} columns.",
+                            action="warn_only",
+                            original_type=type(var).__name__,
+                            original_preview=f"len={var_len}",
+                        )
+                    )
+            except Exception:
+                pass
+
+        if obs is not None and x_shape is not None:
+            try:
+                obs_len = len(obs)
+                if obs_len != x_shape[0]:
+                    issues.append(
+                        ResolvedIssue(
+                            path="obs",
+                            reason=f"Invalid AnnData: obs has {obs_len} rows but X has {x_shape[0]} rows.",
+                            action="warn_only",
+                            original_type=type(obs).__name__,
+                            original_preview=f"len={obs_len}",
+                        )
+                    )
+            except Exception:
+                pass
+
+    except Exception as e:
+        issues.append(
+            ResolvedIssue(
+                path="adata",
+                reason=f"Integrity checks failed to run cleanly: {e}",
+                action="warn_only",
+                original_type=type(adata).__name__,
+                original_preview=_preview(adata),
+            )
+        )
+
+    return issues
+
+
+def clean_anndata(
+    adata: Any,
+    *,
+    deep_copy: bool = True,
+    aggressive: bool = False,
+    clean_uns: bool = True,
+    clean_obs: bool = False,
+    clean_var: bool = False,
+    clean_obsm: bool = False,
+    clean_varm: bool = False,
+    clean_obsp: bool = False,
+    clean_varp: bool = False,
+    clean_layers: bool = False,
+    max_depth: int = 50,
+) -> Tuple[Any, List[ResolvedIssue]]:
+    """
+    Clean an AnnData object for better backward compatibility when writing with newer anndata
+    and reading with older versions (e.g., 0.12 -> 0.11).
+
+    Returns (cleaned_adata, resolved_issues). The cleaner:
+      - Removes dict keys / list elements that are None / pandas NA/NaT / numpy masked
+      - Removes numpy object arrays that contain None/NA/masked
+      - Optionally (aggressive=True) coerces some pandas object containers to strings instead of deleting
+      - Avoids assigning back to AnnData slots (mutates underlying containers) to avoid triggering
+        validation setters on malformed objects.
+
+    Defaults are conservative: clean_uns=True only.
+    """
+    adata2 = copy.deepcopy(adata) if deep_copy else adata
+    resolved: List[ResolvedIssue] = []
+
+    # Warn if object already inconsistent (your error suggests it is)
+    resolved.extend(_integrity_warnings(adata2))
+
+    # Clean selected slots in-place (no setter revalidation)
+    if clean_uns and hasattr(adata2, "uns"):
+        _clean_obj_inplace(adata2.uns, "uns", resolved, aggressive=aggressive, max_depth=max_depth)
+
+    # The below can be destructive; only enable if you really want a “complete clean”.
+    if clean_obs and hasattr(adata2, "obs"):
+        # obs is a DataFrame; cleaning it could drop columns if aggressive=False
+        _clean_obj_inplace(adata2.obs, "obs", resolved, aggressive=aggressive, max_depth=max_depth)
+
+    if clean_var and hasattr(adata2, "var"):
+        _clean_obj_inplace(adata2.var, "var", resolved, aggressive=aggressive, max_depth=max_depth)
+
+    if clean_obsm and hasattr(adata2, "obsm"):
+        _clean_obj_inplace(adata2.obsm, "obsm", resolved, aggressive=aggressive, max_depth=max_depth)
+
+    if clean_varm and hasattr(adata2, "varm"):
+        _clean_obj_inplace(adata2.varm, "varm", resolved, aggressive=aggressive, max_depth=max_depth)
+
+    if clean_obsp and hasattr(adata2, "obsp"):
+        _clean_obj_inplace(adata2.obsp, "obsp", resolved, aggressive=aggressive, max_depth=max_depth)
+
+    if clean_varp and hasattr(adata2, "varp"):
+        _clean_obj_inplace(adata2.varp, "varp", resolved, aggressive=aggressive, max_depth=max_depth)
+
+    if clean_layers and hasattr(adata2, "layers"):
+        _clean_obj_inplace(adata2.layers, "layers", resolved, aggressive=aggressive, max_depth=max_depth)
+
+    return adata2, resolved
