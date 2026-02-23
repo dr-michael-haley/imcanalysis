@@ -410,6 +410,56 @@ class CellCharterConfig:
     enrichment_with_pvalues: bool = False
     enrichment_n_perms: int = 1000
 
+    # Neighborhood enrichment (CellCharter graph enrichment)
+    run_nhood_enrichment: bool = True
+    nhood_connectivity_key: Optional[str] = None
+    nhood_log_fold_change: bool = False
+    nhood_only_inter: bool = True
+    nhood_symmetric: bool = False
+    nhood_with_pvalues: bool = False
+    nhood_n_perms: int = 1000
+    nhood_n_jobs: int = 1
+    nhood_batch_size: int = 10
+    nhood_observed_expected: bool = True
+    save_nhood_enrichment_plot: bool = True
+    nhood_enrichment_significance: Optional[float] = None
+
+    # Differential neighborhood enrichment by condition
+    run_diff_nhood_enrichment: bool = False
+    diff_nhood_condition_key: Optional[str] = None
+    diff_nhood_condition_groups: Optional[List[str]] = None
+    diff_nhood_connectivity_key: Optional[str] = None
+    diff_nhood_log_fold_change: bool = False
+    diff_nhood_only_inter: bool = True
+    diff_nhood_symmetric: bool = False
+    diff_nhood_with_pvalues: bool = False
+    diff_nhood_library_key: Optional[str] = None
+    diff_nhood_n_perms: int = 1000
+    diff_nhood_n_jobs: Optional[int] = None
+    diff_nhood_plot_ncols: int = 2
+    save_diff_nhood_enrichment_plot: bool = True
+
+    # Shape characterisation
+    run_shape_characterisation: bool = False
+    shape_component_key: str = 'component'
+    shape_component_cluster_key: Optional[str] = None
+    shape_connectivity_key: Optional[str] = None
+    shape_min_cells: int = 250
+    shape_min_hole_area_ratio: float = 0.1
+    shape_alpha_start: int = 2000
+    shape_compute_linearity: bool = True
+    shape_linearity_key: str = 'linearity'
+    shape_linearity_height: int = 1000
+    shape_linearity_min_ratio: float = 0.05
+    shape_compute_curl: bool = True
+    shape_curl_key: str = 'curl'
+    shape_plot_metrics: bool = True
+    shape_metrics_condition_key: Optional[str] = None
+    shape_metrics_condition_groups: Optional[List[str]] = None
+    shape_metrics_cluster_key: Optional[str] = None
+    shape_metrics_cluster_groups: Optional[List[str]] = None
+    shape_metrics_ncols: int = 2
+
     # QC plotting
     save_spatial_plots: bool = True
     max_rois_for_plots: int = 12

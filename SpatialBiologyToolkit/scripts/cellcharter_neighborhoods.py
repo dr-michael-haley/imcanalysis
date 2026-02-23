@@ -7,7 +7,9 @@ This stage:
 3. Builds a spatial graph per ROI/sample.
 4. Aggregates neighborhood features with CellCharter.
 5. Clusters cells into spatial neighborhoods.
-6. Saves updated AnnData plus QC tables/plots.
+6. Optionally runs neighborhood enrichment analyses.
+7. Optionally runs shape characterisation analyses.
+8. Saves updated AnnData plus QC tables/plots.
 """
 
 from __future__ import annotations
@@ -658,6 +660,543 @@ def _save_cellcharter_enrichment_plot(
         plt.close("all")
 
 
+def _ensure_categorical_obs(adata: ad.AnnData, key: str) -> bool:
+    """Ensure adata.obs[key] exists and is categorical."""
+    if key not in adata.obs.columns:
+        return False
+
+    series = adata.obs[key]
+    if pd.api.types.is_categorical_dtype(series):
+        adata.obs[key] = series.cat.remove_unused_categories()
+    else:
+        adata.obs[key] = pd.Categorical(series.astype(str))
+    return True
+
+
+def _to_dataframe(matrix: Any) -> pd.DataFrame:
+    """Coerce matrix-like output to DataFrame."""
+    if isinstance(matrix, pd.DataFrame):
+        return matrix
+    arr = np.asarray(matrix)
+    if arr.ndim == 1:
+        arr = arr[:, np.newaxis]
+    return pd.DataFrame(arr)
+
+
+def _save_matrix_heatmap(
+    matrix_df: pd.DataFrame,
+    out_path: Path,
+    title: str,
+    cbar_label: str,
+    cmap: str = "coolwarm",
+    symmetric: bool = True,
+) -> None:
+    """Save a compact heatmap from a DataFrame matrix."""
+    if matrix_df.empty:
+        return
+
+    matrix = matrix_df.to_numpy(dtype=float)
+    finite = matrix[np.isfinite(matrix)]
+    if finite.size == 0:
+        return
+
+    if symmetric:
+        vmax = float(np.max(np.abs(finite)))
+        if vmax == 0:
+            vmax = 1.0
+        vmin = -vmax
+    else:
+        vmin = float(np.min(finite))
+        vmax = float(np.max(finite))
+        if vmin == vmax:
+            vmax = vmin + 1.0
+
+    width = max(6.0, 0.35 * matrix_df.shape[1] + 2.5)
+    height = max(4.0, 0.35 * matrix_df.shape[0] + 2.0)
+    fig, ax = plt.subplots(figsize=(width, height))
+    image = ax.imshow(matrix, cmap=cmap, vmin=vmin, vmax=vmax, aspect="auto")
+    ax.set_xticks(np.arange(matrix_df.shape[1]))
+    ax.set_xticklabels(matrix_df.columns, rotation=45, ha="right", fontsize=8)
+    ax.set_yticks(np.arange(matrix_df.shape[0]))
+    ax.set_yticklabels(matrix_df.index, fontsize=8)
+    ax.set_title(title)
+    cbar = fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label(cbar_label)
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=240, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _run_nhood_enrichment(
+    adata: ad.AnnData,
+    cellcharter_config: CellCharterConfig,
+    qc_dir: Path,
+) -> Dict[str, Any]:
+    """Run CellCharter neighborhood enrichment and save outputs."""
+    details: Dict[str, Any] = {"enabled": True, "ran": False}
+    cluster_key = cellcharter_config.cluster_key
+
+    if not _ensure_categorical_obs(adata, cluster_key):
+        logging.warning(
+            "Skipping nhood enrichment: cluster key '%s' is missing in adata.obs.",
+            cluster_key,
+        )
+        return details
+
+    out_dir = qc_dir / "nhood_enrichment"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    logging.info(
+        "Running CellCharter nhood enrichment (cluster_key=%s, pvalues=%s, n_perms=%d).",
+        cluster_key,
+        cellcharter_config.nhood_with_pvalues,
+        int(cellcharter_config.nhood_n_perms),
+    )
+    try:
+        cc.gr.nhood_enrichment(
+            adata,
+            cluster_key=cluster_key,
+            connectivity_key=cellcharter_config.nhood_connectivity_key,
+            log_fold_change=bool(cellcharter_config.nhood_log_fold_change),
+            only_inter=bool(cellcharter_config.nhood_only_inter),
+            symmetric=bool(cellcharter_config.nhood_symmetric),
+            pvalues=bool(cellcharter_config.nhood_with_pvalues),
+            n_perms=int(cellcharter_config.nhood_n_perms),
+            n_jobs=int(cellcharter_config.nhood_n_jobs),
+            batch_size=int(cellcharter_config.nhood_batch_size),
+            observed_expected=bool(cellcharter_config.nhood_observed_expected),
+        )
+    except Exception as exc:
+        logging.warning("CellCharter nhood enrichment failed: %s", exc)
+        return details
+
+    uns_key = f"{cluster_key}_nhood_enrichment"
+    result = adata.uns.get(uns_key)
+    if not isinstance(result, dict):
+        logging.warning("Neighborhood enrichment output '%s' not found or invalid.", uns_key)
+        return details
+
+    for key in ("enrichment", "pvalue", "observed", "expected"):
+        if key not in result or result[key] is None:
+            continue
+        table = _to_dataframe(result[key])
+        table.to_csv(out_dir / f"{key}.csv")
+        if key == "enrichment" and bool(cellcharter_config.save_enrichment_heatmap):
+            _save_matrix_heatmap(
+                table,
+                out_path=out_dir / "enrichment_heatmap.png",
+                title=f"Neighborhood enrichment ({cluster_key})",
+                cbar_label="enrichment",
+                cmap="coolwarm",
+                symmetric=True,
+            )
+
+    if isinstance(result.get("params"), dict):
+        pd.Series(result["params"], name="value").to_csv(out_dir / "params.csv")
+
+    if cellcharter_config.save_nhood_enrichment_plot:
+        try:
+            cc.pl.nhood_enrichment(
+                adata,
+                cluster_key=cluster_key,
+                figsize=(8, 6),
+                dpi=240,
+                significance=cellcharter_config.nhood_enrichment_significance,
+                save=out_dir / "nhood_enrichment_cellcharter_plot.png",
+            )
+        except Exception as exc:
+            logging.warning("Could not generate CellCharter nhood enrichment plot: %s", exc)
+        finally:
+            plt.close("all")
+
+    details.update({"ran": True, "uns_key": uns_key, "output_dir": str(out_dir)})
+    return details
+
+
+def _run_diff_nhood_enrichment(
+    adata: ad.AnnData,
+    cellcharter_config: CellCharterConfig,
+    sample_key: str,
+    qc_dir: Path,
+) -> Dict[str, Any]:
+    """Run differential neighborhood enrichment and save outputs."""
+    details: Dict[str, Any] = {"enabled": True, "ran": False}
+    cluster_key = cellcharter_config.cluster_key
+    condition_key = cellcharter_config.diff_nhood_condition_key
+
+    if not condition_key:
+        for fallback in ("condition", "dataset", "group", "sample_type"):
+            if fallback in adata.obs.columns:
+                condition_key = fallback
+                logging.info(
+                    "No diff_nhood_condition_key set; falling back to '%s' from adata.obs.",
+                    fallback,
+                )
+                break
+        if not condition_key:
+            logging.warning(
+                "Skipping differential nhood enrichment: set cellcharter.diff_nhood_condition_key in config."
+            )
+            return details
+
+    if not _ensure_categorical_obs(adata, cluster_key):
+        logging.warning(
+            "Skipping differential nhood enrichment: cluster key '%s' is missing in adata.obs.",
+            cluster_key,
+        )
+        return details
+
+    if not _ensure_categorical_obs(adata, condition_key):
+        logging.warning(
+            "Skipping differential nhood enrichment: condition key '%s' is missing in adata.obs.",
+            condition_key,
+        )
+        return details
+
+    condition_groups = cellcharter_config.diff_nhood_condition_groups
+    if condition_groups:
+        available = set(adata.obs[condition_key].cat.categories.tolist())
+        condition_groups = [str(g) for g in condition_groups if str(g) in available]
+        if len(condition_groups) < 2:
+            logging.warning(
+                "Skipping differential nhood enrichment: fewer than 2 valid condition groups in '%s'.",
+                condition_key,
+            )
+            return details
+
+    library_key = cellcharter_config.diff_nhood_library_key or sample_key
+    if bool(cellcharter_config.diff_nhood_with_pvalues) and library_key not in adata.obs.columns:
+        logging.warning(
+            "P-value estimation requested but library key '%s' is missing. Falling back to sample key '%s'.",
+            library_key,
+            sample_key,
+        )
+        library_key = sample_key
+
+    out_dir = qc_dir / "diff_nhood_enrichment"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    logging.info(
+        "Running differential nhood enrichment (%s by %s, pvalues=%s, n_perms=%d).",
+        cluster_key,
+        condition_key,
+        cellcharter_config.diff_nhood_with_pvalues,
+        int(cellcharter_config.diff_nhood_n_perms),
+    )
+    kwargs: Dict[str, Any] = {
+        "log_fold_change": bool(cellcharter_config.diff_nhood_log_fold_change),
+        "only_inter": bool(cellcharter_config.diff_nhood_only_inter),
+        "symmetric": bool(cellcharter_config.diff_nhood_symmetric),
+    }
+    n_jobs = cellcharter_config.diff_nhood_n_jobs
+    try:
+        cc.gr.diff_nhood_enrichment(
+            adata,
+            cluster_key=cluster_key,
+            condition_key=condition_key,
+            condition_groups=condition_groups,
+            connectivity_key=cellcharter_config.diff_nhood_connectivity_key,
+            pvalues=bool(cellcharter_config.diff_nhood_with_pvalues),
+            library_key=library_key,
+            n_perms=int(cellcharter_config.diff_nhood_n_perms),
+            n_jobs=int(n_jobs) if n_jobs is not None else None,
+            **kwargs,
+        )
+    except Exception as exc:
+        logging.warning("CellCharter differential nhood enrichment failed: %s", exc)
+        return details
+
+    uns_key = f"{cluster_key}_{condition_key}_diff_nhood_enrichment"
+    result = adata.uns.get(uns_key)
+    if not isinstance(result, dict) or not result:
+        logging.warning("Differential nhood enrichment output '%s' not found or empty.", uns_key)
+        return details
+
+    long_tables: List[pd.DataFrame] = []
+    for pair_key, pair_result in result.items():
+        if not isinstance(pair_result, dict):
+            continue
+        safe_pair = cleanstring(str(pair_key))
+        for metric_key in ("enrichment", "pvalue"):
+            matrix = pair_result.get(metric_key)
+            if matrix is None:
+                continue
+            table = _to_dataframe(matrix)
+            table.to_csv(out_dir / f"{safe_pair}_{metric_key}.csv")
+            if metric_key == "enrichment":
+                long_df = (
+                    table.stack(dropna=False)
+                    .rename("enrichment")
+                    .reset_index()
+                    .rename(columns={"level_0": "source_cluster", "level_1": "target_cluster"})
+                )
+                long_df.insert(0, "condition_pair", str(pair_key))
+                long_tables.append(long_df)
+
+    if long_tables:
+        pd.concat(long_tables, ignore_index=True).to_csv(
+            out_dir / "diff_nhood_enrichment_long.csv",
+            index=False,
+        )
+
+    if cellcharter_config.save_diff_nhood_enrichment_plot:
+        try:
+            cc.pl.diff_nhood_enrichment(
+                adata,
+                cluster_key=cluster_key,
+                condition_key=condition_key,
+                condition_groups=condition_groups,
+                ncols=int(cellcharter_config.diff_nhood_plot_ncols),
+                cmap="PRGn_r",
+                dpi=240,
+                save=out_dir / "diff_nhood_enrichment_cellcharter_plot.png",
+            )
+        except Exception as exc:
+            logging.warning("Could not generate CellCharter differential nhood plot: %s", exc)
+        finally:
+            plt.close("all")
+
+    details.update(
+        {
+            "ran": True,
+            "uns_key": uns_key,
+            "condition_key": condition_key,
+            "condition_groups": condition_groups,
+            "output_dir": str(out_dir),
+        }
+    )
+    return details
+
+
+def _run_shape_characterisation(
+    adata: ad.AnnData,
+    cellcharter_config: CellCharterConfig,
+    sample_key: str,
+    qc_dir: Path,
+) -> Dict[str, Any]:
+    """Run CellCharter shape characterisation pipeline and save outputs."""
+    details: Dict[str, Any] = {"enabled": True, "ran": False}
+    cluster_key = cellcharter_config.cluster_key
+    component_key = cellcharter_config.shape_component_key
+    component_cluster_key = (
+        cellcharter_config.shape_component_cluster_key or cluster_key
+    )
+
+    if component_cluster_key not in adata.obs.columns:
+        logging.warning(
+            "Skipping shape characterisation: component cluster key '%s' missing in adata.obs.",
+            component_cluster_key,
+        )
+        return details
+
+    _ensure_categorical_obs(adata, component_cluster_key)
+
+    out_dir = qc_dir / "shape_characterisation"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    logging.info(
+        "Running connected components (cluster_key=%s, min_cells=%d, out_key=%s).",
+        component_cluster_key,
+        int(cellcharter_config.shape_min_cells),
+        component_key,
+    )
+    try:
+        cc.gr.connected_components(
+            adata,
+            cluster_key=component_cluster_key,
+            min_cells=int(cellcharter_config.shape_min_cells),
+            connectivity_key=cellcharter_config.shape_connectivity_key,
+            out_key=component_key,
+        )
+    except Exception as exc:
+        logging.warning("Connected components failed: %s", exc)
+        return details
+
+    cols = [component_key]
+    for opt_col in (sample_key, cluster_key, component_cluster_key):
+        if opt_col in adata.obs.columns and opt_col not in cols:
+            cols.append(opt_col)
+    component_table = adata.obs[cols].copy()
+    component_table.to_csv(out_dir / "components_per_cell.csv")
+
+    if sample_key in component_table.columns:
+        counts = (
+            component_table.dropna(subset=[component_key])
+            .groupby([sample_key, component_key], dropna=False)
+            .size()
+            .reset_index(name="n_cells")
+        )
+        counts.to_csv(out_dir / "components_by_sample.csv", index=False)
+
+    logging.info(
+        "Computing shape boundaries (component_key=%s, min_hole_area_ratio=%.3f, alpha_start=%d).",
+        component_key,
+        float(cellcharter_config.shape_min_hole_area_ratio),
+        int(cellcharter_config.shape_alpha_start),
+    )
+    try:
+        cc.tl.boundaries(
+            adata,
+            cluster_key=component_key,
+            min_hole_area_ratio=float(cellcharter_config.shape_min_hole_area_ratio),
+            alpha_start=int(cellcharter_config.shape_alpha_start),
+        )
+    except Exception as exc:
+        logging.warning("Shape boundary computation failed: %s", exc)
+        return details
+
+    shape_uns_key = f"shape_{component_key}"
+    shape_data = adata.uns.get(shape_uns_key, {})
+    boundaries = shape_data.get("boundary") if isinstance(shape_data, dict) else None
+    if isinstance(boundaries, dict):
+        boundary_rows = []
+        for comp_id, poly in boundaries.items():
+            try:
+                boundary_rows.append(
+                    {
+                        component_key: str(comp_id),
+                        "boundary_area": float(poly.area),
+                        "boundary_perimeter": float(poly.length),
+                        "boundary_num_vertices": int(len(poly.exterior.coords)),
+                    }
+                )
+            except Exception:
+                continue
+        if boundary_rows:
+            pd.DataFrame(boundary_rows).to_csv(
+                out_dir / "boundary_summary.csv",
+                index=False,
+            )
+
+    computed_metrics: List[str] = []
+    if cellcharter_config.shape_compute_linearity:
+        try:
+            if hasattr(cc.tl, "linearity_metric"):
+                cc.tl.linearity_metric(
+                    adata,
+                    cluster_key=component_key,
+                    out_key=cellcharter_config.shape_linearity_key,
+                    height=int(cellcharter_config.shape_linearity_height),
+                    min_ratio=float(cellcharter_config.shape_linearity_min_ratio),
+                )
+            else:
+                cc.tl.linearity(
+                    adata,
+                    cluster_key=component_key,
+                    out_key=cellcharter_config.shape_linearity_key,
+                    height=int(cellcharter_config.shape_linearity_height),
+                    min_ratio=float(cellcharter_config.shape_linearity_min_ratio),
+                )
+            computed_metrics.append(cellcharter_config.shape_linearity_key)
+        except Exception as exc:
+            logging.warning("Linearity metric failed: %s", exc)
+
+    if cellcharter_config.shape_compute_curl:
+        try:
+            if hasattr(cc.tl, "curl_metric"):
+                cc.tl.curl_metric(
+                    adata,
+                    cluster_key=component_key,
+                    out_key=cellcharter_config.shape_curl_key,
+                )
+            else:
+                cc.tl.curl(
+                    adata,
+                    cluster_key=component_key,
+                    out_key=cellcharter_config.shape_curl_key,
+                )
+            computed_metrics.append(cellcharter_config.shape_curl_key)
+        except Exception as exc:
+            logging.warning("Curl metric failed: %s", exc)
+
+    shape_data = adata.uns.get(shape_uns_key, {})
+    metric_cols: Dict[str, pd.Series] = {}
+    for metric_key in computed_metrics:
+        metric_dict = shape_data.get(metric_key) if isinstance(shape_data, dict) else None
+        if isinstance(metric_dict, dict) and metric_dict:
+            metric_series = pd.Series(metric_dict, name=metric_key, dtype=float)
+            metric_series.index = metric_series.index.astype(str)
+            metric_cols[metric_key] = metric_series
+
+    metrics_df = None
+    if metric_cols:
+        metrics_df = pd.concat(metric_cols.values(), axis=1)
+        metrics_df.index.name = component_key
+        metrics_df.to_csv(out_dir / "shape_metrics_by_component.csv")
+
+    if metrics_df is not None:
+        metadata_cols = [component_key]
+        for opt_col in (sample_key, component_cluster_key, cluster_key):
+            if opt_col in adata.obs.columns and opt_col not in metadata_cols:
+                metadata_cols.append(opt_col)
+        condition_key = (
+            cellcharter_config.shape_metrics_condition_key
+            or cellcharter_config.diff_nhood_condition_key
+        )
+        if condition_key and condition_key in adata.obs.columns:
+            metadata_cols.append(condition_key)
+
+        component_meta = (
+            adata.obs[metadata_cols]
+            .dropna(subset=[component_key])
+            .copy()
+        )
+        component_meta[component_key] = component_meta[component_key].astype(str)
+        component_meta = component_meta.drop_duplicates(subset=[component_key]).set_index(component_key)
+        component_meta = component_meta[~component_meta.index.duplicated(keep="first")]
+        component_meta.join(metrics_df, how="left").to_csv(
+            out_dir / "shape_metrics_with_metadata.csv"
+        )
+
+    if cellcharter_config.shape_plot_metrics and computed_metrics:
+        condition_key = (
+            cellcharter_config.shape_metrics_condition_key
+            or cellcharter_config.diff_nhood_condition_key
+        )
+        cluster_plot_key = cellcharter_config.shape_metrics_cluster_key
+        if cluster_plot_key is None and component_cluster_key in adata.obs.columns:
+            cluster_plot_key = component_cluster_key
+
+        if condition_key and condition_key in adata.obs.columns:
+            _ensure_categorical_obs(adata, condition_key)
+        else:
+            condition_key = None
+
+        if cluster_plot_key and cluster_plot_key in adata.obs.columns:
+            _ensure_categorical_obs(adata, cluster_plot_key)
+        else:
+            cluster_plot_key = None
+
+        if condition_key is not None or cluster_plot_key is not None:
+            try:
+                cc.pl.shape_metrics(
+                    adata,
+                    condition_key=condition_key,
+                    condition_groups=cellcharter_config.shape_metrics_condition_groups,
+                    cluster_key=cluster_plot_key,
+                    cluster_groups=cellcharter_config.shape_metrics_cluster_groups,
+                    component_key=component_key,
+                    metrics=computed_metrics,
+                    ncols=int(cellcharter_config.shape_metrics_ncols),
+                    save=out_dir / "shape_metrics_cellcharter_plot.png",
+                )
+            except Exception as exc:
+                logging.warning("Could not generate shape metrics plot: %s", exc)
+            finally:
+                plt.close("all")
+
+    details.update(
+        {
+            "ran": True,
+            "component_key": component_key,
+            "shape_uns_key": shape_uns_key,
+            "metrics": computed_metrics,
+            "output_dir": str(out_dir),
+        }
+    )
+    return details
+
+
 def _save_roi_cluster_masks(
     adata: ad.AnnData,
     sample_key: str,
@@ -839,6 +1378,19 @@ def run_cellcharter_neighborhoods(
     categories = sorted(pd.unique(labels), key=_category_sort_key)
     adata.obs[cellcharter_config.cluster_key] = pd.Categorical(labels, categories=categories)
 
+    nhood_details: Dict[str, Any] = {
+        "enabled": bool(cellcharter_config.run_nhood_enrichment),
+        "ran": False,
+    }
+    diff_nhood_details: Dict[str, Any] = {
+        "enabled": bool(cellcharter_config.run_diff_nhood_enrichment),
+        "ran": False,
+    }
+    shape_details: Dict[str, Any] = {
+        "enabled": bool(cellcharter_config.run_shape_characterisation),
+        "ran": False,
+    }
+
     if cellcharter_config.run_enrichment:
         if cellcharter_config.enrichment_label_key not in adata.obs.columns:
             logging.warning(
@@ -873,6 +1425,29 @@ def run_cellcharter_neighborhoods(
                 label_key=cellcharter_config.enrichment_label_key,
                 qc_dir=qc_dir,
             )
+
+    if cellcharter_config.run_nhood_enrichment:
+        nhood_details = _run_nhood_enrichment(
+            adata=adata,
+            cellcharter_config=cellcharter_config,
+            qc_dir=qc_dir,
+        )
+
+    if cellcharter_config.run_diff_nhood_enrichment:
+        diff_nhood_details = _run_diff_nhood_enrichment(
+            adata=adata,
+            cellcharter_config=cellcharter_config,
+            sample_key=sample_key,
+            qc_dir=qc_dir,
+        )
+
+    if cellcharter_config.run_shape_characterisation:
+        shape_details = _run_shape_characterisation(
+            adata=adata,
+            cellcharter_config=cellcharter_config,
+            sample_key=sample_key,
+            qc_dir=qc_dir,
+        )
 
     _save_cluster_tables(
         adata,
@@ -909,6 +1484,9 @@ def run_cellcharter_neighborhoods(
         "aggregated_rep_key": cellcharter_config.aggregated_rep_key,
         "aggregation_use_rep": aggregation_rep,
         "trvae": trvae_details,
+        "nhood_enrichment": nhood_details,
+        "diff_nhood_enrichment": diff_nhood_details,
+        "shape_characterisation": shape_details,
     }
 
     adata.write_h5ad(output_path)
