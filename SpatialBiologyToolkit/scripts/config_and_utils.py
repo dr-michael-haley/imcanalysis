@@ -422,6 +422,7 @@ class CellCharterConfig:
     nhood_batch_size: int = 10
     nhood_observed_expected: bool = True
     save_nhood_enrichment_plot: bool = True
+    nhood_plot_figsize: List[float] = field(default_factory=lambda: [6.0, 3.0])
     nhood_enrichment_significance: Optional[float] = None
 
     # Differential neighborhood enrichment by condition

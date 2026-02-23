@@ -840,6 +840,16 @@ def _save_matrix_heatmap(
     plt.close(fig)
 
 
+def _resolve_figsize(value: Any, fallback: Tuple[float, float]) -> Tuple[float, float]:
+    """Parse a 2-number figsize configuration with safe fallback."""
+    try:
+        if isinstance(value, (list, tuple)) and len(value) == 2:
+            return float(value[0]), float(value[1])
+    except Exception:
+        pass
+    return fallback
+
+
 def _run_nhood_enrichment(
     adata: ad.AnnData,
     cellcharter_config: CellCharterConfig,
@@ -908,11 +918,15 @@ def _run_nhood_enrichment(
         pd.Series(result["params"], name="value").to_csv(out_dir / "params.csv")
 
     if cellcharter_config.save_nhood_enrichment_plot:
+        nhood_figsize = _resolve_figsize(
+            cellcharter_config.nhood_plot_figsize,
+            fallback=(8.0, 6.0),
+        )
         try:
             cc.pl.nhood_enrichment(
                 adata,
                 cluster_key=cluster_key,
-                figsize=(8, 6),
+                figsize=nhood_figsize,
                 significance=cellcharter_config.nhood_enrichment_significance,
                 save=str(out_dir / "nhood_enrichment_cellcharter_plot.png"),
             )
