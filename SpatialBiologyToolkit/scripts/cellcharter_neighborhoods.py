@@ -117,6 +117,37 @@ def _resolve_input_adata_path(
     )
 
 
+def _resolve_output_adata_path(
+    cellcharter_config: CellCharterConfig,
+    process_config: BasicProcessConfig,
+) -> Path:
+    """Resolve output AnnData path with sensible fallback order."""
+    candidates = [
+        cellcharter_config.output_adata_path,
+        process_config.output_adata_path,
+        process_config.input_adata_path,
+    ]
+
+    for idx, candidate in enumerate(candidates):
+        if not candidate:
+            continue
+        path = Path(candidate)
+        if idx == 0:
+            logging.info("Using configured CellCharter output path: %s", path)
+        else:
+            logging.info(
+                "CellCharter output path not set; falling back to candidate %d: %s",
+                idx + 1,
+                path,
+            )
+        return path
+
+    raise ValueError(
+        "Could not resolve output AnnData path for CellCharter. "
+        "Set cellcharter.output_adata_path or process.output_adata_path."
+    )
+
+
 def _resolve_sample_key(adata: ad.AnnData, requested_key: str) -> str:
     """Resolve sample/ROI key in adata.obs, with a small fallback set."""
     if requested_key in adata.obs.columns:
@@ -1374,7 +1405,7 @@ def run_cellcharter_neighborhoods(
 ) -> Path:
     """Run CellCharter neighborhood analysis and return output AnnData path."""
     input_path = _resolve_input_adata_path(cellcharter_config, process_config)
-    output_path = Path(cellcharter_config.output_adata_path)
+    output_path = _resolve_output_adata_path(cellcharter_config, process_config)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     qc_dir = Path(general_config.qc_folder) / cellcharter_config.qc_output_subdir

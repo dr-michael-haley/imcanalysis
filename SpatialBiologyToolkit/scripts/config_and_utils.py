@@ -347,7 +347,7 @@ class VisualizationConfig:
 class CellCharterConfig:
     # Input/output
     input_adata_path: Optional[str] = None  # If None: use process.output_adata_path, fallback to process.input_adata_path
-    output_adata_path: str = 'anndata_cellcharter.h5ad'
+    output_adata_path: Optional[str] = None  # If None: use process.output_adata_path, fallback to process.input_adata_path
     qc_output_subdir: str = 'CellCharter_QC'
 
     # Spatial metadata
@@ -535,6 +535,38 @@ class PairwiseSpatialConfig:
     figure_dpi: int = 300
 
 @dataclass
+class SubclusteringConfig:
+    # Input/output
+    input_adata_path: Optional[str] = None  # If None: use process.output_adata_path, fallback to process.input_adata_path
+    output_adata_path: str = 'anndata_subclustered.h5ad'
+    output_subdir: str = 'subclustering'
+
+    # Template/remap files
+    settings_filename: str = 'sublustering_settings.csv'  # Intentionally matches existing notebook naming
+    marker_list_filename: str = 'marker_list.csv'
+    remap_filename: str = 'subcluster_to_final_population.csv'
+    master_index_mapping_filename: str = 'master_index_to_final_population.csv'
+
+    # Subclustering defaults
+    base_label_key: str = 'population'
+    default_resolution: float = 0.3
+    default_marker_list: str = 'all'  # Resolved as marker column 'markers_all'
+    use_rep: Optional[str] = 'X_biobatchnet'
+
+    # Plotting and QC
+    compute_umap_if_missing: bool = True
+    umap_dot_size: float = 2.0
+    matrixplot_vmax: float = 0.5
+    save_individual_umaps: bool = True
+    figure_extension: str = '.png'
+    figure_dpi: int = 300
+
+    # Final remap integration
+    final_label_key: str = 'population_final'
+    master_index_obs: str = 'Master_Index'
+    apply_remap_only_if_modified: bool = True
+
+@dataclass
 class LoggingConfig:
     log_file: str = 'pipeline.log'
     level: str = 'INFO'
@@ -555,6 +587,7 @@ DEFAULT_CONFIG_CLASSES = {
     'visualization': VisualizationConfig,
     'cellcharter': CellCharterConfig,
     'pairwise_spatial': PairwiseSpatialConfig,
+    'subclustering': SubclusteringConfig,
     'logging': LoggingConfig,
 }
 

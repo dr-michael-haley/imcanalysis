@@ -1,29 +1,53 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="2020" height="620" viewBox="0 0 2020 620" role="img" aria-labelledby="title desc">
-  <title id="title">IMC SLURM pipeline stage flow</title>
-  <desc id="desc">Flow diagram of the SLURM stages showing the main path, optional branch, and diagnostics stage.</desc>
+  <title id="title">IMC SLURM pipeline stage flow (Core vs Analysis)</title>
+  <desc id="desc">Flow diagram of SLURM stages split into Core and Analysis categories, highlighting optional Core stages, optional analysis branches, and diagnostics.</desc>
 
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#4b5563"/>
     </marker>
     <style>
+      .lane-core {
+        fill: #f4f9ff;
+        stroke: #c7dbf3;
+        stroke-width: 1.5;
+        rx: 12;
+        ry: 12;
+      }
+      .lane-analysis {
+        fill: #fff8ef;
+        stroke: #f1d2a6;
+        stroke-width: 1.5;
+        rx: 12;
+        ry: 12;
+      }
       .box {
         stroke-width: 2;
         rx: 12;
         ry: 12;
       }
-      .main {
-        fill: #ecf9f0;
-        stroke: #2e8b57;
+      .core {
+        fill: #e8f3ff;
+        stroke: #2f6fb0;
       }
-      .dev {
-        fill: #fff4de;
-        stroke: #c27a00;
+      .core-optional {
+        fill: #e8f3ff;
+        stroke: #2f6fb0;
+        stroke-dasharray: 8 5;
+      }
+      .analysis {
+        fill: #fff2df;
+        stroke: #c27700;
+      }
+      .analysis-dev {
+        fill: #fff7eb;
+        stroke: #c27700;
+        stroke-dasharray: 8 5;
       }
       .diag {
-        fill: #eef4ff;
-        stroke: #4666b0;
+        fill: #f0ecff;
+        stroke: #6a4aa5;
       }
       .label {
         font-family: Arial, sans-serif;
@@ -31,6 +55,19 @@
         fill: #1f2937;
         text-anchor: middle;
         dominant-baseline: middle;
+      }
+      .title {
+        font-family: Arial, sans-serif;
+        font-size: 24px;
+        font-weight: 700;
+        fill: #111827;
+        text-anchor: middle;
+      }
+      .lane-label {
+        font-family: Arial, sans-serif;
+        font-size: 20px;
+        font-weight: 700;
+        fill: #374151;
       }
       .small {
         font-family: Arial, sans-serif;
@@ -49,77 +86,99 @@
     </style>
   </defs>
 
-  <text x="1010" y="34" class="label" style="font-size:24px;font-weight:700;">IMC SLURM Pipeline Stage Flow</text>
+  <text x="1010" y="36" class="title">IMC SLURM Pipeline Stage Flow (Core vs Analysis)</text>
 
-  <!-- Main pipeline -->
-  <rect class="box main" x="40" y="220" width="120" height="64"/>
-  <text class="label" x="100" y="252">config</text>
+  <!-- Lanes -->
+  <rect class="lane-core" x="20" y="150" width="1980" height="120"/>
+  <rect class="lane-analysis" x="20" y="310" width="1980" height="130"/>
+  <text x="38" y="174" class="lane-label">Core stages</text>
+  <text x="38" y="334" class="lane-label">Analysis stages</text>
 
-  <rect class="box main" x="190" y="220" width="120" height="64"/>
-  <text class="label" x="250" y="252">prep</text>
+  <!-- Core pipeline -->
+  <rect class="box core" x="30" y="185" width="130" height="58"/>
+  <text class="label" x="95" y="214">config</text>
 
-  <rect class="box main" x="340" y="220" width="120" height="64"/>
-  <text class="label" x="400" y="252">denoise</text>
+  <rect class="box core" x="190" y="185" width="130" height="58"/>
+  <text class="label" x="255" y="214">prep</text>
 
-  <rect class="box main" x="490" y="220" width="120" height="64"/>
-  <text class="label" x="550" y="252">dnqc</text>
+  <rect class="box core" x="350" y="185" width="130" height="58"/>
+  <text class="label" x="415" y="214">denoise</text>
 
-  <rect class="box main" x="640" y="220" width="120" height="64"/>
-  <text class="label" x="700" y="252">cellpose</text>
+  <rect class="box core" x="510" y="185" width="130" height="58"/>
+  <text class="label" x="575" y="214">dnqc</text>
 
-  <rect class="box main" x="790" y="220" width="120" height="64"/>
-  <text class="label" x="850" y="252">nimbus</text>
+  <rect class="box core" x="670" y="185" width="130" height="58"/>
+  <text class="label" x="735" y="214">cellpose</text>
 
-  <rect class="box main" x="940" y="220" width="120" height="64"/>
-  <text class="label" x="1000" y="252">bbn</text>
+  <rect class="box core" x="830" y="185" width="130" height="58"/>
+  <text class="label" x="895" y="214">nimbus</text>
 
-  <rect class="box main" x="1090" y="220" width="120" height="64"/>
-  <text class="label" x="1150" y="252">cchar</text>
+  <rect class="box core" x="990" y="185" width="130" height="58"/>
+  <text class="label" x="1055" y="214">bbn</text>
 
-  <rect class="box main" x="1240" y="220" width="120" height="64"/>
-  <text class="label" x="1300" y="252">pairsp</text>
+  <rect class="box core-optional" x="1150" y="185" width="130" height="58"/>
+  <text class="label" x="1215" y="214">subcl</text>
 
-  <rect class="box main" x="1390" y="220" width="120" height="64"/>
-  <text class="label" x="1450" y="252">aiinter</text>
+  <rect class="box core-optional" x="1310" y="185" width="130" height="58"/>
+  <text class="label" x="1375" y="214">aiinter</text>
 
-  <rect class="box main" x="1540" y="220" width="120" height="64"/>
-  <text class="label" x="1600" y="252">vis</text>
+  <rect class="box core" x="1470" y="185" width="130" height="58"/>
+  <text class="label" x="1535" y="214">vis</text>
 
-  <rect class="box main" x="1690" y="220" width="120" height="64"/>
-  <text class="label" x="1750" y="252">reint</text>
+  <rect class="box core-optional" x="1630" y="185" width="130" height="58"/>
+  <text class="label" x="1695" y="214">reint</text>
 
-  <rect class="box main" x="1840" y="220" width="120" height="64"/>
-  <text class="label" x="1900" y="252">zipqc</text>
+  <rect class="box core" x="1790" y="185" width="130" height="58"/>
+  <text class="label" x="1855" y="214">zipqc</text>
 
-  <!-- Main arrows -->
-  <path class="line" d="M 160 252 L 190 252"/>
-  <path class="line" d="M 310 252 L 340 252"/>
-  <path class="line" d="M 460 252 L 490 252"/>
-  <path class="line" d="M 610 252 L 640 252"/>
-  <path class="line" d="M 760 252 L 790 252"/>
-  <path class="line" d="M 910 252 L 940 252"/>
-  <path class="line" d="M 1060 252 L 1090 252"/>
-  <path class="line" d="M 1210 252 L 1240 252"/>
-  <path class="line" d="M 1360 252 L 1390 252"/>
-  <path class="line" d="M 1510 252 L 1540 252"/>
-  <path class="line" d="M 1660 252 L 1690 252"/>
-  <path class="line" d="M 1810 252 L 1840 252"/>
+  <!-- Core arrows -->
+  <path class="line" d="M 160 214 L 190 214"/>
+  <path class="line" d="M 320 214 L 350 214"/>
+  <path class="line" d="M 480 214 L 510 214"/>
+  <path class="line" d="M 640 214 L 670 214"/>
+  <path class="line" d="M 800 214 L 830 214"/>
+  <path class="line" d="M 960 214 L 990 214"/>
+  <path class="line" d="M 1120 214 L 1150 214"/>
+  <path class="line" d="M 1280 214 L 1310 214"/>
+  <path class="line" d="M 1440 214 L 1470 214"/>
+  <path class="line" d="M 1600 214 L 1630 214"/>
+  <path class="line" d="M 1760 214 L 1790 214"/>
 
-  <!-- Optional scport branch -->
-  <rect class="box dev" x="610" y="380" width="180" height="72"/>
-  <text class="label" x="700" y="416">scport (dev)</text>
+  <!-- Analysis branch -->
+  <rect class="box analysis" x="1150" y="345" width="150" height="64"/>
+  <text class="label" x="1225" y="377">cchar</text>
 
-  <path class="line dashed" d="M 400 284 L 400 416 L 610 416"/>
-  <path class="line dashed" d="M 700 284 L 700 380"/>
+  <rect class="box analysis" x="1320" y="345" width="150" height="64"/>
+  <text class="label" x="1395" y="377">pairsp</text>
+
+  <rect class="box analysis-dev" x="700" y="345" width="150" height="64"/>
+  <text class="label" x="775" y="377">scport</text>
+
+  <!-- Analysis arrows (optional) -->
+  <path class="line dashed" d="M 1055 243 L 1055 377 L 1150 377"/>
+  <path class="line dashed" d="M 1055 243 L 1055 320 L 1320 320 L 1320 377"/>
+  <path class="line dashed" d="M 735 243 L 735 345"/>
+  <path class="line dashed" d="M 415 243 L 415 377 L 700 377"/>
 
   <!-- Debug stage -->
-  <rect class="box diag" x="40" y="90" width="120" height="64"/>
-  <text class="label" x="100" y="122">debug</text>
-  <path class="line dashed" d="M 100 154 L 100 220"/>
+  <rect class="box diag" x="30" y="70" width="130" height="58"/>
+  <text class="label" x="95" y="99">debug</text>
+  <path class="line dashed" d="M 95 128 L 95 185"/>
 
-  <!-- Notes -->
-  <text class="small" x="40" y="520">Solid arrows: main recommended run order</text>
-  <text class="small" x="40" y="546">Dashed arrows: optional/side stages (debug can run anytime; scport is in development)</text>
-  <text class="small" x="40" y="572">Status colors: green = stable pipeline stage, amber = development/example stage</text>
-  <text class="small" x="40" y="598">Stage labels: cchar = CellCharter neighborhoods; pairsp = pairwise spatial analyses</text>
+  <!-- Legend and notes -->
+  <rect class="box core" x="40" y="492" width="28" height="20"/>
+  <text class="small" x="78" y="507">Core stage</text>
+
+  <rect class="box core-optional" x="180" y="492" width="28" height="20"/>
+  <text class="small" x="218" y="507">Core stage (optional)</text>
+
+  <rect class="box analysis" x="410" y="492" width="28" height="20"/>
+  <text class="small" x="448" y="507">Analysis stage</text>
+
+  <rect class="box analysis-dev" x="590" y="492" width="28" height="20"/>
+  <text class="small" x="628" y="507">Analysis stage (in development)</text>
+
+  <text class="small" x="40" y="538">Solid arrows: core recommended progression.</text>
+  <text class="small" x="40" y="562">Dashed arrows: optional branches and diagnostics.</text>
+  <text class="small" x="40" y="586">Dashed blue borders: optional Core stages (subcl, aiinter, reint). cchar and pairsp branch independently from bbn.</text>
 </svg>
