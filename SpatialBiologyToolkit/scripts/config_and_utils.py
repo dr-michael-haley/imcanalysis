@@ -184,7 +184,6 @@ class NimbusConfig:
 
 @dataclass
 class BioBatchNetConfig:
-    batch_correction_method: Optional[str] = None
     batch_correction_obs: Optional[str] = None
     n_for_pca: Optional[int] = None
     leiden_resolutions_list: List[float] = field(default_factory=lambda: [0.3, 1.0])
@@ -750,6 +749,22 @@ def _normalize_stage_run_mode(mode: Optional[str]) -> str:
     return mode_text
 
 
+def _collect_slurm_context_from_env() -> Dict[str, str]:
+    """
+    Collect SLURM job metadata from environment variables.
+    Prefer IMC_* aliases set by job scripts, with SLURM_* as fallback.
+    """
+    job_id = os.getenv("IMC_SLURM_JOB_ID") or os.getenv("SLURM_JOB_ID")
+    job_name = os.getenv("IMC_SLURM_JOB_NAME") or os.getenv("SLURM_JOB_NAME")
+
+    slurm: Dict[str, str] = {}
+    if job_id is not None and str(job_id).strip():
+        slurm["job_id"] = str(job_id).strip()
+    if job_name is not None and str(job_name).strip():
+        slurm["job_name"] = str(job_name).strip()
+    return slurm
+
+
 def _sanitize_uns_key(key: Any) -> str:
     """Sanitize dictionary keys for safe storage in AnnData .uns/HDF5."""
     key_text = str(key)
@@ -953,6 +968,7 @@ def record_stage_run_in_uns(
 
     stage_snapshot = build_uns_config_snapshot(stage_config)
     detail_snapshot = build_uns_config_snapshot(extra_details) if extra_details is not None else {}
+    slurm_snapshot = build_uns_config_snapshot(_collect_slurm_context_from_env())
 
     container["stage_order"].append(stage_name)
     run_event: Dict[str, Any] = {"stage": stage_name, "run_utc": timestamp}
@@ -960,6 +976,8 @@ def record_stage_run_in_uns(
         run_event["config"] = stage_snapshot
     if detail_snapshot:
         run_event["details"] = detail_snapshot
+    if slurm_snapshot:
+        run_event["slurm"] = slurm_snapshot
     run_log = container.get("run_log")
     if not isinstance(run_log, dict):
         run_log = {}
@@ -973,6 +991,8 @@ def record_stage_run_in_uns(
         entry["config"] = stage_snapshot
     if detail_snapshot:
         entry["details"] = detail_snapshot
+    if slurm_snapshot:
+        entry["slurm"] = slurm_snapshot
     container["stages"][stage_name] = entry
     adata.uns[uns_key] = container
 

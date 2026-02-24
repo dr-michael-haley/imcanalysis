@@ -342,6 +342,8 @@ for stage in "${stages[@]}"; do
 
     if [[ -n "$pipeline_name" ]]; then
         sbatch_args+=(--job-name="${pipeline_name}_${stage}")
+    else
+        sbatch_args+=(--job-name="${stage}")
     fi
 
     sbatch_args+=("$script")
