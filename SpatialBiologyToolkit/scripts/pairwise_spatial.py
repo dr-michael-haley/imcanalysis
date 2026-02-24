@@ -34,40 +34,24 @@ import SpatialBiologyToolkit.distance_analysis as sbt_distance
 import SpatialBiologyToolkit.pcf as sbt_pcf
 import SpatialBiologyToolkit.spatial as sbt_spatial
 from .config_and_utils import (
-    BasicProcessConfig,
     GeneralConfig,
     PairwiseSpatialConfig,
     cleanstring,
     filter_config_for_dataclass,
+    load_pipeline_anndata,
     process_config_with_overrides,
+    save_pipeline_anndata,
     setup_logging,
 )
 
 
 def _resolve_input_adata_path(
-    pairwise_config: PairwiseSpatialConfig, process_config: BasicProcessConfig
+    general_config: GeneralConfig, pairwise_config: PairwiseSpatialConfig
 ) -> Path:
-    candidates = [
-        pairwise_config.input_adata_path,
-        process_config.output_adata_path,
-        process_config.input_adata_path,
-    ]
-    checked: List[str] = []
-
-    for candidate in candidates:
-        if not candidate:
-            continue
-        path = Path(candidate)
-        checked.append(str(path))
-        if path.exists():
-            logging.info("Using AnnData input: %s", path)
-            return path
-        logging.info("AnnData candidate not found: %s", path)
-
-    raise FileNotFoundError(
-        "Could not resolve AnnData input path for pairwise spatial analyses. Checked: "
-        + ", ".join(checked)
-    )
+    override = pairwise_config.input_adata_path
+    if override:
+        return Path(override)
+    return Path(general_config.anndata_path)
 
 
 def _ensure_extension(ext: str) -> str:
@@ -493,11 +477,21 @@ def _distance_matrix_to_long(df: pd.DataFrame, metric: str) -> pd.DataFrame:
 def run_pairwise_spatial_analyses(
     *,
     general_config: GeneralConfig,
-    process_config: BasicProcessConfig,
     pairwise_config: PairwiseSpatialConfig,
 ) -> Path:
-    input_path = _resolve_input_adata_path(pairwise_config, process_config)
-    adata = ad.read_h5ad(input_path)
+    stage_name = "PairwiseSpatial"
+    input_path = _resolve_input_adata_path(general_config, pairwise_config)
+    adata, _, skip_stage, _ = load_pipeline_anndata(
+        general_config=general_config,
+        stage_name=stage_name,
+        stage_config=pairwise_config,
+        override_path=str(input_path),
+    )
+    if skip_stage:
+        logging.info("Skipping PairwiseSpatial stage based on AnnData stage policy.")
+        return Path(general_config.qc_folder) / pairwise_config.output_subdir
+    if adata is None:
+        raise FileNotFoundError(f"AnnData not found for PairwiseSpatial stage: {input_path}")
     logging.info("Loaded AnnData: %d cells x %d markers", adata.n_obs, adata.n_vars)
 
     if pairwise_config.population_obs not in adata.obs.columns:
@@ -947,6 +941,17 @@ def run_pairwise_spatial_analyses(
     metadata_path = output_root / "pairwise_spatial_run_metadata.json"
     metadata_path.write_text(json.dumps(run_metadata, indent=2), encoding="utf-8")
     logging.info("Saved run metadata to: %s", metadata_path)
+    save_pipeline_anndata(
+        adata=adata,
+        general_config=general_config,
+        stage_name=stage_name,
+        stage_config=pairwise_config,
+        override_path=str(input_path),
+        extra_details={
+            "output_root": str(output_root),
+            "run_metadata_path": str(metadata_path),
+        },
+    )
     logging.info("Pairwise spatial outputs saved to: %s", output_root)
     return output_root
 
@@ -959,15 +964,11 @@ if __name__ == "__main__":
     general_config = GeneralConfig(
         **filter_config_for_dataclass(config.get("general", {}), GeneralConfig)
     )
-    process_config = BasicProcessConfig(
-        **filter_config_for_dataclass(config.get("process", {}), BasicProcessConfig)
-    )
     pairwise_config = PairwiseSpatialConfig(
         **filter_config_for_dataclass(config.get("pairwise_spatial", {}), PairwiseSpatialConfig)
     )
 
     run_pairwise_spatial_analyses(
         general_config=general_config,
-        process_config=process_config,
         pairwise_config=pairwise_config,
     )

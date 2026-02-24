@@ -42,7 +42,9 @@ from .config_and_utils import (
     SegmentationConfig,
     filter_config_for_dataclass,
     get_filename,
+    load_pipeline_anndata,
     process_config_with_overrides,
+    save_pipeline_anndata,
     setup_logging,
 )
 from .segmentation import create_anndata, normalise_markers
@@ -994,6 +996,19 @@ def main() -> None:
     general_config = GeneralConfig(**filter_config_for_dataclass(config.get("general", {}), GeneralConfig))
     seg_config = SegmentationConfig(**filter_config_for_dataclass(config.get("segmentation", {}), SegmentationConfig))
     nimbus_config = NimbusConfig(**filter_config_for_dataclass(config.get("nimbus", {}), NimbusConfig))
+    stage_config = {
+        "segmentation": seg_config,
+        "nimbus": nimbus_config,
+    }
+    _, canonical_anndata_path, skip_stage, _ = load_pipeline_anndata(
+        general_config=general_config,
+        stage_name=pipeline_stage,
+        stage_config=stage_config,
+        allow_missing=True,
+    )
+    if skip_stage:
+        logging.info("Skipping NimbusSegmentation stage based on AnnData stage policy.")
+        return
 
     metadata_folder = Path(general_config.metadata_folder)
     panel = _load_panel(metadata_folder)
@@ -1210,7 +1225,18 @@ def main() -> None:
         logging.info("Skipping ROI-level cell tables per config")
 
     if seg_config.create_anndata:
-        anndata_path = Path(nimbus_config.anndata_output or seg_config.anndata_save_path)
+        if nimbus_config.anndata_output and str(nimbus_config.anndata_output) != str(general_config.anndata_path):
+            logging.warning(
+                "nimbus.anndata_output is deprecated for primary pipeline flow. "
+                "Using general.anndata_path=%s instead.",
+                general_config.anndata_path,
+            )
+        if seg_config.anndata_save_path and str(seg_config.anndata_save_path) != str(general_config.anndata_path):
+            logging.warning(
+                "segmentation.anndata_save_path is deprecated for primary pipeline flow. "
+                "Using general.anndata_path=%s instead.",
+                general_config.anndata_path,
+            )
 
         # Create AnnData with layers for Nimbus, classic, and expansion data
         adata = _create_anndata_with_layers(
@@ -1248,8 +1274,14 @@ def main() -> None:
             else:
                 logging.info("No markers from remove_and_store_markers list found in dataset")
         
-        anndata_path.parent.mkdir(parents=True, exist_ok=True)
-        adata.write_h5ad(anndata_path)
+        anndata_path = save_pipeline_anndata(
+            adata=adata,
+            general_config=general_config,
+            stage_name=pipeline_stage,
+            stage_config=stage_config,
+            override_path=str(canonical_anndata_path),
+            extra_details={"n_cells": int(adata.n_obs), "n_markers": int(adata.n_vars)},
+        )
         logging.info("Saved AnnData to %s", anndata_path)
         logging.info("AnnData structure: .X (normalized Nimbus), layers: %s", list(adata.layers.keys()))
     else:

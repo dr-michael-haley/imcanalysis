@@ -11,17 +11,16 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
 
 import anndata as ad
-import scanpy as sc
 
 from .config_and_utils import (
-    BasicProcessConfig,
     GeneralConfig,
     SegmentationConfig,
     filter_config_for_dataclass,
+    load_pipeline_anndata,
     process_config_with_overrides,
+    save_pipeline_anndata,
     setup_logging,
 )
 
@@ -131,7 +130,7 @@ def main() -> None:
     pipeline_stage = "ReintegrateMarkers"
     config = process_config_with_overrides()
     setup_logging(config.get("logging", {}), pipeline_stage)
-    
+
     # Load configurations
     general_config = GeneralConfig(
         **filter_config_for_dataclass(config.get("general", {}), GeneralConfig)
@@ -139,74 +138,77 @@ def main() -> None:
     seg_config = SegmentationConfig(
         **filter_config_for_dataclass(config.get("segmentation", {}), SegmentationConfig)
     )
-    process_config = BasicProcessConfig(
-        **filter_config_for_dataclass(config.get("process", {}), BasicProcessConfig)
+
+    stage_config = seg_config
+    adata_main, main_adata_path, skip_stage, _ = load_pipeline_anndata(
+        general_config=general_config,
+        stage_name=pipeline_stage,
+        stage_config=stage_config,
     )
-    
-    # Determine input/output paths
-    main_adata_path = Path(process_config.output_adata_path)
+    if skip_stage:
+        logging.info("Skipping marker reintegration stage based on AnnData stage policy.")
+        return
+    if adata_main is None:
+        raise FileNotFoundError(
+            f"Main processed AnnData not found at {main_adata_path}. Please run prior stages first."
+        )
+
+    # Determine removed-marker input path
     removed_adata_path = Path(seg_config.removed_markers_anndata_path)
-    
+
     # Make removed path relative to main adata's directory if not absolute
     if not removed_adata_path.is_absolute():
         removed_adata_path = main_adata_path.parent / removed_adata_path
-    
-    # Output path: add "_reintegrated" suffix
-    output_path = main_adata_path.with_name(
-        f"{main_adata_path.stem}{main_adata_path.suffix}"
-    )
-    
-    # Check if files exist
-    if not main_adata_path.exists():
-        raise FileNotFoundError(
-            f"Main processed AnnData not found at {main_adata_path}. "
-            "Please run batch correction/processing first."
-        )
-    
+
     if not removed_adata_path.exists():
         raise FileNotFoundError(
             f"Removed markers AnnData not found at {removed_adata_path}. "
             "No markers were removed during segmentation, or file has been moved."
         )
-    
-    # Load AnnData objects
-    logging.info(f"Loading main processed AnnData from {main_adata_path}")
-    adata_main = ad.read_h5ad(main_adata_path)
+
+    # Load removed-marker AnnData
+    logging.info(f"Loaded main processed AnnData from {main_adata_path}")
     logging.info(
-        f"Main AnnData: {adata_main.n_obs} cells × {adata_main.n_vars} markers"
+        f"Main AnnData: {adata_main.n_obs} cells x {adata_main.n_vars} markers"
     )
-    
+
     logging.info(f"Loading removed markers AnnData from {removed_adata_path}")
     adata_removed = ad.read_h5ad(removed_adata_path)
     logging.info(
-        f"Removed markers AnnData: {adata_removed.n_obs} cells × {adata_removed.n_vars} markers"
+        f"Removed markers AnnData: {adata_removed.n_obs} cells x {adata_removed.n_vars} markers"
     )
     logging.info(f"Markers to reintegrate: {list(adata_removed.var_names)}")
-    
+
     # Log layer information
     if hasattr(adata_main, 'layers') and adata_main.layers:
         logging.info(f"Main AnnData layers: {list(adata_main.layers.keys())}")
     if hasattr(adata_removed, 'layers') and adata_removed.layers:
         logging.info(f"Removed markers AnnData layers: {list(adata_removed.layers.keys())}")
-    
+
     # Reintegrate markers (automatically handles all layers)
     adata_combined = reintegrate_removed_markers(adata_main, adata_removed)
-    
-    # Save combined AnnData
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    logging.info(f"Saving reintegrated AnnData to {output_path}")
-    adata_combined.write_h5ad(output_path)
-    
+
+    # Save combined AnnData back to canonical path
+    output_path = save_pipeline_anndata(
+        adata=adata_combined,
+        general_config=general_config,
+        stage_name=pipeline_stage,
+        stage_config=stage_config,
+        override_path=str(main_adata_path),
+        extra_details={"removed_adata_path": str(removed_adata_path)},
+    )
+
     logging.info("Marker reintegration complete!")
-    logging.info(f"Final AnnData: {adata_combined.n_obs} cells × {adata_combined.n_vars} markers")
+    logging.info(f"Saved reintegrated AnnData to {output_path}")
+    logging.info(f"Final AnnData: {adata_combined.n_obs} cells x {adata_combined.n_vars} markers")
     logging.info(
         f"Reintegrated {adata_removed.n_vars} markers: {list(adata_removed.var_names)}"
     )
-    
+
     # Log available clustering/embedding keys
     if hasattr(adata_combined, 'obsm') and adata_combined.obsm:
         logging.info(f"Available embeddings: {list(adata_combined.obsm.keys())}")
-    
+
     leiden_keys = [col for col in adata_combined.obs.columns if col.startswith('leiden')]
     if leiden_keys:
         logging.info(f"Available Leiden clusterings: {leiden_keys}")

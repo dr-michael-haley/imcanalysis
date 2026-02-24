@@ -42,12 +42,13 @@ except ImportError as exc:  # pragma: no cover - dependency guard
     ) from exc
 
 from .config_and_utils import (
-    BasicProcessConfig,
     CellCharterConfig,
     GeneralConfig,
     cleanstring,
     filter_config_for_dataclass,
+    load_pipeline_anndata,
     process_config_with_overrides,
+    save_pipeline_anndata,
     setup_logging,
 )
 
@@ -90,62 +91,24 @@ def _parse_aggregations(value: Union[str, Sequence[Any]]) -> Union[str, List[str
 
 
 def _resolve_input_adata_path(
+    general_config: GeneralConfig,
     cellcharter_config: CellCharterConfig,
-    process_config: BasicProcessConfig,
 ) -> Path:
-    """Resolve input AnnData path with sensible fallback order."""
-    candidates = [
-        cellcharter_config.input_adata_path,
-        process_config.output_adata_path,
-        process_config.input_adata_path,
-    ]
-    checked: List[str] = []
-
-    for candidate in candidates:
-        if not candidate:
-            continue
-        path = Path(candidate)
-        checked.append(str(path))
-        if path.exists():
-            logging.info("Using AnnData input: %s", path)
-            return path
-        logging.info("AnnData candidate not found: %s", path)
-
-    raise FileNotFoundError(
-        "Could not resolve AnnData input path for CellCharter. Checked: "
-        + ", ".join(checked)
-    )
+    """Resolve input AnnData path."""
+    if cellcharter_config.input_adata_path:
+        return Path(cellcharter_config.input_adata_path)
+    return Path(general_config.anndata_path)
 
 
 def _resolve_output_adata_path(
+    general_config: GeneralConfig,
     cellcharter_config: CellCharterConfig,
-    process_config: BasicProcessConfig,
 ) -> Path:
-    """Resolve output AnnData path with sensible fallback order."""
-    candidates = [
-        cellcharter_config.output_adata_path,
-        process_config.output_adata_path,
-        process_config.input_adata_path,
-    ]
-
-    for idx, candidate in enumerate(candidates):
-        if not candidate:
-            continue
-        path = Path(candidate)
-        if idx == 0:
-            logging.info("Using configured CellCharter output path: %s", path)
-        else:
-            logging.info(
-                "CellCharter output path not set; falling back to candidate %d: %s",
-                idx + 1,
-                path,
-            )
-        return path
-
-    raise ValueError(
-        "Could not resolve output AnnData path for CellCharter. "
-        "Set cellcharter.output_adata_path or process.output_adata_path."
-    )
+    """Resolve output AnnData path."""
+    if cellcharter_config.output_adata_path:
+        logging.info("Using configured CellCharter output path: %s", cellcharter_config.output_adata_path)
+        return Path(cellcharter_config.output_adata_path)
+    return Path(general_config.anndata_path)
 
 
 def _resolve_sample_key(adata: ad.AnnData, requested_key: str) -> str:
@@ -1400,19 +1363,28 @@ def _save_roi_cluster_masks(
 
 def run_cellcharter_neighborhoods(
     general_config: GeneralConfig,
-    process_config: BasicProcessConfig,
     cellcharter_config: CellCharterConfig,
 ) -> Path:
     """Run CellCharter neighborhood analysis and return output AnnData path."""
-    input_path = _resolve_input_adata_path(cellcharter_config, process_config)
-    output_path = _resolve_output_adata_path(cellcharter_config, process_config)
+    stage_name = "CellCharter"
+    input_path = _resolve_input_adata_path(general_config, cellcharter_config)
+    output_path = _resolve_output_adata_path(general_config, cellcharter_config)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     qc_dir = Path(general_config.qc_folder) / cellcharter_config.qc_output_subdir
     qc_dir.mkdir(parents=True, exist_ok=True)
 
-    logging.info("Loading AnnData from %s", input_path)
-    adata = ad.read_h5ad(input_path)
+    adata, _, skip_stage, _ = load_pipeline_anndata(
+        general_config=general_config,
+        stage_name=stage_name,
+        stage_config=cellcharter_config,
+        override_path=str(input_path),
+    )
+    if skip_stage:
+        logging.info("Skipping CellCharter stage based on AnnData stage policy.")
+        return output_path
+    if adata is None:
+        raise FileNotFoundError(f"AnnData could not be loaded for CellCharter stage: {input_path}")
     logging.info("Loaded AnnData: %d cells x %d features", adata.n_obs, adata.n_vars)
 
     sample_key = _resolve_sample_key(adata, cellcharter_config.sample_key)
@@ -1652,7 +1624,17 @@ def run_cellcharter_neighborhoods(
             sanitized_changes,
         )
 
-    adata.write_h5ad(output_path)
+    output_path = save_pipeline_anndata(
+        adata=adata,
+        general_config=general_config,
+        stage_name=stage_name,
+        stage_config=cellcharter_config,
+        override_path=str(output_path),
+        extra_details={
+            "input_adata_path": str(input_path),
+            "qc_dir": str(qc_dir),
+        },
+    )
     logging.info("Saved CellCharter AnnData output to %s", output_path)
     logging.info("Saved CellCharter QC outputs to %s", qc_dir)
     return output_path
@@ -1666,15 +1648,11 @@ if __name__ == "__main__":
     general_config = GeneralConfig(
         **filter_config_for_dataclass(config.get("general", {}), GeneralConfig)
     )
-    process_config = BasicProcessConfig(
-        **filter_config_for_dataclass(config.get("process", {}), BasicProcessConfig)
-    )
     cellcharter_config = CellCharterConfig(
         **filter_config_for_dataclass(config.get("cellcharter", {}), CellCharterConfig)
     )
 
     run_cellcharter_neighborhoods(
         general_config=general_config,
-        process_config=process_config,
         cellcharter_config=cellcharter_config,
     )

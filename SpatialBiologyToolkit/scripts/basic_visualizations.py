@@ -911,16 +911,20 @@ if __name__ == "__main__":
 
     # Get parameters from config
     general_config = GeneralConfig(**filter_config_for_dataclass(config.get('general', {}), GeneralConfig))
-    process_config = BasicProcessConfig(**filter_config_for_dataclass(config.get('process', {}), BasicProcessConfig))
     viz_config = VisualizationConfig(**filter_config_for_dataclass(config.get('visualization', {}), VisualizationConfig))
     segmentation_config = SegmentationConfig(**filter_config_for_dataclass(config.get('segmentation', {}), SegmentationConfig))
 
-    # Determine which AnnData to load
-    adata_path = viz_config.input_adata_path if viz_config.input_adata_path is not None else process_config.output_adata_path
-    
-    # Load processed AnnData
-    logging.info(f'Loading processed AnnData from {adata_path}.')
-    adata = ad.read_h5ad(adata_path)
+    adata, adata_path, skip_stage, _ = load_pipeline_anndata(
+        general_config=general_config,
+        stage_name=pipeline_stage,
+        stage_config=viz_config,
+        override_path=viz_config.input_adata_path,
+    )
+    if skip_stage:
+        logging.info("Skipping visualization stage based on AnnData stage policy.")
+        exit(0)
+    if adata is None:
+        raise FileNotFoundError(f"AnnData could not be loaded for visualization stage: {adata_path}")
     logging.info('AnnData loaded successfully.')
 
     # Set up QC output folder
@@ -1015,4 +1019,12 @@ if __name__ == "__main__":
                 except Exception as e:
                     log_detailed_error(e, f"creating color legend for metadata column '{meta_col}'")
     
+    save_pipeline_anndata(
+        adata=adata,
+        general_config=general_config,
+        stage_name=pipeline_stage,
+        stage_config=viz_config,
+        override_path=str(adata_path),
+        extra_details={"qc_output_root": str(qc_base)},
+    )
     logging.info('Visualization pipeline completed successfully!')

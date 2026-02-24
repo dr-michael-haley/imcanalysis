@@ -9,6 +9,7 @@ from .config_and_utils import (
     SegmentationConfig,
     DenoisingConfig,
     LoggingConfig,
+    BioBatchNetConfig,
     BasicProcessConfig,
     VisualizationConfig
 )
@@ -25,6 +26,7 @@ def generate_config_template(output_file: str = 'config.yaml'):
         'createmasks': asdict(CreateMasksConfig()),
         'segmentation': asdict(SegmentationConfig()),
         'denoising': asdict(DenoisingConfig()),
+        'biobatchnet': asdict(BioBatchNetConfig()),
         'process': asdict(BasicProcessConfig()),
         'visualization': asdict(VisualizationConfig()),
         'logging': asdict(LoggingConfig()),

@@ -32,12 +32,14 @@ except ImportError:  # pragma: no cover - torch optional
     torch = None  # type: ignore
 
 from .config_and_utils import (  # pylint: disable=relative-beyond-top-level
-    BasicProcessConfig,
+    BioBatchNetConfig,
     GeneralConfig,
     VisualizationConfig,
     cleanstring,
     filter_config_for_dataclass,
+    load_pipeline_anndata,
     process_config_with_overrides,
+    save_pipeline_anndata,
     setup_logging,
 )
 
@@ -229,24 +231,24 @@ def _prepare_qc_dir(base_dir: Path, suffix: Optional[str]) -> Path:
 
 def _postprocess_biobatchnet_results(
     adata: ad.AnnData,
-    process_config: BasicProcessConfig,
+    biobatchnet_config: BioBatchNetConfig,
     batch_key: str,
     qc_dir: Path,
 ) -> None:
     """Run neighbors/UMAP/clustering and save QC plots."""
     neighbors_kwargs: Dict[str, Any] = {}
-    if process_config.n_neighbors is not None:
-        neighbors_kwargs["n_neighbors"] = process_config.n_neighbors
+    if biobatchnet_config.n_neighbors is not None:
+        neighbors_kwargs["n_neighbors"] = biobatchnet_config.n_neighbors
 
     logging.info("Computing neighbors using BioBatchNet embeddings.")
     sc.pp.neighbors(adata, use_rep="X_biobatchnet", **neighbors_kwargs)
 
-    logging.info("Running UMAP (min_dist=%s).", process_config.umap_min_dist)
-    sc.tl.umap(adata, min_dist=process_config.umap_min_dist)
+    logging.info("Running UMAP (min_dist=%s).", biobatchnet_config.umap_min_dist)
+    sc.tl.umap(adata, min_dist=biobatchnet_config.umap_min_dist)
 
     # Only run Leiden clustering if enabled
-    if process_config.biobatchnet_run_leiden:
-        resolutions = process_config.leiden_resolutions_list
+    if biobatchnet_config.biobatchnet_run_leiden:
+        resolutions = biobatchnet_config.leiden_resolutions_list
         if resolutions and not isinstance(resolutions, list):
             resolutions = [resolutions]
         else:
@@ -279,8 +281,8 @@ def _postprocess_biobatchnet_results(
         plt.close(fig)
 
     # Only create Leiden clustering UMAPs if Leiden was run
-    if process_config.biobatchnet_run_leiden:
-        resolutions = process_config.leiden_resolutions_list
+    if biobatchnet_config.biobatchnet_run_leiden:
+        resolutions = biobatchnet_config.leiden_resolutions_list
         if resolutions and not isinstance(resolutions, list):
             resolutions = [resolutions]
         else:
@@ -309,7 +311,9 @@ def _run_single_parameter_set(
     base_adata: ad.AnnData,
     *,
     batch_key: str,
-    process_config: BasicProcessConfig,
+    general_config: GeneralConfig,
+    biobatchnet_config: BioBatchNetConfig,
+    stage_name: str,
     base_params: Dict[str, Any],
     overrides: Optional[Dict[str, Any]],
     label: Optional[str],
@@ -353,13 +357,19 @@ def _run_single_parameter_set(
 
     _postprocess_biobatchnet_results(
         adata_copy,
-        process_config=process_config,
+        biobatchnet_config=biobatchnet_config,
         batch_key=batch_key,
         qc_dir=qc_dir,
     )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    adata_copy.write_h5ad(output_path)
+    output_path = save_pipeline_anndata(
+        adata=adata_copy,
+        general_config=general_config,
+        stage_name=stage_name,
+        stage_config=biobatchnet_config,
+        override_path=str(output_path),
+        extra_details={"parameter_set_label": label or "base"},
+    )
     logging.info("Saved batch-corrected AnnData to %s", output_path)
 
     return {
@@ -411,29 +421,39 @@ def main() -> None:
     general_config = GeneralConfig(
         **filter_config_for_dataclass(config.get("general", {}), GeneralConfig)
     )
-    process_config = BasicProcessConfig(
-        **filter_config_for_dataclass(config.get("process", {}), BasicProcessConfig)
+    biobatchnet_section = config.get("biobatchnet", config.get("process", {}))
+    biobatchnet_config = BioBatchNetConfig(
+        **filter_config_for_dataclass(biobatchnet_section, BioBatchNetConfig)
     )
     # Visualization config is still parsed so downstream modules can reuse the file
     _ = VisualizationConfig(
         **filter_config_for_dataclass(config.get("visualization", {}), VisualizationConfig)
     )
 
-    input_path = Path(process_config.input_adata_path)
-    output_path = Path(process_config.output_adata_path)
+    adata, input_path, skip_stage, _ = load_pipeline_anndata(
+        general_config=general_config,
+        stage_name=pipeline_stage,
+        stage_config=biobatchnet_config,
+    )
+    if skip_stage:
+        logging.info("Skipping BioBatchNet stage based on AnnData stage policy.")
+        return
+    if adata is None:
+        raise FileNotFoundError(
+            f"AnnData could not be loaded for BioBatchNet stage: {input_path}"
+        )
 
-    logging.info("Loading AnnData from %s", input_path)
-    adata = ad.read_h5ad(input_path)
+    output_path = Path(general_config.anndata_path)
     logging.info("AnnData loaded with shape %s and %d markers.", adata.shape, adata.n_vars)
 
-    batch_key = process_config.batch_correction_obs
+    batch_key = biobatchnet_config.batch_correction_obs
     if not batch_key:
         raise ValueError(
-            "process.batch_correction_obs must be set in the config to use BioBatchNet."
+            "biobatchnet.batch_correction_obs must be set in the config to use BioBatchNet."
         )
 
     # Use the nested biobatchnet_params dictionary
-    biobatchnet_params = process_config.biobatchnet_params or {}
+    biobatchnet_params = biobatchnet_config.biobatchnet_params or {}
     
     # Ensure all required keys have defaults
     biobatchnet_params.setdefault('data_type', 'imc')
@@ -443,8 +463,8 @@ def main() -> None:
     biobatchnet_params.setdefault('use_raw', True)
     biobatchnet_params.setdefault('extra_params', None)
 
-    scan_sets = process_config.biobatchnet_scan_parameter_sets or []
-    include_base = process_config.biobatchnet_scan_include_base or not scan_sets
+    scan_sets = biobatchnet_config.biobatchnet_scan_parameter_sets or []
+    include_base = biobatchnet_config.biobatchnet_scan_include_base or not scan_sets
     base_qc_dir = Path(general_config.qc_folder) / "BioBatchNet"
     base_qc_dir.mkdir(parents=True, exist_ok=True)
 
@@ -454,7 +474,9 @@ def main() -> None:
             _run_single_parameter_set(
                 adata,
                 batch_key=batch_key,
-                process_config=process_config,
+                general_config=general_config,
+                biobatchnet_config=biobatchnet_config,
+                stage_name=pipeline_stage,
                 base_params=biobatchnet_params,
                 overrides=None,
                 label=None,
@@ -472,7 +494,9 @@ def main() -> None:
             _run_single_parameter_set(
                 adata,
                 batch_key=batch_key,
-                process_config=process_config,
+                general_config=general_config,
+                biobatchnet_config=biobatchnet_config,
+                stage_name=pipeline_stage,
                 base_params=biobatchnet_params,
                 overrides=overrides,
                 label=fallback_label,

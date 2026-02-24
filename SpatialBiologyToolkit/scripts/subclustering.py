@@ -36,12 +36,13 @@ import matplotlib.pyplot as plt
 
 import SpatialBiologyToolkit.utils as sbt_utils
 from .config_and_utils import (
-    BasicProcessConfig,
     GeneralConfig,
     SubclusteringConfig,
     cleanstring,
     filter_config_for_dataclass,
+    load_pipeline_anndata,
     process_config_with_overrides,
+    save_pipeline_anndata,
     setup_logging,
 )
 
@@ -52,29 +53,12 @@ def _checkpoint(title: str) -> None:
 
 
 def _resolve_input_adata_path(
+    general_config: GeneralConfig,
     subclustering_config: SubclusteringConfig,
-    process_config: BasicProcessConfig,
 ) -> Path:
-    candidates = [
-        subclustering_config.input_adata_path,
-        process_config.output_adata_path,
-        process_config.input_adata_path,
-    ]
-    checked: List[str] = []
-    for candidate in candidates:
-        if not candidate:
-            continue
-        path = Path(candidate)
-        checked.append(str(path))
-        if path.exists():
-            logging.info("Using AnnData input: %s", path)
-            return path
-        logging.info("AnnData candidate not found: %s", path)
-
-    raise FileNotFoundError(
-        "Could not resolve AnnData input path for subclustering. Checked: "
-        + ", ".join(checked)
-    )
+    if subclustering_config.input_adata_path:
+        return Path(subclustering_config.input_adata_path)
+    return Path(general_config.anndata_path)
 
 
 def _ordered_categories(series: pd.Series) -> List[str]:
@@ -464,12 +448,22 @@ def _apply_subcluster_remap_adapted(
 
 def run_subclustering_stage(
     general_config: GeneralConfig,
-    process_config: BasicProcessConfig,
     subclustering_config: SubclusteringConfig,
+    stage_name: str = "Subclustering",
 ) -> Optional[Path]:
     _checkpoint("Load Input")
-    input_path = _resolve_input_adata_path(subclustering_config, process_config)
-    adata = ad.read_h5ad(input_path)
+    input_path = _resolve_input_adata_path(general_config, subclustering_config)
+    adata, _, skip_stage, _ = load_pipeline_anndata(
+        general_config=general_config,
+        stage_name=stage_name,
+        stage_config=subclustering_config,
+        override_path=str(input_path),
+    )
+    if skip_stage:
+        logging.info("Skipping subclustering stage based on AnnData stage policy.")
+        return input_path
+    if adata is None:
+        raise FileNotFoundError(f"AnnData could not be loaded for subclustering stage: {input_path}")
     logging.info("Loaded AnnData: %d cells x %d markers", adata.n_obs, adata.n_vars)
 
     output_dir = Path(subclustering_config.output_subdir)
@@ -726,9 +720,15 @@ def run_subclustering_stage(
         "marker_list_var_columns": marker_list_var_columns,
     }
 
-    output_path = Path(subclustering_config.output_adata_path)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    adata.write_h5ad(output_path)
+    output_override = subclustering_config.output_adata_path or str(input_path)
+    output_path = save_pipeline_anndata(
+        adata=adata,
+        general_config=general_config,
+        stage_name=stage_name,
+        stage_config=subclustering_config,
+        override_path=output_override,
+        extra_details={"subclustering_output_dir": str(output_dir)},
+    )
     logging.info("Saved subclustering AnnData output to %s", output_path)
     return output_path
 
@@ -741,17 +741,14 @@ if __name__ == "__main__":
     general_config = GeneralConfig(
         **filter_config_for_dataclass(config.get("general", {}), GeneralConfig)
     )
-    process_config = BasicProcessConfig(
-        **filter_config_for_dataclass(config.get("process", {}), BasicProcessConfig)
-    )
     subclustering_config = SubclusteringConfig(
         **filter_config_for_dataclass(config.get("subclustering", {}), SubclusteringConfig)
     )
 
     output = run_subclustering_stage(
         general_config=general_config,
-        process_config=process_config,
         subclustering_config=subclustering_config,
+        stage_name=pipeline_stage,
     )
     if output is None:
         logging.info("Subclustering stage exited after template generation.")

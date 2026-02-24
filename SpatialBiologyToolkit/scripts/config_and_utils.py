@@ -3,8 +3,9 @@ import yaml
 import logging
 import argparse
 from pathlib import Path
-from typing import Dict, Any, List, Optional
-from dataclasses import dataclass, field, asdict
+from datetime import datetime, timezone
+from typing import Dict, Any, List, Optional, Tuple
+from dataclasses import dataclass, field, asdict, is_dataclass
 
 @dataclass
 class GeneralConfig:
@@ -17,6 +18,9 @@ class GeneralConfig:
     tiff_stacks_folder: str  = 'tiff_stacks'
     raw_images_folder: str = 'tiffs'
     denoised_images_folder: str = 'processed'
+    anndata_path: str = 'anndata.h5ad'  # Canonical AnnData file path used across pipeline stages
+    anndata_stage_run_mode: str = 'intelligent'  # One of: repeat, skip, intelligent
+    anndata_uns_log_key: str = 'pipeline_stage_log'  # AnnData.uns key storing stage order/config snapshots
 
 @dataclass
 class PreprocessConfig:
@@ -179,15 +183,13 @@ class NimbusConfig:
     expansion_jobs: int = 1  # Number of parallel jobs for expansion extraction (1=sequential, -1=all CPUs)
 
 @dataclass
-class BasicProcessConfig:
-    input_adata_path: str = 'anndata.h5ad'
-    output_adata_path: str = 'anndata_processed.h5ad'
+class BioBatchNetConfig:
     batch_correction_method: Optional[str] = None
     batch_correction_obs: Optional[str] = None
     n_for_pca: Optional[int] = None
     leiden_resolutions_list: List[float] = field(default_factory=lambda: [0.3, 1.0])
     umap_min_dist: float = 0.1
-    
+
     # BioBatchNet-specific parameters (nested dictionary format)
     biobatchnet_params: Optional[Dict[str, Any]] = field(default_factory=lambda: {
         'data_type': 'imc',
@@ -198,34 +200,33 @@ class BasicProcessConfig:
         'extra_params': {
             'loss_weights': {
                 'recon_loss': 100.0,
-                'discriminator': 0.05, # Batch mixing (default: 0.3 — lower = more mixing)
-                'classifier': 1.0, # Batch retention (default: 1)
-                'kl_loss_1': 0.0005, # KL divergence for bio encoder (default: 0.005)
-                'kl_loss_2': 0.1, # KL divergence for batch encoder (default: 0.1)
-                'ortho_loss': 0.01, # Orthogonality constraint (default: 0.01)
+                'discriminator': 0.05,  # Batch mixing (default: 0.3 - lower = more mixing)
+                'classifier': 1.0,  # Batch retention (default: 1)
+                'kl_loss_1': 0.0005,  # KL divergence for bio encoder (default: 0.005)
+                'kl_loss_2': 0.1,  # KL divergence for batch encoder (default: 0.1)
+                'ortho_loss': 0.01,  # Orthogonality constraint (default: 0.01)
             }
         },
     })
-    
+
     # BioBatchNet parameter scanning
-    biobatchnet_scan_parameter_sets: Optional[List[Dict[str, Any]]] = None  # Parameter overrides for scanning
-    biobatchnet_scan_include_base: bool = True  # Run the base configuration alongside scans by default
-    biobatchnet_run_leiden: bool = True  # Run Leiden clustering after BioBatchNet correction
-    
+    biobatchnet_scan_parameter_sets: Optional[List[Dict[str, Any]]] = None
+    biobatchnet_scan_include_base: bool = True
+    biobatchnet_run_leiden: bool = True
+
     # Scanpy neighbors computation
-    n_neighbors: Optional[int] = None  # Number of neighbors for scanpy neighbors computation (None uses scanpy default)
-    
-    # DEPRECATED: Old flat-style parameters (kept for backward compatibility, will be migrated to biobatchnet_params)
+    n_neighbors: Optional[int] = None
+
+    # Deprecated flat-style parameters (auto-migrated into biobatchnet_params)
     biobatchnet_data_type: Optional[str] = None
     biobatchnet_latent_dim: Optional[int] = None
     biobatchnet_epochs: Optional[int] = None
     biobatchnet_device: Optional[str] = None
     biobatchnet_kwargs: Optional[Dict[str, Any]] = None
     biobatchnet_use_raw: Optional[bool] = None
-    
+
     def __post_init__(self):
-        """Migrate old flat-style parameters to nested biobatchnet_params format."""
-        # If biobatchnet_params is None, initialize with defaults
+        """Migrate deprecated flat BioBatchNet parameters into nested biobatchnet_params."""
         if self.biobatchnet_params is None:
             self.biobatchnet_params = {
                 'data_type': 'imc',
@@ -244,8 +245,7 @@ class BasicProcessConfig:
                     }
                 },
             }
-        
-        # Migrate old flat parameters if they are set
+
         migrated = False
         if self.biobatchnet_data_type is not None:
             self.biobatchnet_params['data_type'] = self.biobatchnet_data_type
@@ -265,17 +265,27 @@ class BasicProcessConfig:
         if self.biobatchnet_use_raw is not None:
             self.biobatchnet_params['use_raw'] = self.biobatchnet_use_raw
             migrated = True
-        
+
         if migrated:
             logging.warning(
                 "Deprecated flat BioBatchNet parameters detected and migrated to 'biobatchnet_params'. "
-                "Please update your config.yaml to use the nested format under process.biobatchnet_params."
+                "Please update your config.yaml to use the nested format under biobatchnet.biobatchnet_params."
             )
+
+
+@dataclass
+class BasicProcessConfig(BioBatchNetConfig):
+    """
+    Legacy process config retained for backward compatibility.
+    AnnData path management now belongs in GeneralConfig.
+    """
+    input_adata_path: str = 'anndata.h5ad'
+    output_adata_path: str = 'anndata_processed.h5ad'
 
 @dataclass
 class VisualizationConfig:
     # Input data settings
-    input_adata_path: Optional[str] = None  # Path to AnnData file for visualization (None = use process_config.output_adata_path)
+    input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
     population_columns: Optional[List[str]] = None  # Specific population columns to visualize (None = auto-detect)
     metadata_columns: Optional[List[str]] = None  # Specific metadata columns to visualize (None = auto-detect)
     
@@ -346,8 +356,8 @@ class VisualizationConfig:
 @dataclass
 class CellCharterConfig:
     # Input/output
-    input_adata_path: Optional[str] = None  # If None: use process.output_adata_path, fallback to process.input_adata_path
-    output_adata_path: Optional[str] = None  # If None: use process.output_adata_path, fallback to process.input_adata_path
+    input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
+    output_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
     qc_output_subdir: str = 'CellCharter_QC'
 
     # Spatial metadata
@@ -470,7 +480,7 @@ class CellCharterConfig:
 @dataclass
 class PairwiseSpatialConfig:
     # Input/output
-    input_adata_path: Optional[str] = None  # If None: use process.output_adata_path, then process.input_adata_path
+    input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
     output_subdir: str = 'Pairwise_Spatial'
 
     # Core metadata keys
@@ -537,8 +547,8 @@ class PairwiseSpatialConfig:
 @dataclass
 class SubclusteringConfig:
     # Input/output
-    input_adata_path: Optional[str] = None  # If None: use process.output_adata_path, fallback to process.input_adata_path
-    output_adata_path: str = 'anndata_subclustered.h5ad'
+    input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
+    output_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
     output_subdir: str = 'subclustering'
 
     # Template/remap files
@@ -583,6 +593,7 @@ DEFAULT_CONFIG_CLASSES = {
     'createmasks': CreateMasksConfig,
     'segmentation': SegmentationConfig,
     'nimbus': NimbusConfig,
+    'biobatchnet': BioBatchNetConfig,
     'process': BasicProcessConfig,
     'visualization': VisualizationConfig,
     'cellcharter': CellCharterConfig,
@@ -726,6 +737,240 @@ def setup_logging(logging_config, pipeline_stage):
     # Prevent propagation to avoid duplicate messages if requested
     if prevent_duplicate:
         root_logger.propagate = False
+
+
+def _normalize_stage_run_mode(mode: Optional[str]) -> str:
+    mode_text = str(mode or "intelligent").strip().lower()
+    if mode_text not in {"repeat", "skip", "intelligent"}:
+        logging.warning(
+            "Unknown general.anndata_stage_run_mode='%s'. Falling back to 'intelligent'.",
+            mode,
+        )
+        return "intelligent"
+    return mode_text
+
+
+def _sanitize_for_uns(value: Any) -> Any:
+    """Recursively sanitize values for safe storage in adata.uns and drop None entries."""
+    if value is None:
+        return None
+
+    if isinstance(value, Path):
+        return str(value)
+
+    if is_dataclass(value):
+        value = asdict(value)
+
+    if isinstance(value, dict):
+        out: Dict[str, Any] = {}
+        for key, item in value.items():
+            cleaned = _sanitize_for_uns(item)
+            if cleaned is None:
+                continue
+            out[str(key)] = cleaned
+        return out
+
+    if isinstance(value, (list, tuple, set)):
+        out_list: List[Any] = []
+        for item in value:
+            cleaned = _sanitize_for_uns(item)
+            if cleaned is None:
+                continue
+            out_list.append(cleaned)
+        return out_list
+
+    # Handle NumPy scalars without importing numpy at module import time.
+    if hasattr(value, "item") and callable(getattr(value, "item")):
+        try:
+            return value.item()
+        except Exception:
+            pass
+
+    return value
+
+
+def build_uns_config_snapshot(config_obj: Any) -> Dict[str, Any]:
+    """
+    Build a sanitized config snapshot suitable for adata.uns.
+    All None/null values are removed recursively.
+    """
+    cleaned = _sanitize_for_uns(config_obj)
+    if cleaned is None:
+        return {}
+    if isinstance(cleaned, dict):
+        return cleaned
+    return {"value": cleaned}
+
+
+def resolve_anndata_path(
+    general_config: GeneralConfig,
+    override_path: Optional[str] = None,
+) -> Path:
+    target = override_path if override_path else general_config.anndata_path
+    return Path(str(target))
+
+
+def _get_stage_log_container(adata: Any, uns_key: str) -> Dict[str, Any]:
+    container = adata.uns.get(uns_key)
+    if not isinstance(container, dict):
+        container = {}
+    if not isinstance(container.get("stage_order"), list):
+        container["stage_order"] = []
+    if not isinstance(container.get("run_log"), list):
+        container["run_log"] = []
+    if not isinstance(container.get("stages"), dict):
+        container["stages"] = {}
+    adata.uns[uns_key] = container
+    return container
+
+
+def get_stage_run_record(
+    adata: Any,
+    general_config: GeneralConfig,
+    stage_name: str,
+) -> Optional[Dict[str, Any]]:
+    uns_key = str(general_config.anndata_uns_log_key)
+    container = _get_stage_log_container(adata, uns_key)
+    record = container.get("stages", {}).get(str(stage_name))
+    if isinstance(record, dict):
+        return record
+    return None
+
+
+def should_run_stage(
+    adata: Any,
+    general_config: GeneralConfig,
+    stage_name: str,
+    stage_config: Optional[Any] = None,
+) -> Tuple[bool, str]:
+    """
+    Decide whether a stage should run based on general.anndata_stage_run_mode.
+    """
+    mode = _normalize_stage_run_mode(getattr(general_config, "anndata_stage_run_mode", "intelligent"))
+    record = get_stage_run_record(adata, general_config, stage_name)
+    if record is None:
+        return True, f"Stage '{stage_name}' has no previous run record."
+
+    if mode == "repeat":
+        return True, "general.anndata_stage_run_mode=repeat."
+
+    if mode == "skip":
+        return False, f"Stage '{stage_name}' already recorded and mode=skip."
+
+    current_snapshot = build_uns_config_snapshot(stage_config)
+    previous_snapshot = record.get("config", {})
+    if current_snapshot == previous_snapshot:
+        return (
+            False,
+            f"Stage '{stage_name}' already recorded with matching config and mode=intelligent.",
+        )
+    return (
+        True,
+        f"Stage '{stage_name}' config changed since last run; mode=intelligent so it will run again.",
+    )
+
+
+def load_pipeline_anndata(
+    *,
+    general_config: GeneralConfig,
+    stage_name: str,
+    stage_config: Optional[Any] = None,
+    override_path: Optional[str] = None,
+    allow_missing: bool = False,
+) -> Tuple[Optional[Any], Path, bool, str]:
+    """
+    Standardized AnnData loader with stage-run decision logic.
+
+    Returns
+    -------
+    tuple
+        (adata_or_none, resolved_path, skip_stage, decision_message)
+    """
+    import anndata as ad
+
+    anndata_path = resolve_anndata_path(general_config, override_path=override_path)
+    if not anndata_path.exists():
+        if allow_missing:
+            msg = f"AnnData not found at {anndata_path}; proceeding because allow_missing=True."
+            logging.info(msg)
+            return None, anndata_path, False, msg
+        raise FileNotFoundError(f"AnnData file not found: {anndata_path}")
+
+    logging.info("Loading AnnData from %s", anndata_path)
+    adata = ad.read_h5ad(anndata_path)
+    should_run, reason = should_run_stage(
+        adata=adata,
+        general_config=general_config,
+        stage_name=stage_name,
+        stage_config=stage_config,
+    )
+    skip_stage = not should_run
+    logging.info("Stage decision for '%s': %s", stage_name, reason)
+    return adata, anndata_path, skip_stage, reason
+
+
+def record_stage_run_in_uns(
+    *,
+    adata: Any,
+    general_config: GeneralConfig,
+    stage_name: str,
+    stage_config: Optional[Any] = None,
+    extra_details: Optional[Dict[str, Any]] = None,
+) -> None:
+    """
+    Record a stage run in adata.uns using the configured pipeline log key.
+    """
+    uns_key = str(general_config.anndata_uns_log_key)
+    container = _get_stage_log_container(adata, uns_key)
+    stage_name = str(stage_name)
+    timestamp = datetime.now(timezone.utc).isoformat()
+
+    stage_snapshot = build_uns_config_snapshot(stage_config)
+    detail_snapshot = build_uns_config_snapshot(extra_details) if extra_details is not None else {}
+
+    container["stage_order"].append(stage_name)
+    run_event: Dict[str, Any] = {"stage": stage_name, "run_utc": timestamp}
+    if stage_snapshot:
+        run_event["config"] = stage_snapshot
+    if detail_snapshot:
+        run_event["details"] = detail_snapshot
+    container["run_log"].append(run_event)
+
+    entry: Dict[str, Any] = {"last_run_utc": timestamp}
+    if stage_snapshot:
+        entry["config"] = stage_snapshot
+    if detail_snapshot:
+        entry["details"] = detail_snapshot
+    container["stages"][stage_name] = entry
+    adata.uns[uns_key] = container
+
+
+def save_pipeline_anndata(
+    *,
+    adata: Any,
+    general_config: GeneralConfig,
+    stage_name: str,
+    stage_config: Optional[Any] = None,
+    override_path: Optional[str] = None,
+    extra_details: Optional[Dict[str, Any]] = None,
+) -> Path:
+    """
+    Record stage metadata in adata.uns and save AnnData to the canonical path.
+    """
+    target_path = resolve_anndata_path(general_config, override_path=override_path)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+
+    record_stage_run_in_uns(
+        adata=adata,
+        general_config=general_config,
+        stage_name=stage_name,
+        stage_config=stage_config,
+        extra_details=extra_details,
+    )
+    adata.write_h5ad(target_path)
+    logging.info("Saved AnnData to %s", target_path)
+    return target_path
+
 
 def get_filename(path: Path, name: str) -> str:
     """

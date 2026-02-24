@@ -28,9 +28,10 @@ import anndata as ad
 from .config_and_utils import (
     GeneralConfig,
     VisualizationConfig,
-    BasicProcessConfig,
     filter_config_for_dataclass,
+    load_pipeline_anndata,
     process_config_with_overrides,
+    save_pipeline_anndata,
     setup_logging,
 )
 
@@ -556,36 +557,38 @@ if __name__ == "__main__":
         **filter_config_for_dataclass(config.get('visualization', {}), VisualizationConfig)
     )
     
-    # Load processed AnnData (should have Leiden clustering results)
-    # Try to get input path from config, fallback to default
-    try:
-        process_config = BasicProcessConfig(
-            **filter_config_for_dataclass(config.get('process', {}), BasicProcessConfig)
-        )
-        input_path = process_config.output_adata_path
-    except:
-        input_path = "anndata_processed.h5ad"  # Fallback default
-    
-    if not Path(input_path).exists():
+    adata, input_path, skip_stage, _ = load_pipeline_anndata(
+        general_config=general_config,
+        stage_name=pipeline_stage,
+        stage_config=viz_config,
+    )
+    if skip_stage:
+        logging.info("Skipping AI interpretation stage based on AnnData stage policy.")
+        exit(0)
+    if adata is None:
         logging.error(f"Processed AnnData file not found at {input_path}")
         logging.error("Please run basic processing first to generate Leiden clustering results")
         exit(1)
-    
-    logging.info(f'Loading processed AnnData from {input_path}')
-    adata = ad.read_h5ad(input_path)
     logging.info('AnnData loaded successfully.')
     
     # Run AI interpretation
     try:
-        results = run_ai_interpretation(adata, config, Path("."), save_path=input_path)
-        
+        results = run_ai_interpretation(adata, config, Path("."), save_path=None)
+
         if results:
             logging.info(f"Successfully interpreted {len(results)} Leiden resolutions")
-            # Save updated adata with AI labels (over original file by default)
-            adata.write_h5ad(input_path)
-            logging.info(f"Saved AnnData with AI labels to {input_path}")
         else:
-            logging.info("No AI interpretation results generated - no file updates needed")
+            logging.info("No AI interpretation results generated.")
+
+        save_pipeline_anndata(
+            adata=adata,
+            general_config=general_config,
+            stage_name=pipeline_stage,
+            stage_config=viz_config,
+            override_path=str(input_path),
+            extra_details={"n_interpreted_resolutions": int(len(results))},
+        )
+        logging.info(f"Saved AnnData with stage log to {input_path}")
             
     except Exception as e:
         logging.error(f"AI interpretation failed: {e}")
