@@ -750,6 +750,14 @@ def _normalize_stage_run_mode(mode: Optional[str]) -> str:
     return mode_text
 
 
+def _sanitize_uns_key(key: Any) -> str:
+    """Sanitize dictionary keys for safe storage in AnnData .uns/HDF5."""
+    key_text = str(key)
+    if "/" in key_text:
+        key_text = key_text.replace("/", "__slash__")
+    return key_text
+
+
 def _sanitize_for_uns(value: Any) -> Any:
     """Recursively sanitize values for safe storage in adata.uns and drop None entries."""
     if value is None:
@@ -767,7 +775,7 @@ def _sanitize_for_uns(value: Any) -> Any:
             cleaned = _sanitize_for_uns(item)
             if cleaned is None:
                 continue
-            out[str(key)] = cleaned
+            out[_sanitize_uns_key(key)] = cleaned
         return out
 
     if isinstance(value, (list, tuple, set)):
@@ -816,8 +824,26 @@ def _get_stage_log_container(adata: Any, uns_key: str) -> Dict[str, Any]:
         container = {}
     if not isinstance(container.get("stage_order"), list):
         container["stage_order"] = []
-    if not isinstance(container.get("run_log"), list):
-        container["run_log"] = []
+    run_log_raw = container.get("run_log")
+    migrated: Dict[str, Any] = {}
+    if isinstance(run_log_raw, dict):
+        for idx, item in enumerate(run_log_raw.values(), start=1):
+            run_key = f"run_{idx:06d}"
+            cleaned = _sanitize_for_uns(item)
+            if isinstance(cleaned, dict):
+                migrated[run_key] = cleaned
+            elif cleaned is not None:
+                migrated[run_key] = {"value": cleaned}
+    elif isinstance(run_log_raw, list):
+        # Migrate legacy list-based run logs (can fail HDF5 serialization) to dict form.
+        for idx, item in enumerate(run_log_raw, start=1):
+            run_key = f"run_{idx:06d}"
+            cleaned = _sanitize_for_uns(item)
+            if isinstance(cleaned, dict):
+                migrated[run_key] = cleaned
+            elif cleaned is not None:
+                migrated[run_key] = {"value": cleaned}
+    container["run_log"] = migrated
     if not isinstance(container.get("stages"), dict):
         container["stages"] = {}
     adata.uns[uns_key] = container
@@ -934,7 +960,13 @@ def record_stage_run_in_uns(
         run_event["config"] = stage_snapshot
     if detail_snapshot:
         run_event["details"] = detail_snapshot
-    container["run_log"].append(run_event)
+    run_log = container.get("run_log")
+    if not isinstance(run_log, dict):
+        run_log = {}
+        container["run_log"] = run_log
+    run_idx = len(run_log) + 1
+    run_key = f"run_{run_idx:06d}"
+    run_log[run_key] = run_event
 
     entry: Dict[str, Any] = {"last_run_utc": timestamp}
     if stage_snapshot:
