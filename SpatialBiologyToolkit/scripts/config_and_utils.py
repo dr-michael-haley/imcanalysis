@@ -6,6 +6,7 @@ from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional, Tuple
 from dataclasses import dataclass, field, asdict, is_dataclass
+from collections.abc import MutableMapping
 
 @dataclass
 class GeneralConfig:
@@ -773,6 +774,242 @@ def _sanitize_uns_key(key: Any) -> str:
     return key_text
 
 
+def _is_null_like_for_uns(value: Any) -> bool:
+    """Return True for null-like values that often break cross-version AnnData I/O."""
+    if value is None:
+        return True
+
+    # pandas sentinel nulls
+    try:
+        import pandas as pd  # local import to avoid hard dependency at module import time
+
+        if value is pd.NA or value is pd.NaT:
+            return True
+    except Exception:
+        pass
+
+    # numpy masked sentinel
+    try:
+        import numpy as np
+
+        if value is np.ma.masked:
+            return True
+    except Exception:
+        pass
+
+    return False
+
+
+def _contains_null_like_object_array(value: Any) -> bool:
+    """Detect object-dtype arrays containing null-like values."""
+    try:
+        import numpy as np
+
+        if not isinstance(value, np.ndarray) or value.dtype != object:
+            return False
+        for item in value.ravel():
+            if _is_null_like_for_uns(item):
+                return True
+    except Exception:
+        return False
+    return False
+
+
+def _sanitize_uns_payload(
+    value: Any,
+    *,
+    max_depth: int = 50,
+    _depth: int = 0,
+) -> Tuple[Any, int]:
+    """
+    Recursively sanitize payloads for adata.uns storage.
+    Returns (cleaned_value, removed_item_count).
+    """
+    if _depth > max_depth:
+        return value, 0
+
+    if _is_null_like_for_uns(value):
+        return None, 1
+
+    if isinstance(value, Path):
+        return str(value), 0
+
+    if is_dataclass(value):
+        value = asdict(value)
+
+    if isinstance(value, dict):
+        out: Dict[str, Any] = {}
+        removed = 0
+        for key, item in value.items():
+            cleaned, removed_count = _sanitize_uns_payload(
+                item,
+                max_depth=max_depth,
+                _depth=_depth + 1,
+            )
+            removed += removed_count
+            if cleaned is None:
+                continue
+            out[_sanitize_uns_key(key)] = cleaned
+        return out, removed
+
+    if isinstance(value, list):
+        out_list: List[Any] = []
+        removed = 0
+        for item in value:
+            cleaned, removed_count = _sanitize_uns_payload(
+                item,
+                max_depth=max_depth,
+                _depth=_depth + 1,
+            )
+            removed += removed_count
+            if cleaned is None:
+                continue
+            out_list.append(cleaned)
+        return out_list, removed
+
+    if isinstance(value, tuple):
+        out_tuple: List[Any] = []
+        removed = 0
+        for item in value:
+            cleaned, removed_count = _sanitize_uns_payload(
+                item,
+                max_depth=max_depth,
+                _depth=_depth + 1,
+            )
+            removed += removed_count
+            if cleaned is None:
+                continue
+            out_tuple.append(cleaned)
+        return out_tuple, removed
+
+    if isinstance(value, set):
+        out_set_as_list: List[Any] = []
+        removed = 0
+        for item in value:
+            cleaned, removed_count = _sanitize_uns_payload(
+                item,
+                max_depth=max_depth,
+                _depth=_depth + 1,
+            )
+            removed += removed_count
+            if cleaned is None:
+                continue
+            out_set_as_list.append(cleaned)
+        return out_set_as_list, removed
+
+    # Object arrays containing null-like values can trigger 'null' encoding on write.
+    if _contains_null_like_object_array(value):
+        return None, 1
+
+    # Handle NumPy scalars without importing numpy at module import time.
+    if hasattr(value, "item") and callable(getattr(value, "item")):
+        try:
+            return value.item(), 0
+        except Exception:
+            pass
+
+    return value, 0
+
+
+def _sanitize_anndata_uns_inplace(adata: Any, *, max_depth: int = 50) -> int:
+    """
+    Clean adata.uns in-place to improve backward compatibility across anndata versions.
+    Removes null-like values and unsupported nested payloads.
+    """
+    uns_obj = getattr(adata, "uns", None)
+    if not isinstance(uns_obj, MutableMapping):
+        return 0
+
+    cleaned_uns, removed = _sanitize_uns_payload(dict(uns_obj), max_depth=max_depth)
+    if not isinstance(cleaned_uns, dict):
+        cleaned_uns = {}
+
+    try:
+        uns_obj.clear()
+        uns_obj.update(cleaned_uns)
+    except Exception:
+        adata.uns = cleaned_uns
+
+    return int(removed)
+
+
+def _h5_attr_to_text(value: Any) -> str:
+    try:
+        if isinstance(value, bytes):
+            return value.decode("utf-8", "ignore")
+        if hasattr(value, "item") and callable(getattr(value, "item")):
+            item_value = value.item()
+            if isinstance(item_value, bytes):
+                return item_value.decode("utf-8", "ignore")
+            return str(item_value)
+        return str(value)
+    except Exception:
+        return str(value)
+
+
+def _is_h5_node_null_encoded(node: Any) -> bool:
+    for attr_key in ("encoding-type", "encoding_type"):
+        try:
+            if attr_key in node.attrs:
+                attr_val = _h5_attr_to_text(node.attrs[attr_key]).strip().lower()
+                if attr_val == "null":
+                    return True
+        except Exception:
+            continue
+    return False
+
+
+def _collect_null_encoded_h5_paths(group: Any, prefix: str) -> List[str]:
+    paths: List[str] = []
+    try:
+        import h5py
+    except Exception:
+        return paths
+
+    for name in list(group.keys()):
+        child = group[name]
+        child_path = f"{prefix}/{name}"
+        if _is_h5_node_null_encoded(child):
+            paths.append(child_path)
+            # Whole node will be deleted, so skip recursion into this subtree.
+            continue
+        if isinstance(child, h5py.Group):
+            paths.extend(_collect_null_encoded_h5_paths(child, child_path))
+    return paths
+
+
+def _remove_null_encoded_uns_entries_in_h5ad(anndata_path: Path) -> List[str]:
+    """
+    In-place repair for files containing 'null' encoded datasets under /uns.
+    Returns a list of removed HDF5 paths.
+    """
+    import h5py
+
+    removed_paths: List[str] = []
+    with h5py.File(anndata_path, "r+") as handle:
+        if "uns" not in handle:
+            return removed_paths
+
+        paths_to_remove = _collect_null_encoded_h5_paths(handle["uns"], "/uns")
+        for path in sorted(set(paths_to_remove), key=lambda p: p.count("/"), reverse=True):
+            parent_path, leaf = path.rsplit("/", 1)
+            parent = handle[parent_path.lstrip("/")] if parent_path and parent_path != "/" else handle
+            if leaf in parent:
+                del parent[leaf]
+                removed_paths.append(path)
+
+    return removed_paths
+
+
+def _looks_like_null_encoding_read_error(exc: Exception) -> bool:
+    msg = str(exc)
+    if "encoding_type='null'" in msg or 'encoding_type="null"' in msg:
+        return True
+    if "No read method registered for IOSpec" in msg and "null" in msg:
+        return True
+    return False
+
+
 def _sanitize_for_uns(value: Any) -> Any:
     """Recursively sanitize values for safe storage in adata.uns and drop None entries."""
     if value is None:
@@ -938,7 +1175,38 @@ def load_pipeline_anndata(
         raise FileNotFoundError(f"AnnData file not found: {anndata_path}")
 
     logging.info("Loading AnnData from %s", anndata_path)
-    adata = ad.read_h5ad(anndata_path)
+    try:
+        adata = ad.read_h5ad(anndata_path)
+    except Exception as exc:
+        if not _looks_like_null_encoding_read_error(exc):
+            raise
+
+        logging.warning(
+            "AnnData read failed due null-encoded payloads (likely from newer anndata/scanpy). "
+            "Attempting in-place repair of /uns in %s.",
+            anndata_path,
+        )
+        removed_paths = _remove_null_encoded_uns_entries_in_h5ad(anndata_path)
+        if not removed_paths:
+            raise
+
+        preview = ", ".join(removed_paths[:5])
+        if len(removed_paths) > 5:
+            preview += ", ..."
+        logging.warning(
+            "Removed %d null-encoded /uns entries from %s: %s",
+            len(removed_paths),
+            anndata_path,
+            preview,
+        )
+        adata = ad.read_h5ad(anndata_path)
+
+    removed_from_uns = _sanitize_anndata_uns_inplace(adata)
+    if removed_from_uns > 0:
+        logging.warning(
+            "Removed %d null-like entries from adata.uns after load for compatibility.",
+            removed_from_uns,
+        )
     should_run, reason = should_run_stage(
         adata=adata,
         general_config=general_config,
@@ -1019,7 +1287,28 @@ def save_pipeline_anndata(
         stage_config=stage_config,
         extra_details=extra_details,
     )
-    adata.write_h5ad(target_path)
+
+    removed_from_uns = _sanitize_anndata_uns_inplace(adata)
+    if removed_from_uns > 0:
+        logging.warning(
+            "Removed %d null-like entries from adata.uns before save for backward compatibility.",
+            removed_from_uns,
+        )
+
+    try:
+        adata.write_h5ad(target_path)
+    except Exception as exc:
+        logging.warning(
+            "Initial AnnData write failed (%s). Retrying after additional uns sanitization.",
+            exc,
+        )
+        removed_retry = _sanitize_anndata_uns_inplace(adata, max_depth=100)
+        if removed_retry > 0:
+            logging.warning(
+                "Removed %d additional null-like uns entries before write retry.",
+                removed_retry,
+            )
+        adata.write_h5ad(target_path)
     logging.info("Saved AnnData to %s", target_path)
     return target_path
 
