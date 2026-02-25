@@ -2027,7 +2027,9 @@ def clean_anndata(
 
     Defaults are conservative: clean_uns=True only.
     """
-    adata2 = copy.deepcopy(adata) if deep_copy else adata
+    import copy as cp
+
+    adata2 = cp.deepcopy(adata) if deep_copy else adata
     resolved: List[ResolvedIssue] = []
 
     # Warn if object already inconsistent (your error suggests it is)

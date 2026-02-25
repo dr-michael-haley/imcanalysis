@@ -19,6 +19,7 @@ class GeneralConfig:
     tiff_stacks_folder: str  = 'tiff_stacks'
     raw_images_folder: str = 'tiffs'
     denoised_images_folder: str = 'processed'
+    slurm_logs_folder: str = 'SLURM_logs'
     anndata_path: str = 'anndata.h5ad'  # Canonical AnnData file path used across pipeline stages
     anndata_stage_run_mode: str = 'intelligent'  # One of: repeat, skip, intelligent
     anndata_uns_log_key: str = 'pipeline_stage_log'  # AnnData.uns key storing stage order/config snapshots
