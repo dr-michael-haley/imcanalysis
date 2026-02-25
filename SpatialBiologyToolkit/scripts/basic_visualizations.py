@@ -367,11 +367,13 @@ def create_categorical_umaps(adata, categorical_columns, qc_umap_dir, qc_legend_
                     if make_individual_highlights and category_type == "population":
                         try:
                             if not isinstance(adata.obs[cat_col].dtype, pd.CategoricalDtype):
-                                logging.warning(
-                                    f"Skipping individual highlighted UMAPs for {cat_col}: column is not categorical."
+                                logging.info(
+                                    f"Column '{cat_col}' is not categorical; converting to categorical for highlighted UMAPs."
                                 )
-                            else:
-                                highlight_dir = qc_umap_dir / 'Individual_Highlights' / cleanstring(cat_col)
+                                adata.obs[cat_col] = adata.obs[cat_col].astype("category")
+
+                            highlight_dir = qc_umap_dir / 'Individual_Highlights' / cleanstring(cat_col)
+                            try:
                                 sbt_utils.plot_umap_highlight_clusters(
                                     adata=adata,
                                     subcluster_col=cat_col,
@@ -381,7 +383,24 @@ def create_categorical_umaps(adata, categorical_columns, qc_umap_dir, qc_legend_
                                     save_dir=str(highlight_dir),
                                     save_dpi=300 if viz_config.save_high_res else 150,
                                 )
-                                logging.info(f'Individual highlighted UMAPs saved to {highlight_dir}')
+                            except AttributeError as attr_err:
+                                if "Can only use .cat accessor with a 'category' dtype" not in str(attr_err):
+                                    raise
+                                logging.warning(
+                                    f"Caught non-categorical .cat accessor error for '{cat_col}'. "
+                                    "Converting to categorical and retrying highlighted UMAPs."
+                                )
+                                adata.obs[cat_col] = adata.obs[cat_col].astype("category")
+                                sbt_utils.plot_umap_highlight_clusters(
+                                    adata=adata,
+                                    subcluster_col=cat_col,
+                                    point_size=10,
+                                    legend_loc='none',
+                                    show=False,
+                                    save_dir=str(highlight_dir),
+                                    save_dpi=300 if viz_config.save_high_res else 150,
+                                )
+                            logging.info(f'Individual highlighted UMAPs saved to {highlight_dir}')
                         except Exception as e:
                             log_detailed_error(e, f"creating individual highlighted UMAPs for '{cat_col}'")
                     
@@ -944,7 +963,24 @@ def _population_palette(adata: ad.AnnData, pop_col: str, population_order):
     return palette
 
 
-def _build_roi_area_mm2_map(adata: ad.AnnData, general_config, roi_obs: str):
+def _build_roi_area_mm2_map(
+    adata: ad.AnnData,
+    general_config,
+    roi_obs=None,
+    roi_col=None,
+):
+    # Backward-compatible arg handling: accept either roi_obs or roi_col.
+    if roi_obs is None and roi_col is not None:
+        roi_obs = roi_col
+    elif roi_obs is not None and roi_col is not None and roi_obs != roi_col:
+        logging.warning(
+            "Both roi_obs ('%s') and roi_col ('%s') were provided; using roi_obs.",
+            roi_obs,
+            roi_col,
+        )
+    if roi_obs is None:
+        roi_obs = getattr(general_config, 'roi_obs', 'ROI')
+
     roi_area = {}
     valid_rois = None
     if roi_obs in adata.obs.columns:
