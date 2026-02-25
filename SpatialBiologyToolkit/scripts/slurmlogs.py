@@ -4,7 +4,7 @@ SLURM log organization stage.
 This script reads SLURM job metadata recorded in AnnData pipeline logs and:
 1. Finds matching `slurm-<job_id>.out` files in the current working directory.
 2. Renames local files to `{order}_{stage}_{job_id}.out`.
-3. Copies renamed files into `general.slurm_logs_folder`.
+3. Moves renamed files into `general.slurm_logs_folder`.
 4. Marks files in `general.slurm_logs_folder` that do not match AnnData run records
    by appending `_Unverified` to the filename.
 """
@@ -182,14 +182,16 @@ def _rename_local_file_to_expected(
     return target
 
 
-def _copy_to_log_folder(source_file: Path, log_dir: Path, target_name: str) -> Path:
+def _move_to_log_folder(source_file: Path, log_dir: Path, target_name: str) -> Path:
     target = log_dir / target_name
     try:
         if source_file.resolve() == target.resolve():
             return target
     except Exception:
         pass
-    shutil.copy2(source_file, target)
+    if target.exists():
+        target.unlink()
+    shutil.move(str(source_file), str(target))
     return target
 
 
@@ -230,7 +232,7 @@ def _write_manifest(
         "job_id",
         "expected_filename",
         "local_status",
-        "log_copy_status",
+        "log_move_status",
     ]
     with manifest_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -267,12 +269,12 @@ def run_slurm_log_organizer(
     expected_filenames: List[str] = [record.expected_filename for record in run_records]
     manifest_rows: List[Dict[str, str]] = []
     renamed_count = 0
-    copied_count = 0
+    moved_count = 0
     missing_local_count = 0
 
     for record in run_records:
         local_status = "missing_local_file"
-        copy_status = "not_copied"
+        move_status = "not_moved"
 
         source_file = _pick_local_slurm_file(current_dir=current_dir, record=record)
         if source_file is None:
@@ -301,14 +303,14 @@ def run_slurm_log_organizer(
                 local_status = "renamed_local_file"
                 renamed_count += 1
 
-            copied_file = _copy_to_log_folder(
+            moved_file = _move_to_log_folder(
                 source_file=renamed_file,
                 log_dir=log_dir,
                 target_name=record.expected_filename,
             )
-            if copied_file.exists():
-                copy_status = "copied_to_log_dir"
-                copied_count += 1
+            if moved_file.exists():
+                move_status = "moved_to_log_dir"
+                moved_count += 1
 
         manifest_rows.append(
             {
@@ -318,7 +320,7 @@ def run_slurm_log_organizer(
                 "job_id": record.job_id,
                 "expected_filename": record.expected_filename,
                 "local_status": local_status,
-                "log_copy_status": copy_status,
+                "log_move_status": move_status,
             }
         )
 
@@ -369,11 +371,11 @@ def run_slurm_log_organizer(
     manifest_path = _write_manifest(log_dir=log_dir, rows=manifest_rows)
 
     logging.info(
-        "SLURM log organization complete. records=%d, renamed_local=%d, copied=%d, "
+        "SLURM log organization complete. records=%d, renamed_local=%d, moved=%d, "
         "missing_local=%d, restored_verified=%d, marked_unverified=%d, manifest=%s",
         len(run_records),
         renamed_count,
-        copied_count,
+        moved_count,
         missing_local_count,
         restored_verified,
         marked_unverified,
@@ -391,7 +393,7 @@ def run_slurm_log_organizer(
             "manifest_path": str(manifest_path),
             "records_found": int(len(run_records)),
             "renamed_local": int(renamed_count),
-            "copied_to_log_dir": int(copied_count),
+            "moved_to_log_dir": int(moved_count),
             "missing_local": int(missing_local_count),
             "restored_verified": int(restored_verified),
             "marked_unverified": int(marked_unverified),
