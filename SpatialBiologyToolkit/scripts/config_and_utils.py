@@ -1,5 +1,6 @@
 import os
 import yaml
+import math
 import logging
 import argparse
 from pathlib import Path
@@ -1037,12 +1038,24 @@ def _sanitize_for_uns(value: Any) -> Any:
 
     if isinstance(value, (list, tuple, set)):
         out_list: List[Any] = []
-        for item in value:
+        iterable = value
+        if isinstance(value, set):
+            # Keep set handling deterministic for stable stage snapshot comparison.
+            iterable = sorted(value, key=lambda x: str(x))
+        for item in iterable:
             cleaned = _sanitize_for_uns(item)
             if cleaned is None:
                 continue
             out_list.append(cleaned)
         return out_list
+
+    # Handle array-like payloads (e.g., numpy arrays, pandas index/series) by
+    # converting to python-native lists recursively.
+    if hasattr(value, "tolist") and callable(getattr(value, "tolist")):
+        try:
+            return _sanitize_for_uns(value.tolist())
+        except Exception:
+            pass
 
     # Handle NumPy scalars without importing numpy at module import time.
     if hasattr(value, "item") and callable(getattr(value, "item")):
@@ -1065,6 +1078,49 @@ def build_uns_config_snapshot(config_obj: Any) -> Dict[str, Any]:
     if isinstance(cleaned, dict):
         return cleaned
     return {"value": cleaned}
+
+
+def _is_nan_like(value: Any) -> bool:
+    try:
+        return isinstance(value, float) and math.isnan(value)
+    except Exception:
+        return False
+
+
+def _safe_snapshot_equal(left: Any, right: Any) -> bool:
+    """
+    Robust deep equality for stage snapshots.
+    Handles nested dict/list payloads and treats NaN values as equal.
+    """
+    if _is_nan_like(left) and _is_nan_like(right):
+        return True
+
+    if isinstance(left, dict) and isinstance(right, dict):
+        if set(left.keys()) != set(right.keys()):
+            return False
+        return all(_safe_snapshot_equal(left[k], right[k]) for k in left.keys())
+
+    if isinstance(left, (list, tuple)) and isinstance(right, (list, tuple)):
+        if len(left) != len(right):
+            return False
+        return all(_safe_snapshot_equal(lv, rv) for lv, rv in zip(left, right))
+
+    # Fallback to normalized list representation for remaining array-like objects.
+    if hasattr(left, "tolist") and callable(getattr(left, "tolist")):
+        try:
+            left = left.tolist()
+        except Exception:
+            pass
+    if hasattr(right, "tolist") and callable(getattr(right, "tolist")):
+        try:
+            right = right.tolist()
+        except Exception:
+            pass
+
+    try:
+        return left == right
+    except Exception:
+        return str(left) == str(right)
 
 
 def resolve_anndata_path(
@@ -1141,8 +1197,8 @@ def should_run_stage(
         return False, f"Stage '{stage_name}' already recorded and mode=skip."
 
     current_snapshot = build_uns_config_snapshot(stage_config)
-    previous_snapshot = record.get("config", {})
-    if current_snapshot == previous_snapshot:
+    previous_snapshot = build_uns_config_snapshot(record.get("config", {}))
+    if _safe_snapshot_equal(current_snapshot, previous_snapshot):
         return (
             False,
             f"Stage '{stage_name}' already recorded with matching config and mode=intelligent.",
