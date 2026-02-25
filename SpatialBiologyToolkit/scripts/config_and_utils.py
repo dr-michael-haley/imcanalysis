@@ -20,6 +20,8 @@ class GeneralConfig:
     raw_images_folder: str = 'tiffs'
     denoised_images_folder: str = 'processed'
     slurm_logs_folder: str = 'SLURM_logs'
+    case_obs: Optional[str] = None  # Optional case/sample column in adata.obs (used for case-level summaries/stats)
+    roi_obs: str = 'ROI'  # ROI identifier column in adata.obs
     anndata_path: str = 'anndata.h5ad'  # Canonical AnnData file path used across pipeline stages
     anndata_stage_run_mode: str = 'intelligent'  # One of: repeat, skip, intelligent
     anndata_uns_log_key: str = 'pipeline_stage_log'  # AnnData.uns key storing stage order/config snapshots
@@ -289,6 +291,8 @@ class VisualizationConfig:
     input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
     population_columns: Optional[List[str]] = None  # Specific population columns to visualize (None = auto-detect)
     metadata_columns: Optional[List[str]] = None  # Specific metadata columns to visualize (None = auto-detect)
+    groupby_obs: Optional[str] = None  # Single grouping column used for abundance-focused population plots/stats
+    groupby_obs_groups: Optional[List[str]] = None  # Optional subset/order of groups in groupby_obs
     
     # AI interpretation settings
     enable_ai: bool = True  # Enable AI-powered cluster interpretation

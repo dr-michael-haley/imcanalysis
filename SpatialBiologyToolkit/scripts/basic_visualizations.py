@@ -19,6 +19,8 @@ from pathlib import Path
 import scanpy as sc
 import anndata as ad
 import pandas as pd
+import numpy as np
+import seaborn as sns
 import matplotlib
 # Note: Backend is set to "Agg" only when run as main script (see __main__ section)
 # This allows interactive plotting when importing functions from this module
@@ -640,12 +642,13 @@ def create_population_tissue_overlays(adata, population_columns, qc_pop_dir, gen
         if sbt_plotting is None:
             logging.warning('plotting module unavailable; skipping tissue visualization.')
             return
-            
-        if 'ROI' not in adata.obs.columns:
-            logging.warning('ROI column not found in adata.obs; skipping tissue visualization.')
+
+        roi_obs = getattr(general_config, 'roi_obs', 'ROI')
+        if roi_obs not in adata.obs.columns:
+            logging.warning("ROI column '%s' not found in adata.obs; skipping tissue visualization.", roi_obs)
             return
-            
-        rois = sorted(adata.obs['ROI'].astype(str).unique().tolist())
+
+        rois = sorted(adata.obs[roi_obs].astype(str).unique().tolist())
         if not rois:
             logging.warning('No ROIs found in adata.obs; skipping tissue visualization.')
             return
@@ -664,7 +667,7 @@ def create_population_tissue_overlays(adata, population_columns, qc_pop_dir, gen
                     sbt_plotting.obs_to_mask(
                         adata=adata,
                         roi=roi,
-                        roi_obs='ROI',
+                        roi_obs=roi_obs,
                         cat_obs=pop_col,
                         masks_folder=general_config.masks_folder,
                         save_path=str(save_path),
@@ -722,6 +725,7 @@ def create_backgating_assessment(adata, population_columns, viz_config, general_
                     logging.info(f"Specify overrides - red: {viz_config.backgating_specify_red}, "
                                 f"green: {viz_config.backgating_specify_green}, blue: {viz_config.backgating_specify_blue}")
                     
+                    roi_obs = getattr(general_config, 'roi_obs', 'ROI')
                     sbt_backgating.backgating_assessment(
                         adata=adata,
                         image_folder=image_folder,
@@ -731,7 +735,7 @@ def create_backgating_assessment(adata, population_columns, viz_config, general_
                         pops_list=None,  # Use all populations
                         cells_per_group=viz_config.backgating_cells_per_group,
                         radius=viz_config.backgating_radius,
-                        roi_obs='ROI',
+                        roi_obs=roi_obs,
                         x_loc_obs='X_loc',
                         y_loc_obs='Y_loc',
                         cell_index_obs='Master_Index',
@@ -777,7 +781,7 @@ def create_backgating_assessment(adata, population_columns, viz_config, general_
         log_detailed_error(e, "backgating assessment step")
 
 
-def create_population_analysis(adata, population_columns, metadata_columns, qc_base, max_categories=20):
+def create_population_metadata_analysis(adata, population_columns, metadata_columns, qc_base, max_categories=20):
     """
     Create population analysis across metadata categories.
     
@@ -900,6 +904,592 @@ def create_population_analysis(adata, population_columns, metadata_columns, qc_b
         log_detailed_error(e, "population analysis step")
 
 
+def _ordered_groups(series: pd.Series, configured_groups=None):
+    if configured_groups is not None and len(configured_groups) > 0:
+        observed_groups = {str(x) for x in series.dropna().astype(str).unique().tolist()}
+        configured = [str(x) for x in configured_groups]
+        selected = [x for x in configured if x in observed_groups]
+        missing = [x for x in configured if x not in observed_groups]
+        if missing:
+            logging.warning("Configured groups not found in '%s': %s", series.name, missing)
+        if selected:
+            return selected
+
+    if isinstance(series.dtype, pd.CategoricalDtype):
+        return [str(x) for x in series.cat.categories if pd.notna(x)]
+    return sorted([str(x) for x in series.dropna().astype(str).unique().tolist()])
+
+
+def _population_order(adata: ad.AnnData, pop_col: str):
+    if pop_col not in adata.obs.columns:
+        return []
+    series = adata.obs[pop_col]
+    if isinstance(series.dtype, pd.CategoricalDtype):
+        return [str(x) for x in series.cat.categories if pd.notna(x)]
+    return sorted([str(x) for x in series.dropna().astype(str).unique().tolist()])
+
+
+def _population_palette(adata: ad.AnnData, pop_col: str, population_order):
+    default_color = '#4C72B0'
+    palette = {str(pop): default_color for pop in population_order}
+    color_key = f'{pop_col}_colors'
+    if color_key not in adata.uns:
+        return palette
+
+    colors = list(adata.uns[color_key])
+    categories = _population_order(adata, pop_col)
+    for idx, pop in enumerate(categories):
+        if idx < len(colors):
+            palette[str(pop)] = colors[idx]
+    return palette
+
+
+def _build_roi_area_mm2_map(adata: ad.AnnData, general_config, roi_obs: str):
+    roi_area = {}
+    valid_rois = None
+    if roi_obs in adata.obs.columns:
+        valid_rois = set(adata.obs[roi_obs].dropna().astype(str).unique().tolist())
+
+    sample_uns = adata.uns.get('sample', None)
+    if isinstance(sample_uns, pd.DataFrame) and 'mm2' in sample_uns.columns:
+        for roi, mm2 in sample_uns['mm2'].items():
+            try:
+                roi_key = str(roi)
+                if valid_rois is None or roi_key in valid_rois:
+                    roi_area[roi_key] = float(mm2)
+            except Exception:
+                continue
+    elif isinstance(sample_uns, dict):
+        mm2_data = sample_uns.get('mm2', None)
+        if isinstance(mm2_data, pd.Series):
+            for roi, mm2 in mm2_data.items():
+                try:
+                    roi_key = str(roi)
+                    if valid_rois is None or roi_key in valid_rois:
+                        roi_area[roi_key] = float(mm2)
+                except Exception:
+                    continue
+        elif isinstance(mm2_data, dict):
+            for roi, mm2 in mm2_data.items():
+                try:
+                    roi_key = str(roi)
+                    if valid_rois is None or roi_key in valid_rois:
+                        roi_area[roi_key] = float(mm2)
+                except Exception:
+                    continue
+
+    if roi_area:
+        logging.info("Loaded %d ROI areas from adata.uns['sample']['mm2'].", len(roi_area))
+        return roi_area
+
+    masks_folder = Path(getattr(general_config, 'masks_folder', 'masks'))
+    if not masks_folder.exists():
+        logging.warning("Masks folder '%s' not found. Cells/mm2 plots will be skipped.", masks_folder)
+        return roi_area
+
+    for mask_path in sorted(masks_folder.glob('*.tif*')):
+        roi_name = mask_path.stem
+        if valid_rois is not None and roi_name not in valid_rois:
+            continue
+        mask = None
+        try:
+            import tifffile as tiff
+            mask = tiff.imread(mask_path)
+        except Exception:
+            try:
+                import imageio.v3 as iio
+                mask = iio.imread(mask_path)
+            except Exception as err:
+                logging.warning("Could not read mask '%s': %s", mask_path, err)
+                continue
+
+        try:
+            area_um2 = float(mask.shape[0]) * float(mask.shape[1])
+            roi_area[str(roi_name)] = area_um2 / 1e6
+        except Exception:
+            continue
+
+    if not roi_area:
+        logging.warning(
+            "No ROI area map could be built from masks. "
+            "Cells/mm2 plotting and stats will be skipped."
+        )
+    else:
+        logging.info("Built ROI area map from masks for %d ROIs.", len(roi_area))
+    return roi_area
+
+
+def _save_df(df: pd.DataFrame, save_path: Path):
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(save_path, index=False)
+
+
+def _plot_population_bar(
+    data: pd.DataFrame,
+    x_col: str,
+    y_col: str,
+    order,
+    color,
+    ylabel: str,
+    title: str,
+    save_path: Path,
+    save_high_res: bool,
+):
+    if data.empty:
+        return
+
+    fig_width = 1.5 if len(order) <= 2 else 2.0
+    fig, ax = plt.subplots(figsize=(fig_width, 3))
+    sns.barplot(
+        data=data,
+        x=x_col,
+        y=y_col,
+        order=order,
+        color=color,
+        edgecolor='black',
+        linewidth=0.8,
+        errorbar='se',
+        err_kws={'linewidth': 2},
+        capsize=0.2,
+        ax=ax
+    )
+    ax.tick_params(axis='y', labelsize=10)
+    ax.tick_params(axis='x', labelsize=10, rotation=90)
+    ax.set_ylabel(ylabel, fontsize=10)
+    ax.set_xlabel("")
+    ax.set_title(title, fontsize=10)
+    fig.tight_layout()
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(save_path, bbox_inches='tight', dpi=300 if save_high_res else 150)
+    plt.close(fig)
+
+
+def _run_mlm_stats_and_save(
+    data: pd.DataFrame,
+    pop_col: str,
+    group_col: str,
+    case_col: str,
+    roi_col: str,
+    value_col: str,
+    average_cases: bool,
+    stats_dir: Path,
+    out_prefix: str,
+):
+    if sbt_plotting is None or not hasattr(sbt_plotting, 'mlm_stats'):
+        logging.warning("plotting.mlm_stats unavailable; skipping stats for %s.", out_prefix)
+        return
+
+    required_cols = [pop_col, group_col, case_col, roi_col, value_col]
+    missing_cols = [col for col in required_cols if col not in data.columns]
+    if missing_cols:
+        logging.warning("Skipping stats for %s; missing required columns: %s", out_prefix, missing_cols)
+        return
+
+    stats_input = data.dropna(subset=required_cols).copy()
+    if stats_input.empty:
+        logging.warning("Skipping stats for %s; no rows after filtering.", out_prefix)
+        return
+
+    stats_input[pop_col] = stats_input[pop_col].astype(str)
+    stats_input[group_col] = stats_input[group_col].astype(str)
+    stats_input[case_col] = stats_input[case_col].astype(str)
+    stats_input[roi_col] = stats_input[roi_col].astype(str)
+
+    n_groups = stats_input[group_col].nunique()
+    if n_groups != 2:
+        logging.warning(
+            "Skipping stats for %s; mlm_stats requires exactly 2 groups in '%s', found %d.",
+            out_prefix,
+            group_col,
+            n_groups,
+        )
+        return
+
+    suffix = 'case_avg' if average_cases else 'roi_level'
+    try:
+        results_df = sbt_plotting.mlm_stats(
+            stats_input,
+            pop_col=pop_col,
+            value_col=value_col,
+            case_col=case_col,
+            group_col=group_col,
+            roi_col=roi_col,
+            method='fdr_bh',
+            average_cases=average_cases,
+        )
+    except Exception as e:
+        log_detailed_error(e, f"running mlm_stats for {out_prefix} ({suffix})")
+        return
+
+    stats_dir.mkdir(parents=True, exist_ok=True)
+    full_path = stats_dir / f"{out_prefix}_{suffix}_full.csv"
+    results_df.to_csv(full_path, index=False)
+
+    if average_cases:
+        preferred_cols = [
+            pop_col,
+            't_test_p_value',
+            'mannwhitneyu_p_value',
+            't_test_p_value_corrected',
+            'mannwhitneyu_p_value_corrected',
+        ]
+        sort_col = 'mannwhitneyu_p_value' if 'mannwhitneyu_p_value' in results_df.columns else None
+    else:
+        preferred_cols = [
+            pop_col,
+            'mlm_p_value',
+            'mlm_p_value_corrected',
+            'mlm_warnings',
+            't_test_p_value',
+            'mannwhitneyu_p_value',
+            't_test_p_value_corrected',
+            'mannwhitneyu_p_value_corrected',
+        ]
+        sort_col = 'mlm_p_value' if 'mlm_p_value' in results_df.columns else None
+
+    summary_cols = [col for col in preferred_cols if col in results_df.columns]
+    summary_df = results_df[summary_cols].copy()
+    if sort_col is not None:
+        summary_df = summary_df.sort_values(by=sort_col)
+    summary_path = stats_dir / f"{out_prefix}_{suffix}.csv"
+    summary_df.to_csv(summary_path, index=False)
+    logging.info("Saved stats: %s and %s", summary_path, full_path)
+
+
+def create_population_abundance_analysis(
+    adata: ad.AnnData,
+    population_columns,
+    viz_config,
+    general_config,
+    qc_base: Path,
+):
+    """
+    Create notebook-style per-population abundance plots and stats for one grouping variable.
+
+    The grouping variable is controlled by visualization.groupby_obs and optional
+    visualization.groupby_obs_groups. ROI and case identifiers are controlled by
+    general.roi_obs and general.case_obs.
+    """
+    group_col = getattr(viz_config, 'groupby_obs', None)
+    if not group_col:
+        logging.warning("No visualization.groupby_obs provided; skipping abundance analysis.")
+        return
+    if group_col not in adata.obs.columns:
+        logging.warning("Grouping column '%s' not found in adata.obs; skipping abundance analysis.", group_col)
+        return
+
+    roi_col = getattr(general_config, 'roi_obs', 'ROI')
+    if roi_col not in adata.obs.columns:
+        logging.warning("ROI column '%s' not found in adata.obs; skipping abundance analysis.", roi_col)
+        return
+
+    case_col = getattr(general_config, 'case_obs', None)
+    if case_col is not None and case_col not in adata.obs.columns:
+        logging.warning(
+            "Case column '%s' not found in adata.obs; case-average plots/stats will be skipped.",
+            case_col,
+        )
+        case_col = None
+
+    group_order = _ordered_groups(adata.obs[group_col], getattr(viz_config, 'groupby_obs_groups', None))
+    if not group_order:
+        logging.warning("No valid groups found for '%s'; skipping abundance analysis.", group_col)
+        return
+
+    logging.info(
+        "Running abundance analysis for group '%s' (groups=%s) with ROI column '%s'%s.",
+        group_col,
+        group_order,
+        roi_col,
+        f" and case column '{case_col}'" if case_col else "",
+    )
+
+    analysis_root = qc_base / 'Population_Analysis_Figures' / f"Abundance_by_{cleanstring(str(group_col))}"
+    raw_root = analysis_root / 'Raw_Data'
+    plot_root = analysis_root / 'Plots'
+    stats_root = analysis_root / 'Stats'
+    for out_dir in [analysis_root, raw_root, plot_root, stats_root]:
+        out_dir.mkdir(parents=True, exist_ok=True)
+
+    roi_area_map = _build_roi_area_mm2_map(adata, general_config, roi_col=roi_col)
+    has_roi_areas = len(roi_area_map) > 0
+
+    for pop_col in population_columns:
+        if pop_col not in adata.obs.columns:
+            logging.warning("Population column '%s' not found in adata.obs; skipping.", pop_col)
+            continue
+
+        pop_name = cleanstring(str(pop_col))
+        pop_root = analysis_root / pop_name
+        pop_raw_root = raw_root / pop_name
+        pop_plot_root = plot_root / pop_name
+        pop_stats_root = stats_root / pop_name
+        for out_dir in [pop_root, pop_raw_root, pop_plot_root, pop_stats_root]:
+            out_dir.mkdir(parents=True, exist_ok=True)
+
+        required_cols = [pop_col, group_col, roi_col]
+        if case_col:
+            required_cols.append(case_col)
+
+        obs = adata.obs[required_cols].copy()
+        obs = obs.dropna(subset=required_cols)
+        if obs.empty:
+            logging.warning("No non-null rows available for population column '%s'; skipping.", pop_col)
+            continue
+
+        for col in required_cols:
+            obs[col] = obs[col].astype(str)
+        obs = obs[obs[group_col].isin(group_order)].copy()
+        if obs.empty:
+            logging.warning(
+                "No rows in '%s' after filtering '%s' to groups %s; skipping.",
+                pop_col,
+                group_col,
+                group_order,
+            )
+            continue
+
+        _save_df(obs, pop_raw_root / 'cell_level_filtered.csv')
+
+        pop_order = _population_order(adata, pop_col)
+        if not pop_order:
+            pop_order = sorted(obs[pop_col].astype(str).unique().tolist())
+        palette = _population_palette(adata, pop_col, pop_order)
+
+        count_group_cols = [pop_col, group_col]
+        if case_col:
+            count_group_cols.append(case_col)
+        count_group_cols.append(roi_col)
+        counts = (
+            obs.groupby(count_group_cols, observed=True)
+            .size()
+            .reset_index(name='n_cells')
+        )
+        counts['n_cells'] = counts['n_cells'].astype(float)
+        _save_df(counts, pop_raw_root / 'counts_by_population_group_roi.csv')
+
+        total_group_cols = [group_col, roi_col]
+        if case_col:
+            total_group_cols.append(case_col)
+        totals = (
+            obs.groupby(total_group_cols, observed=True)
+            .size()
+            .reset_index(name='total_cells')
+        )
+        _save_df(totals, pop_raw_root / 'totals_by_group_roi.csv')
+
+        # Proportions
+        proportions = counts.merge(totals, on=total_group_cols, how='left')
+        proportions['prop_cells'] = proportions['n_cells'] / proportions['total_cells']
+        proportions = proportions.replace([np.inf, -np.inf], np.nan).dropna(subset=['prop_cells'])
+        _save_df(proportions, pop_raw_root / 'proportions_roi_level.csv')
+
+        # Cells/mm2
+        counts_mm2 = counts.copy()
+        if has_roi_areas:
+            counts_mm2['area_mm2'] = counts_mm2[roi_col].map(roi_area_map)
+            missing_area = int(counts_mm2['area_mm2'].isna().sum())
+            if missing_area > 0:
+                logging.warning(
+                    "Population column '%s': %d rows missing ROI area in masks/sample table; "
+                    "those rows are excluded from cells/mm2.",
+                    pop_col,
+                    missing_area,
+                )
+            counts_mm2 = counts_mm2.dropna(subset=['area_mm2']).copy()
+            if not counts_mm2.empty:
+                counts_mm2['cells_per_mm2'] = counts_mm2['n_cells'] / counts_mm2['area_mm2']
+                counts_mm2 = counts_mm2.replace([np.inf, -np.inf], np.nan).dropna(subset=['cells_per_mm2'])
+                _save_df(counts_mm2, pop_raw_root / 'cells_per_mm2_roi_level.csv')
+        else:
+            logging.warning(
+                "Population column '%s': no ROI area map available; skipping cells/mm2 plots and stats.",
+                pop_col,
+            )
+
+        # Optional case-averaged raw outputs
+        case_proportions = pd.DataFrame()
+        if case_col:
+            case_proportions = (
+                proportions.groupby([pop_col, group_col, case_col], observed=True, as_index=False)['prop_cells']
+                .mean()
+            )
+            _save_df(case_proportions, pop_raw_root / 'proportions_case_average.csv')
+
+        case_mm2 = pd.DataFrame()
+        if case_col and has_roi_areas and not counts_mm2.empty:
+            case_mm2 = (
+                counts_mm2.groupby([pop_col, group_col, case_col], observed=True, as_index=False)['cells_per_mm2']
+                .mean()
+            )
+            _save_df(case_mm2, pop_raw_root / 'cells_per_mm2_case_average.csv')
+
+        # Per-population plots
+        for pop in pop_order:
+            pop_label = str(pop)
+            pop_safe = cleanstring(pop_label)
+            pop_color = palette.get(pop_label, '#4C72B0')
+
+            pop_prop = proportions[(proportions[pop_col] == pop_label) & (proportions[group_col].isin(group_order))].copy()
+            if not pop_prop.empty:
+                _save_df(pop_prop, pop_raw_root / 'per_population' / 'proportions_roi_level' / f'{pop_safe}.csv')
+                _plot_population_bar(
+                    data=pop_prop,
+                    x_col=group_col,
+                    y_col='prop_cells',
+                    order=group_order,
+                    color=pop_color,
+                    ylabel='Proportion of cells\n(ROI level)',
+                    title=pop_label,
+                    save_path=pop_plot_root / 'proportions_roi_level' / f'{pop_safe}.{viz_config.figure_format}',
+                    save_high_res=viz_config.save_high_res,
+                )
+
+            if case_col and not case_proportions.empty:
+                pop_prop_case = case_proportions[
+                    (case_proportions[pop_col] == pop_label) & (case_proportions[group_col].isin(group_order))
+                ].copy()
+                if not pop_prop_case.empty:
+                    _save_df(pop_prop_case, pop_raw_root / 'per_population' / 'proportions_case_average' / f'{pop_safe}.csv')
+                    _plot_population_bar(
+                        data=pop_prop_case,
+                        x_col=group_col,
+                        y_col='prop_cells',
+                        order=group_order,
+                        color=pop_color,
+                        ylabel='Proportion of cells\n(Case average)',
+                        title=pop_label,
+                        save_path=pop_plot_root / 'proportions_case_average' / f'{pop_safe}.{viz_config.figure_format}',
+                        save_high_res=viz_config.save_high_res,
+                    )
+
+            if has_roi_areas and not counts_mm2.empty:
+                pop_mm2 = counts_mm2[
+                    (counts_mm2[pop_col] == pop_label) & (counts_mm2[group_col].isin(group_order))
+                ].copy()
+                if not pop_mm2.empty:
+                    _save_df(pop_mm2, pop_raw_root / 'per_population' / 'cells_per_mm2_roi_level' / f'{pop_safe}.csv')
+                    _plot_population_bar(
+                        data=pop_mm2,
+                        x_col=group_col,
+                        y_col='cells_per_mm2',
+                        order=group_order,
+                        color=pop_color,
+                        ylabel='Cells per mm$^2$\n(ROI level)',
+                        title=pop_label,
+                        save_path=pop_plot_root / 'cells_per_mm2_roi_level' / f'{pop_safe}.{viz_config.figure_format}',
+                        save_high_res=viz_config.save_high_res,
+                    )
+
+            if case_col and has_roi_areas and not case_mm2.empty:
+                pop_mm2_case = case_mm2[
+                    (case_mm2[pop_col] == pop_label) & (case_mm2[group_col].isin(group_order))
+                ].copy()
+                if not pop_mm2_case.empty:
+                    _save_df(pop_mm2_case, pop_raw_root / 'per_population' / 'cells_per_mm2_case_average' / f'{pop_safe}.csv')
+                    _plot_population_bar(
+                        data=pop_mm2_case,
+                        x_col=group_col,
+                        y_col='cells_per_mm2',
+                        order=group_order,
+                        color=pop_color,
+                        ylabel='Cells per mm$^2$\n(Case average)',
+                        title=pop_label,
+                        save_path=pop_plot_root / 'cells_per_mm2_case_average' / f'{pop_safe}.{viz_config.figure_format}',
+                        save_high_res=viz_config.save_high_res,
+                    )
+
+        # Stats (requires case column and exactly two groups for mlm_stats)
+        if case_col:
+            stats_prefix_base = f"{cleanstring(str(pop_col))}_{cleanstring(str(group_col))}"
+            _run_mlm_stats_and_save(
+                data=proportions,
+                pop_col=pop_col,
+                group_col=group_col,
+                case_col=case_col,
+                roi_col=roi_col,
+                value_col='prop_cells',
+                average_cases=False,
+                stats_dir=pop_stats_root,
+                out_prefix=f'{stats_prefix_base}_proportions',
+            )
+            _run_mlm_stats_and_save(
+                data=proportions,
+                pop_col=pop_col,
+                group_col=group_col,
+                case_col=case_col,
+                roi_col=roi_col,
+                value_col='prop_cells',
+                average_cases=True,
+                stats_dir=pop_stats_root,
+                out_prefix=f'{stats_prefix_base}_proportions',
+            )
+
+            if has_roi_areas and not counts_mm2.empty:
+                _run_mlm_stats_and_save(
+                    data=counts_mm2,
+                    pop_col=pop_col,
+                    group_col=group_col,
+                    case_col=case_col,
+                    roi_col=roi_col,
+                    value_col='cells_per_mm2',
+                    average_cases=False,
+                    stats_dir=pop_stats_root,
+                    out_prefix=f'{stats_prefix_base}_cells_per_mm2',
+                )
+                _run_mlm_stats_and_save(
+                    data=counts_mm2,
+                    pop_col=pop_col,
+                    group_col=group_col,
+                    case_col=case_col,
+                    roi_col=roi_col,
+                    value_col='cells_per_mm2',
+                    average_cases=True,
+                    stats_dir=pop_stats_root,
+                    out_prefix=f'{stats_prefix_base}_cells_per_mm2',
+                )
+        else:
+            logging.info(
+                "Population column '%s': case_obs not configured or missing, so MLM stats and case-average "
+                "plots are skipped.",
+                pop_col,
+            )
+
+    logging.info("Population abundance analysis completed. Outputs saved to: %s", analysis_root)
+
+
+def create_population_analysis(
+    adata,
+    population_columns,
+    metadata_columns,
+    qc_base,
+    viz_config,
+    general_config,
+    max_categories=20,
+):
+    """
+    Dispatch population analysis:
+    - If visualization.groupby_obs is set: run abundance-focused analysis.
+    - Otherwise: run legacy metadata-by-population analysis.
+    """
+    if getattr(viz_config, 'groupby_obs', None):
+        create_population_abundance_analysis(
+            adata=adata,
+            population_columns=population_columns,
+            viz_config=viz_config,
+            general_config=general_config,
+            qc_base=qc_base,
+        )
+    else:
+        create_population_metadata_analysis(
+            adata=adata,
+            population_columns=population_columns,
+            metadata_columns=metadata_columns,
+            qc_base=qc_base,
+            max_categories=max_categories,
+        )
+
+
 if __name__ == "__main__":
     # Set matplotlib to non-interactive backend for batch processing
     matplotlib.use("Agg")
@@ -989,7 +1579,15 @@ if __name__ == "__main__":
     # Create population analysis across metadata
     if viz_config.create_population_analysis:
         logging.info("Creating population analysis...")
-        create_population_analysis(adata, population_columns, metadata_columns, qc_base, max_categories=min(20, viz_config.max_categories))
+        create_population_analysis(
+            adata=adata,
+            population_columns=population_columns,
+            metadata_columns=metadata_columns,
+            qc_base=qc_base,
+            viz_config=viz_config,
+            general_config=general_config,
+            max_categories=min(20, viz_config.max_categories),
+        )
     
     # Create backgating assessment for populations
     if viz_config.create_backgating:
