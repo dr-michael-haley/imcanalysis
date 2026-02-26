@@ -32,6 +32,15 @@ from .config_and_utils import (
 
 _RUN_KEY_RE = re.compile(r"^run_(\d+)$")
 _UNVERIFIED_RE = re.compile(r"^(?P<base>.+?)_Unverified(?:_\d+)?(?P<ext>\.out)$")
+_SLURM_DEFAULT_STEM_RE = re.compile(
+    r"^slurm-(?P<job_id>\d+(?:_\d+)?)(?:[_-](?P<job_name>.+))?$", re.IGNORECASE
+)
+_GENERIC_JOBID_STEM_RE = re.compile(
+    r"^(?P<prefix>.+?)[-_](?P<job_id>\d+(?:_\d+)?)$", re.IGNORECASE
+)
+_RENAMED_STEM_RE = re.compile(
+    r"^(?P<order>\d+)_(?P<stage>.+)_(?P<job_id>\d+(?:_\d+)?)$", re.IGNORECASE
+)
 
 
 @dataclass
@@ -160,6 +169,87 @@ def _pick_local_slurm_file(current_dir: Path, record: SlurmRunRecord) -> Optiona
     return None
 
 
+def _looks_like_slurm_output(path: Path) -> bool:
+    if not path.is_file() or path.suffix.lower() != ".out":
+        return False
+
+    stem = path.stem
+    if _SLURM_DEFAULT_STEM_RE.match(stem):
+        return True
+    if _RENAMED_STEM_RE.match(stem):
+        return True
+    if _GENERIC_JOBID_STEM_RE.match(stem):
+        return True
+
+    return "slurm" in path.name.lower()
+
+
+def _discover_local_slurm_outputs(current_dir: Path) -> List[Path]:
+    return sorted(p for p in current_dir.glob("*.out") if _looks_like_slurm_output(p))
+
+
+def _extract_fallback_record(local_file: Path, order: int) -> SlurmRunRecord:
+    stem = local_file.stem
+    stage = "UntrackedSlurm"
+    job_name = ""
+    job_id = f"unknown_{order:04d}"
+
+    renamed_match = _RENAMED_STEM_RE.match(stem)
+    if renamed_match:
+        parsed_stage = renamed_match.group("stage")
+        parsed_job_id = renamed_match.group("job_id")
+        if parsed_stage:
+            stage = parsed_stage
+        if parsed_job_id:
+            job_id = parsed_job_id
+        return SlurmRunRecord(order=order, stage=stage, job_id=job_id, job_name=job_name)
+
+    slurm_match = _SLURM_DEFAULT_STEM_RE.match(stem)
+    if slurm_match:
+        parsed_job_id = slurm_match.group("job_id")
+        parsed_job_name = (slurm_match.group("job_name") or "").strip()
+        if parsed_job_id:
+            job_id = parsed_job_id
+        if parsed_job_name:
+            job_name = parsed_job_name
+            stage = parsed_job_name
+        return SlurmRunRecord(order=order, stage=stage, job_id=job_id, job_name=job_name)
+
+    generic_match = _GENERIC_JOBID_STEM_RE.match(stem)
+    if generic_match:
+        parsed_prefix = (generic_match.group("prefix") or "").strip("_-")
+        parsed_job_id = generic_match.group("job_id")
+        if parsed_job_id:
+            job_id = parsed_job_id
+        if parsed_prefix:
+            job_name = parsed_prefix
+            stage = parsed_prefix
+        return SlurmRunRecord(order=order, stage=stage, job_id=job_id, job_name=job_name)
+
+    return SlurmRunRecord(order=order, stage=stage, job_id=job_id, job_name=job_name)
+
+
+def _make_unique_name(
+    base_name: str,
+    existing_names: Sequence[str],
+    log_dir: Path,
+    current_dir: Path,
+) -> str:
+    existing_set = set(existing_names)
+    candidate = base_name
+    stem = Path(base_name).stem
+    suffix = Path(base_name).suffix
+    idx = 2
+    while (
+        candidate in existing_set
+        or (log_dir / candidate).exists()
+        or (current_dir / candidate).exists()
+    ):
+        candidate = f"{stem}_{idx}{suffix}"
+        idx += 1
+    return candidate
+
+
 def _rename_local_file_to_expected(
     source_file: Path,
     current_dir: Path,
@@ -175,6 +265,20 @@ def _rename_local_file_to_expected(
             record.job_id,
             target.name,
         )
+        return target
+
+    source_file.rename(target)
+    logging.info("Renamed local SLURM output: %s -> %s", source_file.name, target.name)
+    return target
+
+
+def _rename_local_file_to_name(
+    source_file: Path,
+    current_dir: Path,
+    target_name: str,
+) -> Path:
+    target = current_dir / target_name
+    if source_file == target:
         return target
 
     source_file.rename(target)
@@ -231,6 +335,7 @@ def _write_manifest(
         "job_name",
         "job_id",
         "expected_filename",
+        "record_source",
         "local_status",
         "log_move_status",
     ]
@@ -267,10 +372,14 @@ def run_slurm_log_organizer(
     log_dir.mkdir(parents=True, exist_ok=True)
 
     expected_filenames: List[str] = [record.expected_filename for record in run_records]
+    known_target_names = set(expected_filenames)
     manifest_rows: List[Dict[str, str]] = []
     renamed_count = 0
     moved_count = 0
     missing_local_count = 0
+    fallback_discovered_count = 0
+    fallback_renamed_count = 0
+    fallback_moved_count = 0
 
     for record in run_records:
         local_status = "missing_local_file"
@@ -319,19 +428,74 @@ def run_slurm_log_organizer(
                 "job_name": record.job_name,
                 "job_id": record.job_id,
                 "expected_filename": record.expected_filename,
+                "record_source": "pipeline",
+                "local_status": local_status,
+                "log_move_status": move_status,
+            }
+        )
+
+    fallback_start_order = len(run_records) + 1
+    for fallback_idx, local_file in enumerate(_discover_local_slurm_outputs(current_dir), start=0):
+        if not local_file.exists() or not local_file.is_file():
+            continue
+
+        fallback_discovered_count += 1
+        fallback_record = _extract_fallback_record(
+            local_file=local_file,
+            order=fallback_start_order + fallback_idx,
+        )
+        target_name = _make_unique_name(
+            base_name=fallback_record.expected_filename,
+            existing_names=tuple(known_target_names),
+            log_dir=log_dir,
+            current_dir=current_dir,
+        )
+        known_target_names.add(target_name)
+
+        local_status = "already_renamed"
+        renamed_fallback_file = local_file
+        if local_file.name != target_name:
+            renamed_fallback_file = _rename_local_file_to_name(
+                source_file=local_file,
+                current_dir=current_dir,
+                target_name=target_name,
+            )
+            local_status = "renamed_fallback_local_file"
+            fallback_renamed_count += 1
+
+        moved_file = _move_to_log_folder(
+            source_file=renamed_fallback_file,
+            log_dir=log_dir,
+            target_name=target_name,
+        )
+        move_status = "moved_to_log_dir" if moved_file.exists() else "not_moved"
+        if move_status == "moved_to_log_dir":
+            fallback_moved_count += 1
+
+        manifest_rows.append(
+            {
+                "order": str(fallback_record.order),
+                "stage": fallback_record.stage,
+                "job_name": fallback_record.job_name,
+                "job_id": fallback_record.job_id,
+                "expected_filename": target_name,
+                "record_source": "fallback",
                 "local_status": local_status,
                 "log_move_status": move_status,
             }
         )
 
     expected_set = set(expected_filenames)
+    protected_names = expected_set | {
+        row["expected_filename"] for row in manifest_rows if row.get("record_source") == "fallback"
+    }
 
     restored_verified = 0
     for file_path in sorted(log_dir.glob("*.out")):
         if not _has_unverified_suffix(file_path.name):
             continue
         verified_name = _remove_unverified_suffix(file_path.name)
-        if verified_name not in expected_set:
+        if verified_name not in protected_names:
             continue
         verified_target = log_dir / verified_name
         if verified_target.exists():
@@ -341,7 +505,7 @@ def run_slurm_log_organizer(
 
     marked_unverified = 0
     for file_path in sorted(log_dir.glob("*.out")):
-        if file_path.name in expected_set:
+        if file_path.name in protected_names:
             continue
         if _has_unverified_suffix(file_path.name):
             continue
@@ -372,11 +536,15 @@ def run_slurm_log_organizer(
 
     logging.info(
         "SLURM log organization complete. records=%d, renamed_local=%d, moved=%d, "
-        "missing_local=%d, restored_verified=%d, marked_unverified=%d, manifest=%s",
+        "missing_local=%d, fallback_discovered=%d, fallback_renamed=%d, "
+        "fallback_moved=%d, restored_verified=%d, marked_unverified=%d, manifest=%s",
         len(run_records),
         renamed_count,
         moved_count,
         missing_local_count,
+        fallback_discovered_count,
+        fallback_renamed_count,
+        fallback_moved_count,
         restored_verified,
         marked_unverified,
         manifest_path,
@@ -395,6 +563,9 @@ def run_slurm_log_organizer(
             "renamed_local": int(renamed_count),
             "moved_to_log_dir": int(moved_count),
             "missing_local": int(missing_local_count),
+            "fallback_discovered": int(fallback_discovered_count),
+            "fallback_renamed": int(fallback_renamed_count),
+            "fallback_moved": int(fallback_moved_count),
             "restored_verified": int(restored_verified),
             "marked_unverified": int(marked_unverified),
             "missing_in_log_dir_count": int(len(missing_in_log_dir)),
