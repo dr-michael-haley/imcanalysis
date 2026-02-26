@@ -37,6 +37,8 @@ from .config_and_utils import (
     GeneralConfig,
     PairwiseSpatialConfig,
     cleanstring,
+    coalesce_config_list,
+    coalesce_config_text,
     filter_config_for_dataclass,
     load_pipeline_anndata,
     process_config_with_overrides,
@@ -83,7 +85,8 @@ def _resolve_metadata_columns(
     if pairwise_config.include_all_obs_metadata:
         columns = list(adata.obs.columns)
     else:
-        columns = [c for c in pairwise_config.metadata_obs_columns if c in adata.obs.columns]
+        configured = pairwise_config.metadata_obs_columns or []
+        columns = [c for c in configured if c in adata.obs.columns]
 
     must_have = [
         pairwise_config.roi_obs,
@@ -162,7 +165,9 @@ def _label_colors(labels: Sequence[str], color_map: Dict[str, str]) -> pd.Series
 
 
 def _normalise_population_pairs(
-    population_pairs: Dict[str, Any], population_obs: str
+    population_pairs: Dict[str, Any],
+    population_obs: str,
+    available_pops: Sequence[str],
 ) -> Dict[str, List[str]]:
     if not population_pairs:
         return {}
@@ -182,16 +187,86 @@ def _normalise_population_pairs(
         )
         return {}
 
+    available = [str(p) for p in available_pops]
+    available_set = set(available)
+    available_lower_to_exact: Dict[str, List[str]] = {}
+    for pop in available:
+        available_lower_to_exact.setdefault(pop.lower(), []).append(pop)
+
+    def _resolve_target_spec(source_name: str, target_spec: Any) -> List[str]:
+        if target_spec is None:
+            return []
+        if isinstance(target_spec, (list, tuple, set, pd.Index, np.ndarray)):
+            raw_tokens = [t for t in target_spec if t is not None]
+        else:
+            raw_tokens = [target_spec]
+
+        resolved: List[str] = []
+        seen: set[str] = set()
+        for token_raw in raw_tokens:
+            token = str(token_raw).strip()
+            if not token:
+                continue
+
+            token_upper = token.upper()
+            matches: List[str] = []
+            if token_upper == "ALL":
+                matches = list(available)
+            elif token_upper == "ALL_OTHERS":
+                matches = [p for p in available if p != source_name]
+            elif token_upper.startswith("MATCH_"):
+                pattern = token[6:]
+                if pattern:
+                    pattern_lower = pattern.lower()
+                    matches = [p for p in available if pattern_lower in p.lower()]
+            elif token_upper.startswith("NOT_"):
+                pattern = token[4:]
+                if pattern:
+                    pattern_lower = pattern.lower()
+                    matches = [p for p in available if pattern_lower not in p.lower()]
+            else:
+                if token in available_set:
+                    matches = [token]
+                else:
+                    ci = available_lower_to_exact.get(token.lower(), [])
+                    if len(ci) == 1:
+                        matches = [ci[0]]
+
+            if not matches:
+                logging.warning(
+                    "population_pairs target spec '%s' for source '%s' matched no populations.",
+                    token,
+                    source_name,
+                )
+                continue
+
+            for match in matches:
+                if match not in seen:
+                    seen.add(match)
+                    resolved.append(match)
+        return resolved
+
     normalised: Dict[str, List[str]] = {}
     for source, targets in mapping.items():
-        if targets is None:
+        source_name = str(source).strip()
+        if not source_name or targets is None:
             continue
-        if isinstance(targets, (list, tuple, set, pd.Index, np.ndarray)):
-            target_list = [str(t) for t in targets if t is not None]
-        else:
-            target_list = [str(targets)]
+
+        if source_name not in available_set:
+            ci = available_lower_to_exact.get(source_name.lower(), [])
+            if len(ci) == 1:
+                source_name = ci[0]
+            else:
+                logging.warning(
+                    "population_pairs source '%s' not found in available populations for obs '%s'. "
+                    "Pair may produce no data.",
+                    source_name,
+                    population_obs,
+                )
+
+        target_list = _resolve_target_spec(source_name, targets)
         if target_list:
-            normalised[str(source)] = target_list
+            normalised[source_name] = target_list
     return normalised
 
 
@@ -239,6 +314,25 @@ def _ordered_matrix(matrix: pd.DataFrame, ordered_pops: Sequence[str]) -> pd.Dat
     return matrix
 
 
+def _force_show_all_tick_labels(
+    ax: Any,
+    *,
+    x_rotation: float = 90.0,
+    y_rotation: float = 0.0,
+) -> None:
+    """Force all x/y tick labels to render on matrix plots."""
+    ax.tick_params(axis="x", which="both", bottom=True, top=False, labelbottom=True)
+    ax.tick_params(axis="y", which="both", left=True, right=False, labelleft=True)
+
+    for label in ax.get_xticklabels():
+        label.set_visible(True)
+        label.set_rotation(x_rotation)
+        label.set_ha("right")
+    for label in ax.get_yticklabels():
+        label.set_visible(True)
+        label.set_rotation(y_rotation)
+
+
 def _save_matrix_plot(
     matrix: pd.DataFrame,
     *,
@@ -276,6 +370,8 @@ def _save_matrix_plot(
                 "figsize": figsize,
                 "row_cluster": bool(row_cluster),
                 "col_cluster": bool(col_cluster),
+                "xticklabels": 1,
+                "yticklabels": 1,
                 "linewidths": 0.4,
                 "linecolor": "white",
                 "cbar_kws": {"fraction": 0.046, "pad": 0.04},
@@ -289,6 +385,7 @@ def _save_matrix_plot(
                 clustermap_kws["col_colors"] = col_colors.reindex(matrix.columns, fill_value="lightgray")
 
             grid = sns.clustermap(**clustermap_kws)
+            _force_show_all_tick_labels(grid.ax_heatmap, x_rotation=90.0, y_rotation=0.0)
             grid.fig.suptitle(title, y=1.02)
             grid.fig.savefig(out_path, dpi=int(dpi), bbox_inches="tight")
             plt.close(grid.fig)
@@ -307,6 +404,8 @@ def _save_matrix_plot(
         "cmap": cmap,
         "vmin": vmin,
         "vmax": vmax,
+        "xticklabels": 1,
+        "yticklabels": 1,
         "linewidths": 0.4,
         "linecolor": "white",
         "cbar_kws": {"fraction": 0.046, "pad": 0.04},
@@ -316,6 +415,7 @@ def _save_matrix_plot(
         heatmap_kws["norm"] = TwoSlopeNorm(vmin=vmin, vcenter=center, vmax=vmax)
 
     sns.heatmap(**heatmap_kws)
+    _force_show_all_tick_labels(ax, x_rotation=90.0, y_rotation=0.0)
     ax.set_title(title)
     fig.tight_layout()
     fig.savefig(out_path, dpi=int(dpi), bbox_inches="tight")
@@ -474,12 +574,73 @@ def _distance_matrix_to_long(df: pd.DataFrame, metric: str) -> pd.DataFrame:
     return long
 
 
+def _load_saved_csv(
+    path: Path,
+    *,
+    required_cols: Optional[Sequence[str]] = None,
+) -> Optional[pd.DataFrame]:
+    """Load a saved CSV if present and structurally usable."""
+    if not path.exists():
+        return None
+
+    try:
+        df = pd.read_csv(path)
+    except Exception as exc:
+        logging.warning("Could not load saved results from %s: %s", path, exc)
+        return None
+
+    if required_cols:
+        missing = [c for c in required_cols if c not in df.columns]
+        if missing:
+            logging.warning(
+                "Saved results file %s is missing required columns %s. Ignoring saved file.",
+                path,
+                missing,
+            )
+            return None
+    return df
+
+
 def run_pairwise_spatial_analyses(
     *,
     general_config: GeneralConfig,
     pairwise_config: PairwiseSpatialConfig,
 ) -> Path:
     stage_name = "PairwiseSpatial"
+    pairwise_config.population_obs = coalesce_config_text(
+        pairwise_config.population_obs,
+        general_config.population_obs_primary,
+        default="population",
+    )
+    pairwise_config.groupby_obs = coalesce_config_text(
+        pairwise_config.groupby_obs,
+        general_config.groupby_obs,
+    )
+    pairwise_config.roi_obs = coalesce_config_text(
+        pairwise_config.roi_obs,
+        general_config.roi_obs,
+        default="ROI",
+    )
+    pairwise_config.x_coord_obs = coalesce_config_text(
+        pairwise_config.x_coord_obs,
+        general_config.x_coord_obs,
+        default="X_loc",
+    )
+    pairwise_config.y_coord_obs = coalesce_config_text(
+        pairwise_config.y_coord_obs,
+        general_config.y_coord_obs,
+        default="Y_loc",
+    )
+    pairwise_config.master_index_obs = coalesce_config_text(
+        pairwise_config.master_index_obs,
+        general_config.master_index_obs,
+        default="Master_Index",
+    )
+    if not pairwise_config.metadata_obs_columns:
+        pairwise_config.metadata_obs_columns = (
+            coalesce_config_list(general_config.metadata_obs, default=[]) or []
+        )
+
     input_path = _resolve_input_adata_path(general_config, pairwise_config)
     adata, _, skip_stage, _ = load_pipeline_anndata(
         general_config=general_config,
@@ -493,6 +654,17 @@ def run_pairwise_spatial_analyses(
     if adata is None:
         raise FileNotFoundError(f"AnnData not found for PairwiseSpatial stage: {input_path}")
     logging.info("Loaded AnnData: %d cells x %d markers", adata.n_obs, adata.n_vars)
+
+    logging.info(
+        "Resolved Pairwise obs keys: population_obs='%s', groupby_obs='%s', roi_obs='%s', x_coord_obs='%s', "
+        "y_coord_obs='%s', master_index_obs='%s'.",
+        pairwise_config.population_obs,
+        pairwise_config.groupby_obs,
+        pairwise_config.roi_obs,
+        pairwise_config.x_coord_obs,
+        pairwise_config.y_coord_obs,
+        pairwise_config.master_index_obs,
+    )
 
     if pairwise_config.population_obs not in adata.obs.columns:
         raise KeyError(
@@ -514,10 +686,17 @@ def run_pairwise_spatial_analyses(
     extension = _ensure_extension(pairwise_config.figure_extension)
     matrix_figsize = _figsize(pairwise_config.heatmap_figsize, fallback=(8.0, 6.0))
     bar_figsize = _figsize(pairwise_config.barplot_figsize, fallback=(3.0, 3.0))
+    reload_saved_results = bool(pairwise_config.reload_saved_results)
+    analysis_sources: Dict[str, str] = {"squidpy": "skipped", "distance": "skipped", "pcf": "skipped"}
+    logging.info("Pairwise reload_saved_results=%s", reload_saved_results)
 
     ordered_pops = _population_order(adata, pairwise_config.population_obs)
     color_map = _population_color_map(adata, pairwise_config.population_obs, ordered_pops)
-    pair_map = _normalise_population_pairs(pairwise_config.population_pairs, pairwise_config.population_obs)
+    pair_map = _normalise_population_pairs(
+        pairwise_config.population_pairs,
+        pairwise_config.population_obs,
+        ordered_pops,
+    )
 
     obs_snapshot = adata.obs.copy()
     obs_snapshot.to_csv(metadata_dir / "anndata_obs_snapshot.csv.gz", index=True)
@@ -529,36 +708,54 @@ def run_pairwise_spatial_analyses(
 
     if pairwise_config.run_squidpy_interactions:
         subregion_obs = pairwise_config.squidpy_subregion_obs or pairwise_config.roi_obs
-        logging.info(
-            "Running Squidpy interactions (population_obs=%s, subregion=%s).",
-            pairwise_config.population_obs,
-            subregion_obs,
-        )
-        squidpy_results = sbt_spatial.squidpy_subregion_interactions(
-            adata=adata,
-            population_obs=pairwise_config.population_obs,
-            subregion=subregion_obs,
-            subregion_suffix=pairwise_config.squidpy_subregion_suffix,
-            radius=(int(pairwise_config.squidpy_radius_min_um), int(pairwise_config.squidpy_radius_max_um)),
-            n_permutations=int(pairwise_config.squidpy_n_permutations),
-        )
-
         squidpy_raw_dir = raw_dir / "squidpy_interactions"
-        for metric, region_dict in squidpy_results.items():
-            metric_dir = squidpy_raw_dir / metric
-            metric_dir.mkdir(parents=True, exist_ok=True)
-            for region_name, matrix in region_dict.items():
-                matrix.to_csv(metric_dir / f"{cleanstring(region_name)}.csv")
+        squidpy_raw_dir.mkdir(parents=True, exist_ok=True)
+        squidpy_long_path = squidpy_raw_dir / "squidpy_interactions_long.csv"
+        squidpy_long = pd.DataFrame()
+        loaded_squidpy = False
 
-        squidpy_long = _flatten_squidpy_results(squidpy_results, subregion_obs)
-        subregion_metadata = _build_key_metadata_table(adata, subregion_obs, metadata_cols)
-        if not subregion_metadata.empty and not squidpy_long.empty:
-            squidpy_long = squidpy_long.merge(
-                subregion_metadata.reset_index(),
-                on=subregion_obs,
-                how="left",
+        if reload_saved_results:
+            loaded = _load_saved_csv(
+                squidpy_long_path,
+                required_cols=["source_population", "target_population", "metric", "value"],
             )
-        squidpy_long.to_csv(squidpy_raw_dir / "squidpy_interactions_long.csv", index=False)
+            if loaded is not None:
+                squidpy_long = loaded
+                loaded_squidpy = True
+                analysis_sources["squidpy"] = "loaded"
+                logging.info("Reloaded saved Squidpy results from %s", squidpy_long_path)
+
+        if not loaded_squidpy:
+            logging.info(
+                "Running Squidpy interactions (population_obs=%s, subregion=%s).",
+                pairwise_config.population_obs,
+                subregion_obs,
+            )
+            squidpy_results = sbt_spatial.squidpy_subregion_interactions(
+                adata=adata,
+                population_obs=pairwise_config.population_obs,
+                subregion=subregion_obs,
+                subregion_suffix=pairwise_config.squidpy_subregion_suffix,
+                radius=(int(pairwise_config.squidpy_radius_min_um), int(pairwise_config.squidpy_radius_max_um)),
+                n_permutations=int(pairwise_config.squidpy_n_permutations),
+            )
+
+            for metric, region_dict in squidpy_results.items():
+                metric_dir = squidpy_raw_dir / metric
+                metric_dir.mkdir(parents=True, exist_ok=True)
+                for region_name, matrix in region_dict.items():
+                    matrix.to_csv(metric_dir / f"{cleanstring(region_name)}.csv")
+
+            squidpy_long = _flatten_squidpy_results(squidpy_results, subregion_obs)
+            subregion_metadata = _build_key_metadata_table(adata, subregion_obs, metadata_cols)
+            if not subregion_metadata.empty and not squidpy_long.empty:
+                squidpy_long = squidpy_long.merge(
+                    subregion_metadata.reset_index(),
+                    on=subregion_obs,
+                    how="left",
+                )
+            squidpy_long.to_csv(squidpy_long_path, index=False)
+            analysis_sources["squidpy"] = "computed"
 
         if pairwise_config.make_matrix_plots and not squidpy_long.empty:
             row_colors = _label_colors(ordered_pops, color_map)
@@ -650,52 +847,68 @@ def run_pairwise_spatial_analyses(
                     )
 
     if pairwise_config.run_distance_bootstrap:
-        if source_population_obs not in adata.obs.columns:
-            raise KeyError(
-                f"Configured source_population_obs '{source_population_obs}' not found in AnnData.obs."
-            )
-
-        logging.info(
-            "Running distance bootstrap (population_obs=%s, source_population_obs=%s).",
-            pairwise_config.population_obs,
-            source_population_obs,
-        )
-        observed_all, bootmean_all, delta_all, zscore_all = (
-            sbt_distance.bootstrap_nearest_population_distances_all_rois(
-                adata,
-                roi_col=pairwise_config.roi_obs,
-                master_index_col=pairwise_config.master_index_obs,
-                cell_type_col=pairwise_config.population_obs,
-                x_col=pairwise_config.x_coord_obs,
-                y_col=pairwise_config.y_coord_obs,
-                populations=pairwise_config.distance_populations,
-                roi_ids=pairwise_config.distance_roi_ids,
-                n_bootstraps=int(pairwise_config.distance_n_bootstraps),
-                n_jobs=int(pairwise_config.distance_n_jobs),
-                source_population_col=source_population_obs,
-                ddof=int(pairwise_config.distance_ddof),
-            )
-        )
-
         distance_raw_dir = raw_dir / "distance_bootstrap"
         distance_raw_dir.mkdir(parents=True, exist_ok=True)
-        metric_wide = {
-            "observed": observed_all,
-            "bootmean": bootmean_all,
-            "delta": delta_all,
-            "zscore": zscore_all,
-        }
-        for metric, df in metric_wide.items():
-            df.to_csv(distance_raw_dir / f"distance_{metric}.csv")
+        distance_long_path = distance_raw_dir / "distance_long.csv"
+        distance_long = pd.DataFrame()
+        loaded_distance = False
 
-        long_frames: List[pd.DataFrame] = []
-        for metric, df in metric_wide.items():
-            long_frames.append(_distance_matrix_to_long(df, metric=metric))
-        distance_long = pd.concat(long_frames, ignore_index=True)
-        if not roi_metadata.empty and not distance_long.empty:
-            merge_roi_meta = roi_metadata.reset_index().rename(columns={pairwise_config.roi_obs: "roi"})
-            distance_long = distance_long.merge(merge_roi_meta, on="roi", how="left")
-        distance_long.to_csv(distance_raw_dir / "distance_long.csv", index=False)
+        if reload_saved_results:
+            loaded = _load_saved_csv(
+                distance_long_path,
+                required_cols=["source_population", "target_population", "metric", "value"],
+            )
+            if loaded is not None:
+                distance_long = loaded
+                loaded_distance = True
+                analysis_sources["distance"] = "loaded"
+                logging.info("Reloaded saved distance-bootstrap results from %s", distance_long_path)
+
+        if not loaded_distance:
+            if source_population_obs not in adata.obs.columns:
+                raise KeyError(
+                    f"Configured source_population_obs '{source_population_obs}' not found in AnnData.obs."
+                )
+            logging.info(
+                "Running distance bootstrap (population_obs=%s, source_population_obs=%s).",
+                pairwise_config.population_obs,
+                source_population_obs,
+            )
+            observed_all, bootmean_all, delta_all, zscore_all = (
+                sbt_distance.bootstrap_nearest_population_distances_all_rois(
+                    adata,
+                    roi_col=pairwise_config.roi_obs,
+                    master_index_col=pairwise_config.master_index_obs,
+                    cell_type_col=pairwise_config.population_obs,
+                    x_col=pairwise_config.x_coord_obs,
+                    y_col=pairwise_config.y_coord_obs,
+                    populations=pairwise_config.distance_populations,
+                    roi_ids=pairwise_config.distance_roi_ids,
+                    n_bootstraps=int(pairwise_config.distance_n_bootstraps),
+                    n_jobs=int(pairwise_config.distance_n_jobs),
+                    source_population_col=source_population_obs,
+                    ddof=int(pairwise_config.distance_ddof),
+                )
+            )
+
+            metric_wide = {
+                "observed": observed_all,
+                "bootmean": bootmean_all,
+                "delta": delta_all,
+                "zscore": zscore_all,
+            }
+            for metric, df in metric_wide.items():
+                df.to_csv(distance_raw_dir / f"distance_{metric}.csv")
+
+            long_frames: List[pd.DataFrame] = []
+            for metric, df in metric_wide.items():
+                long_frames.append(_distance_matrix_to_long(df, metric=metric))
+            distance_long = pd.concat(long_frames, ignore_index=True)
+            if not roi_metadata.empty and not distance_long.empty:
+                merge_roi_meta = roi_metadata.reset_index().rename(columns={pairwise_config.roi_obs: "roi"})
+                distance_long = distance_long.merge(merge_roi_meta, on="roi", how="left")
+            distance_long.to_csv(distance_long_path, index=False)
+            analysis_sources["distance"] = "computed"
 
         if pairwise_config.make_matrix_plots and not distance_long.empty:
             row_colors = _label_colors(ordered_pops, color_map)
@@ -786,126 +999,166 @@ def run_pairwise_spatial_analyses(
                     )
 
     if pairwise_config.run_pcf:
-        logging.info("Running PCF analysis at %.2f um.", pairwise_config.pcf_target_distance_um)
         pcf_raw_dir = raw_dir / "pcf"
         pcf_spoox_dir = pcf_raw_dir / "spoox_out"
         pcf_summary_dir = pcf_raw_dir / "summary"
         pcf_stats_path = pcf_raw_dir / "pcf_stats.txt"
         pcf_conditions_path = pcf_raw_dir / "pcf_conditions.json"
+        pcf_summary_path = pcf_raw_dir / "pcf_summary.csv"
+        pcf_long_path = pcf_raw_dir / "pcf_long.csv"
         for folder in [pcf_raw_dir, pcf_spoox_dir, pcf_summary_dir]:
             folder.mkdir(parents=True, exist_ok=True)
 
-        pcf_summary = sbt_pcf.run_paircorrelation_at_distance(
-            adata=adata,
-            population_obs=pairwise_config.population_obs,
-            groupby=pairwise_config.groupby_obs,
-            target_distance=float(pairwise_config.pcf_target_distance_um),
-            spoox_output_dir=pcf_spoox_dir,
-            spoox_output_summary_dir=pcf_summary_dir,
-            stats_file=pcf_stats_path,
-            conditions_file=pcf_conditions_path,
-            index_obs=pairwise_config.master_index_obs,
-            roi_obs=pairwise_config.roi_obs,
-            xloc_obs=pairwise_config.x_coord_obs,
-            yloc_obs=pairwise_config.y_coord_obs,
-            cluster_column=pairwise_config.pcf_cluster_column,
-            samples=pairwise_config.pcf_samples,
-            max_radius=float(pairwise_config.pcf_max_radius_um),
-            radius_step=float(pairwise_config.pcf_radius_step_um),
-            num_bootstrap=int(pairwise_config.pcf_num_bootstrap),
-        )
-        pcf_summary.to_csv(pcf_raw_dir / "pcf_summary.csv", index=False)
+        pcf_summary = None
+        pcf_long = None
+        if reload_saved_results:
+            loaded_summary = _load_saved_csv(
+                pcf_summary_path,
+                required_cols=["cell_type_1", "cell_type_2"],
+            )
+            loaded_long = _load_saved_csv(
+                pcf_long_path,
+                required_cols=["source_population", "target_population", "metric", "value"],
+            )
+            if loaded_summary is not None and loaded_long is not None:
+                pcf_summary = loaded_summary
+                pcf_long = loaded_long
+                analysis_sources["pcf"] = "loaded"
+                logging.info(
+                    "Reloaded saved PCF results from %s and %s",
+                    pcf_summary_path,
+                    pcf_long_path,
+                )
+            elif loaded_summary is not None or loaded_long is not None:
+                logging.warning(
+                    "Found partial saved PCF outputs (summary or long only). Recomputing PCF analysis."
+                )
+
+        if pcf_summary is None or pcf_long is None:
+            logging.info("Running PCF analysis at %.2f um.", pairwise_config.pcf_target_distance_um)
+            pcf_summary = sbt_pcf.run_paircorrelation_at_distance(
+                adata=adata,
+                population_obs=pairwise_config.population_obs,
+                groupby=pairwise_config.groupby_obs,
+                target_distance=float(pairwise_config.pcf_target_distance_um),
+                spoox_output_dir=pcf_spoox_dir,
+                spoox_output_summary_dir=pcf_summary_dir,
+                stats_file=pcf_stats_path,
+                conditions_file=pcf_conditions_path,
+                index_obs=pairwise_config.master_index_obs,
+                roi_obs=pairwise_config.roi_obs,
+                xloc_obs=pairwise_config.x_coord_obs,
+                yloc_obs=pairwise_config.y_coord_obs,
+                cluster_column=pairwise_config.pcf_cluster_column,
+                samples=pairwise_config.pcf_samples,
+                max_radius=float(pairwise_config.pcf_max_radius_um),
+                radius_step=float(pairwise_config.pcf_radius_step_um),
+                num_bootstrap=int(pairwise_config.pcf_num_bootstrap),
+            )
+            pcf_summary.to_csv(pcf_summary_path, index=False)
+
+            if "condition" not in pcf_summary.columns:
+                pcf_summary["condition"] = "All"
+
+            pcf_long = pcf_summary.melt(
+                id_vars=["condition", "cell_type_1", "cell_type_2"],
+                value_vars=[c for c in ["g_mean", "g_min", "g_max"] if c in pcf_summary.columns],
+                var_name="metric",
+                value_name="value",
+            ).rename(
+                columns={
+                    "cell_type_1": "source_population",
+                    "cell_type_2": "target_population",
+                }
+            )
+            pcf_long.to_csv(pcf_long_path, index=False)
+
+            pcf_cell_input_cols = [
+                c
+                for c in [
+                    pairwise_config.master_index_obs,
+                    pairwise_config.roi_obs,
+                    pairwise_config.population_obs,
+                    pairwise_config.groupby_obs,
+                    *metadata_cols,
+                ]
+                if c and c in adata.obs.columns
+            ]
+            if pcf_cell_input_cols:
+                adata.obs[pcf_cell_input_cols].to_csv(pcf_raw_dir / "pcf_input_cell_metadata.csv")
+            analysis_sources["pcf"] = "computed"
 
         if "condition" not in pcf_summary.columns:
             pcf_summary["condition"] = "All"
-
-        pcf_long = pcf_summary.melt(
-            id_vars=["condition", "cell_type_1", "cell_type_2"],
-            value_vars=[c for c in ["g_mean", "g_min", "g_max"] if c in pcf_summary.columns],
-            var_name="metric",
-            value_name="value",
-        ).rename(
-            columns={
-                "cell_type_1": "source_population",
-                "cell_type_2": "target_population",
-            }
-        )
-        pcf_long.to_csv(pcf_raw_dir / "pcf_long.csv", index=False)
-
-        pcf_cell_input_cols = [
-            c
-            for c in [
-                pairwise_config.master_index_obs,
-                pairwise_config.roi_obs,
-                pairwise_config.population_obs,
-                pairwise_config.groupby_obs,
-                *metadata_cols,
-            ]
-            if c and c in adata.obs.columns
-        ]
-        if pcf_cell_input_cols:
-            adata.obs[pcf_cell_input_cols].to_csv(pcf_raw_dir / "pcf_input_cell_metadata.csv")
+        if "condition" not in pcf_long.columns:
+            pcf_long["condition"] = "All"
 
         if pairwise_config.make_matrix_plots and not pcf_summary.empty:
-            for condition_name, cond_df in pcf_summary.groupby("condition", observed=True):
-                cond_df = cond_df.copy()
-                labels = sorted(
-                    pd.unique(
-                        np.concatenate(
-                            [
-                                cond_df["cell_type_1"].astype(str).to_numpy(),
-                                cond_df["cell_type_2"].astype(str).to_numpy(),
-                            ]
-                        )
-                    ).tolist()
+            if "g_mean" not in pcf_summary.columns:
+                logging.warning(
+                    "PCF summary is missing 'g_mean'; skipping PCF matrix plots."
                 )
-                color_series = _label_colors(labels, color_map)
-                condition_stub = cleanstring(condition_name)
-                out_path = matrix_dir / f"pcf_g_mean_{condition_stub}{extension}"
+            else:
+                for condition_name, cond_df in pcf_summary.groupby("condition", observed=True):
+                    cond_df = cond_df.copy()
+                    labels = sorted(
+                        pd.unique(
+                            np.concatenate(
+                                [
+                                    cond_df["cell_type_1"].astype(str).to_numpy(),
+                                    cond_df["cell_type_2"].astype(str).to_numpy(),
+                                ]
+                            )
+                        ).tolist()
+                    )
+                    color_series = _label_colors(labels, color_map)
+                    condition_stub = cleanstring(condition_name)
+                    out_path = matrix_dir / f"pcf_g_mean_{condition_stub}{extension}"
 
-                try:
-                    grid = sbt_pcf.plot_paircorrelation_clustermap(
-                        summary=cond_df,
-                        condition=condition_name,
-                        cmap=pairwise_config.heatmap_cmap_pcf,
-                        cluster=bool(
-                            pairwise_config.heatmap_row_cluster
-                            and pairwise_config.heatmap_col_cluster
-                        ),
-                        figsize=matrix_figsize,
-                        row_colors=color_series,
-                        col_colors=color_series,
-                    )
-                    grid.fig.savefig(out_path, dpi=int(pairwise_config.figure_dpi), bbox_inches="tight")
-                    plt.close(grid.fig)
-                except Exception as exc:
-                    logging.warning(
-                        "PCF clustermap failed for condition '%s' (%s). Using heatmap fallback.",
-                        condition_name,
-                        exc,
-                    )
-                    matrix = cond_df.pivot_table(
-                        index="cell_type_1",
-                        columns="cell_type_2",
-                        values="g_mean",
-                        aggfunc="mean",
-                    )
-                    matrix = _ordered_matrix(matrix, ordered_pops)
-                    _save_matrix_plot(
-                        matrix,
-                        out_path=out_path,
-                        title=f"PCF g_mean ({condition_name})",
-                        cmap=pairwise_config.heatmap_cmap_pcf,
-                        center=1.0,
-                        use_clustermap=pairwise_config.heatmap_use_clustermap,
-                        row_cluster=pairwise_config.heatmap_row_cluster,
-                        col_cluster=pairwise_config.heatmap_col_cluster,
-                        figsize=matrix_figsize,
-                        percentile=pairwise_config.heatmap_percentile,
-                        dpi=pairwise_config.figure_dpi,
-                        row_colors=_label_colors(ordered_pops, color_map),
-                        col_colors=_label_colors(ordered_pops, color_map),
-                    )
+                    try:
+                        grid = sbt_pcf.plot_paircorrelation_clustermap(
+                            summary=cond_df,
+                            condition=condition_name,
+                            cmap=pairwise_config.heatmap_cmap_pcf,
+                            cluster=bool(
+                                pairwise_config.heatmap_row_cluster
+                                and pairwise_config.heatmap_col_cluster
+                            ),
+                            figsize=matrix_figsize,
+                            row_colors=color_series,
+                            col_colors=color_series,
+                        )
+                        _force_show_all_tick_labels(grid.ax_heatmap, x_rotation=90.0, y_rotation=0.0)
+                        grid.fig.savefig(out_path, dpi=int(pairwise_config.figure_dpi), bbox_inches="tight")
+                        plt.close(grid.fig)
+                    except Exception as exc:
+                        logging.warning(
+                            "PCF clustermap failed for condition '%s' (%s). Using heatmap fallback.",
+                            condition_name,
+                            exc,
+                        )
+                        matrix = cond_df.pivot_table(
+                            index="cell_type_1",
+                            columns="cell_type_2",
+                            values="g_mean",
+                            aggfunc="mean",
+                        )
+                        matrix = _ordered_matrix(matrix, ordered_pops)
+                        _save_matrix_plot(
+                            matrix,
+                            out_path=out_path,
+                            title=f"PCF g_mean ({condition_name})",
+                            cmap=pairwise_config.heatmap_cmap_pcf,
+                            center=1.0,
+                            use_clustermap=pairwise_config.heatmap_use_clustermap,
+                            row_cluster=pairwise_config.heatmap_row_cluster,
+                            col_cluster=pairwise_config.heatmap_col_cluster,
+                            figsize=matrix_figsize,
+                            percentile=pairwise_config.heatmap_percentile,
+                            dpi=pairwise_config.figure_dpi,
+                            row_colors=_label_colors(ordered_pops, color_map),
+                            col_colors=_label_colors(ordered_pops, color_map),
+                        )
 
         if pairwise_config.make_pair_barplots and pair_map and not pcf_long.empty:
             for metric in sorted(pcf_long["metric"].dropna().unique().tolist()):
@@ -936,6 +1189,8 @@ def run_pairwise_spatial_analyses(
         "ran_squidpy": bool(pairwise_config.run_squidpy_interactions),
         "ran_distance": bool(pairwise_config.run_distance_bootstrap),
         "ran_pcf": bool(pairwise_config.run_pcf),
+        "reload_saved_results": reload_saved_results,
+        "analysis_sources": analysis_sources,
         "population_pairs": pair_map,
     }
     metadata_path = output_root / "pairwise_spatial_run_metadata.json"

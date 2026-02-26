@@ -39,6 +39,7 @@ from .config_and_utils import (
     GeneralConfig,
     SubclusteringConfig,
     cleanstring,
+    coalesce_config_text,
     filter_config_for_dataclass,
     load_pipeline_anndata,
     process_config_with_overrides,
@@ -118,6 +119,7 @@ def _ensure_templates(
     adata: ad.AnnData,
     subclustering_config: SubclusteringConfig,
     output_dir: Path,
+    base_label_key: str,
 ) -> Tuple[Path, Path, bool]:
     settings_path = output_dir / subclustering_config.settings_filename
     marker_list_path = output_dir / subclustering_config.marker_list_filename
@@ -125,16 +127,16 @@ def _ensure_templates(
     created_any = False
 
     if not settings_path.exists():
-        if subclustering_config.base_label_key not in adata.obs.columns:
+        if base_label_key not in adata.obs.columns:
             raise KeyError(
-                f"Configured base_label_key '{subclustering_config.base_label_key}' "
+                f"Configured base_label_key '{base_label_key}' "
                 "is missing in AnnData.obs, so template settings cannot be generated."
             )
 
-        populations = _ordered_categories(adata.obs[subclustering_config.base_label_key])
+        populations = _ordered_categories(adata.obs[base_label_key])
         settings_df = pd.DataFrame(
             {
-                "base_label": [subclustering_config.base_label_key] * len(populations),
+                "base_label": [base_label_key] * len(populations),
                 "population": populations,
                 "resolution": [float(subclustering_config.default_resolution)] * len(populations),
                 "marker_list": [str(subclustering_config.default_marker_list)] * len(populations),
@@ -451,6 +453,19 @@ def run_subclustering_stage(
     subclustering_config: SubclusteringConfig,
     stage_name: str = "Subclustering",
 ) -> Optional[Path]:
+    subclustering_config.base_label_key = coalesce_config_text(
+        subclustering_config.base_label_key,
+        general_config.population_obs_primary,
+        default="population",
+    )
+    subclustering_config.master_index_obs = coalesce_config_text(
+        subclustering_config.master_index_obs,
+        general_config.master_index_obs,
+        default="Master_Index",
+    )
+    resolved_base_label_key = subclustering_config.base_label_key
+    resolved_master_index_obs = subclustering_config.master_index_obs
+
     _checkpoint("Load Input")
     input_path = _resolve_input_adata_path(general_config, subclustering_config)
     adata, _, skip_stage, _ = load_pipeline_anndata(
@@ -466,6 +481,12 @@ def run_subclustering_stage(
         raise FileNotFoundError(f"AnnData could not be loaded for subclustering stage: {input_path}")
     logging.info("Loaded AnnData: %d cells x %d markers", adata.n_obs, adata.n_vars)
 
+    logging.info(
+        "Resolved Subclustering obs keys: base_label_key='%s', master_index_obs='%s'.",
+        resolved_base_label_key,
+        resolved_master_index_obs,
+    )
+
     output_dir = Path(subclustering_config.output_subdir)
     output_dir.mkdir(parents=True, exist_ok=True)
     logging.info("Subclustering output directory: %s", output_dir)
@@ -475,6 +496,7 @@ def run_subclustering_stage(
         adata=adata,
         subclustering_config=subclustering_config,
         output_dir=output_dir,
+        base_label_key=resolved_base_label_key,
     )
     if created_any:
         logging.info(
@@ -672,7 +694,7 @@ def run_subclustering_stage(
             remap_path.name,
         )
     else:
-        fallback_base_labels = [subclustering_config.base_label_key]
+        fallback_base_labels = [resolved_base_label_key]
         fallback_base_labels.extend(
             [str(x) for x in pd.unique(settings_df["base_label"].dropna()) if str(x) not in fallback_base_labels]
         )
@@ -687,7 +709,7 @@ def run_subclustering_stage(
             subclustering_config.final_label_key,
         )
 
-        master_col = subclustering_config.master_index_obs
+        master_col = resolved_master_index_obs
         if master_col in adata.obs.columns:
             master_values = adata.obs[master_col].tolist()
         else:
@@ -705,14 +727,14 @@ def run_subclustering_stage(
             }
         )
         mapping_df.to_csv(mapping_path, index=False)
-        logging.info("Saved Master_Index to final population mapping: %s", mapping_path)
+        logging.info("Saved %s to final population mapping: %s", master_col, mapping_path)
 
     adata.uns["subclustering_pipeline"] = {
         "input_adata_path": str(input_path),
         "settings_path": str(settings_path),
         "marker_list_path": str(marker_list_path),
         "remap_path": str(remap_path),
-        "base_label_key": subclustering_config.base_label_key,
+        "base_label_key": resolved_base_label_key,
         "final_label_key": subclustering_config.final_label_key,
         "n_settings_rows": int(settings_df.shape[0]),
         "n_remap_rows": int(remap_df.shape[0]),

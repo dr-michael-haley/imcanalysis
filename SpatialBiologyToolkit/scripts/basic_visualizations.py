@@ -1202,13 +1202,17 @@ def create_population_abundance_analysis(
     """
     Create notebook-style per-population abundance plots and stats for one grouping variable.
 
-    The grouping variable is controlled by visualization.groupby_obs and optional
-    visualization.groupby_obs_groups. ROI and case identifiers are controlled by
-    general.roi_obs and general.case_obs.
+    Grouping resolution order:
+    1) visualization.groupby_obs / visualization.groupby_obs_groups
+    2) general.groupby_obs / general.groupby_obs_primary_pairwise / general.groupby_obs_groups
+    ROI and case identifiers are controlled by general.roi_obs and general.case_obs.
     """
-    group_col = getattr(viz_config, 'groupby_obs', None)
+    group_col = coalesce_config_text(
+        getattr(viz_config, 'groupby_obs', None),
+        getattr(general_config, 'groupby_obs', None),
+    )
     if not group_col:
-        logging.warning("No visualization.groupby_obs provided; skipping abundance analysis.")
+        logging.warning("No grouping column configured (visualization.groupby_obs/general.groupby_obs); skipping abundance analysis.")
         return
     if group_col not in adata.obs.columns:
         logging.warning("Grouping column '%s' not found in adata.obs; skipping abundance analysis.", group_col)
@@ -1227,7 +1231,12 @@ def create_population_abundance_analysis(
         )
         case_col = None
 
-    group_order = _ordered_groups(adata.obs[group_col], getattr(viz_config, 'groupby_obs_groups', None))
+    configured_groups = coalesce_config_list(
+        getattr(viz_config, 'groupby_obs_groups', None),
+        getattr(general_config, 'groupby_obs_primary_pairwise', None),
+        getattr(general_config, 'groupby_obs_groups', None),
+    )
+    group_order = _ordered_groups(adata.obs[group_col], configured_groups)
     if not group_order:
         logging.warning("No valid groups found for '%s'; skipping abundance analysis.", group_col)
         return
@@ -1505,10 +1514,14 @@ def create_population_analysis(
 ):
     """
     Dispatch population analysis:
-    - If visualization.groupby_obs is set: run abundance-focused analysis.
+    - If a grouping column is configured in visualization/group general settings: run abundance-focused analysis.
     - Otherwise: run legacy metadata-by-population analysis.
     """
-    if getattr(viz_config, 'groupby_obs', None):
+    effective_groupby = coalesce_config_text(
+        getattr(viz_config, 'groupby_obs', None),
+        getattr(general_config, 'groupby_obs', None),
+    )
+    if effective_groupby:
         create_population_abundance_analysis(
             adata=adata,
             population_columns=population_columns,
@@ -1540,6 +1553,22 @@ if __name__ == "__main__":
     viz_config = VisualizationConfig(**filter_config_for_dataclass(config.get('visualization', {}), VisualizationConfig))
     segmentation_config = SegmentationConfig(**filter_config_for_dataclass(config.get('segmentation', {}), SegmentationConfig))
 
+    # Promote shared General obs defaults into visualization config when script overrides are not set.
+    if viz_config.population_columns is None:
+        if getattr(general_config, 'population_obs_all', None) is not None:
+            viz_config.population_columns = [str(c) for c in general_config.population_obs_all]
+        elif getattr(general_config, 'population_obs_primary', None):
+            viz_config.population_columns = [str(general_config.population_obs_primary)]
+    if viz_config.metadata_columns is None and getattr(general_config, 'metadata_obs', None) is not None:
+        viz_config.metadata_columns = [str(c) for c in general_config.metadata_obs]
+    if viz_config.groupby_obs is None:
+        viz_config.groupby_obs = coalesce_config_text(getattr(general_config, 'groupby_obs', None))
+    if viz_config.groupby_obs_groups is None:
+        viz_config.groupby_obs_groups = coalesce_config_list(
+            getattr(general_config, 'groupby_obs_primary_pairwise', None),
+            getattr(general_config, 'groupby_obs_groups', None),
+        )
+
     adata, adata_path, skip_stage, _ = load_pipeline_anndata(
         general_config=general_config,
         stage_name=pipeline_stage,
@@ -1565,16 +1594,17 @@ if __name__ == "__main__":
     for p in [qc_umap_dir, qc_matrix_dir, qc_legend_dir, qc_pop_dir]:
         p.mkdir(parents=True, exist_ok=True)
 
-    # Find all population and metadata columns intelligently
+    # Resolve population columns (visualization/general resolved config > auto-detect)
     if viz_config.population_columns is not None:
-        population_columns = viz_config.population_columns
-        logging.info(f"Using population columns from config: {population_columns}")
+        population_columns = [str(c) for c in viz_config.population_columns]
+        logging.info(f"Using population columns from resolved config: {population_columns}")
     else:
         population_columns = find_population_columns(adata, max_categories=viz_config.max_categories)
-    
+
+    # Resolve metadata columns (visualization/general resolved config > auto-detect)
     if viz_config.metadata_columns is not None:
-        metadata_columns = viz_config.metadata_columns
-        logging.info(f"Using metadata columns from config: {metadata_columns}")
+        metadata_columns = [str(c) for c in viz_config.metadata_columns]
+        logging.info(f"Using metadata columns from resolved config: {metadata_columns}")
     else:
         metadata_columns = find_metadata_columns(adata, population_columns, general_config.metadata_folder, max_categories=viz_config.max_categories)
     

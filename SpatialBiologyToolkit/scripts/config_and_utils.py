@@ -23,6 +23,16 @@ class GeneralConfig:
     slurm_logs_folder: str = 'SLURM_logs'
     case_obs: Optional[str] = None  # Optional case/sample column in adata.obs (used for case-level summaries/stats)
     roi_obs: str = 'ROI'  # ROI identifier column in adata.obs
+    metadata_obs: Optional[List[str]] = None  # Optional metadata obs columns for QC and grouped summaries
+    groupby_obs: Optional[str] = None  # Primary grouping axis for cross-condition analyses
+    groupby_obs_groups: Optional[List[str]] = None  # Optional ordered subset for groupby_obs
+    groupby_obs_primary_pairwise: Optional[List[str]] = None  # Optional preferred 2-group subset for pairwise analyses
+    population_obs_all: Optional[List[str]] = None  # Optional full list of population/cluster obs columns
+    population_obs_primary: Optional[str] = None  # Optional primary population obs used by downstream analyses
+    spatial_key: str = 'spatial'  # Canonical adata.obsm key for XY coordinates
+    x_coord_obs: str = 'X_loc'  # Fallback X coordinate obs column when spatial_key is missing
+    y_coord_obs: str = 'Y_loc'  # Fallback Y coordinate obs column when spatial_key is missing
+    master_index_obs: str = 'Master_Index'  # Canonical stable per-cell index column in adata.obs
     anndata_path: str = 'anndata.h5ad'  # Canonical AnnData file path used across pipeline stages
     anndata_stage_run_mode: str = 'intelligent'  # One of: repeat, skip, intelligent
     anndata_uns_log_key: str = 'pipeline_stage_log'  # AnnData.uns key storing stage order/config snapshots
@@ -290,10 +300,10 @@ class BasicProcessConfig(BioBatchNetConfig):
 class VisualizationConfig:
     # Input data settings
     input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
-    population_columns: Optional[List[str]] = None  # Specific population columns to visualize (None = auto-detect)
-    metadata_columns: Optional[List[str]] = None  # Specific metadata columns to visualize (None = auto-detect)
-    groupby_obs: Optional[str] = None  # Single grouping column used for abundance-focused population plots/stats
-    groupby_obs_groups: Optional[List[str]] = None  # Optional subset/order of groups in groupby_obs
+    population_columns: Optional[List[str]] = None  # Script override for population columns (None = use general.population_obs_all or auto-detect)
+    metadata_columns: Optional[List[str]] = None  # Script override for metadata columns (None = use general.metadata_obs or auto-detect)
+    groupby_obs: Optional[str] = None  # Script override for grouping column (None = use general.groupby_obs)
+    groupby_obs_groups: Optional[List[str]] = None  # Script override for groups (None = use general pairwise/groups settings)
     
     # AI interpretation settings
     enable_ai: bool = True  # Enable AI-powered cluster interpretation
@@ -367,10 +377,10 @@ class CellCharterConfig:
     qc_output_subdir: str = 'CellCharter_QC'
 
     # Spatial metadata
-    sample_key: str = 'ROI'
-    spatial_key: str = 'spatial'  # adata.obsm key for XY coordinates
-    x_coord_col: str = 'X_loc'     # fallback obs column if spatial_key is missing
-    y_coord_col: str = 'Y_loc'     # fallback obs column if spatial_key is missing
+    sample_key: Optional[str] = None  # Optional override (None = use general.roi_obs)
+    spatial_key: Optional[str] = None  # Optional override (None = use general.spatial_key)
+    x_coord_col: Optional[str] = None  # Optional override (None = use general.x_coord_obs)
+    y_coord_col: Optional[str] = None  # Optional override (None = use general.y_coord_obs)
 
     # Features
     use_rep: Optional[str] = None      # For non-TRVAE mode: adata.obsm key for neighborhood aggregation
@@ -422,7 +432,6 @@ class CellCharterConfig:
 
     # Optional enrichment
     run_enrichment: bool = True
-    enrichment_label_key: str = 'cell_type'
     enrichment_with_pvalues: bool = False
     enrichment_n_perms: int = 1000
 
@@ -488,14 +497,15 @@ class PairwiseSpatialConfig:
     # Input/output
     input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
     output_subdir: str = 'Pairwise_Spatial'
+    reload_saved_results: bool = True  # Reuse saved raw analysis outputs when present (useful for plot-only reruns)
 
     # Core metadata keys
-    population_obs: str = 'population'  # Column in adata.obs with population labels
-    groupby_obs: Optional[str] = None
-    roi_obs: str = 'ROI'
-    x_coord_obs: str = 'X_loc'
-    y_coord_obs: str = 'Y_loc'
-    master_index_obs: str = 'Master_Index'
+    population_obs: Optional[str] = None  # Optional override (None = use general.population_obs_primary or legacy 'population')
+    groupby_obs: Optional[str] = None  # Optional override (None = use general.groupby_obs)
+    roi_obs: Optional[str] = None  # Optional override (None = use general.roi_obs)
+    x_coord_obs: Optional[str] = None  # Optional override (None = use general.x_coord_obs)
+    y_coord_obs: Optional[str] = None  # Optional override (None = use general.y_coord_obs)
+    master_index_obs: Optional[str] = None  # Optional override (None = use general.master_index_obs)
     source_population_obs: Optional[str] = None  # If None: uses population_obs
 
     # Metadata export controls
@@ -531,6 +541,11 @@ class PairwiseSpatialConfig:
     # Supports:
     # 1) Direct mapping: {source_pop: [target_pop, ...]}
     # 2) Nested by obs key: {population_obs: {source_pop: [target_pop, ...]}}
+    # Target tokens:
+    # - "ALL": all populations in population_obs
+    # - "ALL_OTHERS": all populations except source_pop
+    # - "MATCH_x": populations containing substring "x" (case-insensitive)
+    # - "NOT_x": populations not containing substring "x" (case-insensitive)
     population_pairs: Dict[str, Any] = field(default_factory=dict)
 
     # Plotting
@@ -564,7 +579,7 @@ class SubclusteringConfig:
     master_index_mapping_filename: str = 'master_index_to_final_population.csv'
 
     # Subclustering defaults
-    base_label_key: str = 'population'
+    base_label_key: Optional[str] = None  # Optional override (None = use general.population_obs_primary or legacy 'population')
     default_resolution: float = 0.3
     default_marker_list: str = 'all'  # Resolved as marker column 'markers_all'
     use_rep: Optional[str] = 'X_biobatchnet'
@@ -579,7 +594,7 @@ class SubclusteringConfig:
 
     # Final remap integration
     final_label_key: str = 'population_final'
-    master_index_obs: str = 'Master_Index'
+    master_index_obs: Optional[str] = None  # Optional override (None = use general.master_index_obs)
     apply_remap_only_if_modified: bool = True
 
 @dataclass
@@ -1121,6 +1136,32 @@ def _safe_snapshot_equal(left: Any, right: Any) -> bool:
         return left == right
     except Exception:
         return str(left) == str(right)
+
+
+def coalesce_config_text(*values: Any, default: Optional[str] = None) -> Optional[str]:
+    """
+    Return the first non-empty string-like value from a list of candidates.
+    """
+    for value in values:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    return default
+
+
+def coalesce_config_list(*values: Any, default: Optional[List[str]] = None) -> Optional[List[str]]:
+    """
+    Return the first non-null list-like value from a list of candidates as a list of strings.
+    """
+    for value in values:
+        if value is None:
+            continue
+        if isinstance(value, (list, tuple, set)):
+            return [str(v) for v in value]
+        return [str(value)]
+    return default
 
 
 def resolve_anndata_path(

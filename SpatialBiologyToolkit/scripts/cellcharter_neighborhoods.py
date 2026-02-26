@@ -45,6 +45,8 @@ from .config_and_utils import (
     CellCharterConfig,
     GeneralConfig,
     cleanstring,
+    coalesce_config_list,
+    coalesce_config_text,
     filter_config_for_dataclass,
     load_pipeline_anndata,
     process_config_with_overrides,
@@ -935,6 +937,7 @@ def _run_nhood_enrichment(
 
 def _run_diff_nhood_enrichment(
     adata: ad.AnnData,
+    general_config: GeneralConfig,
     cellcharter_config: CellCharterConfig,
     sample_key: str,
     qc_dir: Path,
@@ -942,7 +945,10 @@ def _run_diff_nhood_enrichment(
     """Run differential neighborhood enrichment and save outputs."""
     details: Dict[str, Any] = {"enabled": True, "ran": False}
     cluster_key = cellcharter_config.cluster_key
-    condition_key = cellcharter_config.diff_nhood_condition_key
+    condition_key = coalesce_config_text(
+        cellcharter_config.diff_nhood_condition_key,
+        general_config.groupby_obs,
+    )
 
     if not condition_key:
         for fallback in ("condition", "dataset", "group", "sample_type"):
@@ -955,7 +961,8 @@ def _run_diff_nhood_enrichment(
                 break
         if not condition_key:
             logging.warning(
-                "Skipping differential nhood enrichment: set cellcharter.diff_nhood_condition_key in config."
+                "Skipping differential nhood enrichment: configure cellcharter.diff_nhood_condition_key "
+                "or general.groupby_obs."
             )
             return details
 
@@ -973,7 +980,11 @@ def _run_diff_nhood_enrichment(
         )
         return details
 
-    condition_groups = cellcharter_config.diff_nhood_condition_groups
+    condition_groups = coalesce_config_list(
+        cellcharter_config.diff_nhood_condition_groups,
+        general_config.groupby_obs_primary_pairwise,
+        general_config.groupby_obs_groups,
+    )
     if condition_groups:
         available = set(adata.obs[condition_key].cat.categories.tolist())
         condition_groups = [str(g) for g in condition_groups if str(g) in available]
@@ -1089,6 +1100,7 @@ def _run_diff_nhood_enrichment(
 
 def _run_shape_characterisation(
     adata: ad.AnnData,
+    general_config: GeneralConfig,
     cellcharter_config: CellCharterConfig,
     sample_key: str,
     qc_dir: Path,
@@ -1249,8 +1261,11 @@ def _run_shape_characterisation(
             if opt_col in adata.obs.columns and opt_col not in metadata_cols:
                 metadata_cols.append(opt_col)
         condition_key = (
-            cellcharter_config.shape_metrics_condition_key
-            or cellcharter_config.diff_nhood_condition_key
+            coalesce_config_text(
+                cellcharter_config.shape_metrics_condition_key,
+                cellcharter_config.diff_nhood_condition_key,
+                general_config.groupby_obs,
+            )
         )
         if condition_key and condition_key in adata.obs.columns:
             metadata_cols.append(condition_key)
@@ -1269,8 +1284,11 @@ def _run_shape_characterisation(
 
     if cellcharter_config.shape_plot_metrics and computed_metrics:
         condition_key = (
-            cellcharter_config.shape_metrics_condition_key
-            or cellcharter_config.diff_nhood_condition_key
+            coalesce_config_text(
+                cellcharter_config.shape_metrics_condition_key,
+                cellcharter_config.diff_nhood_condition_key,
+                general_config.groupby_obs,
+            )
         )
         cluster_plot_key = cellcharter_config.shape_metrics_cluster_key
         if cluster_plot_key is None and component_cluster_key in adata.obs.columns:
@@ -1367,6 +1385,36 @@ def run_cellcharter_neighborhoods(
 ) -> Path:
     """Run CellCharter neighborhood analysis and return output AnnData path."""
     stage_name = "CellCharter"
+    cellcharter_config.sample_key = coalesce_config_text(
+        cellcharter_config.sample_key,
+        general_config.roi_obs,
+        default="ROI",
+    )
+    cellcharter_config.spatial_key = coalesce_config_text(
+        cellcharter_config.spatial_key,
+        general_config.spatial_key,
+        default="spatial",
+    )
+    cellcharter_config.x_coord_col = coalesce_config_text(
+        cellcharter_config.x_coord_col,
+        general_config.x_coord_obs,
+        default="X_loc",
+    )
+    cellcharter_config.y_coord_col = coalesce_config_text(
+        cellcharter_config.y_coord_col,
+        general_config.y_coord_obs,
+        default="Y_loc",
+    )
+    if cellcharter_config.diff_nhood_condition_key is None:
+        cellcharter_config.diff_nhood_condition_key = coalesce_config_text(
+            general_config.groupby_obs,
+        )
+    if cellcharter_config.diff_nhood_condition_groups is None:
+        cellcharter_config.diff_nhood_condition_groups = coalesce_config_list(
+            general_config.groupby_obs_primary_pairwise,
+            general_config.groupby_obs_groups,
+        )
+
     input_path = _resolve_input_adata_path(general_config, cellcharter_config)
     output_path = _resolve_output_adata_path(general_config, cellcharter_config)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1387,12 +1435,18 @@ def run_cellcharter_neighborhoods(
         raise FileNotFoundError(f"AnnData could not be loaded for CellCharter stage: {input_path}")
     logging.info("Loaded AnnData: %d cells x %d features", adata.n_obs, adata.n_vars)
 
-    sample_key = _resolve_sample_key(adata, cellcharter_config.sample_key)
+    sample_key_requested = str(cellcharter_config.sample_key)
+    spatial_key_requested = str(cellcharter_config.spatial_key)
+    x_coord_col = str(cellcharter_config.x_coord_col)
+    y_coord_col = str(cellcharter_config.y_coord_col)
+    population_obs_primary = coalesce_config_text(general_config.population_obs_primary)
+
+    sample_key = _resolve_sample_key(adata, sample_key_requested)
     spatial_key = _ensure_spatial_coordinates(
         adata,
-        spatial_key=cellcharter_config.spatial_key,
-        x_coord_col=cellcharter_config.x_coord_col,
-        y_coord_col=cellcharter_config.y_coord_col,
+        spatial_key=spatial_key_requested,
+        x_coord_col=x_coord_col,
+        y_coord_col=y_coord_col,
     )
 
     trvae_details: Dict[str, Any] = {"enabled": False}
@@ -1520,37 +1574,41 @@ def run_cellcharter_neighborhoods(
     }
 
     if cellcharter_config.run_enrichment:
-        if cellcharter_config.enrichment_label_key not in adata.obs.columns:
+        if not population_obs_primary:
             logging.warning(
-                "Skipping enrichment because label key '%s' is missing in adata.obs.",
-                cellcharter_config.enrichment_label_key,
+                "Skipping enrichment because general.population_obs_primary is not set."
+            )
+        elif population_obs_primary not in adata.obs.columns:
+            logging.warning(
+                "Skipping enrichment because general.population_obs_primary '%s' is missing in adata.obs.",
+                population_obs_primary,
             )
         else:
             logging.info(
                 "Running enrichment for %s vs %s (pvalues=%s, n_perms=%d).",
                 cellcharter_config.cluster_key,
-                cellcharter_config.enrichment_label_key,
+                population_obs_primary,
                 cellcharter_config.enrichment_with_pvalues,
                 int(cellcharter_config.enrichment_n_perms),
             )
             cc.gr.enrichment(
                 adata,
                 group_key=cellcharter_config.cluster_key,
-                label_key=cellcharter_config.enrichment_label_key,
+                label_key=population_obs_primary,
                 pvalues=bool(cellcharter_config.enrichment_with_pvalues),
                 n_perms=int(cellcharter_config.enrichment_n_perms),
             )
             _save_enrichment_outputs(
                 adata,
                 cluster_key=cellcharter_config.cluster_key,
-                label_key=cellcharter_config.enrichment_label_key,
+                label_key=population_obs_primary,
                 save_heatmap=cellcharter_config.save_enrichment_heatmap,
                 qc_dir=qc_dir,
             )
             _save_cellcharter_enrichment_plot(
                 adata,
                 cluster_key=cellcharter_config.cluster_key,
-                label_key=cellcharter_config.enrichment_label_key,
+                label_key=population_obs_primary,
                 qc_dir=qc_dir,
             )
 
@@ -1564,6 +1622,7 @@ def run_cellcharter_neighborhoods(
     if cellcharter_config.run_diff_nhood_enrichment:
         diff_nhood_details = _run_diff_nhood_enrichment(
             adata=adata,
+            general_config=general_config,
             cellcharter_config=cellcharter_config,
             sample_key=sample_key,
             qc_dir=qc_dir,
@@ -1572,6 +1631,7 @@ def run_cellcharter_neighborhoods(
     if cellcharter_config.run_shape_characterisation:
         shape_details = _run_shape_characterisation(
             adata=adata,
+            general_config=general_config,
             cellcharter_config=cellcharter_config,
             sample_key=sample_key,
             qc_dir=qc_dir,
@@ -1608,6 +1668,7 @@ def run_cellcharter_neighborhoods(
         "output_adata_path": str(output_path),
         "sample_key": sample_key,
         "spatial_key": spatial_key,
+        "population_obs_primary": population_obs_primary,
         "cluster_key": cellcharter_config.cluster_key,
         "aggregated_rep_key": cellcharter_config.aggregated_rep_key,
         "aggregation_use_rep": aggregation_rep,
