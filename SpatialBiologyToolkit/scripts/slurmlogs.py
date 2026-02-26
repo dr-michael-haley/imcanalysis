@@ -43,6 +43,17 @@ _RENAMED_STEM_RE = re.compile(
 )
 
 
+def _stage_from_job_name(job_name: str) -> str:
+    name = str(job_name or "").strip()
+    if not name:
+        return ""
+    if "_" in name:
+        suffix = name.rsplit("_", 1)[-1].strip()
+        if suffix:
+            return suffix
+    return name
+
+
 @dataclass
 class SlurmRunRecord:
     order: int
@@ -129,6 +140,11 @@ def _extract_slurm_run_records(adata: Any, uns_key: str) -> List[SlurmRunRecord]
             elif event.get("job_name") is not None:
                 job_name = str(event.get("job_name")).strip()
 
+        if stage in {"", "UnknownStage"} and job_name:
+            inferred_stage = _stage_from_job_name(job_name)
+            if inferred_stage:
+                stage = inferred_stage
+
         if not job_id:
             continue
 
@@ -212,7 +228,7 @@ def _extract_fallback_record(local_file: Path, order: int) -> SlurmRunRecord:
             job_id = parsed_job_id
         if parsed_job_name:
             job_name = parsed_job_name
-            stage = parsed_job_name
+            stage = _stage_from_job_name(parsed_job_name)
         return SlurmRunRecord(order=order, stage=stage, job_id=job_id, job_name=job_name)
 
     generic_match = _GENERIC_JOBID_STEM_RE.match(stem)
@@ -223,7 +239,7 @@ def _extract_fallback_record(local_file: Path, order: int) -> SlurmRunRecord:
             job_id = parsed_job_id
         if parsed_prefix:
             job_name = parsed_prefix
-            stage = parsed_prefix
+            stage = _stage_from_job_name(parsed_prefix)
         return SlurmRunRecord(order=order, stage=stage, job_id=job_id, job_name=job_name)
 
     return SlurmRunRecord(order=order, stage=stage, job_id=job_id, job_name=job_name)
