@@ -1,0 +1,964 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Usage:
+  adata-report [options] <anndata.h5ad>
+
+Create a human-readable report for an AnnData file using embedded Python.
+
+Options:
+  -o, --output FILE         Save text report to FILE
+      --json FILE           Save machine-readable JSON summary to FILE
+      --stage-log-key KEY   Force a specific uns key for stage logs
+      --metadata-dir DIR    Metadata folder to validate against (default: auto-detect)
+      --max-var-names N     Max var_names to print (default: 200)
+      --full-var-names      Print all var_names
+      --no-var-names        Do not print var_names
+      --python BIN          Python executable to use (default: PYTHON_BIN env, then python3/python)
+      --conda-env ENV       Conda env to activate before running (default: imc_segmentation)
+      --no-conda            Do not activate conda env
+      --no-print            Do not print report to stdout (only save to file/json)
+  -h, --help                Show this help
+
+Environment:
+  PYTHON_BIN                Preferred python binary, e.g. python or python3
+  ADATA_REPORT_ENV          Default conda env (overridden by --conda-env)
+
+Examples:
+  adata-report anndata.h5ad
+  adata-report --output adata_report.txt anndata.h5ad
+  adata-report --metadata-dir metadata anndata.h5ad
+  adata-report --conda-env imc_cellcharter anndata.h5ad
+  adata-report --json adata_report.json --no-print anndata.h5ad
+EOF
+}
+
+ANNDATA_PATH=""
+OUTPUT_FILE=""
+JSON_FILE=""
+STAGE_LOG_KEY=""
+METADATA_DIR=""
+MAX_VAR_NAMES=200
+FULL_VAR_NAMES=0
+SHOW_VAR_NAMES=1
+NO_PRINT=0
+USE_CONDA=1
+CONDA_ENV="${ADATA_REPORT_ENV:-imc_segmentation}"
+PY_BIN="${PYTHON_BIN:-}"
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -o|--output)
+            OUTPUT_FILE="${2:-}"
+            shift 2
+            ;;
+        --json)
+            JSON_FILE="${2:-}"
+            shift 2
+            ;;
+        --stage-log-key)
+            STAGE_LOG_KEY="${2:-}"
+            shift 2
+            ;;
+        --metadata-dir)
+            METADATA_DIR="${2:-}"
+            shift 2
+            ;;
+        --max-var-names)
+            MAX_VAR_NAMES="${2:-}"
+            shift 2
+            ;;
+        --full-var-names)
+            FULL_VAR_NAMES=1
+            shift
+            ;;
+        --no-var-names)
+            SHOW_VAR_NAMES=0
+            shift
+            ;;
+        --python)
+            PY_BIN="${2:-}"
+            shift 2
+            ;;
+        --conda-env)
+            CONDA_ENV="${2:-}"
+            shift 2
+            ;;
+        --no-conda)
+            USE_CONDA=0
+            shift
+            ;;
+        --no-print)
+            NO_PRINT=1
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        --)
+            shift
+            break
+            ;;
+        -*)
+            echo "Unknown option: $1" >&2
+            usage
+            exit 1
+            ;;
+        *)
+            if [[ -n "$ANNDATA_PATH" ]]; then
+                echo "Error: only one AnnData path may be provided." >&2
+                usage
+                exit 1
+            fi
+            ANNDATA_PATH="$1"
+            shift
+            ;;
+    esac
+done
+
+if [[ -z "$ANNDATA_PATH" ]]; then
+    echo "Error: AnnData path is required." >&2
+    usage
+    exit 1
+fi
+
+if [[ ! -f "$ANNDATA_PATH" ]]; then
+    echo "Error: file not found: $ANNDATA_PATH" >&2
+    exit 1
+fi
+
+if ! [[ "$MAX_VAR_NAMES" =~ ^[0-9]+$ ]]; then
+    echo "Error: --max-var-names must be a non-negative integer." >&2
+    exit 1
+fi
+
+if [[ "$NO_PRINT" -eq 1 && -z "$OUTPUT_FILE" && -z "$JSON_FILE" ]]; then
+    echo "Error: --no-print requires --output and/or --json." >&2
+    exit 1
+fi
+
+if [[ "$USE_CONDA" -eq 1 ]]; then
+    # Try standard conda initialization in current shell.
+    if command -v conda >/dev/null 2>&1; then
+        eval "$(conda shell.bash hook 2>/dev/null || true)"
+    fi
+
+    # Fallback: source common conda.sh locations if conda is still unavailable.
+    if ! command -v conda >/dev/null 2>&1; then
+        for csh in \
+            "$HOME/miniconda3/etc/profile.d/conda.sh" \
+            "$HOME/anaconda3/etc/profile.d/conda.sh" \
+            "/opt/conda/etc/profile.d/conda.sh"
+        do
+            if [[ -f "$csh" ]]; then
+                # shellcheck disable=SC1090
+                source "$csh"
+                break
+            fi
+        done
+    fi
+
+    if ! command -v conda >/dev/null 2>&1; then
+        echo "Error: conda was requested but could not be initialized." >&2
+        echo "Tip: run with --no-conda or provide --python /path/to/python." >&2
+        exit 1
+    fi
+
+    if [[ -z "$CONDA_ENV" ]]; then
+        echo "Error: conda env name is empty." >&2
+        exit 1
+    fi
+
+    if ! conda activate "$CONDA_ENV" >/dev/null 2>&1; then
+        echo "Error: failed to activate conda env '$CONDA_ENV'." >&2
+        echo "Tip: use --conda-env <name>, --no-conda, or --python <bin>." >&2
+        exit 1
+    fi
+fi
+
+if [[ -z "$PY_BIN" ]]; then
+    if command -v python >/dev/null 2>&1; then
+        PY_BIN="python"
+    elif command -v python3 >/dev/null 2>&1; then
+        PY_BIN="python3"
+    else
+        echo "Error: could not find python3 or python in PATH." >&2
+        echo "Tip: activate your conda environment first, or pass --python /path/to/python." >&2
+        exit 1
+    fi
+fi
+
+if ! command -v "$PY_BIN" >/dev/null 2>&1; then
+    echo "Error: python executable not found: $PY_BIN" >&2
+    exit 1
+fi
+
+"$PY_BIN" - "$ANNDATA_PATH" "$OUTPUT_FILE" "$JSON_FILE" "$STAGE_LOG_KEY" "$MAX_VAR_NAMES" "$FULL_VAR_NAMES" "$SHOW_VAR_NAMES" "$NO_PRINT" "$METADATA_DIR" <<'PYCODE'
+import os
+import sys
+import json
+import re
+from datetime import datetime, timezone
+from collections import Counter
+from pathlib import Path
+
+
+def format_bytes(num_bytes):
+    try:
+        x = float(num_bytes)
+    except Exception:
+        return str(num_bytes)
+    units = ["B", "KB", "MB", "GB", "TB"]
+    idx = 0
+    while x >= 1024.0 and idx < len(units) - 1:
+        x /= 1024.0
+        idx += 1
+    return f"{x:.2f} {units[idx]}"
+
+
+def matrix_nbytes(x):
+    if x is None:
+        return 0
+    total = 0
+    for attr in ("data", "indices", "indptr"):
+        part = getattr(x, attr, None)
+        if part is not None and hasattr(part, "nbytes"):
+            total += int(part.nbytes)
+    if total > 0:
+        return total
+    if hasattr(x, "nbytes"):
+        return int(x.nbytes)
+    return 0
+
+
+def dtype_name(x):
+    dt = getattr(x, "dtype", None)
+    return str(dt) if dt is not None else "unknown"
+
+
+def shape_text(x):
+    shape = getattr(x, "shape", None)
+    return str(tuple(shape)) if shape is not None else "unknown"
+
+
+def mapping_key_sample(mapping_obj, max_keys=20):
+    try:
+        keys = list(mapping_obj.keys())
+    except Exception:
+        return []
+    keys = [str(k) for k in keys]
+    return keys[:max_keys]
+
+
+def is_stage_log_candidate(obj):
+    if not isinstance(obj, dict):
+        return False
+    expected = {"stage_order", "run_log", "stages"}
+    return any(k in obj for k in expected)
+
+
+def find_stage_log_container(uns_obj, preferred_key=""):
+    if preferred_key:
+        candidate = uns_obj.get(preferred_key)
+        if is_stage_log_candidate(candidate):
+            return preferred_key, candidate
+    if "pipeline_stage_log" in uns_obj and is_stage_log_candidate(uns_obj.get("pipeline_stage_log")):
+        return "pipeline_stage_log", uns_obj.get("pipeline_stage_log")
+    for key, value in uns_obj.items():
+        if is_stage_log_candidate(value):
+            return str(key), value
+    return None, None
+
+
+def normalize_run_events(run_log_raw):
+    events = []
+    if isinstance(run_log_raw, dict):
+        for key in sorted(run_log_raw.keys(), key=lambda x: str(x)):
+            val = run_log_raw[key]
+            if isinstance(val, dict):
+                events.append((str(key), val))
+            else:
+                events.append((str(key), {"value": str(val)}))
+    elif isinstance(run_log_raw, list):
+        for idx, val in enumerate(run_log_raw, start=1):
+            key = f"run_{idx:06d}"
+            if isinstance(val, dict):
+                events.append((key, val))
+            else:
+                events.append((key, {"value": str(val)}))
+    return events
+
+
+def safe_unique_count(df, column_name):
+    if column_name not in df.columns:
+        return None
+    try:
+        return int(df[column_name].nunique(dropna=True))
+    except Exception:
+        return None
+
+
+def to_bool_series(series):
+    truthy = {"1", "true", "t", "yes", "y"}
+    return series.map(
+        lambda x: (str(x).strip().lower() in truthy)
+        if x is not None
+        else False
+    )
+
+
+def detect_metadata_dir(adata_path, metadata_dir_arg=""):
+    notes = []
+    if metadata_dir_arg:
+        p = Path(metadata_dir_arg).expanduser().resolve()
+        if p.exists() and p.is_dir():
+            return p, notes
+        notes.append(f"Requested metadata directory not found: {p}")
+        return None, notes
+
+    adata_parent = Path(adata_path).resolve().parent
+    candidates = [
+        Path.cwd() / "metadata",
+        adata_parent / "metadata",
+        Path.cwd(),
+        adata_parent,
+    ]
+
+    seen = set()
+    for c in candidates:
+        c_resolved = c.resolve()
+        c_key = str(c_resolved)
+        if c_key in seen:
+            continue
+        seen.add(c_key)
+        if not c_resolved.exists() or not c_resolved.is_dir():
+            continue
+        has_dictionary = (c_resolved / "dictionary.csv").exists()
+        has_panel = (c_resolved / "panel.csv").exists()
+        has_panel_multi = any(c_resolved.glob("panel_*.csv"))
+        has_metadata = (c_resolved / "metadata.csv").exists()
+        if has_dictionary or has_panel or has_panel_multi or has_metadata:
+            return c_resolved, notes
+
+    notes.append("No metadata directory detected (looked near CWD and AnnData parent).")
+    return None, notes
+
+
+def analyze_dictionary_consistency(metadata_dir, adata, pd):
+    result = {
+        "exists": False,
+        "path": str((metadata_dir / "dictionary.csv").resolve()),
+        "error": None,
+        "dictionary_columns_total": 0,
+        "dictionary_columns_used_for_mapping": [],
+        "dictionary_columns_missing_in_adata_obs": [],
+        "dictionary_columns_present_in_adata_obs": [],
+        "dictionary_roi_count": 0,
+        "adata_roi_count": 0,
+        "adata_rois_missing_in_dictionary": [],
+        "dictionary_rois_missing_in_adata": [],
+    }
+
+    dictionary_path = metadata_dir / "dictionary.csv"
+    if not dictionary_path.exists():
+        return result
+
+    result["exists"] = True
+    try:
+        dictionary_df = pd.read_csv(dictionary_path, index_col="ROI")
+    except Exception:
+        try:
+            dictionary_df = pd.read_csv(dictionary_path)
+            if "ROI" in dictionary_df.columns:
+                dictionary_df = dictionary_df.set_index("ROI", drop=True)
+            else:
+                dictionary_df = dictionary_df.set_index(dictionary_df.columns[0], drop=True)
+        except Exception as exc:
+            result["error"] = str(exc)
+            return result
+
+    dict_cols_all = [str(c) for c in dictionary_df.columns]
+    dict_cols_used = [
+        c for c in dict_cols_all
+        if "example" not in c.lower() and "description" not in c.lower()
+    ]
+
+    obs_cols = {str(c) for c in adata.obs.columns}
+    missing_cols = sorted([c for c in dict_cols_used if c not in obs_cols])
+    present_cols = sorted([c for c in dict_cols_used if c in obs_cols])
+
+    result["dictionary_columns_total"] = len(dict_cols_all)
+    result["dictionary_columns_used_for_mapping"] = dict_cols_used
+    result["dictionary_columns_missing_in_adata_obs"] = missing_cols
+    result["dictionary_columns_present_in_adata_obs"] = present_cols
+
+    dict_rois = {str(x) for x in dictionary_df.index.astype(str).tolist()}
+    result["dictionary_roi_count"] = len(dict_rois)
+    if "ROI" in adata.obs.columns:
+        adata_rois = {str(x) for x in adata.obs["ROI"].dropna().astype(str).tolist()}
+        result["adata_roi_count"] = len(adata_rois)
+        result["adata_rois_missing_in_dictionary"] = sorted(adata_rois - dict_rois)
+        result["dictionary_rois_missing_in_adata"] = sorted(dict_rois - adata_rois)
+
+    return result
+
+
+def analyze_panel_consistency(metadata_dir, adata, pd):
+    result = {
+        "exists": False,
+        "panel_files": [],
+        "error": None,
+        "all_panel_markers_cleaned": [],
+        "active_panel_markers_cleaned": [],
+        "adata_var_names_count": int(adata.n_vars),
+        "active_panel_markers_missing_in_adata_var": [],
+        "panel_markers_missing_in_adata_var": [],
+        "adata_var_not_in_active_panel_markers": [],
+    }
+
+    panel_paths = []
+    panel_single = metadata_dir / "panel.csv"
+    if panel_single.exists():
+        panel_paths = [panel_single]
+    else:
+        panel_paths = sorted(metadata_dir.glob("panel_*.csv"))
+
+    if not panel_paths:
+        return result
+
+    result["exists"] = True
+    all_markers = set()
+    active_markers = set()
+
+    for panel_path in panel_paths:
+        panel_info = {
+            "path": str(panel_path.resolve()),
+            "n_rows": 0,
+            "n_channel_labels": 0,
+            "n_active_markers": 0,
+            "used_active_columns": False,
+        }
+        try:
+            panel_df = pd.read_csv(panel_path)
+        except Exception as exc:
+            panel_info["error"] = str(exc)
+            result["panel_files"].append(panel_info)
+            continue
+
+        panel_info["n_rows"] = int(len(panel_df))
+        if "channel_label" not in panel_df.columns:
+            panel_info["error"] = "Missing required column: channel_label"
+            result["panel_files"].append(panel_info)
+            continue
+
+        labels = panel_df["channel_label"].map(lambda x: re.sub(r"\W+", "", str(x))).astype(str)
+        labels = labels[labels.str.len() > 0]
+        label_set = set(labels.tolist())
+        all_markers.update(label_set)
+        panel_info["n_channel_labels"] = len(label_set)
+
+        active_set = set(label_set)
+        if "use_denoised" in panel_df.columns and "use_raw" in panel_df.columns:
+            denoised = to_bool_series(panel_df["use_denoised"])
+            use_raw = to_bool_series(panel_df["use_raw"])
+            mask = denoised | use_raw
+            active_labels = labels.loc[mask]
+            if len(active_labels) > 0:
+                active_set = set(active_labels.tolist())
+            panel_info["used_active_columns"] = True
+
+        active_markers.update(active_set)
+        panel_info["n_active_markers"] = len(active_set)
+        result["panel_files"].append(panel_info)
+
+    adata_vars = {str(v) for v in adata.var_names.astype(str).tolist()}
+    result["all_panel_markers_cleaned"] = sorted(all_markers)
+    result["active_panel_markers_cleaned"] = sorted(active_markers)
+    result["active_panel_markers_missing_in_adata_var"] = sorted(active_markers - adata_vars)
+    result["panel_markers_missing_in_adata_var"] = sorted(all_markers - adata_vars)
+    result["adata_var_not_in_active_panel_markers"] = sorted(adata_vars - active_markers)
+    return result
+
+
+def analyze_metadata_csv_consistency(metadata_dir, adata, pd):
+    result = {
+        "exists": False,
+        "path": str((metadata_dir / "metadata.csv").resolve()),
+        "error": None,
+        "metadata_roi_count": 0,
+        "adata_roi_count": 0,
+        "metadata_rois_missing_in_adata": [],
+        "adata_rois_missing_in_metadata": [],
+        "import_data_false_rois_in_adata": [],
+        "expected_obs_fields_from_metadata_missing_in_adata": [],
+    }
+
+    metadata_path = metadata_dir / "metadata.csv"
+    if not metadata_path.exists():
+        return result
+
+    result["exists"] = True
+    try:
+        metadata_df = pd.read_csv(metadata_path)
+    except Exception as exc:
+        result["error"] = str(exc)
+        return result
+
+    roi_col = "unstacked_data_folder" if "unstacked_data_folder" in metadata_df.columns else None
+    if roi_col is None and "ROI" in metadata_df.columns:
+        roi_col = "ROI"
+    if roi_col is None and len(metadata_df.columns) > 0:
+        roi_col = metadata_df.columns[0]
+
+    metadata_rois = set()
+    if roi_col is not None:
+        metadata_rois = {str(x) for x in metadata_df[roi_col].dropna().astype(str).tolist()}
+    result["metadata_roi_count"] = len(metadata_rois)
+
+    adata_rois = set()
+    if "ROI" in adata.obs.columns:
+        adata_rois = {str(x) for x in adata.obs["ROI"].dropna().astype(str).tolist()}
+    result["adata_roi_count"] = len(adata_rois)
+
+    result["metadata_rois_missing_in_adata"] = sorted(metadata_rois - adata_rois)
+    result["adata_rois_missing_in_metadata"] = sorted(adata_rois - metadata_rois)
+
+    if "import_data" in metadata_df.columns and roi_col is not None and "ROI" in adata.obs.columns:
+        import_false = metadata_df.loc[~to_bool_series(metadata_df["import_data"]), roi_col].astype(str).tolist()
+        import_false_set = set(import_false)
+        result["import_data_false_rois_in_adata"] = sorted(import_false_set & adata_rois)
+
+    expected_obs = ["ROI_name", "ROI_width", "ROI_height"]
+    if "mcd" in metadata_df.columns:
+        expected_obs.append("MCD_file")
+    elif "source_file" in metadata_df.columns:
+        expected_obs.extend(["Source_file", "File_type"])
+    obs_cols = {str(c) for c in adata.obs.columns}
+    result["expected_obs_fields_from_metadata_missing_in_adata"] = sorted(
+        [c for c in expected_obs if c not in obs_cols]
+    )
+
+    return result
+
+
+def analyze_metadata_consistency(adata_path, metadata_dir_arg, adata, pd):
+    result = {
+        "found": False,
+        "metadata_dir": None,
+        "notes": [],
+        "dictionary": {},
+        "panel": {},
+        "metadata_csv": {},
+    }
+
+    metadata_dir, notes = detect_metadata_dir(adata_path, metadata_dir_arg)
+    result["notes"].extend(notes)
+    if metadata_dir is None:
+        return result
+
+    result["found"] = True
+    result["metadata_dir"] = str(metadata_dir.resolve())
+
+    if pd is None:
+        result["notes"].append("pandas unavailable: metadata consistency checks skipped.")
+        return result
+
+    result["dictionary"] = analyze_dictionary_consistency(metadata_dir, adata, pd)
+    result["panel"] = analyze_panel_consistency(metadata_dir, adata, pd)
+    result["metadata_csv"] = analyze_metadata_csv_consistency(metadata_dir, adata, pd)
+    return result
+
+
+def main():
+    adata_path = sys.argv[1]
+    output_file = sys.argv[2] or ""
+    json_file = sys.argv[3] or ""
+    preferred_stage_log_key = sys.argv[4] or ""
+    max_var_names = int(sys.argv[5])
+    full_var_names = bool(int(sys.argv[6]))
+    show_var_names = bool(int(sys.argv[7]))
+    no_print = bool(int(sys.argv[8]))
+    metadata_dir_arg = sys.argv[9] or ""
+
+    try:
+        import anndata as ad
+    except Exception as exc:
+        raise SystemExit(
+            "Error: could not import anndata. Activate the correct environment first.\n"
+            f"Details: {exc}"
+        )
+    try:
+        import pandas as pd
+    except Exception:
+        pd = None
+
+    try:
+        adata = ad.read_h5ad(adata_path)
+    except Exception as exc:
+        raise SystemExit(f"Error: failed to read AnnData file '{adata_path}': {exc}")
+
+    file_size_bytes = os.path.getsize(adata_path)
+    file_size_text = format_bytes(file_size_bytes)
+
+    x_bytes = matrix_nbytes(adata.X)
+    layer_bytes = {str(k): matrix_nbytes(v) for k, v in adata.layers.items()}
+    total_matrix_bytes = int(x_bytes + sum(layer_bytes.values()))
+
+    obs_cols = [str(c) for c in adata.obs.columns]
+    var_cols = [str(c) for c in adata.var.columns]
+    uns_keys = [str(k) for k in adata.uns.keys()]
+
+    stage_log_key, stage_log = find_stage_log_container(adata.uns, preferred_stage_log_key)
+    stage_metrics = {
+        "found": stage_log is not None,
+        "log_key": stage_log_key,
+        "stage_order_count": 0,
+        "stage_order_unique_count": 0,
+        "stage_order_unique": [],
+        "run_event_count": 0,
+        "run_counts_by_stage": {},
+        "known_stage_records": 0,
+        "last_stage_in_order": None,
+        "last_run_utc": None,
+        "distinct_slurm_job_ids": [],
+        "distinct_slurm_job_names": [],
+        "recent_runs": [],
+    }
+
+    if isinstance(stage_log, dict):
+        stage_order = stage_log.get("stage_order", [])
+        if not isinstance(stage_order, list):
+            stage_order = []
+        stage_order_str = [str(x) for x in stage_order]
+        unique_stage_order = list(dict.fromkeys(stage_order_str))
+
+        run_events = normalize_run_events(stage_log.get("run_log"))
+        stage_counts = Counter()
+        slurm_job_ids = set()
+        slurm_job_names = set()
+        recent_runs = []
+
+        for run_key, event in run_events:
+            stage_name = str(event.get("stage", "<unknown>"))
+            run_utc = event.get("run_utc")
+            stage_counts[stage_name] += 1
+
+            slurm = event.get("slurm", {})
+            job_id = None
+            job_name = None
+            if isinstance(slurm, dict):
+                job_id = slurm.get("job_id")
+                job_name = slurm.get("job_name")
+            if job_id is not None and str(job_id).strip():
+                slurm_job_ids.add(str(job_id).strip())
+            if job_name is not None and str(job_name).strip():
+                slurm_job_names.add(str(job_name).strip())
+
+            recent_runs.append(
+                {
+                    "run_key": run_key,
+                    "stage": stage_name,
+                    "run_utc": str(run_utc) if run_utc is not None else None,
+                    "job_id": str(job_id) if job_id is not None else None,
+                    "job_name": str(job_name) if job_name is not None else None,
+                }
+            )
+
+        recent_runs = recent_runs[-20:]
+        known_stage_records = stage_log.get("stages", {})
+        if not isinstance(known_stage_records, dict):
+            known_stage_records = {}
+
+        stage_metrics.update(
+            {
+                "stage_order_count": len(stage_order_str),
+                "stage_order_unique_count": len(unique_stage_order),
+                "stage_order_unique": unique_stage_order,
+                "run_event_count": len(run_events),
+                "run_counts_by_stage": dict(sorted(stage_counts.items(), key=lambda kv: kv[0])),
+                "known_stage_records": len(known_stage_records),
+                "last_stage_in_order": stage_order_str[-1] if stage_order_str else None,
+                "last_run_utc": recent_runs[-1]["run_utc"] if recent_runs else None,
+                "distinct_slurm_job_ids": sorted(slurm_job_ids),
+                "distinct_slurm_job_names": sorted(slurm_job_names),
+                "recent_runs": recent_runs,
+            }
+        )
+
+    common_obs_uniques = {}
+    for col in ("ROI", "Patient", "Sample", "Condition", "condition", "batch", "dataset"):
+        n_unique = safe_unique_count(adata.obs, col)
+        if n_unique is not None:
+            common_obs_uniques[col] = n_unique
+
+    var_names_all = [str(v) for v in adata.var_names]
+    if full_var_names:
+        var_names_shown = var_names_all
+        var_names_truncated = False
+    elif show_var_names:
+        var_names_shown = var_names_all[:max_var_names]
+        var_names_truncated = len(var_names_all) > len(var_names_shown)
+    else:
+        var_names_shown = []
+        var_names_truncated = False
+
+    metadata_consistency = analyze_metadata_consistency(
+        adata_path=adata_path,
+        metadata_dir_arg=metadata_dir_arg,
+        adata=adata,
+        pd=pd,
+    )
+
+    report_data = {
+        "report_generated_utc": datetime.now(timezone.utc).isoformat(),
+        "file": {
+            "path": os.path.abspath(adata_path),
+            "size_bytes": int(file_size_bytes),
+            "size_human": file_size_text,
+        },
+        "anndata": {
+            "repr": str(adata),
+            "shape": [int(adata.n_obs), int(adata.n_vars)],
+            "n_obs": int(adata.n_obs),
+            "n_vars": int(adata.n_vars),
+            "X_type": type(adata.X).__name__,
+            "X_shape": shape_text(adata.X),
+            "X_dtype": dtype_name(adata.X),
+            "X_estimated_bytes": int(x_bytes),
+            "layers_count": len(adata.layers.keys()),
+            "layers_estimated_bytes": layer_bytes,
+            "estimated_matrix_storage_bytes": int(total_matrix_bytes),
+            "estimated_matrix_storage_human": format_bytes(total_matrix_bytes),
+            "obs_columns_count": len(obs_cols),
+            "obs_columns_sample": obs_cols[:50],
+            "var_columns_count": len(var_cols),
+            "var_columns_sample": var_cols[:50],
+            "uns_keys_count": len(uns_keys),
+            "uns_keys_sample": uns_keys[:50],
+            "obsm_keys": mapping_key_sample(adata.obsm, max_keys=50),
+            "obsp_keys": mapping_key_sample(adata.obsp, max_keys=50),
+            "varm_keys": mapping_key_sample(adata.varm, max_keys=50),
+            "varp_keys": mapping_key_sample(adata.varp, max_keys=50),
+            "common_obs_unique_counts": common_obs_uniques,
+        },
+        "var_names": {
+            "total": len(var_names_all),
+            "shown": len(var_names_shown),
+            "truncated": bool(var_names_truncated),
+            "values": var_names_shown,
+        },
+        "pipeline_stage_log": stage_metrics,
+        "metadata_consistency": metadata_consistency,
+    }
+
+    lines = []
+    lines.append("=" * 88)
+    lines.append("AnnData Report")
+    lines.append("=" * 88)
+    lines.append(f"Generated (UTC): {report_data['report_generated_utc']}")
+    lines.append(f"File: {report_data['file']['path']}")
+    lines.append(f"On-disk size: {report_data['file']['size_human']} ({report_data['file']['size_bytes']} bytes)")
+    lines.append("")
+
+    lines.append("Basic AnnData Metrics")
+    lines.append("-" * 88)
+    lines.append("AnnData summary string:")
+    for row in str(adata).splitlines():
+        lines.append(f"  {row}")
+    lines.append(f"n_obs: {report_data['anndata']['n_obs']}")
+    lines.append(f"n_vars: {report_data['anndata']['n_vars']}")
+    lines.append(f"X type/dtype/shape: {report_data['anndata']['X_type']} / {report_data['anndata']['X_dtype']} / {report_data['anndata']['X_shape']}")
+    lines.append(
+        "Estimated matrix storage (X + layers): "
+        f"{report_data['anndata']['estimated_matrix_storage_human']} "
+        f"({report_data['anndata']['estimated_matrix_storage_bytes']} bytes)"
+    )
+    lines.append(f"obs columns ({report_data['anndata']['obs_columns_count']}): {', '.join(report_data['anndata']['obs_columns_sample'])}")
+    lines.append(f"var columns ({report_data['anndata']['var_columns_count']}): {', '.join(report_data['anndata']['var_columns_sample'])}")
+    lines.append(f"uns keys ({report_data['anndata']['uns_keys_count']}): {', '.join(report_data['anndata']['uns_keys_sample'])}")
+    lines.append(f"obsm keys: {', '.join(report_data['anndata']['obsm_keys'])}")
+    lines.append(f"obsp keys: {', '.join(report_data['anndata']['obsp_keys'])}")
+    lines.append(f"varm keys: {', '.join(report_data['anndata']['varm_keys'])}")
+    lines.append(f"varp keys: {', '.join(report_data['anndata']['varp_keys'])}")
+    if report_data["anndata"]["common_obs_unique_counts"]:
+        lines.append("Common obs unique counts:")
+        for k, v in report_data["anndata"]["common_obs_unique_counts"].items():
+            lines.append(f"  - {k}: {v}")
+    lines.append("")
+
+    lines.append("Pipeline Stage Log Metrics")
+    lines.append("-" * 88)
+    if not stage_metrics["found"]:
+        lines.append("No pipeline stage log container found in adata.uns.")
+        if preferred_stage_log_key:
+            lines.append(f"Preferred key requested: '{preferred_stage_log_key}'")
+    else:
+        lines.append(f"Log key: {stage_metrics['log_key']}")
+        lines.append(f"Stage order entries: {stage_metrics['stage_order_count']}")
+        lines.append(f"Unique stages in order: {stage_metrics['stage_order_unique_count']}")
+        lines.append(f"Run events recorded: {stage_metrics['run_event_count']}")
+        lines.append(f"Stage records in 'stages': {stage_metrics['known_stage_records']}")
+        lines.append(f"Last stage in order: {stage_metrics['last_stage_in_order']}")
+        lines.append(f"Last run UTC: {stage_metrics['last_run_utc']}")
+        lines.append(f"Distinct SLURM job IDs ({len(stage_metrics['distinct_slurm_job_ids'])}): {', '.join(stage_metrics['distinct_slurm_job_ids'])}")
+        lines.append(f"Distinct SLURM job names ({len(stage_metrics['distinct_slurm_job_names'])}): {', '.join(stage_metrics['distinct_slurm_job_names'])}")
+        lines.append("Run counts by stage:")
+        if stage_metrics["run_counts_by_stage"]:
+            for stage_name, n_runs in stage_metrics["run_counts_by_stage"].items():
+                lines.append(f"  - {stage_name}: {n_runs}")
+        else:
+            lines.append("  (none)")
+        if stage_metrics["recent_runs"]:
+            lines.append("Recent runs (last 20):")
+            for run in stage_metrics["recent_runs"]:
+                lines.append(
+                    f"  - {run['run_key']}: stage={run['stage']}, run_utc={run['run_utc']}, "
+                    f"job_id={run['job_id']}, job_name={run['job_name']}"
+                )
+    lines.append("")
+
+    lines.append("Metadata Consistency Checks")
+    lines.append("-" * 88)
+    meta = report_data["metadata_consistency"]
+    if not meta["found"]:
+        lines.append("No metadata folder detected for consistency checks.")
+    else:
+        lines.append(f"Metadata folder: {meta['metadata_dir']}")
+        for note in meta.get("notes", []):
+            lines.append(f"  - Note: {note}")
+
+        dictionary = meta.get("dictionary", {})
+        lines.append("Dictionary vs adata.obs:")
+        if not dictionary.get("exists", False):
+            lines.append("  - dictionary.csv not found")
+        elif dictionary.get("error"):
+            lines.append(f"  - Error reading dictionary.csv: {dictionary['error']}")
+        else:
+            lines.append(
+                "  - Mapping columns in dictionary: "
+                f"{len(dictionary.get('dictionary_columns_used_for_mapping', []))}"
+            )
+            lines.append(
+                "  - Missing dictionary columns in adata.obs: "
+                f"{len(dictionary.get('dictionary_columns_missing_in_adata_obs', []))}"
+            )
+            if dictionary.get("dictionary_columns_missing_in_adata_obs"):
+                lines.append(
+                    "    "
+                    + ", ".join(dictionary.get("dictionary_columns_missing_in_adata_obs", []))
+                )
+            lines.append(
+                "  - adata ROIs missing in dictionary: "
+                f"{len(dictionary.get('adata_rois_missing_in_dictionary', []))}"
+            )
+            lines.append(
+                "  - dictionary ROIs missing in adata: "
+                f"{len(dictionary.get('dictionary_rois_missing_in_adata', []))}"
+            )
+
+        panel = meta.get("panel", {})
+        lines.append("Panel markers vs adata.var_names:")
+        if not panel.get("exists", False):
+            lines.append("  - panel.csv / panel_*.csv not found")
+        elif panel.get("error"):
+            lines.append(f"  - Error reading panel file(s): {panel['error']}")
+        else:
+            lines.append(f"  - Panel files parsed: {len(panel.get('panel_files', []))}")
+            lines.append(
+                "  - Active panel markers missing in adata.var_names: "
+                f"{len(panel.get('active_panel_markers_missing_in_adata_var', []))}"
+            )
+            if panel.get("active_panel_markers_missing_in_adata_var"):
+                lines.append(
+                    "    "
+                    + ", ".join(panel.get("active_panel_markers_missing_in_adata_var", []))
+                )
+            lines.append(
+                "  - adata.var_names not in active panel markers: "
+                f"{len(panel.get('adata_var_not_in_active_panel_markers', []))}"
+            )
+
+        metadata_csv = meta.get("metadata_csv", {})
+        lines.append("metadata.csv vs adata.obs:")
+        if not metadata_csv.get("exists", False):
+            lines.append("  - metadata.csv not found")
+        elif metadata_csv.get("error"):
+            lines.append(f"  - Error reading metadata.csv: {metadata_csv['error']}")
+        else:
+            lines.append(
+                "  - ROIs in metadata.csv / adata: "
+                f"{metadata_csv.get('metadata_roi_count', 0)} / {metadata_csv.get('adata_roi_count', 0)}"
+            )
+            lines.append(
+                "  - import_data=False ROIs present in adata: "
+                f"{len(metadata_csv.get('import_data_false_rois_in_adata', []))}"
+            )
+            lines.append(
+                "  - Expected metadata-derived obs fields missing in adata: "
+                f"{len(metadata_csv.get('expected_obs_fields_from_metadata_missing_in_adata', []))}"
+            )
+            if metadata_csv.get("expected_obs_fields_from_metadata_missing_in_adata"):
+                lines.append(
+                    "    "
+                    + ", ".join(metadata_csv.get("expected_obs_fields_from_metadata_missing_in_adata", []))
+                )
+    lines.append("")
+
+    lines.append("adata.var_names")
+    lines.append("-" * 88)
+    if not show_var_names:
+        lines.append("var_names output disabled by --no-var-names")
+    else:
+        total = report_data["var_names"]["total"]
+        shown = report_data["var_names"]["shown"]
+        lines.append(f"Total var_names: {total}")
+        lines.append(f"Shown: {shown}")
+        if report_data["var_names"]["truncated"]:
+            lines.append(f"Truncated: yes (use --full-var-names to display all)")
+        else:
+            lines.append("Truncated: no")
+        for name in report_data["var_names"]["values"]:
+            lines.append(f"  - {name}")
+    lines.append("")
+
+    # Suggested next checks section
+    lines.append("Suggested Follow-up Checks")
+    lines.append("-" * 88)
+    lines.append("  - Verify expected ROI/Patient/Condition columns are present and complete.")
+    lines.append("  - Confirm latest stage run matches current config and expected SLURM job.")
+    lines.append("  - Inspect memory/storage growth across X and layers before adding new stages.")
+    lines.append("  - Check marker list consistency in var_names against panel metadata.")
+    lines.append("")
+
+    report_text = "\n".join(lines) + "\n"
+
+    if output_file:
+        out_dir = os.path.dirname(os.path.abspath(output_file))
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+        with open(output_file, "w", encoding="utf-8") as fh:
+            fh.write(report_text)
+
+    if json_file:
+        json_dir = os.path.dirname(os.path.abspath(json_file))
+        if json_dir:
+            os.makedirs(json_dir, exist_ok=True)
+        with open(json_file, "w", encoding="utf-8") as fh:
+            json.dump(report_data, fh, indent=2, ensure_ascii=False)
+
+    if not no_print:
+        sys.stdout.write(report_text)
+        sys.stdout.flush()
+
+    if output_file:
+        print(f"[adata-report] Text report saved to: {os.path.abspath(output_file)}")
+    if json_file:
+        print(f"[adata-report] JSON summary saved to: {os.path.abspath(json_file)}")
+
+
+if __name__ == "__main__":
+    main()
+PYCODE

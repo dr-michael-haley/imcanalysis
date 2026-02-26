@@ -487,7 +487,7 @@ def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, v
                     sc.tl.dendrogram(adata, groupby=cat_col)
                     
                     # 1. Create standard-scaled matrixplot
-                    logging.info(f'  Creating standard-scaled MatrixPlot for {cat_col}')
+                    logging.info(f'Creating standard-scaled MatrixPlot for {cat_col}')
                     ordered_markers = sbt_utils.reorder_vars_by_expression(adata, markers_to_plot)
                     fig_path_scaled = qc_matrix_dir / f'Matrixplot_{cat_col}_scaled.{viz_config.figure_format}'
                     _create_and_save_matrixplot(
@@ -497,10 +497,10 @@ def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, v
                         standard_scale='var',
                         vmax=None,
                     )
-                    logging.info(f'  Standard-scaled MatrixPlot saved to {fig_path_scaled}')
+                    logging.info(f'Standard-scaled MatrixPlot saved to {fig_path_scaled}')
                     
                     # 2. Create non-scaled matrixplot with vmax
-                    logging.info(f'  Creating vmax-capped MatrixPlot for {cat_col} (vmax={viz_config.matrixplot_vmax})')
+                    logging.info(f'Creating vmax-capped MatrixPlot for {cat_col} (vmax={viz_config.matrixplot_vmax})')
                     fig_path_vmax = qc_matrix_dir / f'Matrixplot_{cat_col}_vmax.{viz_config.figure_format}'
                     _create_and_save_matrixplot(
                         var_names=ordered_markers,
@@ -509,7 +509,7 @@ def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, v
                         standard_scale=None,
                         vmax=viz_config.matrixplot_vmax,
                     )
-                    logging.info(f'  Vmax-capped MatrixPlot saved to {fig_path_vmax}')
+                    logging.info(f'Vmax-capped MatrixPlot saved to {fig_path_vmax}')
                     
                     # 3. Create filtered matrix plots if remove_markers_list is provided
                     if remove_markers_list and len(remove_markers_list) > 0:
@@ -517,10 +517,10 @@ def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, v
                         filtered_markers = [m for m in markers_to_plot if m not in remove_markers_list]
                         
                         if filtered_markers:
-                            logging.info(f'  Creating filtered MatrixPlots for {cat_col} (excluding {len(remove_markers_list)} markers: {remove_markers_list})')
+                            logging.info(f'Creating filtered MatrixPlots for {cat_col} (excluding {len(remove_markers_list)} markers: {remove_markers_list})')
                             
                             # 3a. Create filtered standard-scaled matrixplot
-                            logging.info(f'    Creating filtered standard-scaled MatrixPlot for {cat_col}')
+                            logging.info(f'Creating filtered standard-scaled MatrixPlot for {cat_col}')
                             ordered_filtered_markers = sbt_utils.reorder_vars_by_expression(adata, filtered_markers)
                             fig_path_scaled_filtered = qc_matrix_dir / f'Matrixplot_{cat_col}_scaled_filtered.{viz_config.figure_format}'
                             _create_and_save_matrixplot(
@@ -530,10 +530,10 @@ def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, v
                                 standard_scale='var',
                                 vmax=None,
                             )
-                            logging.info(f'    Filtered standard-scaled MatrixPlot saved to {fig_path_scaled_filtered}')
+                            logging.info(f'Filtered standard-scaled MatrixPlot saved to {fig_path_scaled_filtered}')
                             
                             # 3b. Create filtered non-scaled matrixplot with vmax
-                            logging.info(f'    Creating filtered vmax-capped MatrixPlot for {cat_col} (vmax={viz_config.matrixplot_vmax})')
+                            logging.info(f'Creating filtered vmax-capped MatrixPlot for {cat_col} (vmax={viz_config.matrixplot_vmax})')
                             fig_path_vmax_filtered = qc_matrix_dir / f'Matrixplot_{cat_col}_vmax_filtered.{viz_config.figure_format}'
                             _create_and_save_matrixplot(
                                 var_names=ordered_filtered_markers,
@@ -542,9 +542,9 @@ def create_categorical_matrix_plots(adata, categorical_columns, qc_matrix_dir, v
                                 standard_scale=None,
                                 vmax=viz_config.matrixplot_vmax,
                             )
-                            logging.info(f'    Filtered vmax-capped MatrixPlot saved to {fig_path_vmax_filtered}')
+                            logging.info(f'Filtered vmax-capped MatrixPlot saved to {fig_path_vmax_filtered}')
                         else:
-                            logging.warning(f'  All markers would be filtered out for {cat_col}; skipping filtered plots.')
+                            logging.warning(f'All markers would be filtered out for {cat_col}; skipping filtered plots.')
                     
                 except Exception as e:
                     log_detailed_error(e, f"creating MatrixPlot for {category_type} column '{cat_col}'")

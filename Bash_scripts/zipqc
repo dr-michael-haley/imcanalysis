@@ -9,7 +9,7 @@ declare -A FOLDER_SETS
 FOLDER_SETS[default]="
 QC/BasicProcess_QC/Matrixplots/
 QC/BasicProcess_QC/UMAPs/
-QC/BasicProcess_QC/Population_Analyis_Figures/
+QC/BasicProcess_QC/Population_Analysis_Figures/
 QC/BasicProcess_QC/Population_images/
 QC/BasicProcess_QC/Color_legends/
 QC/denoising/
