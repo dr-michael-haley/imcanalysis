@@ -62,6 +62,14 @@ def _ensure_extension(ext: str) -> str:
     return ext if ext.startswith(".") else f".{ext}"
 
 
+def _reversed_cmap_name(cmap: str) -> str:
+    """Return a reversed matplotlib colormap name, preserving already-reversed names."""
+    text = str(cmap).strip()
+    if not text:
+        return text
+    return text if text.endswith("_r") else f"{text}_r"
+
+
 def _figsize(values: Sequence[float], fallback: Tuple[float, float]) -> Tuple[float, float]:
     if not values or len(values) < 2:
         return fallback
@@ -373,7 +381,8 @@ def _save_matrix_plot(
                 "xticklabels": 1,
                 "yticklabels": 1,
                 "linewidths": 0.4,
-                "linecolor": "white",
+                "linecolor": "black",
+                "dendrogram_ratio": 0.05,
                 "cbar_kws": {"fraction": 0.046, "pad": 0.04},
             }
             if center is not None and vmin < center < vmax:
@@ -407,7 +416,7 @@ def _save_matrix_plot(
         "xticklabels": 1,
         "yticklabels": 1,
         "linewidths": 0.4,
-        "linecolor": "white",
+        "linecolor": "black",
         "cbar_kws": {"fraction": 0.046, "pad": 0.04},
     }
     if center is not None and vmin < center < vmax:
@@ -926,11 +935,12 @@ def run_pairwise_spatial_analyses(
                 matrix.to_csv(distance_raw_dir / f"matrix_mean_{metric}.csv")
 
                 center = 0.0 if metric in {"delta", "zscore"} else None
-                distance_cmap = (
+                base_distance_cmap = (
                     pairwise_config.heatmap_cmap_counts
                     if metric in {"observed", "bootmean"}
                     else pairwise_config.heatmap_cmap_distance
                 )
+                distance_cmap = _reversed_cmap_name(base_distance_cmap)
                 _save_matrix_plot(
                     matrix,
                     out_path=matrix_dir / f"distance_{metric}_all{extension}",

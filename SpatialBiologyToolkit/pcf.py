@@ -762,10 +762,16 @@ def plot_paircorrelation_clustermap(
         square=True,
         figsize=figsize,
         cbar_kws=default_cbar,
+        xticklabels=1,
+        yticklabels=1,
         row_cluster=cluster,
         col_cluster=cluster,
         row_colors=row_colors,
         col_colors=col_colors,
+        linewidths=0.4,
+        linecolor="black",
+        dendrogram_ratio=0.05,
+
         **clustermap_kws,
     )
 

@@ -37,7 +37,7 @@ fi
 usage() {
     cat <<EOF
 Usage:
-  $0 [--name NAME] [--dry-run] stage1 [stage2 ...]
+  $0 [--name NAME] [--dry-run] [--no-update] stage1 [stage2 ...]
   $0 --list [stage1 stage2 ...]
 
 Run a pipeline:
@@ -45,6 +45,7 @@ Run a pipeline:
                       (e.g. NAME_stage1, NAME_stage2, ...)
   --dry-run           Show what would be submitted, but do not call sbatch
                       or write to the log file.
+  --no-update, -nu    Skip automatic git update in maybe_auto_update_repo.
 
 List available stages (no jobs submitted):
   --list              List stages and their scripts / metadata.
@@ -200,6 +201,7 @@ trap 'echo "Pipeline script aborted unexpectedly" >&2' ERR
 # - Safe by default: skips update if working tree has local changes
 # - Can be disabled by exporting PIPELINE_AUTO_UPDATE=0
 maybe_auto_update_repo() {
+    (( no_update == 0 )) || return 0
     [[ "${PIPELINE_AUTO_UPDATE:-1}" == "1" ]] || return 0
 
     command -v git >/dev/null 2>&1 || return 0
@@ -221,6 +223,7 @@ maybe_auto_update_repo() {
 pipeline_name=""
 list_mode=0
 dry_run=0
+no_update=0
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -239,6 +242,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --dry-run)
             dry_run=1
+            shift
+            ;;
+        --no-update|-nu)
+            no_update=1
             shift
             ;;
         --help|-h)
