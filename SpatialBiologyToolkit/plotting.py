@@ -1374,10 +1374,12 @@ import matplotlib.cm as mpl_cm
 
 import numpy as np
 import pandas as pd
+import logging
 from pathlib import Path
 import matplotlib.pyplot as plt
 import matplotlib.cm as mpl_cm
 from skimage import io, segmentation, morphology
+from scipy import ndimage as ndi
 
 # If you have your own utility functions, import them or define inline.
 # E.g.:
@@ -1404,6 +1406,7 @@ def obs_to_mask(
     # Mask file location
     masks_folder: str = 'Masks',
     masks_ext: str = 'tiff',
+    voronoi_transform_mask: bool = False,
     # Numeric scaling for quant_obs
     min_val: float = None,
     max_val: float = None,
@@ -1442,6 +1445,10 @@ def obs_to_mask(
     If `label_obs` is provided (default: 'ObjectNumber'), all mapping uses those
     label IDs to match AnnData rows to mask labels. This allows correct mapping
     even if some cells were removed from AnnData or if mask labels are not 1..N.
+
+    If `voronoi_transform_mask=True`, the input mask is converted at load time into
+    a pseudo-Voronoi partition where each background pixel is assigned to its
+    nearest labeled cell ID.
     """
 
     # Default layer order if user didn't provide any
@@ -1455,6 +1462,21 @@ def obs_to_mask(
     base_mask = io.imread(mask_path)
     if base_mask.ndim != 2:
         raise ValueError(f"Expected 2D mask, got shape {base_mask.shape} for ROI '{roi}'.")
+
+    if voronoi_transform_mask:
+        labels = np.asarray(base_mask)
+        bg = labels == 0
+        if np.any(bg) and np.any(labels > 0):
+            _, (iy, ix) = ndi.distance_transform_edt(bg, return_indices=True)
+            voronoi_mask = labels[iy, ix]
+            voronoi_mask[labels > 0] = labels[labels > 0]
+            base_mask = voronoi_mask.astype(labels.dtype, copy=False)
+        else:
+            logging.warning(
+                "obs_to_mask(voronoi_transform_mask=True): mask for ROI '%s' has no mix of background/labels; "
+                "skipping Voronoi transform.",
+                roi,
+            )
 
     adata_roi_obs = adata.obs.loc[adata.obs[roi_obs] == roi].copy()
     adata_roi_obs.reset_index(drop=True, inplace=True)

@@ -605,6 +605,7 @@ def _save_pair_barplots(
             ax.set_xlabel("")
             ax.set_ylabel(value_label)
             ax.tick_params(axis="x", labelrotation=90 if group_col else 0)
+            ax.grid(False)
             fig.tight_layout()
 
             plot_path = out_dir / f"{analysis}_{metric}_{pair_stub}{extension}"

@@ -694,14 +694,24 @@ def _save_cluster_composition_plots(
     roi_props = roi_counts.merge(roi_meta, on=sample_key, how="left")
     roi_props.to_csv(out_dir / "roi_level_cluster_proportions.csv", index=False)
 
+    # Case-level composition: aggregate counts directly by case (no ROI pre-averaging).
+    case_counts = (
+        obs.groupby([case_key, cluster_key], observed=True)
+        .size()
+        .reset_index(name="n_cells")
+    )
+    case_totals = case_counts.groupby(case_key, observed=True)["n_cells"].transform("sum")
+    case_counts["case_proportion"] = case_counts["n_cells"] / case_totals.replace(0, np.nan)
+    case_props = case_counts[[case_key, cluster_key, "case_proportion"]].copy()
+
     case_props = (
-        roi_props.groupby([case_key, cluster_key], observed=True)["roi_proportion"]
+        case_props.groupby([case_key, cluster_key], observed=True)["case_proportion"]
         .mean()
-        .reset_index(name="case_mean_roi_proportion")
+        .reset_index(name="case_proportion")
     )
     if use_group and groupby_key:
         case_group_nunique = (
-            roi_meta.groupby(case_key, observed=True)[groupby_key]
+            obs.groupby(case_key, observed=True)[groupby_key]
             .nunique(dropna=True)
         )
         ambiguous_cases = case_group_nunique[case_group_nunique > 1].index.tolist()
@@ -711,12 +721,12 @@ def _save_cluster_composition_plots(
                 groupby_key,
             )
         case_group_map = (
-            roi_meta.groupby(case_key, observed=True)[groupby_key]
+            obs.groupby(case_key, observed=True)[groupby_key]
             .agg(_majority_label)
             .reset_index()
         )
         case_props = case_props.merge(case_group_map, on=case_key, how="left")
-    case_props.to_csv(out_dir / "case_averaged_roi_proportions.csv", index=False)
+    case_props.to_csv(out_dir / "case_level_cluster_proportions.csv", index=False)
 
     if isinstance(adata.obs[cluster_key].dtype, pd.CategoricalDtype):
         cluster_order = [str(c) for c in adata.obs[cluster_key].cat.categories.tolist()]
@@ -731,7 +741,7 @@ def _save_cluster_composition_plots(
         wide = df_in.pivot_table(
             index=case_key,
             columns=cluster_key,
-            values="case_mean_roi_proportion",
+            values="case_proportion",
             aggfunc="mean",
             fill_value=0.0,
         )
@@ -757,9 +767,12 @@ def _save_cluster_composition_plots(
         colors = [cluster_color_map.get(col, "#808080") for col in wide.columns]
         wide.plot(kind="bar", stacked=True, ax=ax, color=colors, width=0.9)
         ax.set_xlabel(case_key)
-        ax.set_ylabel("Proportion (ROI-averaged within case)")
+        ax.set_ylabel("Proportion")
         ax.set_title(title)
         ax.tick_params(axis="x", rotation=90)
+        ax.set_ylim(0.0, 1.0)
+        ax.margins(y=0.0)
+        ax.grid(False)
         ax.legend(
             title=cluster_key,
             bbox_to_anchor=(1.02, 1.0),
@@ -773,8 +786,8 @@ def _save_cluster_composition_plots(
 
     _plot_stacked(
         case_props,
-        title=f"Case-averaged ROI cluster proportions ({cluster_key})",
-        stem="stacked_case_average_all",
+        title=f"Case-level cluster proportions ({cluster_key})",
+        stem="stacked_case_proportion_all",
     )
 
     if use_group and groupby_key:
@@ -785,8 +798,8 @@ def _save_cluster_composition_plots(
                 continue
             _plot_stacked(
                 subset,
-                title=f"Case-averaged ROI cluster proportions ({groupby_key}={group})",
-                stem=f"stacked_case_average_{cleanstring(group)}",
+                title=f"Case-level cluster proportions ({groupby_key}={group})",
+                stem=f"stacked_case_proportion_{cleanstring(group)}",
             )
 
         bar_df = case_props.dropna(subset=[groupby_key]).copy()
@@ -798,7 +811,7 @@ def _save_cluster_composition_plots(
             sns.barplot(
                 data=bar_df,
                 x=cluster_key,
-                y="case_mean_roi_proportion",
+                y="case_proportion",
                 hue=groupby_key,
                 order=cluster_order,
                 hue_order=hue_order if hue_order else None,
@@ -807,9 +820,12 @@ def _save_cluster_composition_plots(
                 ax=ax,
             )
             ax.set_xlabel(cluster_key)
-            ax.set_ylabel("Proportion (ROI-averaged within case)")
-            ax.set_title(f"Spatial cluster proportions by {groupby_key}")
+            ax.set_ylabel("Case-level proportion")
+            ax.set_title(f"Spatial cluster case-level proportions by {groupby_key}")
             ax.tick_params(axis="x", rotation=90)
+            ax.set_ylim(0.0, 1.0)
+            ax.margins(y=0.0)
+            ax.grid(False)
             ax.legend(
                 title=groupby_key,
                 bbox_to_anchor=(1.02, 1.0),
@@ -818,7 +834,7 @@ def _save_cluster_composition_plots(
             )
             fig.tight_layout()
             fig.savefig(
-                out_dir / f"barplot_case_roi_avg_by_{cleanstring(groupby_key)}.{fmt}",
+                out_dir / f"barplot_case_proportion_by_{cleanstring(groupby_key)}.{fmt}",
                 dpi=dpi,
                 bbox_inches="tight",
             )
@@ -1723,12 +1739,15 @@ def _save_roi_cluster_masks(
         return
 
     roi_dir = qc_dir / "ROI_cluster_masks"
+    voronoi_dir = qc_dir / "ROI_cluster_masks_voronoi"
     roi_dir.mkdir(parents=True, exist_ok=True)
+    voronoi_dir.mkdir(parents=True, exist_ok=True)
     rois = sorted(pd.unique(adata.obs[sample_key].astype(str)))
     fmt = _normalise_figure_format(figure_format)
 
     for roi in rois:
-        save_path = roi_dir / f"{cleanstring(roi)}.{fmt}"
+        save_path_standard = roi_dir / f"{cleanstring(roi)}.{fmt}"
+        save_path_voronoi = voronoi_dir / f"{cleanstring(roi)}.{fmt}"
         try:
             sbt_plotting.obs_to_mask(
                 adata=adata,
@@ -1738,13 +1757,34 @@ def _save_roi_cluster_masks(
                 cat_colour_map=cluster_color_map if cluster_color_map is not None else "tab20",
                 adata_colormap=True,
                 masks_folder=masks_folder,
-                save_path=str(save_path),
+                save_path=str(save_path_standard),
                 background_color="white",
                 separator_color="black",
             )
         except Exception as exc:
             logging.warning(
                 "Could not create ROI mask plot for ROI '%s' using cluster key '%s': %s",
+                roi,
+                cluster_key,
+                exc,
+            )
+        try:
+            sbt_plotting.obs_to_mask(
+                adata=adata,
+                roi=str(roi),
+                roi_obs=sample_key,
+                cat_obs=cluster_key,
+                cat_colour_map=cluster_color_map if cluster_color_map is not None else "tab20",
+                adata_colormap=True,
+                masks_folder=masks_folder,
+                voronoi_transform_mask=True,
+                save_path=str(save_path_voronoi),
+                background_color="white",
+                separator_color="black",
+            )
+        except Exception as exc:
+            logging.warning(
+                "Could not create ROI Voronoi mask plot for ROI '%s' using cluster key '%s': %s",
                 roi,
                 cluster_key,
                 exc,
