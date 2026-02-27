@@ -357,10 +357,13 @@ class ToolkitNimbusDataset(MultiplexDataset):
             logging.info(f"Normalization QC galleries saved to: {qc_gallery_dir}")
 
 
-def _load_panel(metadata_folder: Path) -> pd.DataFrame:
+def _load_panel(metadata_folder: Path, nimbus_cfg: NimbusConfig) -> pd.DataFrame:
     panel = pd.read_csv(metadata_folder / "panel.csv")
     panel["channel_label"] = [re.sub(r"\\W+", "", str(x)) for x in panel["channel_label"]]
-    panel["filename"] = panel["channel_name"] + "_" + panel["channel_label"]
+    if bool(getattr(nimbus_cfg, "simple_image_names", False)):
+        panel["filename"] = panel["channel_label"]
+    else:
+        panel["filename"] = panel["channel_name"] + "_" + panel["channel_label"]
     return panel
 
 
@@ -1011,7 +1014,7 @@ def main() -> None:
         return
 
     metadata_folder = Path(general_config.metadata_folder)
-    panel = _load_panel(metadata_folder)
+    panel = _load_panel(metadata_folder, nimbus_config)
 
     mask_lookup = _discover_masks(Path(general_config.masks_folder), nimbus_config.mask_extensions)
     if not mask_lookup:

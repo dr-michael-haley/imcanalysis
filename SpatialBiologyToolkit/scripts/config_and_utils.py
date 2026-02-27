@@ -206,6 +206,7 @@ class NimbusConfig:
     roi_table_prefix: str = 'nimbus_'
     use_denoised_first: bool = True
     allow_raw_fallback: bool = True
+    simple_image_names: bool = False  # If True, match images by channel_label only (instead of channel_name_channel_label)
     mask_extensions: List[str] = field(default_factory=lambda: ['.tiff', '.tif'])
     test_time_augmentation: bool = True
     batch_size: int = 10
