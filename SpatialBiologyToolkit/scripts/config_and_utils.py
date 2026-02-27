@@ -491,8 +491,8 @@ class CellCharterConfig:
     cluster_umap_legend_loc: str = 'right margin'
     save_cluster_composition_plots: bool = True
     composition_order_by_environment: str = '0'  # Cluster label used to order case stacked bars by abundance
-    composition_stacked_figsize: List[float] = field(default_factory=lambda: [12.0, 6.0])
-    composition_group_barplot_figsize: List[float] = field(default_factory=lambda: [10.0, 5.0])
+    composition_stacked_figsize: List[float] = field(default_factory=lambda: [6.0, 3.0])
+    composition_group_barplot_figsize: List[float] = field(default_factory=lambda: [6.0, 3.0])
     figure_format: str = 'png'
     save_high_res: bool = True
 
