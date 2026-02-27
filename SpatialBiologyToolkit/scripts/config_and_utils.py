@@ -34,7 +34,7 @@ class GeneralConfig:
     y_coord_obs: str = 'Y_loc'  # Fallback Y coordinate obs column when spatial_key is missing
     master_index_obs: str = 'Master_Index'  # Canonical stable per-cell index column in adata.obs
     anndata_path: str = 'anndata.h5ad'  # Canonical AnnData file path used across pipeline stages
-    anndata_stage_run_mode: str = 'intelligent'  # One of: repeat, skip, intelligent
+    anndata_stage_run_mode: str = 'repeat'  # One of: repeat, skip, intelligent
     anndata_uns_log_key: str = 'pipeline_stage_log'  # AnnData.uns key storing stage order/config snapshots
 
 @dataclass
@@ -381,6 +381,9 @@ class CellCharterConfig:
     spatial_key: Optional[str] = None  # Optional override (None = use general.spatial_key)
     x_coord_col: Optional[str] = None  # Optional override (None = use general.x_coord_obs)
     y_coord_col: Optional[str] = None  # Optional override (None = use general.y_coord_obs)
+    case_obs: Optional[str] = None  # Optional override (None = use general.case_obs)
+    groupby_obs: Optional[str] = None  # Optional override (None = use general.groupby_obs)
+    groupby_obs_groups: Optional[List[str]] = None  # Optional override (None = use general.groupby_obs groups settings)
 
     # Features
     use_rep: Optional[str] = None      # For non-TRVAE mode: adata.obsm key for neighborhood aggregation
@@ -491,6 +494,16 @@ class CellCharterConfig:
     max_rois_for_plots: int = 12
     point_size: float = 2.0
     save_enrichment_heatmap: bool = True
+    cluster_default_cmap: Optional[str] = None  # If None, use scanpy's godsnot_102 palette for adata.uns['{cluster_key}_colors']
+    save_cluster_umap: bool = True
+    cluster_umap_point_size: float = 10.0
+    cluster_umap_legend_loc: str = 'right margin'
+    save_cluster_composition_plots: bool = True
+    composition_order_by_environment: str = '0'  # Cluster label used to order case stacked bars by abundance
+    composition_stacked_figsize: List[float] = field(default_factory=lambda: [12.0, 6.0])
+    composition_group_barplot_figsize: List[float] = field(default_factory=lambda: [10.0, 5.0])
+    figure_format: str = 'png'
+    save_high_res: bool = True
 
 @dataclass
 class PairwiseSpatialConfig:
@@ -556,6 +569,7 @@ class PairwiseSpatialConfig:
     heatmap_col_cluster: bool = True
     heatmap_figsize: List[float] = field(default_factory=lambda: [5.0, 5.0])
     heatmap_percentile: float = 95.0
+    pairwise_matrices_cbar_corner: str = 'lower_right'  # One of: 'lower_right', 'upper_left'
     pairwise_matrices_share_vmax_vmin: bool = False  # If True, use limits from each metric's all-data matrix for all group matrix plots
     heatmap_cmap_interactions: str = 'coolwarm'
     heatmap_cmap_distance: str = 'coolwarm'

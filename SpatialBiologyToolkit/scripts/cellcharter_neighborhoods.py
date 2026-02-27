@@ -22,10 +22,12 @@ import anndata as ad
 import matplotlib
 import numpy as np
 import pandas as pd
+import seaborn as sns
 from scipy import sparse
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.colors import to_hex
 
 try:
     import squidpy as sq
@@ -40,6 +42,11 @@ except ImportError as exc:  # pragma: no cover - dependency guard
     raise ImportError(
         "CellCharter is required for this script. Install it with 'pip install cellcharter'."
     ) from exc
+
+try:
+    import scanpy as sc
+except Exception:
+    sc = None
 
 from .config_and_utils import (
     CellCharterConfig,
@@ -466,6 +473,357 @@ def _category_sort_key(value: Any) -> Tuple[int, Any]:
     return (1, text)
 
 
+def _normalise_figure_format(value: str) -> str:
+    """Return a safe matplotlib file extension without leading dot."""
+    text = str(value or "png").strip().lower().lstrip(".")
+    return text or "png"
+
+
+def _build_discrete_colors_from_cmap(cmap_name: Optional[str], n_colors: int) -> List[str]:
+    """Sample n discrete colors from a configured cmap or default scanpy palette."""
+    n = max(0, int(n_colors))
+    if n == 0:
+        return []
+
+    cmap_to_use = str(cmap_name).strip() if cmap_name is not None else ""
+    if not cmap_to_use or cmap_to_use.lower() in {"none", "null"}:
+        if (
+            sc is not None
+            and hasattr(sc, "pl")
+            and hasattr(sc.pl, "palettes")
+            and hasattr(sc.pl.palettes, "godsnot_102")
+        ):
+            base_palette = [to_hex(c, keep_alpha=False) for c in list(sc.pl.palettes.godsnot_102)]
+            if base_palette:
+                repeats = int(np.ceil(n / float(len(base_palette))))
+                return (base_palette * repeats)[:n]
+        logging.warning(
+            "cluster_default_cmap is unset, but scanpy godsnot_102 is unavailable. Falling back to 'tab20'."
+        )
+        cmap_to_use = "tab20"
+
+    try:
+        cmap = plt.get_cmap(cmap_to_use)
+    except Exception:
+        logging.warning("Invalid cluster_default_cmap '%s'; falling back to 'tab20'.", cmap_to_use)
+        cmap = plt.get_cmap("tab20")
+
+    if n == 1:
+        return [to_hex(cmap(0.0), keep_alpha=False)]
+
+    sample_points = np.linspace(0.0, 1.0, num=n, endpoint=False)
+    return [to_hex(cmap(float(x)), keep_alpha=False) for x in sample_points]
+
+
+def _ensure_obs_color_map(
+    adata: ad.AnnData,
+    obs_key: str,
+    cmap_name: Optional[str],
+) -> Dict[str, str]:
+    """
+    Build and store adata.uns color payloads for a categorical obs key.
+
+    Stores:
+    - adata.uns[f"{obs_key}_colors"] as list aligned to categorical order
+    - adata.uns[f"{obs_key}_colormap"] as {category: color}
+    """
+    if not _ensure_categorical_obs(adata, obs_key):
+        return {}
+
+    categories = [str(c) for c in adata.obs[obs_key].cat.categories.tolist()]
+    colors = _build_discrete_colors_from_cmap(cmap_name, len(categories))
+    color_map = {cat: color for cat, color in zip(categories, colors)}
+    adata.uns[f"{obs_key}_colors"] = [color_map[cat] for cat in categories]
+    adata.uns[f"{obs_key}_colormap"] = color_map
+    return color_map
+
+
+def _palette_from_adata_uns(adata: ad.AnnData, obs_key: str) -> Optional[Dict[str, str]]:
+    """Return a seaborn-compatible palette dict from adata.uns if available."""
+    if obs_key not in adata.obs.columns:
+        return None
+
+    series = adata.obs[obs_key]
+    if isinstance(series.dtype, pd.CategoricalDtype):
+        categories = [str(c) for c in series.cat.categories.tolist()]
+    else:
+        categories = sorted(series.dropna().astype(str).unique().tolist())
+
+    if not categories:
+        return None
+
+    colors = adata.uns.get(f"{obs_key}_colors")
+    if isinstance(colors, (list, tuple, np.ndarray)) and len(colors) >= len(categories):
+        return {cat: str(colors[idx]) for idx, cat in enumerate(categories)}
+
+    color_map = adata.uns.get(f"{obs_key}_colormap")
+    if isinstance(color_map, dict):
+        return {str(k): str(v) for k, v in color_map.items()}
+
+    return None
+
+
+def _ordered_groups(series: pd.Series, configured_groups: Optional[Sequence[Any]]) -> List[str]:
+    """Resolve an ordered list of groups, constrained to observed values."""
+    observed = pd.Series(series).dropna().astype(str)
+    observed = observed[~observed.isin({"", "nan", "NaN", "None", "none"})]
+    observed_set = set(observed.unique().tolist())
+    if not observed_set:
+        return []
+
+    if configured_groups:
+        ordered = [str(g) for g in configured_groups if str(g) in observed_set]
+        if ordered:
+            return ordered
+
+    if isinstance(series.dtype, pd.CategoricalDtype):
+        return [str(c) for c in series.cat.categories.tolist() if str(c) in observed_set]
+    return sorted(observed_set)
+
+
+def _majority_label(series: pd.Series) -> str:
+    """Return a stable majority label as string for grouped metadata columns."""
+    values = series.dropna().astype(str)
+    if values.empty:
+        return ""
+    modes = values.mode()
+    if not modes.empty:
+        return str(modes.iloc[0])
+    return str(values.iloc[0])
+
+
+def _save_cluster_umap(
+    adata: ad.AnnData,
+    *,
+    cluster_key: str,
+    qc_dir: Path,
+    figure_format: str,
+    save_high_res: bool,
+    point_size: float,
+    legend_loc: str,
+) -> None:
+    """Save one UMAP colored by spatial clusters, if X_umap is present."""
+    if sc is None:
+        logging.warning("scanpy is unavailable; skipping CellCharter cluster UMAP.")
+        return
+    if cluster_key not in adata.obs.columns:
+        logging.warning("Cluster key '%s' missing in adata.obs; skipping cluster UMAP.", cluster_key)
+        return
+    if "X_umap" not in adata.obsm.keys():
+        logging.warning("AnnData lacks obsm['X_umap']; skipping cluster UMAP.")
+        return
+
+    fmt = _normalise_figure_format(figure_format)
+    out_path = qc_dir / f"UMAP_{cleanstring(cluster_key)}.{fmt}"
+    dpi = 300 if bool(save_high_res) else 150
+
+    try:
+        fig = sc.pl.umap(
+            adata,
+            color=cluster_key,
+            size=float(point_size),
+            legend_loc=str(legend_loc),
+            return_fig=True,
+        )
+        fig.savefig(out_path, bbox_inches="tight", dpi=dpi)
+        plt.close(fig)
+    except Exception as exc:
+        logging.warning("Failed to save CellCharter cluster UMAP: %s", exc)
+
+
+def _save_cluster_composition_plots(
+    adata: ad.AnnData,
+    *,
+    cluster_key: str,
+    sample_key: str,
+    case_key: str,
+    groupby_key: Optional[str],
+    configured_groups: Optional[Sequence[Any]],
+    cluster_color_map: Dict[str, str],
+    order_by_environment: str,
+    qc_dir: Path,
+    figure_format: str,
+    save_high_res: bool,
+    stacked_figsize: Tuple[float, float],
+    grouped_bar_figsize: Tuple[float, float],
+) -> None:
+    """Save case-level stacked composition plots and grouped bar plots for spatial clusters."""
+    required_cols = [cluster_key, sample_key, case_key]
+    missing = [c for c in required_cols if c not in adata.obs.columns]
+    if missing:
+        logging.warning(
+            "Skipping CellCharter composition plots. Missing required obs columns: %s",
+            missing,
+        )
+        return
+
+    fmt = _normalise_figure_format(figure_format)
+    dpi = 300 if bool(save_high_res) else 150
+    out_dir = qc_dir / "cluster_composition"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    use_group = bool(groupby_key and groupby_key in adata.obs.columns)
+    if groupby_key and not use_group:
+        logging.warning(
+            "Configured groupby_obs '%s' missing in adata.obs; creating non-grouped composition plots only.",
+            groupby_key,
+        )
+
+    obs_cols = [cluster_key, sample_key, case_key] + ([str(groupby_key)] if use_group else [])
+    obs = adata.obs[obs_cols].copy()
+    obs = obs.dropna(subset=[cluster_key, sample_key, case_key])
+    if obs.empty:
+        logging.warning("No rows available after dropping NA values; skipping composition plots.")
+        return
+
+    for col in obs_cols:
+        obs[col] = obs[col].astype(str)
+
+    agg_spec: Dict[str, Any] = {case_key: _majority_label}
+    if use_group and groupby_key:
+        agg_spec[groupby_key] = _majority_label
+    roi_meta = obs.groupby(sample_key, observed=True).agg(agg_spec).reset_index()
+
+    roi_counts = (
+        obs.groupby([sample_key, cluster_key], observed=True)
+        .size()
+        .reset_index(name="n_cells")
+    )
+    roi_totals = roi_counts.groupby(sample_key, observed=True)["n_cells"].transform("sum")
+    roi_counts["roi_proportion"] = roi_counts["n_cells"] / roi_totals.replace(0, np.nan)
+    roi_props = roi_counts.merge(roi_meta, on=sample_key, how="left")
+    roi_props.to_csv(out_dir / "roi_level_cluster_proportions.csv", index=False)
+
+    case_props = (
+        roi_props.groupby([case_key, cluster_key], observed=True)["roi_proportion"]
+        .mean()
+        .reset_index(name="case_mean_roi_proportion")
+    )
+    if use_group and groupby_key:
+        case_group_nunique = (
+            roi_meta.groupby(case_key, observed=True)[groupby_key]
+            .nunique(dropna=True)
+        )
+        ambiguous_cases = case_group_nunique[case_group_nunique > 1].index.tolist()
+        if ambiguous_cases:
+            logging.warning(
+                "Some cases map to multiple '%s' values; using majority assignment for grouped composition plots.",
+                groupby_key,
+            )
+        case_group_map = (
+            roi_meta.groupby(case_key, observed=True)[groupby_key]
+            .agg(_majority_label)
+            .reset_index()
+        )
+        case_props = case_props.merge(case_group_map, on=case_key, how="left")
+    case_props.to_csv(out_dir / "case_averaged_roi_proportions.csv", index=False)
+
+    if isinstance(adata.obs[cluster_key].dtype, pd.CategoricalDtype):
+        cluster_order = [str(c) for c in adata.obs[cluster_key].cat.categories.tolist()]
+    else:
+        cluster_order = sorted(case_props[cluster_key].dropna().astype(str).unique().tolist(), key=_category_sort_key)
+    cluster_order = [c for c in cluster_order if c in case_props[cluster_key].astype(str).unique().tolist()]
+    if not cluster_order:
+        logging.warning("No valid clusters found for composition plotting.")
+        return
+
+    def _plot_stacked(df_in: pd.DataFrame, *, title: str, stem: str) -> None:
+        wide = df_in.pivot_table(
+            index=case_key,
+            columns=cluster_key,
+            values="case_mean_roi_proportion",
+            aggfunc="mean",
+            fill_value=0.0,
+        )
+        if wide.empty:
+            return
+
+        columns = [c for c in cluster_order if c in wide.columns]
+        if not columns:
+            return
+        wide = wide.reindex(columns=columns, fill_value=0.0)
+
+        env_label = str(order_by_environment)
+        if env_label in wide.columns:
+            wide = wide.sort_values(by=env_label, ascending=False)
+        else:
+            logging.info(
+                "composition_order_by_environment '%s' not present in this subset; using default case order.",
+                env_label,
+            )
+
+        wide.to_csv(out_dir / f"{stem}.csv", index=True)
+        fig, ax = plt.subplots(figsize=stacked_figsize)
+        colors = [cluster_color_map.get(col, "#808080") for col in wide.columns]
+        wide.plot(kind="bar", stacked=True, ax=ax, color=colors, width=0.9)
+        ax.set_xlabel(case_key)
+        ax.set_ylabel("Proportion (ROI-averaged within case)")
+        ax.set_title(title)
+        ax.tick_params(axis="x", rotation=90)
+        ax.legend(
+            title=cluster_key,
+            bbox_to_anchor=(1.02, 1.0),
+            loc="upper left",
+            frameon=False,
+            fontsize=8,
+        )
+        fig.tight_layout()
+        fig.savefig(out_dir / f"{stem}.{fmt}", dpi=dpi, bbox_inches="tight")
+        plt.close(fig)
+
+    _plot_stacked(
+        case_props,
+        title=f"Case-averaged ROI cluster proportions ({cluster_key})",
+        stem="stacked_case_average_all",
+    )
+
+    if use_group and groupby_key:
+        available_groups = _ordered_groups(case_props[groupby_key], configured_groups)
+        for group in available_groups:
+            subset = case_props[case_props[groupby_key].astype(str) == str(group)].copy()
+            if subset.empty:
+                continue
+            _plot_stacked(
+                subset,
+                title=f"Case-averaged ROI cluster proportions ({groupby_key}={group})",
+                stem=f"stacked_case_average_{cleanstring(group)}",
+            )
+
+        bar_df = case_props.dropna(subset=[groupby_key]).copy()
+        bar_df = bar_df[~bar_df[groupby_key].astype(str).isin({"", "nan", "NaN", "None", "none"})]
+        if not bar_df.empty:
+            hue_order = _ordered_groups(bar_df[groupby_key], configured_groups)
+            palette = _palette_from_adata_uns(adata, groupby_key)
+            fig, ax = plt.subplots(figsize=grouped_bar_figsize)
+            sns.barplot(
+                data=bar_df,
+                x=cluster_key,
+                y="case_mean_roi_proportion",
+                hue=groupby_key,
+                order=cluster_order,
+                hue_order=hue_order if hue_order else None,
+                errorbar="se",
+                palette=palette,
+                ax=ax,
+            )
+            ax.set_xlabel(cluster_key)
+            ax.set_ylabel("Proportion (ROI-averaged within case)")
+            ax.set_title(f"Spatial cluster proportions by {groupby_key}")
+            ax.tick_params(axis="x", rotation=90)
+            ax.legend(
+                title=groupby_key,
+                bbox_to_anchor=(1.02, 1.0),
+                loc="upper left",
+                frameon=False,
+            )
+            fig.tight_layout()
+            fig.savefig(
+                out_dir / f"barplot_case_roi_avg_by_{cleanstring(groupby_key)}.{fmt}",
+                dpi=dpi,
+                bbox_inches="tight",
+            )
+            plt.close(fig)
+
 def _save_cluster_tables(
     adata: ad.AnnData,
     sample_key: str,
@@ -502,6 +860,9 @@ def _save_spatial_cluster_plots(
     point_size: float,
     max_samples: int,
     qc_dir: Path,
+    cluster_color_map: Optional[Dict[str, str]] = None,
+    figure_format: str = "png",
+    save_high_res: bool = True,
 ) -> None:
     """Save per-sample spatial scatter plots colored by CellCharter clusters."""
     if sample_key not in adata.obs.columns:
@@ -517,14 +878,20 @@ def _save_spatial_cluster_plots(
     )
 
     labels_all = adata.obs[cluster_key].astype(str)
-    categories = sorted(pd.unique(labels_all), key=_category_sort_key)
-    if len(categories) <= 20:
-        cmap = plt.get_cmap("tab20", len(categories))
+    if isinstance(adata.obs[cluster_key].dtype, pd.CategoricalDtype):
+        categories = [str(c) for c in adata.obs[cluster_key].cat.categories.tolist()]
     else:
-        cmap = plt.get_cmap("gist_ncar", len(categories))
-    color_map = {cat: cmap(i) for i, cat in enumerate(categories)}
+        categories = sorted(pd.unique(labels_all), key=_category_sort_key)
+
+    if cluster_color_map is None:
+        fallback_colors = _build_discrete_colors_from_cmap(None, len(categories))
+        color_map = {cat: fallback_colors[idx] for idx, cat in enumerate(categories)}
+    else:
+        color_map = {cat: cluster_color_map.get(cat, "#808080") for cat in categories}
 
     coords_all = np.asarray(adata.obsm[spatial_key], dtype=np.float32)
+    fmt = _normalise_figure_format(figure_format)
+    dpi = 300 if bool(save_high_res) else 150
 
     for sample in samples:
         mask = adata.obs[sample_key].astype(str).to_numpy() == sample
@@ -565,8 +932,8 @@ def _save_spatial_cluster_plots(
         fig.tight_layout()
         sample_slug = cleanstring(sample)
         fig.savefig(
-            qc_dir / f"spatial_clusters_{sample_slug}.png",
-            dpi=220,
+            qc_dir / f"spatial_clusters_{sample_slug}.{fmt}",
+            dpi=dpi,
             bbox_inches="tight",
         )
         plt.close(fig)
@@ -1340,6 +1707,8 @@ def _save_roi_cluster_masks(
     cluster_key: str,
     masks_folder: str,
     qc_dir: Path,
+    cluster_color_map: Optional[Dict[str, str]] = None,
+    figure_format: str = "png",
 ) -> None:
     """Save one mask-style cluster plot per ROI using plotting.obs_to_mask."""
     if sbt_plotting is None:
@@ -1356,15 +1725,18 @@ def _save_roi_cluster_masks(
     roi_dir = qc_dir / "ROI_cluster_masks"
     roi_dir.mkdir(parents=True, exist_ok=True)
     rois = sorted(pd.unique(adata.obs[sample_key].astype(str)))
+    fmt = _normalise_figure_format(figure_format)
 
     for roi in rois:
-        save_path = roi_dir / f"{cleanstring(roi)}.png"
+        save_path = roi_dir / f"{cleanstring(roi)}.{fmt}"
         try:
             sbt_plotting.obs_to_mask(
                 adata=adata,
                 roi=str(roi),
                 roi_obs=sample_key,
                 cat_obs=cluster_key,
+                cat_colour_map=cluster_color_map if cluster_color_map is not None else "tab20",
+                adata_colormap=True,
                 masks_folder=masks_folder,
                 save_path=str(save_path),
                 background_color="white",
@@ -1405,12 +1777,27 @@ def run_cellcharter_neighborhoods(
         general_config.y_coord_obs,
         default="Y_loc",
     )
+    cellcharter_config.case_obs = coalesce_config_text(
+        cellcharter_config.case_obs,
+        general_config.case_obs,
+    )
+    cellcharter_config.groupby_obs = coalesce_config_text(
+        cellcharter_config.groupby_obs,
+        general_config.groupby_obs,
+    )
+    if cellcharter_config.groupby_obs_groups is None:
+        cellcharter_config.groupby_obs_groups = coalesce_config_list(
+            general_config.groupby_obs_primary_pairwise,
+            general_config.groupby_obs_groups,
+        )
     if cellcharter_config.diff_nhood_condition_key is None:
         cellcharter_config.diff_nhood_condition_key = coalesce_config_text(
+            cellcharter_config.groupby_obs,
             general_config.groupby_obs,
         )
     if cellcharter_config.diff_nhood_condition_groups is None:
         cellcharter_config.diff_nhood_condition_groups = coalesce_config_list(
+            cellcharter_config.groupby_obs_groups,
             general_config.groupby_obs_primary_pairwise,
             general_config.groupby_obs_groups,
         )
@@ -1559,6 +1946,22 @@ def run_cellcharter_neighborhoods(
     labels = pd.Series(predicted.astype(str), index=adata.obs_names, dtype="object")
     categories = sorted(pd.unique(labels), key=_category_sort_key)
     adata.obs[cellcharter_config.cluster_key] = pd.Categorical(labels, categories=categories)
+    cluster_color_map = _ensure_obs_color_map(
+        adata,
+        obs_key=cellcharter_config.cluster_key,
+        cmap_name=cellcharter_config.cluster_default_cmap,
+    )
+    cmap_label = (
+        str(cellcharter_config.cluster_default_cmap)
+        if cellcharter_config.cluster_default_cmap not in (None, "", "None", "none")
+        else "scanpy.godsnot_102 (default)"
+    )
+    logging.info(
+        "Stored cluster colors in adata.uns['%s_colors'] using cmap '%s'.",
+        cellcharter_config.cluster_key,
+        cmap_label,
+    )
+    figure_format = _normalise_figure_format(cellcharter_config.figure_format)
 
     nhood_details: Dict[str, Any] = {
         "enabled": bool(cellcharter_config.run_nhood_enrichment),
@@ -1653,6 +2056,9 @@ def run_cellcharter_neighborhoods(
             point_size=float(cellcharter_config.point_size),
             max_samples=int(cellcharter_config.max_rois_for_plots),
             qc_dir=qc_dir,
+            cluster_color_map=cluster_color_map,
+            figure_format=figure_format,
+            save_high_res=bool(cellcharter_config.save_high_res),
         )
 
     _save_roi_cluster_masks(
@@ -1661,7 +2067,57 @@ def run_cellcharter_neighborhoods(
         cluster_key=cellcharter_config.cluster_key,
         masks_folder=general_config.masks_folder,
         qc_dir=qc_dir,
+        cluster_color_map=cluster_color_map,
+        figure_format=figure_format,
     )
+
+    if bool(cellcharter_config.save_cluster_umap):
+        _save_cluster_umap(
+            adata=adata,
+            cluster_key=cellcharter_config.cluster_key,
+            qc_dir=qc_dir,
+            figure_format=figure_format,
+            save_high_res=bool(cellcharter_config.save_high_res),
+            point_size=float(cellcharter_config.cluster_umap_point_size),
+            legend_loc=str(cellcharter_config.cluster_umap_legend_loc),
+        )
+
+    if bool(cellcharter_config.save_cluster_composition_plots):
+        case_key = coalesce_config_text(
+            cellcharter_config.case_obs,
+            general_config.case_obs,
+        )
+        groupby_key = coalesce_config_text(
+            cellcharter_config.groupby_obs,
+            general_config.groupby_obs,
+        )
+        if not case_key:
+            logging.warning(
+                "Skipping CellCharter composition plots: case_obs is not configured "
+                "(set cellcharter.case_obs or general.case_obs)."
+            )
+        else:
+            _save_cluster_composition_plots(
+                adata=adata,
+                cluster_key=cellcharter_config.cluster_key,
+                sample_key=sample_key,
+                case_key=str(case_key),
+                groupby_key=groupby_key,
+                configured_groups=cellcharter_config.groupby_obs_groups,
+                cluster_color_map=cluster_color_map,
+                order_by_environment=str(cellcharter_config.composition_order_by_environment),
+                qc_dir=qc_dir,
+                figure_format=figure_format,
+                save_high_res=bool(cellcharter_config.save_high_res),
+                stacked_figsize=_resolve_figsize(
+                    cellcharter_config.composition_stacked_figsize,
+                    fallback=(12.0, 6.0),
+                ),
+                grouped_bar_figsize=_resolve_figsize(
+                    cellcharter_config.composition_group_barplot_figsize,
+                    fallback=(10.0, 5.0),
+                ),
+            )
 
     adata.uns["cellcharter_pipeline"] = {
         "input_adata_path": str(input_path),
@@ -1670,6 +2126,10 @@ def run_cellcharter_neighborhoods(
         "spatial_key": spatial_key,
         "population_obs_primary": population_obs_primary,
         "cluster_key": cellcharter_config.cluster_key,
+        "cluster_default_cmap": cellcharter_config.cluster_default_cmap,
+        "case_obs": cellcharter_config.case_obs,
+        "groupby_obs": cellcharter_config.groupby_obs,
+        "groupby_obs_groups": cellcharter_config.groupby_obs_groups,
         "aggregated_rep_key": cellcharter_config.aggregated_rep_key,
         "aggregation_use_rep": aggregation_rep,
         "trvae": trvae_details,

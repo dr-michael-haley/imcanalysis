@@ -364,6 +364,44 @@ def _force_show_all_tick_labels(
         label.set_rotation(y_rotation)
 
 
+def _normalise_cbar_corner(value: Optional[str]) -> str:
+    text = str(value or "").strip().lower().replace("-", "_")
+    if text in {"lower_right", "upper_left"}:
+        return text
+    logging.warning(
+        "Invalid pairwise_matrices_cbar_corner='%s'. Using default 'lower_right'.",
+        value,
+    )
+    return "lower_right"
+
+
+def _place_colorbar_in_corner(
+    cbar_ax: Any,
+    reference_ax: Any,
+    *,
+    corner: str,
+) -> None:
+    if cbar_ax is None or reference_ax is None:
+        return
+
+    ref_box = reference_ax.get_position()
+    cbar_width = max(0.012, ref_box.width * 0.045)
+    cbar_height = max(0.10, ref_box.height * 0.30)
+    pad_x = max(0.005, ref_box.width * 0.02)
+    pad_y = max(0.005, ref_box.height * 0.02)
+
+    if corner == "upper_left":
+        x0 = ref_box.x0 + pad_x
+        y0 = ref_box.y1 - cbar_height - pad_y
+    else:
+        x0 = ref_box.x1 - cbar_width - pad_x
+        y0 = ref_box.y0 + pad_y
+
+    x0 = float(np.clip(x0, 0.0, max(0.0, 1.0 - cbar_width)))
+    y0 = float(np.clip(y0, 0.0, max(0.0, 1.0 - cbar_height)))
+    cbar_ax.set_position([x0, y0, cbar_width, cbar_height])
+
+
 def _save_matrix_plot(
     matrix: pd.DataFrame,
     *,
@@ -380,6 +418,7 @@ def _save_matrix_plot(
     row_colors: Optional[pd.Series] = None,
     col_colors: Optional[pd.Series] = None,
     fixed_limits: Optional[Tuple[float, float]] = None,
+    cbar_corner: str = "lower_right",
 ) -> None:
     if matrix.empty:
         logging.warning("Skipping matrix plot '%s': empty matrix.", title)
@@ -433,6 +472,8 @@ def _save_matrix_plot(
                 clustermap_kws["col_colors"] = col_colors.reindex(matrix.columns, fill_value="lightgray")
 
             grid = sns.clustermap(**clustermap_kws)
+            grid.fig.canvas.draw()
+            _place_colorbar_in_corner(grid.cax, grid.ax_heatmap, corner=cbar_corner)
             #_force_show_all_tick_labels(grid.ax_heatmap, x_rotation=90.0, y_rotation=0.0)
             grid.fig.suptitle(title, y=1.02)
             grid.fig.savefig(out_path, dpi=int(dpi), bbox_inches="tight")
@@ -462,10 +503,15 @@ def _save_matrix_plot(
         heatmap_kws["center"] = center
         heatmap_kws["norm"] = TwoSlopeNorm(vmin=vmin, vcenter=center, vmax=vmax)
 
-    sns.heatmap(**heatmap_kws)
+    heatmap_artist = sns.heatmap(**heatmap_kws)
     #_force_show_all_tick_labels(ax, x_rotation=90.0, y_rotation=0.0)
     ax.set_title(title)
     fig.tight_layout()
+    fig.canvas.draw()
+    if heatmap_artist.collections:
+        cbar = heatmap_artist.collections[0].colorbar
+        if cbar is not None:
+            _place_colorbar_in_corner(cbar.ax, ax, corner=cbar_corner)
     fig.savefig(out_path, dpi=int(dpi), bbox_inches="tight")
     plt.close(fig)
 
@@ -735,8 +781,10 @@ def run_pairwise_spatial_analyses(
     matrix_figsize = _figsize(pairwise_config.heatmap_figsize, fallback=(8.0, 6.0))
     bar_figsize = _figsize(pairwise_config.barplot_figsize, fallback=(3.0, 3.0))
     reload_saved_results = bool(pairwise_config.reload_saved_results)
+    cbar_corner = _normalise_cbar_corner(pairwise_config.pairwise_matrices_cbar_corner)
     analysis_sources: Dict[str, str] = {"squidpy": "skipped", "distance": "skipped", "pcf": "skipped"}
     logging.info("Pairwise reload_saved_results=%s", reload_saved_results)
+    logging.info("Pairwise matrix colorbar corner=%s", cbar_corner)
 
     ordered_pops = _population_order(adata, pairwise_config.population_obs)
     color_map = _population_color_map(adata, pairwise_config.population_obs, ordered_pops)
@@ -850,6 +898,7 @@ def run_pairwise_spatial_analyses(
                     row_colors=row_colors,
                     col_colors=col_colors,
                     fixed_limits=shared_limits,
+                    cbar_corner=cbar_corner,
                 )
 
                 if (
@@ -880,6 +929,7 @@ def run_pairwise_spatial_analyses(
                             row_colors=row_colors,
                             col_colors=col_colors,
                             fixed_limits=shared_limits,
+                            cbar_corner=cbar_corner,
                         )
 
                 if pairwise_config.make_pair_barplots and pair_map:
@@ -1013,6 +1063,7 @@ def run_pairwise_spatial_analyses(
                     row_colors=row_colors,
                     col_colors=col_colors,
                     fixed_limits=shared_limits,
+                    cbar_corner=cbar_corner,
                 )
 
                 if (
@@ -1043,6 +1094,7 @@ def run_pairwise_spatial_analyses(
                             row_colors=row_colors,
                             col_colors=col_colors,
                             fixed_limits=shared_limits,
+                            cbar_corner=cbar_corner,
                         )
 
                 if pairwise_config.make_pair_barplots and pair_map:
@@ -1183,6 +1235,23 @@ def run_pairwise_spatial_analyses(
                     analysis="pcf",
                     metric="g_mean",
                 )
+                _save_matrix_plot(
+                    pcf_all_matrix,
+                    out_path=matrix_dir / f"pcf_g_mean_all_conditions{extension}",
+                    title="PCF g_mean (all conditions combined)",
+                    cmap=pairwise_config.heatmap_cmap_pcf,
+                    center=1.0,
+                    use_clustermap=pairwise_config.heatmap_use_clustermap,
+                    row_cluster=pairwise_config.heatmap_row_cluster,
+                    col_cluster=pairwise_config.heatmap_col_cluster,
+                    figsize=matrix_figsize,
+                    percentile=pairwise_config.heatmap_percentile,
+                    dpi=pairwise_config.figure_dpi,
+                    row_colors=_label_colors(ordered_pops, color_map),
+                    col_colors=_label_colors(ordered_pops, color_map),
+                    fixed_limits=shared_pcf_limits,
+                    cbar_corner=cbar_corner,
+                )
                 for condition_name, cond_df in pcf_summary.groupby("condition", observed=True):
                     cond_df = cond_df.copy()
                     matrix = cond_df.pivot_table(
@@ -1222,6 +1291,8 @@ def run_pairwise_spatial_analyses(
                             row_colors=color_series,
                             col_colors=color_series,
                         )
+                        grid.fig.canvas.draw()
+                        _place_colorbar_in_corner(grid.cax, grid.ax_heatmap, corner=cbar_corner)
                         #_force_show_all_tick_labels(grid.ax_heatmap, x_rotation=90.0, y_rotation=0.0)
                         grid.fig.savefig(out_path, dpi=int(pairwise_config.figure_dpi), bbox_inches="tight")
                         plt.close(grid.fig)
@@ -1246,6 +1317,7 @@ def run_pairwise_spatial_analyses(
                             row_colors=_label_colors(ordered_pops, color_map),
                             col_colors=_label_colors(ordered_pops, color_map),
                             fixed_limits=shared_pcf_limits,
+                            cbar_corner=cbar_corner,
                         )
 
         if pairwise_config.make_pair_barplots and pair_map and not pcf_long.empty:
@@ -1278,6 +1350,7 @@ def run_pairwise_spatial_analyses(
         "ran_distance": bool(pairwise_config.run_distance_bootstrap),
         "ran_pcf": bool(pairwise_config.run_pcf),
         "reload_saved_results": reload_saved_results,
+        "pairwise_matrices_cbar_corner": cbar_corner,
         "pairwise_matrices_share_vmax_vmin": bool(pairwise_config.pairwise_matrices_share_vmax_vmin),
         "analysis_sources": analysis_sources,
         "population_pairs": pair_map,
