@@ -310,6 +310,29 @@ def _compute_limits(
     return float(lo), float(hi)
 
 
+def _shared_limits_from_all(
+    matrix: pd.DataFrame,
+    *,
+    enabled: bool,
+    percentile: float,
+    center: Optional[float],
+    analysis: str,
+    metric: str,
+) -> Optional[Tuple[float, float]]:
+    if not enabled:
+        return None
+
+    vmin, vmax = _compute_limits(matrix, percentile=percentile, center=center)
+    if vmin is None or vmax is None:
+        logging.warning(
+            "Could not compute shared vmin/vmax for %s metric '%s'. Falling back to per-matrix limits.",
+            analysis,
+            metric,
+        )
+        return None
+    return float(vmin), float(vmax)
+
+
 def _ordered_matrix(matrix: pd.DataFrame, ordered_pops: Sequence[str]) -> pd.DataFrame:
     if matrix.empty:
         return matrix
@@ -356,12 +379,28 @@ def _save_matrix_plot(
     dpi: int,
     row_colors: Optional[pd.Series] = None,
     col_colors: Optional[pd.Series] = None,
+    fixed_limits: Optional[Tuple[float, float]] = None,
 ) -> None:
     if matrix.empty:
         logging.warning("Skipping matrix plot '%s': empty matrix.", title)
         return
 
-    vmin, vmax = _compute_limits(matrix, percentile=percentile, center=center)
+    if fixed_limits is not None:
+        vmin, vmax = fixed_limits
+        if (
+            vmin is None
+            or vmax is None
+            or not np.isfinite(vmin)
+            or not np.isfinite(vmax)
+            or np.isclose(vmin, vmax)
+        ):
+            logging.warning(
+                "Invalid fixed limits supplied for '%s'. Falling back to per-matrix limits.",
+                title,
+            )
+            vmin, vmax = _compute_limits(matrix, percentile=percentile, center=center)
+    else:
+        vmin, vmax = _compute_limits(matrix, percentile=percentile, center=center)
     if vmin is None or vmax is None:
         logging.warning("Skipping matrix plot '%s': matrix has no finite values.", title)
         return
@@ -788,6 +827,14 @@ def run_pairwise_spatial_analyses(
                     cmap = pairwise_config.heatmap_cmap_interactions
                     center = 0.0
 
+                shared_limits = _shared_limits_from_all(
+                    matrix,
+                    enabled=bool(pairwise_config.pairwise_matrices_share_vmax_vmin),
+                    percentile=pairwise_config.heatmap_percentile,
+                    center=center,
+                    analysis="squidpy",
+                    metric=metric,
+                )
                 _save_matrix_plot(
                     matrix,
                     out_path=matrix_dir / f"squidpy_{metric}_all{extension}",
@@ -802,6 +849,7 @@ def run_pairwise_spatial_analyses(
                     dpi=pairwise_config.figure_dpi,
                     row_colors=row_colors,
                     col_colors=col_colors,
+                    fixed_limits=shared_limits,
                 )
 
                 if (
@@ -831,6 +879,7 @@ def run_pairwise_spatial_analyses(
                             dpi=pairwise_config.figure_dpi,
                             row_colors=row_colors,
                             col_colors=col_colors,
+                            fixed_limits=shared_limits,
                         )
 
                 if pairwise_config.make_pair_barplots and pair_map:
@@ -941,6 +990,14 @@ def run_pairwise_spatial_analyses(
                     else pairwise_config.heatmap_cmap_distance
                 )
                 distance_cmap = _reversed_cmap_name(base_distance_cmap)
+                shared_limits = _shared_limits_from_all(
+                    matrix,
+                    enabled=bool(pairwise_config.pairwise_matrices_share_vmax_vmin),
+                    percentile=pairwise_config.heatmap_percentile,
+                    center=center,
+                    analysis="distance",
+                    metric=metric,
+                )
                 _save_matrix_plot(
                     matrix,
                     out_path=matrix_dir / f"distance_{metric}_all{extension}",
@@ -955,6 +1012,7 @@ def run_pairwise_spatial_analyses(
                     dpi=pairwise_config.figure_dpi,
                     row_colors=row_colors,
                     col_colors=col_colors,
+                    fixed_limits=shared_limits,
                 )
 
                 if (
@@ -984,6 +1042,7 @@ def run_pairwise_spatial_analyses(
                             dpi=pairwise_config.figure_dpi,
                             row_colors=row_colors,
                             col_colors=col_colors,
+                            fixed_limits=shared_limits,
                         )
 
                 if pairwise_config.make_pair_barplots and pair_map:
@@ -1109,8 +1168,30 @@ def run_pairwise_spatial_analyses(
                     "PCF summary is missing 'g_mean'; skipping PCF matrix plots."
                 )
             else:
+                pcf_all_matrix = pcf_summary.pivot_table(
+                    index="cell_type_1",
+                    columns="cell_type_2",
+                    values="g_mean",
+                    aggfunc="mean",
+                )
+                pcf_all_matrix = _ordered_matrix(pcf_all_matrix, ordered_pops)
+                shared_pcf_limits = _shared_limits_from_all(
+                    pcf_all_matrix,
+                    enabled=bool(pairwise_config.pairwise_matrices_share_vmax_vmin),
+                    percentile=pairwise_config.heatmap_percentile,
+                    center=1.0,
+                    analysis="pcf",
+                    metric="g_mean",
+                )
                 for condition_name, cond_df in pcf_summary.groupby("condition", observed=True):
                     cond_df = cond_df.copy()
+                    matrix = cond_df.pivot_table(
+                        index="cell_type_1",
+                        columns="cell_type_2",
+                        values="g_mean",
+                        aggfunc="mean",
+                    )
+                    matrix = _ordered_matrix(matrix, ordered_pops)
                     labels = sorted(
                         pd.unique(
                             np.concatenate(
@@ -1129,6 +1210,9 @@ def run_pairwise_spatial_analyses(
                         grid = sbt_pcf.plot_paircorrelation_clustermap(
                             summary=cond_df,
                             condition=condition_name,
+                            percentile=pairwise_config.heatmap_percentile,
+                            vmin=shared_pcf_limits[0] if shared_pcf_limits is not None else None,
+                            vmax=shared_pcf_limits[1] if shared_pcf_limits is not None else None,
                             cmap=pairwise_config.heatmap_cmap_pcf,
                             cluster=bool(
                                 pairwise_config.heatmap_row_cluster
@@ -1147,13 +1231,6 @@ def run_pairwise_spatial_analyses(
                             condition_name,
                             exc,
                         )
-                        matrix = cond_df.pivot_table(
-                            index="cell_type_1",
-                            columns="cell_type_2",
-                            values="g_mean",
-                            aggfunc="mean",
-                        )
-                        matrix = _ordered_matrix(matrix, ordered_pops)
                         _save_matrix_plot(
                             matrix,
                             out_path=out_path,
@@ -1168,6 +1245,7 @@ def run_pairwise_spatial_analyses(
                             dpi=pairwise_config.figure_dpi,
                             row_colors=_label_colors(ordered_pops, color_map),
                             col_colors=_label_colors(ordered_pops, color_map),
+                            fixed_limits=shared_pcf_limits,
                         )
 
         if pairwise_config.make_pair_barplots and pair_map and not pcf_long.empty:
@@ -1200,6 +1278,7 @@ def run_pairwise_spatial_analyses(
         "ran_distance": bool(pairwise_config.run_distance_bootstrap),
         "ran_pcf": bool(pairwise_config.run_pcf),
         "reload_saved_results": reload_saved_results,
+        "pairwise_matrices_share_vmax_vmin": bool(pairwise_config.pairwise_matrices_share_vmax_vmin),
         "analysis_sources": analysis_sources,
         "population_pairs": pair_map,
     }

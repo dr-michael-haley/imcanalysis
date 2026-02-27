@@ -556,6 +556,7 @@ class PairwiseSpatialConfig:
     heatmap_col_cluster: bool = True
     heatmap_figsize: List[float] = field(default_factory=lambda: [5.0, 5.0])
     heatmap_percentile: float = 95.0
+    pairwise_matrices_share_vmax_vmin: bool = False  # If True, use limits from each metric's all-data matrix for all group matrix plots
     heatmap_cmap_interactions: str = 'coolwarm'
     heatmap_cmap_distance: str = 'coolwarm'
     heatmap_cmap_pcf: str = 'coolwarm'
