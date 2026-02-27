@@ -376,15 +376,6 @@ class CellCharterConfig:
     output_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
     qc_output_subdir: str = 'CellCharter_QC'
 
-    # Spatial metadata
-    sample_key: Optional[str] = None  # Optional override (None = use general.roi_obs)
-    spatial_key: Optional[str] = None  # Optional override (None = use general.spatial_key)
-    x_coord_col: Optional[str] = None  # Optional override (None = use general.x_coord_obs)
-    y_coord_col: Optional[str] = None  # Optional override (None = use general.y_coord_obs)
-    case_obs: Optional[str] = None  # Optional override (None = use general.case_obs)
-    groupby_obs: Optional[str] = None  # Optional override (None = use general.groupby_obs)
-    groupby_obs_groups: Optional[List[str]] = None  # Optional override (None = use general.groupby_obs groups settings)
-
     # Features
     use_rep: Optional[str] = None      # For non-TRVAE mode: adata.obsm key for neighborhood aggregation
     use_layer: Optional[str] = None    # For TRVAE or non-TRVAE mode: adata.layers key (None uses adata.X)

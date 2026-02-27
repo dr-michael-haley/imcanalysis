@@ -1757,49 +1757,39 @@ def run_cellcharter_neighborhoods(
 ) -> Path:
     """Run CellCharter neighborhood analysis and return output AnnData path."""
     stage_name = "CellCharter"
-    cellcharter_config.sample_key = coalesce_config_text(
-        cellcharter_config.sample_key,
+    resolved_sample_key = coalesce_config_text(
         general_config.roi_obs,
         default="ROI",
     )
-    cellcharter_config.spatial_key = coalesce_config_text(
-        cellcharter_config.spatial_key,
+    resolved_spatial_key = coalesce_config_text(
         general_config.spatial_key,
         default="spatial",
     )
-    cellcharter_config.x_coord_col = coalesce_config_text(
-        cellcharter_config.x_coord_col,
+    resolved_x_coord_col = coalesce_config_text(
         general_config.x_coord_obs,
         default="X_loc",
     )
-    cellcharter_config.y_coord_col = coalesce_config_text(
-        cellcharter_config.y_coord_col,
+    resolved_y_coord_col = coalesce_config_text(
         general_config.y_coord_obs,
         default="Y_loc",
     )
-    cellcharter_config.case_obs = coalesce_config_text(
-        cellcharter_config.case_obs,
+    resolved_case_obs = coalesce_config_text(
         general_config.case_obs,
     )
-    cellcharter_config.groupby_obs = coalesce_config_text(
-        cellcharter_config.groupby_obs,
+    resolved_groupby_obs = coalesce_config_text(
         general_config.groupby_obs,
     )
-    if cellcharter_config.groupby_obs_groups is None:
-        cellcharter_config.groupby_obs_groups = coalesce_config_list(
-            general_config.groupby_obs_primary_pairwise,
-            general_config.groupby_obs_groups,
-        )
+    resolved_groupby_obs_groups = coalesce_config_list(
+        general_config.groupby_obs_primary_pairwise,
+        general_config.groupby_obs_groups,
+    )
     if cellcharter_config.diff_nhood_condition_key is None:
         cellcharter_config.diff_nhood_condition_key = coalesce_config_text(
-            cellcharter_config.groupby_obs,
-            general_config.groupby_obs,
+            resolved_groupby_obs,
         )
     if cellcharter_config.diff_nhood_condition_groups is None:
         cellcharter_config.diff_nhood_condition_groups = coalesce_config_list(
-            cellcharter_config.groupby_obs_groups,
-            general_config.groupby_obs_primary_pairwise,
-            general_config.groupby_obs_groups,
+            resolved_groupby_obs_groups,
         )
 
     input_path = _resolve_input_adata_path(general_config, cellcharter_config)
@@ -1822,10 +1812,10 @@ def run_cellcharter_neighborhoods(
         raise FileNotFoundError(f"AnnData could not be loaded for CellCharter stage: {input_path}")
     logging.info("Loaded AnnData: %d cells x %d features", adata.n_obs, adata.n_vars)
 
-    sample_key_requested = str(cellcharter_config.sample_key)
-    spatial_key_requested = str(cellcharter_config.spatial_key)
-    x_coord_col = str(cellcharter_config.x_coord_col)
-    y_coord_col = str(cellcharter_config.y_coord_col)
+    sample_key_requested = str(resolved_sample_key)
+    spatial_key_requested = str(resolved_spatial_key)
+    x_coord_col = str(resolved_x_coord_col)
+    y_coord_col = str(resolved_y_coord_col)
     population_obs_primary = coalesce_config_text(general_config.population_obs_primary)
 
     sample_key = _resolve_sample_key(adata, sample_key_requested)
@@ -2083,18 +2073,12 @@ def run_cellcharter_neighborhoods(
         )
 
     if bool(cellcharter_config.save_cluster_composition_plots):
-        case_key = coalesce_config_text(
-            cellcharter_config.case_obs,
-            general_config.case_obs,
-        )
-        groupby_key = coalesce_config_text(
-            cellcharter_config.groupby_obs,
-            general_config.groupby_obs,
-        )
+        case_key = resolved_case_obs
+        groupby_key = resolved_groupby_obs
         if not case_key:
             logging.warning(
                 "Skipping CellCharter composition plots: case_obs is not configured "
-                "(set cellcharter.case_obs or general.case_obs)."
+                "(set general.case_obs)."
             )
         else:
             _save_cluster_composition_plots(
@@ -2103,7 +2087,7 @@ def run_cellcharter_neighborhoods(
                 sample_key=sample_key,
                 case_key=str(case_key),
                 groupby_key=groupby_key,
-                configured_groups=cellcharter_config.groupby_obs_groups,
+                configured_groups=resolved_groupby_obs_groups,
                 cluster_color_map=cluster_color_map,
                 order_by_environment=str(cellcharter_config.composition_order_by_environment),
                 qc_dir=qc_dir,
@@ -2127,9 +2111,9 @@ def run_cellcharter_neighborhoods(
         "population_obs_primary": population_obs_primary,
         "cluster_key": cellcharter_config.cluster_key,
         "cluster_default_cmap": cellcharter_config.cluster_default_cmap,
-        "case_obs": cellcharter_config.case_obs,
-        "groupby_obs": cellcharter_config.groupby_obs,
-        "groupby_obs_groups": cellcharter_config.groupby_obs_groups,
+        "case_obs": resolved_case_obs,
+        "groupby_obs": resolved_groupby_obs,
+        "groupby_obs_groups": resolved_groupby_obs_groups,
         "aggregated_rep_key": cellcharter_config.aggregated_rep_key,
         "aggregation_use_rep": aggregation_rep,
         "trvae": trvae_details,
