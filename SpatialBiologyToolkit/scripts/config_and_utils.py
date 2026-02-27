@@ -42,6 +42,38 @@ class PreprocessConfig:
     minimum_roi_dimensions: int = 200
 
 @dataclass
+class RebuildMetadataConfig:
+    input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
+    output_metadata_folder: Optional[str] = None  # Optional override (None = use general.metadata_folder)
+    include_obs_patterns: Optional[List[str]] = None  # Optional regex allowlist for ROI-invariant obs columns
+    exclude_obs: List[str] = field(default_factory=lambda: [
+        'ObjectNumber',
+        'CellID',
+        'cell_id',
+        'Master_Index',
+        'X_loc',
+        'Y_loc',
+    ])
+    exclude_obs_contains: List[str] = field(default_factory=lambda: [
+        'population',
+        'leiden',
+        'cluster',
+        'nhood',
+        'neighborhood',
+    ])
+    preserve_existing_import_data: bool = True  # Keep prior metadata.csv import_data values where ROI names match
+    metadata_description_obs: Optional[str] = None  # Optional ROI-invariant obs column used for metadata description
+    include_invariant_obs_in_metadata_csv: bool = True
+    include_invariant_obs_in_dictionary_csv: bool = True
+    panel_channel_name_var: Optional[str] = None  # Optional adata.var column for panel channel_name values
+    panel_channel_label_var: Optional[str] = None  # Optional adata.var column for panel channel_label values
+    panel_use_denoised_default: bool = True
+    panel_use_raw_default: bool = False
+    panel_to_denoise_default: bool = True
+    panel_remove_outliers_default: bool = False
+    preserve_existing_panel_flags: bool = True  # Keep prior panel use_* flags when channel labels match
+
+@dataclass
 class DenoisingConfig:
     run_denoising: bool = True
     method: str = 'deep_snf'  # Options: 'deep_snf', 'dimr'
@@ -616,6 +648,7 @@ class LoggingConfig:
 DEFAULT_CONFIG_CLASSES = {
     'general': GeneralConfig,
     'preprocess': PreprocessConfig,
+    'rebuild_metadata': RebuildMetadataConfig,
     'denoising': DenoisingConfig,
     'createmasks': CreateMasksConfig,
     'segmentation': SegmentationConfig,
