@@ -361,7 +361,7 @@ def _load_panel(metadata_folder: Path, nimbus_cfg: NimbusConfig) -> pd.DataFrame
     panel = pd.read_csv(metadata_folder / "panel.csv")
     panel["channel_label"] = [re.sub(r"\\W+", "", str(x)) for x in panel["channel_label"]]
     if bool(getattr(nimbus_cfg, "simple_image_names", False)):
-        panel["filename"] = panel["channel_label"]
+        panel["filename"] = panel["channel_label"] + ".tiff"
     else:
         panel["filename"] = panel["channel_name"] + "_" + panel["channel_label"]
     return panel
