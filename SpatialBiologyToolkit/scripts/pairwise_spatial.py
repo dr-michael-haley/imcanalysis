@@ -385,7 +385,7 @@ def _save_matrix_plot(
                 clustermap_kws["col_colors"] = col_colors.reindex(matrix.columns, fill_value="lightgray")
 
             grid = sns.clustermap(**clustermap_kws)
-            _force_show_all_tick_labels(grid.ax_heatmap, x_rotation=90.0, y_rotation=0.0)
+            #_force_show_all_tick_labels(grid.ax_heatmap, x_rotation=90.0, y_rotation=0.0)
             grid.fig.suptitle(title, y=1.02)
             grid.fig.savefig(out_path, dpi=int(dpi), bbox_inches="tight")
             plt.close(grid.fig)
@@ -415,7 +415,7 @@ def _save_matrix_plot(
         heatmap_kws["norm"] = TwoSlopeNorm(vmin=vmin, vcenter=center, vmax=vmax)
 
     sns.heatmap(**heatmap_kws)
-    _force_show_all_tick_labels(ax, x_rotation=90.0, y_rotation=0.0)
+    #_force_show_all_tick_labels(ax, x_rotation=90.0, y_rotation=0.0)
     ax.set_title(title)
     fig.tight_layout()
     fig.savefig(out_path, dpi=int(dpi), bbox_inches="tight")
@@ -1128,7 +1128,7 @@ def run_pairwise_spatial_analyses(
                             row_colors=color_series,
                             col_colors=color_series,
                         )
-                        _force_show_all_tick_labels(grid.ax_heatmap, x_rotation=90.0, y_rotation=0.0)
+                        #_force_show_all_tick_labels(grid.ax_heatmap, x_rotation=90.0, y_rotation=0.0)
                         grid.fig.savefig(out_path, dpi=int(pairwise_config.figure_dpi), bbox_inches="tight")
                         plt.close(grid.fig)
                     except Exception as exc:
