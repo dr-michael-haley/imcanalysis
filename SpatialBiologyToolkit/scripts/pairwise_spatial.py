@@ -29,6 +29,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.colors import TwoSlopeNorm
+from matplotlib.transforms import Bbox
 
 import SpatialBiologyToolkit.distance_analysis as sbt_distance
 import SpatialBiologyToolkit.pcf as sbt_pcf
@@ -384,22 +385,155 @@ def _place_colorbar_in_corner(
     if cbar_ax is None or reference_ax is None:
         return
 
+    fig = reference_ax.figure
+    try:
+        renderer = fig.canvas.get_renderer()
+    except Exception:
+        fig.canvas.draw()
+        renderer = fig.canvas.get_renderer()
+
+    def _bbox_to_tuple(bbox: Any) -> Optional[Tuple[float, float, float, float]]:
+        if bbox is None:
+            return None
+        vals = [float(bbox.x0), float(bbox.y0), float(bbox.x1), float(bbox.y1)]
+        if not np.all(np.isfinite(vals)):
+            return None
+        return vals[0], vals[1], vals[2], vals[3]
+
+    def _axis_tight_box(ax: Any) -> Optional[Tuple[float, float, float, float]]:
+        try:
+            tight = ax.get_tightbbox(renderer)
+        except Exception:
+            tight = None
+        if tight is None:
+            return _bbox_to_tuple(ax.get_position())
+        return _bbox_to_tuple(tight.transformed(fig.transFigure.inverted()))
+
+    def _ticklabel_box(axis: str) -> Optional[Tuple[float, float, float, float]]:
+        labels = reference_ax.get_xticklabels() if axis == "x" else reference_ax.get_yticklabels()
+        windows = []
+        for label in labels:
+            if not label.get_visible():
+                continue
+            if not str(label.get_text()).strip():
+                continue
+            try:
+                bb = label.get_window_extent(renderer=renderer)
+            except Exception:
+                continue
+            if bb is None or bb.width <= 0 or bb.height <= 0:
+                continue
+            windows.append(bb)
+        if not windows:
+            return None
+        union = Bbox.union(windows).transformed(fig.transFigure.inverted())
+        return _bbox_to_tuple(union)
+
+    def _intersection_area(
+        a: Tuple[float, float, float, float], b: Tuple[float, float, float, float]
+    ) -> float:
+        dx = min(a[2], b[2]) - max(a[0], b[0])
+        dy = min(a[3], b[3]) - max(a[1], b[1])
+        if dx <= 0 or dy <= 0:
+            return 0.0
+        return float(dx * dy)
+
+    def _outside_penalty(rect: Tuple[float, float, float, float]) -> float:
+        return float(
+            max(0.0, -rect[0])
+            + max(0.0, -rect[1])
+            + max(0.0, rect[2] - 1.0)
+            + max(0.0, rect[3] - 1.0)
+        )
+
+    def _to_rect(x0: float, y0: float, w: float, h: float) -> Tuple[float, float, float, float]:
+        return float(x0), float(y0), float(x0 + w), float(y0 + h)
+
+    def _rect_size(rect: Tuple[float, float, float, float]) -> Tuple[float, float]:
+        return float(rect[2] - rect[0]), float(rect[3] - rect[1])
+
+    def _score_rect(
+        rect: Tuple[float, float, float, float], occupied_boxes: Sequence[Tuple[float, float, float, float]]
+    ) -> float:
+        overlap = float(sum(_intersection_area(rect, box) for box in occupied_boxes))
+        return overlap + (1_000.0 * _outside_penalty(rect))
+
     ref_box = reference_ax.get_position()
+    ref_tight = _axis_tight_box(reference_ax) or (
+        float(ref_box.x0),
+        float(ref_box.y0),
+        float(ref_box.x1),
+        float(ref_box.y1),
+    )
+    x_tick_box = _ticklabel_box("x")
+    y_tick_box = _ticklabel_box("y")
+
     cbar_width = max(0.012, ref_box.width * 0.045)
     cbar_height = max(0.10, ref_box.height * 0.30)
     pad_x = max(0.005, ref_box.width * 0.02)
     pad_y = max(0.005, ref_box.height * 0.02)
 
-    if corner == "upper_left":
-        x0 = ref_box.x0 + pad_x
-        y0 = ref_box.y1 - cbar_height - pad_y
-    else:
-        x0 = ref_box.x1 - cbar_width - pad_x
-        y0 = ref_box.y0 + pad_y
+    occupied: List[Tuple[float, float, float, float]] = []
+    for ax in fig.axes:
+        if ax is cbar_ax or not ax.get_visible():
+            continue
+        box = _axis_tight_box(ax)
+        if box is not None:
+            occupied.append(box)
 
-    x0 = float(np.clip(x0, 0.0, max(0.0, 1.0 - cbar_width)))
-    y0 = float(np.clip(y0, 0.0, max(0.0, 1.0 - cbar_height)))
-    cbar_ax.set_position([x0, y0, cbar_width, cbar_height])
+    candidates: List[Tuple[float, float, float, float]] = []
+
+    # Prefer placing lower-right colorbars in whitespace left of x tick labels
+    # and below y tick labels (avoids heatmap overlap on dense clustermaps).
+    if corner == "lower_right" and x_tick_box is not None and y_tick_box is not None:
+        available_w = float(x_tick_box[0] - 0.01)
+        available_h = float(y_tick_box[1] - 0.01)
+        if available_w > 0.02 and available_h > 0.06:
+            adaptive_w = min(cbar_width, max(0.012, available_w * 0.9))
+            adaptive_h = min(cbar_height, max(0.06, available_h * 0.9))
+            x1 = x_tick_box[0] - pad_x
+            y1 = y_tick_box[1] - pad_y
+            candidates.append(_to_rect(x1 - adaptive_w, y1 - adaptive_h, adaptive_w, adaptive_h))
+
+    if corner == "upper_left":
+        candidates.extend(
+            [
+                _to_rect(ref_tight[0] - cbar_width - pad_x, ref_tight[3] - cbar_height, cbar_width, cbar_height),
+                _to_rect(ref_box.x0 + pad_x, ref_box.y1 - cbar_height - pad_y, cbar_width, cbar_height),
+                _to_rect(ref_box.x1 - cbar_width - pad_x, ref_box.y0 + pad_y, cbar_width, cbar_height),
+            ]
+        )
+    else:
+        candidates.extend(
+            [
+                _to_rect(ref_tight[0] - cbar_width - pad_x, ref_box.y0 + pad_y, cbar_width, cbar_height),
+                _to_rect(ref_tight[2] + pad_x, ref_box.y0 + pad_y, cbar_width, cbar_height),
+                _to_rect(ref_box.x1 - cbar_width - pad_x, ref_box.y0 + pad_y, cbar_width, cbar_height),
+            ]
+        )
+
+    best_rect: Optional[Tuple[float, float, float, float]] = None
+    best_score: Optional[float] = None
+    for rect in candidates:
+        score = _score_rect(rect, occupied)
+        if best_score is None or score < best_score:
+            best_rect = rect
+            best_score = score
+        if score <= 1e-10:
+            break
+
+    if best_rect is None:
+        x0 = float(np.clip(ref_box.x1 - cbar_width - pad_x, 0.0, max(0.0, 1.0 - cbar_width)))
+        y0 = float(np.clip(ref_box.y0 + pad_y, 0.0, max(0.0, 1.0 - cbar_height)))
+        cbar_ax.set_position([x0, y0, cbar_width, cbar_height])
+        return
+
+    width, height = _rect_size(best_rect)
+    width = float(max(0.008, width))
+    height = float(max(0.05, height))
+    x0 = float(np.clip(best_rect[0], 0.0, max(0.0, 1.0 - width)))
+    y0 = float(np.clip(best_rect[1], 0.0, max(0.0, 1.0 - height)))
+    cbar_ax.set_position([x0, y0, width, height])
 
 
 def _save_matrix_plot(

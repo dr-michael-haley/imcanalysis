@@ -823,7 +823,6 @@ def _save_cluster_composition_plots(
             ax.set_ylabel("Case-level proportion")
             ax.set_title(f"Spatial cluster case-level proportions by {groupby_key}")
             ax.tick_params(axis="x", rotation=90)
-            ax.set_ylim(0.0, 1.0)
             ax.margins(y=0.0)
             ax.grid(False)
             ax.legend(
