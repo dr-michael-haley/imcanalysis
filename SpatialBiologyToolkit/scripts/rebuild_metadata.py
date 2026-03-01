@@ -3,10 +3,11 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import anndata as ad
 import pandas as pd
+import tifffile as tiff
 
 from .config_and_utils import (
     GeneralConfig,
@@ -197,6 +198,74 @@ def _resolve_excluded_obs(general: GeneralConfig, cfg: RebuildMetadataConfig) ->
     return sorted(excluded)
 
 
+def _discover_masks(masks_folder: Path, extensions: Sequence[str]) -> Dict[str, Path]:
+    lookup: Dict[str, Path] = {}
+    if not masks_folder.exists():
+        return lookup
+
+    allowed = {ext.lower() for ext in extensions}
+    for path in sorted(masks_folder.iterdir()):
+        if not path.is_file():
+            continue
+        if path.suffix.lower() not in allowed:
+            continue
+        roi = path.stem
+        if roi not in lookup:
+            lookup[roi] = path
+    return lookup
+
+
+def _mask_width_height(mask_path: Path) -> Optional[Tuple[float, float]]:
+    try:
+        mask = tiff.imread(mask_path)
+    except Exception as exc:  # pragma: no cover - defensive logging
+        logging.warning("Could not read mask '%s' for dimensions: %s", mask_path, exc)
+        return None
+
+    if len(mask.shape) < 2:
+        logging.warning("Mask '%s' has invalid shape %s; expected at least 2 dimensions.", mask_path, mask.shape)
+        return None
+
+    height = float(mask.shape[-2])
+    width = float(mask.shape[-1])
+    return width, height
+
+
+def _build_roi_dimensions(rois: Sequence[str], masks_folder: Path) -> Dict[str, Tuple[Optional[float], Optional[float]]]:
+    mask_lookup = _discover_masks(masks_folder, extensions=[".tiff", ".tif"])
+    dimensions: Dict[str, Tuple[Optional[float], Optional[float]]] = {}
+    missing_masks: List[str] = []
+    invalid_shapes: List[str] = []
+
+    for roi in rois:
+        mask_path = mask_lookup.get(str(roi))
+        if mask_path is None:
+            missing_masks.append(str(roi))
+            dimensions[str(roi)] = (None, None)
+            continue
+
+        width_height = _mask_width_height(mask_path)
+        if width_height is None:
+            invalid_shapes.append(str(roi))
+            dimensions[str(roi)] = (None, None)
+            continue
+        dimensions[str(roi)] = width_height
+
+    if missing_masks:
+        logging.warning(
+            "No matching mask found for %d ROI(s) in %s. width_um/height_um left blank for those ROIs.",
+            len(missing_masks),
+            masks_folder,
+        )
+    if invalid_shapes:
+        logging.warning(
+            "%d ROI mask(s) in %s had unreadable/invalid shapes. width_um/height_um left blank for those ROIs.",
+            len(invalid_shapes),
+            masks_folder,
+        )
+    return dimensions
+
+
 def rebuild_metadata_from_anndata(general: GeneralConfig, cfg: RebuildMetadataConfig) -> None:
     adata_path = Path(cfg.input_adata_path or general.anndata_path)
     metadata_folder = Path(cfg.output_metadata_folder or general.metadata_folder)
@@ -236,23 +305,16 @@ def rebuild_metadata_from_anndata(general: GeneralConfig, cfg: RebuildMetadataCo
     else:
         metadata_df["description"] = metadata_df["unstacked_data_folder"]
 
-    metadata_df["import_data"] = True
-    existing_metadata_path = metadata_folder / "metadata.csv"
-    if cfg.preserve_existing_import_data and existing_metadata_path.exists():
-        try:
-            existing_metadata = pd.read_csv(existing_metadata_path)
-            if {"unstacked_data_folder", "import_data"}.issubset(existing_metadata.columns):
-                old_import = existing_metadata.set_index("unstacked_data_folder")["import_data"]
-                old_map = {str(k): _coerce_bool(v) for k, v in old_import.to_dict().items()}
-                preserved_values: List[bool] = []
-                for roi in metadata_df["unstacked_data_folder"]:
-                    raw = old_map.get(str(roi))
-                    preserved_values.append(True if raw is None else bool(raw))
-                metadata_df["import_data"] = preserved_values
-        except Exception as exc:  # pragma: no cover - defensive logging
-            logging.warning("Could not preserve existing import_data values: %s", exc)
+    roi_names = metadata_df["unstacked_data_folder"].astype(str).tolist()
+    roi_dimensions = _build_roi_dimensions(roi_names, Path(general.masks_folder))
+    metadata_df["width_um"] = [roi_dimensions[roi][0] for roi in roi_names]
+    metadata_df["height_um"] = [roi_dimensions[roi][1] for roi in roi_names]
 
-    invariant_write_cols = [c for c in invariant_cols if c not in {"description", "import_data"}]
+    # Rebuild policy: always import all ROIs by default.
+    metadata_df["import_data"] = True
+
+    reserved_cols = {"unstacked_data_folder", "description", "width_um", "height_um", "import_data"}
+    invariant_write_cols = [c for c in invariant_cols if c not in reserved_cols]
     if cfg.include_invariant_obs_in_metadata_csv:
         for col in invariant_write_cols:
             metadata_df[col] = roi_table[col].reindex(metadata_df["unstacked_data_folder"]).values
