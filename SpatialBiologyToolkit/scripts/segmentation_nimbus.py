@@ -821,17 +821,43 @@ def _create_anndata_with_layers(
     # Add metadata from metadata.csv (optional)
     metadata_path = metadata_folder / 'metadata.csv'
     if metadata_path.exists():
-        metadata = pd.read_csv(metadata_path, index_col='unstacked_data_folder')
-        adata.obs['ROI'] = adata.obs['ROI'].astype('category')
-        adata.obs['ROI_name'] = adata.obs['ROI'].map(metadata['description'].to_dict())
-        adata.obs['ROI_width'] = adata.obs['ROI'].map(metadata['width_um'].to_dict())
-        adata.obs['ROI_height'] = adata.obs['ROI'].map(metadata['height_um'].to_dict())
-        
-        if 'mcd' in metadata.columns:
-            adata.obs['MCD_file'] = adata.obs['ROI'].map(metadata['mcd'].to_dict())
-        elif 'source_file' in metadata.columns:
-            adata.obs['Source_file'] = adata.obs['ROI'].map(metadata['source_file'].to_dict())
-            adata.obs['File_type'] = adata.obs['ROI'].map(metadata['file_type'].to_dict())
+        expected_metadata_cols = {'description', 'width_um', 'height_um', 'mcd', 'source_file', 'file_type'}
+        try:
+            metadata = pd.read_csv(metadata_path, index_col='unstacked_data_folder')
+        except Exception as exc:
+            logging.warning(
+                "Failed to parse metadata.csv at %s; skipping ROI metadata enrichment. Error: %s",
+                metadata_path,
+                exc,
+            )
+        else:
+            present_expected_cols = expected_metadata_cols.intersection(set(metadata.columns))
+            if not present_expected_cols:
+                logging.warning(
+                    "metadata.csv found at %s but contains none of the expected columns %s; skipping ROI metadata enrichment.",
+                    metadata_path,
+                    sorted(expected_metadata_cols),
+                )
+            else:
+                adata.obs['ROI'] = adata.obs['ROI'].astype('category')
+
+                if 'description' in metadata.columns:
+                    adata.obs['ROI_name'] = adata.obs['ROI'].map(metadata['description'].to_dict())
+                if 'width_um' in metadata.columns:
+                    adata.obs['ROI_width'] = adata.obs['ROI'].map(metadata['width_um'].to_dict())
+                if 'height_um' in metadata.columns:
+                    adata.obs['ROI_height'] = adata.obs['ROI'].map(metadata['height_um'].to_dict())
+
+                if 'mcd' in metadata.columns:
+                    adata.obs['MCD_file'] = adata.obs['ROI'].map(metadata['mcd'].to_dict())
+                elif 'source_file' in metadata.columns and 'file_type' in metadata.columns:
+                    adata.obs['Source_file'] = adata.obs['ROI'].map(metadata['source_file'].to_dict())
+                    adata.obs['File_type'] = adata.obs['ROI'].map(metadata['file_type'].to_dict())
+                elif 'source_file' in metadata.columns or 'file_type' in metadata.columns:
+                    logging.warning(
+                        "metadata.csv at %s has only one of source_file/file_type; skipping source file metadata enrichment.",
+                        metadata_path,
+                    )
     else:
         logging.info("metadata.csv not found at %s; skipping ROI metadata enrichment.", metadata_path)
     

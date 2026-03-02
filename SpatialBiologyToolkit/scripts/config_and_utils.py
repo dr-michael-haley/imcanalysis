@@ -223,7 +223,6 @@ class NimbusConfig:
     norm_dict_qc_only: bool = False  # If True, stop after normalization dict computation and QC generation
     save_prediction_maps: bool = False
     allow_prediction_resize: bool = False  # If True, fall back to resizing predictions when shapes mismatch
-    overwrite_existing_outputs: bool = True
     use_existing_master_celltables: bool = False  # If True, reuse existing master cell tables when found
     extract_classic_intensities: bool = True  # Extract classic mean intensities over masks
     extract_expansion_intensities: bool = True  # Extract mean intensities from expanded masks
