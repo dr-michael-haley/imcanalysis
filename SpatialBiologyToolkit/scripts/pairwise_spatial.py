@@ -367,7 +367,7 @@ def _force_show_all_tick_labels(
 
 def _normalise_cbar_corner(value: Optional[str]) -> str:
     text = str(value or "").strip().lower().replace("-", "_")
-    if text in {"lower_right", "upper_left"}:
+    if text in {"lower_right", "upper_left", "off_plot_right"}:
         return text
     logging.warning(
         "Invalid pairwise_matrices_cbar_corner='%s'. Using default 'lower_right'.",
@@ -483,19 +483,24 @@ def _place_colorbar_in_corner(
 
     candidates: List[Tuple[float, float, float, float]] = []
 
-    # Prefer placing lower-right colorbars in whitespace left of x tick labels
-    # and below y tick labels (avoids heatmap overlap on dense clustermaps).
-    if corner == "lower_right" and x_tick_box is not None and y_tick_box is not None:
-        available_w = float(x_tick_box[0] - 0.01)
-        available_h = float(y_tick_box[1] - 0.01)
-        if available_w > 0.02 and available_h > 0.06:
-            adaptive_w = min(cbar_width, max(0.012, available_w * 0.9))
-            adaptive_h = min(cbar_height, max(0.06, available_h * 0.9))
-            x1 = x_tick_box[0] - pad_x
-            y1 = y_tick_box[1] - pad_y
-            candidates.append(_to_rect(x1 - adaptive_w, y1 - adaptive_h, adaptive_w, adaptive_h))
+    if corner == "off_plot_right":
+        # Place outside the plot and outside right-side labels at upper-right.
+        right_start = float(ref_tight[2] + pad_x)
+        available_w = float(1.0 - right_start - 0.002)
+        adaptive_w = min(cbar_width, max(0.008, available_w))
+        adaptive_h = min(cbar_height, max(0.08, ref_tight[3] - ref_box.y0))
+        top_y = float(np.clip(ref_tight[3] - adaptive_h, 0.0, max(0.0, 1.0 - adaptive_h)))
 
-    if corner == "upper_left":
+        if available_w > 0.008:
+            candidates.append(_to_rect(right_start, top_y, adaptive_w, adaptive_h))
+            # Slightly lower backup if top slot has overlap with other artists.
+            candidates.append(_to_rect(right_start, max(0.0, top_y - pad_y), adaptive_w, adaptive_h))
+        # Fallback inside upper-right if no outside room.
+        candidates.append(
+            _to_rect(ref_box.x1 - cbar_width - pad_x, ref_box.y1 - cbar_height - pad_y, cbar_width, cbar_height)
+        )
+
+    elif corner == "upper_left":
         candidates.extend(
             [
                 _to_rect(ref_tight[0] - cbar_width - pad_x, ref_tight[3] - cbar_height, cbar_width, cbar_height),
@@ -506,9 +511,25 @@ def _place_colorbar_in_corner(
     else:
         candidates.extend(
             [
-                _to_rect(ref_tight[0] - cbar_width - pad_x, ref_box.y0 + pad_y, cbar_width, cbar_height),
                 _to_rect(ref_tight[2] + pad_x, ref_box.y0 + pad_y, cbar_width, cbar_height),
                 _to_rect(ref_box.x1 - cbar_width - pad_x, ref_box.y0 + pad_y, cbar_width, cbar_height),
+            ]
+        )
+        # Optional fallback for very dense layouts: lower-left whitespace
+        # (left of x labels and below y labels), but only after right-side
+        # candidates are attempted so lower_right remains lower-right by default.
+        if x_tick_box is not None and y_tick_box is not None:
+            available_w = float(x_tick_box[0] - 0.01)
+            available_h = float(y_tick_box[1] - 0.01)
+            if available_w > 0.02 and available_h > 0.06:
+                adaptive_w = min(cbar_width, max(0.012, available_w * 0.9))
+                adaptive_h = min(cbar_height, max(0.06, available_h * 0.9))
+                x1 = x_tick_box[0] - pad_x
+                y1 = y_tick_box[1] - pad_y
+                candidates.append(_to_rect(x1 - adaptive_w, y1 - adaptive_h, adaptive_w, adaptive_h))
+        candidates.extend(
+            [
+                _to_rect(ref_tight[0] - cbar_width - pad_x, ref_box.y0 + pad_y, cbar_width, cbar_height),
             ]
         )
 
