@@ -686,9 +686,37 @@ def _save_pair_barplots(
     extension: str,
     add_points: bool,
     value_label: str,
+    make_source_target_barplots: bool = True,
+    source_target_width_scale: float = 0.35,
 ) -> None:
     if data.empty or not pairs:
         return
+
+    def _ordered_levels(series: pd.Series) -> List[str]:
+        if pd.api.types.is_categorical_dtype(series):
+            return [str(x) for x in series.cat.categories.tolist() if pd.notna(x)]
+        return sorted(series.dropna().astype(str).unique().tolist())
+
+    def _dedupe_legend(ax: Any) -> None:
+        handles, labels = ax.get_legend_handles_labels()
+        if not handles:
+            return
+        seen = set()
+        unique_h: List[Any] = []
+        unique_l: List[str] = []
+        for h, l in zip(handles, labels):
+            label = str(l)
+            if not label or label.startswith("_") or label in seen:
+                continue
+            seen.add(label)
+            unique_h.append(h)
+            unique_l.append(label)
+        if unique_h:
+            ax.legend(unique_h, unique_l, title="target_population", frameon=True)
+        else:
+            leg = ax.get_legend()
+            if leg is not None:
+                leg.remove()
 
     for source, targets in pairs.items():
         for target in targets:
@@ -767,6 +795,120 @@ def _save_pair_barplots(
             plot_path.parent.mkdir(parents=True, exist_ok=True)
             fig.savefig(plot_path, dpi=int(dpi), bbox_inches="tight")
             plt.close(fig)
+
+    if not make_source_target_barplots:
+        return
+
+    base_width = float(figsize[0])
+    base_height = float(figsize[1])
+    width_scale = max(0.05, float(source_target_width_scale))
+
+    for source, targets in pairs.items():
+        source_subset = data[data["source_population"].astype(str) == str(source)].copy()
+        if source_subset.empty:
+            continue
+        source_subset = source_subset[source_subset["target_population"].astype(str).isin([str(t) for t in targets])]
+        if source_subset.empty:
+            continue
+        source_subset["target_population"] = source_subset["target_population"].astype(str)
+
+        target_order = [str(t) for t in targets if str(t) in source_subset["target_population"].astype(str).unique().tolist()]
+        if not target_order:
+            target_order = sorted(source_subset["target_population"].dropna().astype(str).unique().tolist())
+        if not target_order:
+            continue
+
+        source_stub = cleanstring(source)
+        raw_path = raw_dir / f"{analysis}_{metric}_{source_stub}_all_targets.csv"
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        source_subset.to_csv(raw_path, index=False)
+
+        palette = {t: color_map.get(str(t), "#4c72b0") for t in target_order}
+
+        use_group = bool(group_col and group_col in source_subset.columns and source_subset[group_col].notna().any())
+        if use_group:
+            x_col = str(group_col)
+            source_subset[x_col] = source_subset[x_col].astype(str)
+            order = _ordered_levels(source_subset[x_col])
+            n_groups = max(1, len(order))
+            n_targets = max(1, len(target_order))
+            plot_width = max(base_width, width_scale * n_groups * n_targets)
+
+            fig, ax = plt.subplots(figsize=(plot_width, base_height))
+            sns.barplot(
+                data=source_subset,
+                x=x_col,
+                y="value",
+                hue="target_population",
+                order=order,
+                hue_order=target_order,
+                errorbar="se" if len(source_subset) > 1 else None,
+                palette=palette,
+                ax=ax,
+            )
+            if add_points:
+                sns.stripplot(
+                    data=source_subset,
+                    x=x_col,
+                    y="value",
+                    hue="target_population",
+                    order=order,
+                    hue_order=target_order,
+                    dodge=True,
+                    palette=palette,
+                    size=2.5,
+                    alpha=0.6,
+                    jitter=0.15,
+                    ax=ax,
+                )
+            ax.tick_params(axis="x", labelrotation=90)
+            _dedupe_legend(ax)
+        else:
+            x_col = "target_population"
+            order = target_order
+            n_targets = max(1, len(target_order))
+            plot_width = max(base_width, width_scale * n_targets * 2.0)
+
+            fig, ax = plt.subplots(figsize=(plot_width, base_height))
+            sns.barplot(
+                data=source_subset,
+                x=x_col,
+                y="value",
+                hue="target_population",
+                order=order,
+                hue_order=target_order,
+                dodge=False,
+                errorbar="se" if len(source_subset) > 1 else None,
+                palette=palette,
+                ax=ax,
+            )
+            if add_points:
+                sns.stripplot(
+                    data=source_subset,
+                    x=x_col,
+                    y="value",
+                    order=order,
+                    color="black",
+                    size=2.8,
+                    alpha=0.6,
+                    jitter=0.15,
+                    ax=ax,
+                )
+            ax.tick_params(axis="x", labelrotation=90)
+            leg = ax.get_legend()
+            if leg is not None:
+                leg.remove()
+
+        ax.set_title(f"{source} -> all selected targets")
+        ax.set_xlabel(group_col if use_group else "target_population")
+        ax.set_ylabel(value_label)
+        ax.grid(False)
+        fig.tight_layout()
+
+        plot_path = out_dir / f"{analysis}_{metric}_{source_stub}_all_targets{extension}"
+        plot_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(plot_path, dpi=int(dpi), bbox_inches="tight")
+        plt.close(fig)
 
 
 def _flatten_squidpy_results(
@@ -1108,6 +1250,8 @@ def run_pairwise_spatial_analyses(
                         extension=extension,
                         add_points=pairwise_config.barplot_add_points,
                         value_label=f"Squidpy {metric}",
+                        make_source_target_barplots=pairwise_config.make_source_target_barplots,
+                        source_target_width_scale=pairwise_config.source_target_barplot_width_scale,
                     )
 
     if pairwise_config.run_distance_bootstrap:
@@ -1273,6 +1417,8 @@ def run_pairwise_spatial_analyses(
                         extension=extension,
                         add_points=pairwise_config.barplot_add_points,
                         value_label=f"Distance {metric}",
+                        make_source_target_barplots=pairwise_config.make_source_target_barplots,
+                        source_target_width_scale=pairwise_config.source_target_barplot_width_scale,
                     )
 
     if pairwise_config.run_pcf:
@@ -1582,6 +1728,8 @@ def run_pairwise_spatial_analyses(
                     extension=extension,
                     add_points=pairwise_config.barplot_add_points,
                     value_label=f"PCF {metric}",
+                    make_source_target_barplots=pairwise_config.make_source_target_barplots,
+                    source_target_width_scale=pairwise_config.source_target_barplot_width_scale,
                 )
 
     run_metadata = {
@@ -1597,6 +1745,8 @@ def run_pairwise_spatial_analyses(
         "reload_saved_results": reload_saved_results,
         "pairwise_matrices_cbar_corner": cbar_corner,
         "pairwise_matrices_share_vmax_vmin": bool(pairwise_config.pairwise_matrices_share_vmax_vmin),
+        "make_source_target_barplots": bool(pairwise_config.make_source_target_barplots),
+        "source_target_barplot_width_scale": float(pairwise_config.source_target_barplot_width_scale),
         "analysis_sources": analysis_sources,
         "population_pairs": pair_map,
     }
