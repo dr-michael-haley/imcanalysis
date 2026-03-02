@@ -1255,6 +1255,7 @@ def run_pairwise_spatial_analyses(
                     )
 
     if pairwise_config.run_pcf:
+        target_distance_um = float(pairwise_config.pcf_target_distance_um)
         pcf_raw_dir = raw_dir / "pcf"
         pcf_spoox_dir = pcf_raw_dir / "spoox_out"
         pcf_summary_dir = pcf_raw_dir / "summary"
@@ -1262,41 +1263,83 @@ def run_pairwise_spatial_analyses(
         pcf_conditions_path = pcf_raw_dir / "pcf_conditions.json"
         pcf_summary_path = pcf_raw_dir / "pcf_summary.csv"
         pcf_long_path = pcf_raw_dir / "pcf_long.csv"
+        pcf_roi_summary_path = pcf_raw_dir / "pcf_roi_summary.csv"
+        pcf_roi_long_path = pcf_raw_dir / "pcf_roi_long.csv"
+        pcf_roi_summary_tsv_path = (
+            pcf_summary_dir
+            / "paircorrelationfunction"
+            / f"pcf_{target_distance_um:.1f}um_roi_summary.tsv"
+        )
         for folder in [pcf_raw_dir, pcf_spoox_dir, pcf_summary_dir]:
             folder.mkdir(parents=True, exist_ok=True)
 
         pcf_summary = None
         pcf_long = None
+        pcf_roi_summary = None
+        pcf_roi_long = None
         if reload_saved_results:
             loaded_summary = _load_saved_csv(
                 pcf_summary_path,
                 required_cols=["cell_type_1", "cell_type_2"],
             )
+            loaded_roi_summary = _load_saved_csv(
+                pcf_roi_summary_path,
+                required_cols=["roi", "cell_type_1", "cell_type_2", "g"],
+            )
+            loaded_roi_long = _load_saved_csv(
+                pcf_roi_long_path,
+                required_cols=["roi", "source_population", "target_population", "metric", "value"],
+            )
             loaded_long = _load_saved_csv(
                 pcf_long_path,
                 required_cols=["source_population", "target_population", "metric", "value"],
             )
-            if loaded_summary is not None and loaded_long is not None:
+            if loaded_summary is not None and loaded_roi_long is not None:
                 pcf_summary = loaded_summary
+                pcf_roi_long = loaded_roi_long
+                pcf_roi_summary = loaded_roi_summary
                 pcf_long = loaded_long
+                if pcf_long is None:
+                    pcf_long = pcf_summary.melt(
+                        id_vars=["condition", "cell_type_1", "cell_type_2"]
+                        if "condition" in pcf_summary.columns
+                        else ["cell_type_1", "cell_type_2"],
+                        value_vars=[
+                            c for c in ["g_mean", "g_min", "g_max"] if c in pcf_summary.columns
+                        ],
+                        var_name="metric",
+                        value_name="value",
+                    ).rename(
+                        columns={
+                            "cell_type_1": "source_population",
+                            "cell_type_2": "target_population",
+                        }
+                    )
+                    pcf_long.to_csv(pcf_long_path, index=False)
                 analysis_sources["pcf"] = "loaded"
                 logging.info(
-                    "Reloaded saved PCF results from %s and %s",
+                    "Reloaded saved PCF results from %s and %s (ROI-level long).",
                     pcf_summary_path,
-                    pcf_long_path,
+                    pcf_roi_long_path,
                 )
-            elif loaded_summary is not None or loaded_long is not None:
+            elif (
+                loaded_summary is not None
+                or loaded_long is not None
+                or loaded_roi_summary is not None
+                or loaded_roi_long is not None
+            ):
                 logging.warning(
-                    "Found partial saved PCF outputs (summary or long only). Recomputing PCF analysis."
+                    "Found partial saved PCF outputs (summary/long/ROI-level incomplete). "
+                    "Recomputing PCF analysis."
                 )
 
-        if pcf_summary is None or pcf_long is None:
-            logging.info("Running PCF analysis at %.2f um.", pairwise_config.pcf_target_distance_um)
+        if pcf_summary is None or pcf_roi_long is None:
+            logging.info("Running PCF analysis at %.2f um.", target_distance_um)
             pcf_summary = sbt_pcf.run_paircorrelation_at_distance(
                 adata=adata,
                 population_obs=pairwise_config.population_obs,
                 groupby=pairwise_config.groupby_obs,
-                target_distance=float(pairwise_config.pcf_target_distance_um),
+                target_distance=target_distance_um,
                 spoox_output_dir=pcf_spoox_dir,
                 spoox_output_summary_dir=pcf_summary_dir,
                 stats_file=pcf_stats_path,
@@ -1310,6 +1353,7 @@ def run_pairwise_spatial_analyses(
                 max_radius=float(pairwise_config.pcf_max_radius_um),
                 radius_step=float(pairwise_config.pcf_radius_step_um),
                 num_bootstrap=int(pairwise_config.pcf_num_bootstrap),
+                save_roi_level_summary=True,
             )
             pcf_summary.to_csv(pcf_summary_path, index=False)
 
@@ -1329,6 +1373,31 @@ def run_pairwise_spatial_analyses(
             )
             pcf_long.to_csv(pcf_long_path, index=False)
 
+            if not pcf_roi_summary_tsv_path.exists():
+                raise FileNotFoundError(
+                    "PCF ROI-level summary was not found after run: "
+                    f"{pcf_roi_summary_tsv_path}"
+                )
+            pcf_roi_summary = pd.read_csv(pcf_roi_summary_tsv_path, sep="\t")
+            required_roi_cols = {"roi", "cell_type_1", "cell_type_2", "g"}
+            missing_roi_cols = sorted(required_roi_cols.difference(pcf_roi_summary.columns))
+            if missing_roi_cols:
+                raise ValueError(
+                    "PCF ROI-level summary is missing required columns: "
+                    f"{missing_roi_cols}"
+                )
+            pcf_roi_summary.to_csv(pcf_roi_summary_path, index=False)
+
+            pcf_roi_long = pcf_roi_summary.rename(
+                columns={
+                    "cell_type_1": "source_population",
+                    "cell_type_2": "target_population",
+                    "g": "value",
+                }
+            ).copy()
+            pcf_roi_long["metric"] = "g"
+            pcf_roi_long.to_csv(pcf_roi_long_path, index=False)
+
             pcf_cell_input_cols = [
                 c
                 for c in [
@@ -1346,8 +1415,28 @@ def run_pairwise_spatial_analyses(
 
         if "condition" not in pcf_summary.columns:
             pcf_summary["condition"] = "All"
-        if "condition" not in pcf_long.columns:
+        if pcf_long is not None and "condition" not in pcf_long.columns:
             pcf_long["condition"] = "All"
+        if pcf_roi_long is not None and "condition" not in pcf_roi_long.columns:
+            pcf_roi_long["condition"] = "All"
+        if (
+            pcf_roi_summary is not None
+            and not roi_metadata.empty
+            and "roi" in pcf_roi_summary.columns
+        ):
+            merge_roi_meta = roi_metadata.reset_index().rename(columns={pairwise_config.roi_obs: "roi"})
+            cols_to_add = ["roi"] + [c for c in merge_roi_meta.columns if c != "roi" and c not in pcf_roi_summary.columns]
+            pcf_roi_summary = pcf_roi_summary.merge(merge_roi_meta[cols_to_add], on="roi", how="left")
+            pcf_roi_summary.to_csv(pcf_roi_summary_path, index=False)
+        if (
+            pcf_roi_long is not None
+            and not roi_metadata.empty
+            and "roi" in pcf_roi_long.columns
+        ):
+            merge_roi_meta = roi_metadata.reset_index().rename(columns={pairwise_config.roi_obs: "roi"})
+            cols_to_add = ["roi"] + [c for c in merge_roi_meta.columns if c != "roi" and c not in pcf_roi_long.columns]
+            pcf_roi_long = pcf_roi_long.merge(merge_roi_meta[cols_to_add], on="roi", how="left")
+            pcf_roi_long.to_csv(pcf_roi_long_path, index=False)
 
         if pairwise_config.make_matrix_plots and not pcf_summary.empty:
             if "g_mean" not in pcf_summary.columns:
@@ -1455,9 +1544,9 @@ def run_pairwise_spatial_analyses(
                             cbar_corner=cbar_corner,
                         )
 
-        if pairwise_config.make_pair_barplots and pair_map and not pcf_long.empty:
-            for metric in sorted(pcf_long["metric"].dropna().unique().tolist()):
-                metric_df = pcf_long[pcf_long["metric"] == metric].copy()
+        if pairwise_config.make_pair_barplots and pair_map and pcf_roi_long is not None and not pcf_roi_long.empty:
+            for metric in sorted(pcf_roi_long["metric"].dropna().unique().tolist()):
+                metric_df = pcf_roi_long[pcf_roi_long["metric"] == metric].copy()
                 _save_pair_barplots(
                     metric_df,
                     pairs=pair_map,

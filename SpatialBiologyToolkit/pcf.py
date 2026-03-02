@@ -56,6 +56,7 @@ def run_paircorrelation_at_distance(
     max_radius: float = 300.0,
     radius_step: float = 10.0,
     num_bootstrap: int = 999,
+    save_roi_level_summary: bool = True,
 ) -> pd.DataFrame:
     """Run pair-correlation analysis entirely in Python and average by condition.
 
@@ -63,6 +64,10 @@ def run_paircorrelation_at_distance(
     reference, computes pair-correlation curves per sample, averages them by
     condition with bootstrap confidence bounds, and returns a tidy table with
     g(r) statistics evaluated at ``target_distance``.
+
+    When ``save_roi_level_summary`` is True, a per-ROI table at the same target
+    distance is also saved to:
+    ``{spoox_output_summary_dir}/paircorrelationfunction/pcf_{target_distance:.1f}um_roi_summary.tsv``.
     """
 
     if target_distance <= 0:
@@ -138,6 +143,24 @@ def run_paircorrelation_at_distance(
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     result_df.to_csv(summary_path, sep="\t", index=False)
     print(f"[pcf] Saved summary table to {summary_path}")
+
+    if save_roi_level_summary:
+        roi_level_df = _summarise_target_radius_by_roi(
+            per_sample_results=per_sample_results,
+            datasets=datasets,
+            cluster_numbers=cluster_numbers,
+            conditions=conditions,
+            target_distance=target_distance,
+        )
+        roi_summary_path = (
+            summary_dir
+            / "paircorrelationfunction"
+            / f"pcf_{target_distance:.1f}um_roi_summary.tsv"
+        )
+        roi_summary_path.parent.mkdir(parents=True, exist_ok=True)
+        roi_level_df.to_csv(roi_summary_path, sep="\t", index=False)
+        print(f"[pcf] Saved ROI-level summary table to {roi_summary_path}")
+
     return result_df
 
 
@@ -202,6 +225,8 @@ def _build_conditions_mapping(
 ) -> Dict[str, List[str]]:
     if groupby:
         df = adata.obs[[roi_obs, groupby]].drop_duplicates(subset=roi_obs)
+        if samples:
+            df = df[df[roi_obs].astype(str).isin([str(s) for s in samples])]
         grouped = df.groupby(groupby)[roi_obs].apply(list).to_dict()
         return {str(cond): list(rois) for cond, rois in grouped.items()}
 
@@ -457,6 +482,70 @@ def _summarise_target_radius(
     return pd.DataFrame(rows).sort_values(
         ["condition", "cell_type_1", "cell_type_2"]
     ).reset_index(drop=True)
+
+
+def _summarise_target_radius_by_roi(
+    *,
+    per_sample_results: Dict[str, PairCorrelationSampleResult],
+    datasets: Dict[str, SampleSpatialData],
+    cluster_numbers: Sequence[Hashable],
+    conditions: Dict[str, List[str]],
+    target_distance: float,
+) -> pd.DataFrame:
+    """Summarise g(r) at target_distance for each ROI/sample and population pair."""
+    roi_to_condition: Dict[str, str] = {}
+    for condition, rois in conditions.items():
+        for roi in rois:
+            roi_to_condition[str(roi)] = str(condition)
+
+    rows: List[Dict[str, Union[str, float, int]]] = []
+    for sample_id, sample_result in per_sample_results.items():
+        ds = datasets.get(sample_id)
+        if ds is None:
+            continue
+        radii = np.asarray(sample_result.radii, dtype=float)
+        if radii.size == 0:
+            continue
+        idx = int(np.argmin(np.abs(radii - target_distance)))
+        evaluated = float(radii[idx])
+        gs = np.asarray(sample_result.gs, dtype=float)
+
+        for a, cluster_a in enumerate(cluster_numbers):
+            for b, cluster_b in enumerate(cluster_numbers):
+                if a >= gs.shape[0] or b >= gs.shape[1] or idx >= gs.shape[2]:
+                    continue
+                g_val = float(gs[a, b, idx])
+                if not np.isfinite(g_val):
+                    continue
+
+                rows.append(
+                    {
+                        "roi": str(sample_id),
+                        "condition": roi_to_condition.get(str(sample_id), "All"),
+                        "cell_type_1": str(cluster_a),
+                        "cell_type_2": str(cluster_b),
+                        "requested_um": float(target_distance),
+                        "evaluated_um": evaluated,
+                        "g": g_val,
+                        "delta_um": abs(evaluated - float(target_distance)),
+                        "n_cell_type_1": int(ds.cluster_counts.get(cluster_a, 0)),
+                        "n_cell_type_2": int(ds.cluster_counts.get(cluster_b, 0)),
+                        "domain_x": float(ds.domain_x),
+                        "domain_y": float(ds.domain_y),
+                    }
+                )
+
+    if not rows:
+        raise ValueError(
+            "No ROI-level pair-correlation results were generated. "
+            "Verify selected samples and population columns."
+        )
+
+    return (
+        pd.DataFrame(rows)
+        .sort_values(["condition", "roi", "cell_type_1", "cell_type_2"])
+        .reset_index(drop=True)
+    )
 
 
 def getPCFContributionsWithinGrid(
