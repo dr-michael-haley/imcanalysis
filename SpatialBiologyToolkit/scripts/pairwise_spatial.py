@@ -146,6 +146,15 @@ def _population_order(adata: ad.AnnData, population_obs: str) -> List[str]:
     return [str(x) for x in pd.unique(series.dropna())]
 
 
+def _obs_order(adata: ad.AnnData, obs_key: str) -> List[str]:
+    if obs_key not in adata.obs.columns:
+        return []
+    series = adata.obs[obs_key]
+    if pd.api.types.is_categorical_dtype(series):
+        return [str(x) for x in series.cat.categories if pd.notna(x)]
+    return [str(x) for x in pd.unique(series.dropna())]
+
+
 def _population_color_map(
     adata: ad.AnnData, population_obs: str, ordered_pops: Sequence[str]
 ) -> Dict[str, str]:
@@ -484,21 +493,71 @@ def _place_colorbar_in_corner(
     candidates: List[Tuple[float, float, float, float]] = []
 
     if corner == "off_plot_right":
-        # Place outside the plot and outside right-side labels at upper-right.
-        right_start = float(ref_tight[2] + pad_x)
-        available_w = float(1.0 - right_start - 0.002)
-        adaptive_w = min(cbar_width, max(0.008, available_w))
-        adaptive_h = min(cbar_height, max(0.08, ref_tight[3] - ref_box.y0))
-        top_y = float(np.clip(ref_tight[3] - adaptive_h, 0.0, max(0.0, 1.0 - adaptive_h)))
+        # Deterministic right-gutter placement:
+        # 1) Find current right-most occupied artist bounds (labels included)
+        # 2) If needed, shift visible non-cbar axes left to create space
+        # 3) Place cbar in the reserved gutter at upper-right outside the plot area
+        visible_axes = [ax for ax in fig.axes if ax is not cbar_ax and ax.get_visible()]
+        occupied_boxes = [_axis_tight_box(ax) for ax in visible_axes]
+        occupied_boxes = [b for b in occupied_boxes if b is not None]
 
-        if available_w > 0.008:
-            candidates.append(_to_rect(right_start, top_y, adaptive_w, adaptive_h))
-            # Slightly lower backup if top slot has overlap with other artists.
-            candidates.append(_to_rect(right_start, max(0.0, top_y - pad_y), adaptive_w, adaptive_h))
-        # Fallback inside upper-right if no outside room.
-        candidates.append(
-            _to_rect(ref_box.x1 - cbar_width - pad_x, ref_box.y1 - cbar_height - pad_y, cbar_width, cbar_height)
-        )
+        occupied_right = max((b[2] for b in occupied_boxes), default=float(ref_tight[2]))
+        occupied_top = max((b[3] for b in occupied_boxes), default=float(ref_tight[3]))
+        right_start = float(occupied_right + pad_x)
+        desired_w = float(cbar_width)
+        desired_h = float(min(cbar_height, max(0.08, ref_tight[3] - ref_box.y0)))
+        right_limit = 0.995
+
+        need = float((right_start + desired_w) - right_limit)
+        if need > 0:
+            min_x0 = min((ax.get_position().x0 for ax in visible_axes), default=0.0)
+            max_shift = max(0.0, float(min_x0 - 0.01))
+            shift = min(need + pad_x, max_shift)
+            if shift > 0:
+                for ax in visible_axes:
+                    pos = ax.get_position()
+                    ax.set_position([pos.x0 - shift, pos.y0, pos.width, pos.height])
+                fig.canvas.draw()
+                try:
+                    renderer = fig.canvas.get_renderer()
+                except Exception:
+                    pass
+                occupied_boxes = [_axis_tight_box(ax) for ax in visible_axes]
+                occupied_boxes = [b for b in occupied_boxes if b is not None]
+                occupied_right = max((b[2] for b in occupied_boxes), default=float(ref_tight[2]))
+                occupied_top = max((b[3] for b in occupied_boxes), default=float(ref_tight[3]))
+                right_start = float(occupied_right + pad_x)
+
+        # If there is still not enough room, expand figure width to create a safe gutter.
+        need_after_shift = float((right_start + desired_w) - right_limit)
+        if need_after_shift > 0:
+            try:
+                w_in, h_in = fig.get_size_inches()
+                scale = 1.0 + min(1.0, max(0.02, need_after_shift * 2.0))
+                fig.set_size_inches(float(w_in * scale), float(h_in), forward=True)
+                fig.canvas.draw()
+                try:
+                    renderer = fig.canvas.get_renderer()
+                except Exception:
+                    pass
+                occupied_boxes = [_axis_tight_box(ax) for ax in visible_axes]
+                occupied_boxes = [b for b in occupied_boxes if b is not None]
+                occupied_right = max((b[2] for b in occupied_boxes), default=float(ref_tight[2]))
+                occupied_top = max((b[3] for b in occupied_boxes), default=float(ref_tight[3]))
+                right_start = float(occupied_right + pad_x)
+            except Exception:
+                pass
+
+        available_w = float(right_limit - right_start)
+        width = float(max(0.008, min(desired_w, available_w)))
+        x0 = float(np.clip(right_start, 0.0, max(0.0, 1.0 - width)))
+        # keep it strictly to the right of occupied content when possible
+        if x0 < right_start and right_start <= 1.0:
+            x0 = float(min(right_start, 1.0 - width))
+
+        y0 = float(np.clip(occupied_top - desired_h, 0.0, max(0.0, 1.0 - desired_h)))
+        cbar_ax.set_position([x0, y0, width, desired_h])
+        return
 
     elif corner == "upper_left":
         candidates.extend(
@@ -688,6 +747,7 @@ def _save_pair_barplots(
     value_label: str,
     make_source_target_barplots: bool = True,
     source_target_width_scale: float = 0.35,
+    group_color_map: Optional[Dict[str, str]] = None,
 ) -> None:
     if data.empty or not pairs:
         return
@@ -697,7 +757,7 @@ def _save_pair_barplots(
             return [str(x) for x in series.cat.categories.tolist() if pd.notna(x)]
         return sorted(series.dropna().astype(str).unique().tolist())
 
-    def _dedupe_legend(ax: Any) -> None:
+    def _dedupe_legend(ax: Any, *, title: str) -> None:
         handles, labels = ax.get_legend_handles_labels()
         if not handles:
             return
@@ -712,7 +772,15 @@ def _save_pair_barplots(
             unique_h.append(h)
             unique_l.append(label)
         if unique_h:
-            ax.legend(unique_h, unique_l, title="target_population", frameon=True)
+            ax.legend(
+                unique_h,
+                unique_l,
+                title=title,
+                frameon=True,
+                loc="upper left",
+                bbox_to_anchor=(1.01, 1.0),
+                borderaxespad=0.0,
+            )
         else:
             leg = ax.get_legend()
             if leg is not None:
@@ -827,21 +895,32 @@ def _save_pair_barplots(
 
         use_group = bool(group_col and group_col in source_subset.columns and source_subset[group_col].notna().any())
         if use_group:
-            x_col = str(group_col)
-            source_subset[x_col] = source_subset[x_col].astype(str)
-            order = _ordered_levels(source_subset[x_col])
-            n_groups = max(1, len(order))
+            hue_col = str(group_col)
+            source_subset[hue_col] = source_subset[hue_col].astype(str)
+            x_col = "target_population"
+            x_order = target_order
+            hue_order = _ordered_levels(source_subset[hue_col])
+            n_groups = max(1, len(hue_order))
             n_targets = max(1, len(target_order))
-            plot_width = max(base_width, width_scale * n_groups * n_targets)
+            # Scale primarily with x categories (targets); groups are dodge bars.
+            plot_width = max(base_width, width_scale * n_targets)
+            palette_vals = sns.color_palette("tab10", n_colors=n_groups).as_hex()
+            if group_color_map:
+                palette = {
+                    g: str(group_color_map.get(g, palette_vals[i]))
+                    for i, g in enumerate(hue_order)
+                }
+            else:
+                palette = {g: str(palette_vals[i]) for i, g in enumerate(hue_order)}
 
             fig, ax = plt.subplots(figsize=(plot_width, base_height))
             sns.barplot(
                 data=source_subset,
                 x=x_col,
                 y="value",
-                hue="target_population",
-                order=order,
-                hue_order=target_order,
+                hue=hue_col,
+                order=x_order,
+                hue_order=hue_order,
                 errorbar="se" if len(source_subset) > 1 else None,
                 palette=palette,
                 ax=ax,
@@ -851,9 +930,9 @@ def _save_pair_barplots(
                     data=source_subset,
                     x=x_col,
                     y="value",
-                    hue="target_population",
-                    order=order,
-                    hue_order=target_order,
+                    hue=hue_col,
+                    order=x_order,
+                    hue_order=hue_order,
                     dodge=True,
                     palette=palette,
                     size=2.5,
@@ -862,12 +941,12 @@ def _save_pair_barplots(
                     ax=ax,
                 )
             ax.tick_params(axis="x", labelrotation=90)
-            _dedupe_legend(ax)
+            _dedupe_legend(ax, title=hue_col)
         else:
             x_col = "target_population"
             order = target_order
             n_targets = max(1, len(target_order))
-            plot_width = max(base_width, width_scale * n_targets * 2.0)
+            plot_width = max(base_width, width_scale * n_targets)
 
             fig, ax = plt.subplots(figsize=(plot_width, base_height))
             sns.barplot(
@@ -900,7 +979,7 @@ def _save_pair_barplots(
                 leg.remove()
 
         ax.set_title(f"{source} -> all selected targets")
-        ax.set_xlabel(group_col if use_group else "target_population")
+        ax.set_xlabel("target_population")
         ax.set_ylabel(value_label)
         ax.grid(False)
         fig.tight_layout()
@@ -1086,6 +1165,11 @@ def run_pairwise_spatial_analyses(
 
     ordered_pops = _population_order(adata, pairwise_config.population_obs)
     color_map = _population_color_map(adata, pairwise_config.population_obs, ordered_pops)
+    group_color_map: Optional[Dict[str, str]] = None
+    if pairwise_config.groupby_obs and pairwise_config.groupby_obs in adata.obs.columns:
+        ordered_groups = _obs_order(adata, pairwise_config.groupby_obs)
+        if ordered_groups:
+            group_color_map = _population_color_map(adata, pairwise_config.groupby_obs, ordered_groups)
     pair_map = _normalise_population_pairs(
         pairwise_config.population_pairs,
         pairwise_config.population_obs,
@@ -1252,6 +1336,7 @@ def run_pairwise_spatial_analyses(
                         value_label=f"Squidpy {metric}",
                         make_source_target_barplots=pairwise_config.make_source_target_barplots,
                         source_target_width_scale=pairwise_config.source_target_barplot_width_scale,
+                        group_color_map=group_color_map,
                     )
 
     if pairwise_config.run_distance_bootstrap:
@@ -1419,6 +1504,7 @@ def run_pairwise_spatial_analyses(
                         value_label=f"Distance {metric}",
                         make_source_target_barplots=pairwise_config.make_source_target_barplots,
                         source_target_width_scale=pairwise_config.source_target_barplot_width_scale,
+                        group_color_map=group_color_map,
                     )
 
     if pairwise_config.run_pcf:
@@ -1730,6 +1816,7 @@ def run_pairwise_spatial_analyses(
                     value_label=f"PCF {metric}",
                     make_source_target_barplots=pairwise_config.make_source_target_barplots,
                     source_target_width_scale=pairwise_config.source_target_barplot_width_scale,
+                    group_color_map=group_color_map,
                 )
 
     run_metadata = {

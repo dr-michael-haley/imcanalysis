@@ -601,8 +601,8 @@ class PairwiseSpatialConfig:
     heatmap_cmap_counts: str = 'viridis'
     barplot_figsize: List[float] = field(default_factory=lambda: [3.0, 3.0])
     barplot_add_points: bool = True
-    make_source_target_barplots: bool = True  # Also plot all selected targets for each source on one figure (hue=target_population)
-    source_target_barplot_width_scale: float = 0.35  # Width scaling constant for source->all-target plots (auto width ~= scale * n_groups * n_targets)
+    make_source_target_barplots: bool = True  # Also plot all selected targets for each source on one figure (hue=group)
+    source_target_barplot_width_scale: float = 0.35  # Width scaling constant for source->all-target plots (auto width ~= scale * n_targets)
     figure_extension: str = '.png'
     figure_dpi: int = 300
 
