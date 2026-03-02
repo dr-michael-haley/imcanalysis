@@ -456,6 +456,7 @@ class CellCharterConfig:
     trainer_devices: Optional[int] = None
     trainer_max_epochs: int = 100
     cluster_key: str = 'spatial_cluster'
+    repeat_analysis: bool = True  # If False and cluster_key already exists in input AnnData, skip analysis and run plotting/export only
 
     # Optional enrichment
     run_enrichment: bool = True

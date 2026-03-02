@@ -1865,119 +1865,153 @@ def run_cellcharter_neighborhoods(
         y_coord_col=y_coord_col,
     )
 
-    trvae_details: Dict[str, Any] = {"enabled": False}
-    if cellcharter_config.use_trvae:
-        logging.info("TRVAE mode enabled (cellcharter.use_trvae=True).")
-        aggregation_rep, trvae_details = _compute_trvae_representation(
-            adata=adata,
-            cellcharter_config=cellcharter_config,
-            sample_key=sample_key,
-            qc_dir=qc_dir,
-        )
-        logging.info("Using TRVAE representation adata.obsm['%s'] for neighborhood aggregation.", aggregation_rep)
-    else:
-        feature_matrix, feature_rep_key, source_label = _select_feature_matrix(
-            adata,
-            cellcharter_config,
-            allow_auto_reduced=True,
-        )
-        feature_matrix = feature_matrix.astype(np.float32, copy=False)
-        if feature_matrix.shape[0] != adata.n_obs:
-            raise ValueError(
-                f"Feature matrix rows ({feature_matrix.shape[0]}) must match adata.n_obs ({adata.n_obs})."
-            )
+    cluster_key = str(cellcharter_config.cluster_key)
+    existing_cluster_non_null = 0
+    if cluster_key in adata.obs.columns:
+        existing_cluster_non_null = int(adata.obs[cluster_key].notna().sum())
+    skip_existing_cluster_analysis = (
+        (not bool(cellcharter_config.repeat_analysis)) and existing_cluster_non_null > 0
+    )
 
-        if cellcharter_config.scale_by_sample:
-            logging.info("Applying sample-wise feature scaling using '%s'.", sample_key)
-            sample_ids = adata.obs[sample_key].astype(str).to_numpy()
-            scaled = _zscore_by_sample(feature_matrix, sample_ids)
-            adata.obsm[cellcharter_config.scaled_rep_key] = scaled
-            aggregation_rep = cellcharter_config.scaled_rep_key
-            logging.info(
-                "Stored scaled features in adata.obsm['%s'] (source: %s).",
-                cellcharter_config.scaled_rep_key,
-                source_label,
+    trvae_details: Dict[str, Any] = {"enabled": False}
+    aggregation_rep: Optional[str] = None
+
+    if skip_existing_cluster_analysis:
+        logging.info(
+            "cellcharter.repeat_analysis=False and cluster key '%s' already exists for %d/%d cells. "
+            "Skipping TRVAE/aggregation/clustering and reusing existing labels for plotting/export.",
+            cluster_key,
+            existing_cluster_non_null,
+            adata.n_obs,
+        )
+        _ensure_categorical_obs(adata, cluster_key)
+        trvae_details = {
+            "enabled": bool(cellcharter_config.use_trvae),
+            "ran": False,
+            "reused_existing_cluster_key": True,
+        }
+        prior_payload = adata.uns.get("cellcharter_pipeline")
+        if isinstance(prior_payload, dict):
+            aggregation_rep = prior_payload.get("aggregation_use_rep")
+    else:
+        if cellcharter_config.use_trvae:
+            logging.info("TRVAE mode enabled (cellcharter.use_trvae=True).")
+            aggregation_rep, trvae_details = _compute_trvae_representation(
+                adata=adata,
+                cellcharter_config=cellcharter_config,
+                sample_key=sample_key,
+                qc_dir=qc_dir,
             )
+            logging.info("Using TRVAE representation adata.obsm['%s'] for neighborhood aggregation.", aggregation_rep)
         else:
-            if feature_rep_key is not None:
-                aggregation_rep = feature_rep_key
-                logging.info("Using feature representation %s without additional scaling.", source_label)
-            elif source_label == "X":
-                aggregation_rep = None
-                logging.info("Using adata.X for neighborhood aggregation.")
-            else:
-                adata.obsm[cellcharter_config.scaled_rep_key] = feature_matrix
-                aggregation_rep = cellcharter_config.scaled_rep_key
-                logging.info(
-                    "Stored features from %s in adata.obsm['%s'] for aggregation.",
-                    source_label,
-                    cellcharter_config.scaled_rep_key,
+            feature_matrix, feature_rep_key, source_label = _select_feature_matrix(
+                adata,
+                cellcharter_config,
+                allow_auto_reduced=True,
+            )
+            feature_matrix = feature_matrix.astype(np.float32, copy=False)
+            if feature_matrix.shape[0] != adata.n_obs:
+                raise ValueError(
+                    f"Feature matrix rows ({feature_matrix.shape[0]}) must match adata.n_obs ({adata.n_obs})."
                 )
 
-    logging.info("Building spatial graph with Squidpy (delaunay=%s).", cellcharter_config.delaunay)
-    sq.gr.spatial_neighbors(
-        adata,
-        library_key=sample_key,
-        coord_type="generic",
-        delaunay=bool(cellcharter_config.delaunay),
-        spatial_key=spatial_key,
-    )
+            if cellcharter_config.scale_by_sample:
+                logging.info("Applying sample-wise feature scaling using '%s'.", sample_key)
+                sample_ids = adata.obs[sample_key].astype(str).to_numpy()
+                scaled = _zscore_by_sample(feature_matrix, sample_ids)
+                adata.obsm[cellcharter_config.scaled_rep_key] = scaled
+                aggregation_rep = cellcharter_config.scaled_rep_key
+                logging.info(
+                    "Stored scaled features in adata.obsm['%s'] (source: %s).",
+                    cellcharter_config.scaled_rep_key,
+                    source_label,
+                )
+            else:
+                if feature_rep_key is not None:
+                    aggregation_rep = feature_rep_key
+                    logging.info("Using feature representation %s without additional scaling.", source_label)
+                elif source_label == "X":
+                    aggregation_rep = None
+                    logging.info("Using adata.X for neighborhood aggregation.")
+                else:
+                    adata.obsm[cellcharter_config.scaled_rep_key] = feature_matrix
+                    aggregation_rep = cellcharter_config.scaled_rep_key
+                    logging.info(
+                        "Stored features from %s in adata.obsm['%s'] for aggregation.",
+                        source_label,
+                        cellcharter_config.scaled_rep_key,
+                    )
 
-    if cellcharter_config.remove_long_links:
-        logging.info(
-            "Removing long graph links above distance percentile %.2f.",
-            float(cellcharter_config.distance_percentile),
-        )
-        cc.gr.remove_long_links(
+        logging.info("Building spatial graph with Squidpy (delaunay=%s).", cellcharter_config.delaunay)
+        sq.gr.spatial_neighbors(
             adata,
-            distance_percentile=float(cellcharter_config.distance_percentile),
+            library_key=sample_key,
+            coord_type="generic",
+            delaunay=bool(cellcharter_config.delaunay),
+            spatial_key=spatial_key,
         )
 
-    n_layers = _parse_n_layers(cellcharter_config.n_layers)
-    aggregations = _parse_aggregations(cellcharter_config.aggregations)
-    logging.info(
-        "Aggregating neighborhoods (n_layers=%s, aggregations=%s, use_rep=%s).",
-        n_layers,
-        aggregations,
-        aggregation_rep,
-    )
-    cc.gr.aggregate_neighbors(
-        adata,
-        n_layers=n_layers,
-        aggregations=aggregations,
-        use_rep=aggregation_rep,
-        sample_key=sample_key,
-        out_key=cellcharter_config.aggregated_rep_key,
-    )
+        if cellcharter_config.remove_long_links:
+            logging.info(
+                "Removing long graph links above distance percentile %.2f.",
+                float(cellcharter_config.distance_percentile),
+            )
+            cc.gr.remove_long_links(
+                adata,
+                distance_percentile=float(cellcharter_config.distance_percentile),
+            )
 
-    trainer_params = {
-        "accelerator": cellcharter_config.trainer_accelerator,
-        "max_epochs": int(cellcharter_config.trainer_max_epochs),
-    }
-    if cellcharter_config.trainer_devices is not None:
-        trainer_params["devices"] = int(cellcharter_config.trainer_devices)
+        n_layers = _parse_n_layers(cellcharter_config.n_layers)
+        aggregations = _parse_aggregations(cellcharter_config.aggregations)
+        logging.info(
+            "Aggregating neighborhoods (n_layers=%s, aggregations=%s, use_rep=%s).",
+            n_layers,
+            aggregations,
+            aggregation_rep,
+        )
+        cc.gr.aggregate_neighbors(
+            adata,
+            n_layers=n_layers,
+            aggregations=aggregations,
+            use_rep=aggregation_rep,
+            sample_key=sample_key,
+            out_key=cellcharter_config.aggregated_rep_key,
+        )
 
-    logging.info(
-        "Clustering neighborhoods with CellCharter (n_clusters=%d, covariance_type=%s).",
-        int(cellcharter_config.n_clusters),
-        cellcharter_config.covariance_type,
-    )
-    model = cc.tl.Cluster(
-        n_clusters=int(cellcharter_config.n_clusters),
-        covariance_type=cellcharter_config.covariance_type,
-        batch_size=cellcharter_config.batch_size,
-        trainer_params=trainer_params,
-        random_state=int(cellcharter_config.random_state),
-    )
-    model.fit(adata, use_rep=cellcharter_config.aggregated_rep_key)
-    predicted = model.predict(adata, use_rep=cellcharter_config.aggregated_rep_key)
+        trainer_params = {
+            "accelerator": cellcharter_config.trainer_accelerator,
+            "max_epochs": int(cellcharter_config.trainer_max_epochs),
+        }
+        if cellcharter_config.trainer_devices is not None:
+            trainer_params["devices"] = int(cellcharter_config.trainer_devices)
 
-    labels = pd.Series(predicted.astype(str), index=adata.obs_names, dtype="object")
-    categories = sorted(pd.unique(labels), key=_category_sort_key)
-    adata.obs[cellcharter_config.cluster_key] = pd.Categorical(labels, categories=categories)
+        logging.info(
+            "Clustering neighborhoods with CellCharter (n_clusters=%d, covariance_type=%s).",
+            int(cellcharter_config.n_clusters),
+            cellcharter_config.covariance_type,
+        )
+        model = cc.tl.Cluster(
+            n_clusters=int(cellcharter_config.n_clusters),
+            covariance_type=cellcharter_config.covariance_type,
+            batch_size=cellcharter_config.batch_size,
+            trainer_params=trainer_params,
+            random_state=int(cellcharter_config.random_state),
+        )
+        model.fit(adata, use_rep=cellcharter_config.aggregated_rep_key)
+        predicted = model.predict(adata, use_rep=cellcharter_config.aggregated_rep_key)
+
+        labels = pd.Series(predicted.astype(str), index=adata.obs_names, dtype="object")
+        categories = sorted(pd.unique(labels), key=_category_sort_key)
+        adata.obs[cluster_key] = pd.Categorical(labels, categories=categories)
+
+    if cluster_key not in adata.obs.columns:
+        raise KeyError(
+            f"Cluster key '{cluster_key}' was not found in adata.obs after CellCharter stage."
+        )
+
     cluster_color_map = _ensure_obs_color_map(
         adata,
-        obs_key=cellcharter_config.cluster_key,
+        obs_key=cluster_key,
         cmap_name=cellcharter_config.cluster_default_cmap,
     )
     cmap_label = (
@@ -1987,7 +2021,7 @@ def run_cellcharter_neighborhoods(
     )
     logging.info(
         "Stored cluster colors in adata.uns['%s_colors'] using cmap '%s'.",
-        cellcharter_config.cluster_key,
+        cluster_key,
         cmap_label,
     )
     figure_format = _normalise_figure_format(cellcharter_config.figure_format)
@@ -2005,7 +2039,22 @@ def run_cellcharter_neighborhoods(
         "ran": False,
     }
 
-    if cellcharter_config.run_enrichment:
+    if skip_existing_cluster_analysis:
+        nhood_details["skipped_existing_cluster"] = True
+        diff_nhood_details["skipped_existing_cluster"] = True
+        shape_details["skipped_existing_cluster"] = True
+        if (
+            cellcharter_config.run_enrichment
+            or cellcharter_config.run_nhood_enrichment
+            or cellcharter_config.run_diff_nhood_enrichment
+            or cellcharter_config.run_shape_characterisation
+        ):
+            logging.info(
+                "Skipping enrichment and shape analysis because cellcharter.repeat_analysis=False "
+                "and existing cluster labels were reused."
+            )
+
+    if (not skip_existing_cluster_analysis) and cellcharter_config.run_enrichment:
         if not population_obs_primary:
             logging.warning(
                 "Skipping enrichment because general.population_obs_primary is not set."
@@ -2044,14 +2093,14 @@ def run_cellcharter_neighborhoods(
                 qc_dir=qc_dir,
             )
 
-    if cellcharter_config.run_nhood_enrichment:
+    if (not skip_existing_cluster_analysis) and cellcharter_config.run_nhood_enrichment:
         nhood_details = _run_nhood_enrichment(
             adata=adata,
             cellcharter_config=cellcharter_config,
             qc_dir=qc_dir,
         )
 
-    if cellcharter_config.run_diff_nhood_enrichment:
+    if (not skip_existing_cluster_analysis) and cellcharter_config.run_diff_nhood_enrichment:
         diff_nhood_details = _run_diff_nhood_enrichment(
             adata=adata,
             general_config=general_config,
@@ -2060,7 +2109,7 @@ def run_cellcharter_neighborhoods(
             qc_dir=qc_dir,
         )
 
-    if cellcharter_config.run_shape_characterisation:
+    if (not skip_existing_cluster_analysis) and cellcharter_config.run_shape_characterisation:
         shape_details = _run_shape_characterisation(
             adata=adata,
             general_config=general_config,
@@ -2149,6 +2198,9 @@ def run_cellcharter_neighborhoods(
         "spatial_key": spatial_key,
         "population_obs_primary": population_obs_primary,
         "cluster_key": cellcharter_config.cluster_key,
+        "repeat_analysis": bool(cellcharter_config.repeat_analysis),
+        "reused_existing_cluster_key": bool(skip_existing_cluster_analysis),
+        "existing_cluster_non_null_count": int(existing_cluster_non_null),
         "cluster_default_cmap": cellcharter_config.cluster_default_cmap,
         "case_obs": resolved_case_obs,
         "groupby_obs": resolved_groupby_obs,
