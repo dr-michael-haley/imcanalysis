@@ -558,6 +558,7 @@ class CellCharterConfig:
     save_cluster_composition_plots: bool = True
     composition_order_by_environment: str = '0'  # Cluster label used to order case stacked bars by abundance
     composition_stacked_figsize: List[float] = field(default_factory=lambda: [6.0, 3.0])
+    composition_stacked_width_scale: float = 0.30  # Auto width for stacked case plots ~= max(base_width, scale * n_cases)
     composition_group_barplot_figsize: List[float] = field(default_factory=lambda: [6.0, 3.0])
     figure_format: str = 'png'
     save_high_res: bool = True

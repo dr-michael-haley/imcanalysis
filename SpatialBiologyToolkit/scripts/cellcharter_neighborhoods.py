@@ -645,6 +645,7 @@ def _save_cluster_composition_plots(
     figure_format: str,
     save_high_res: bool,
     stacked_figsize: Tuple[float, float],
+    stacked_width_scale: float,
     grouped_bar_figsize: Tuple[float, float],
 ) -> None:
     """Save case-level stacked composition plots and grouped bar plots for spatial clusters."""
@@ -763,7 +764,11 @@ def _save_cluster_composition_plots(
             )
 
         wide.to_csv(out_dir / f"{stem}.csv", index=True)
-        fig, ax = plt.subplots(figsize=stacked_figsize)
+        base_width = float(stacked_figsize[0])
+        base_height = float(stacked_figsize[1])
+        width_scale = max(0.05, float(stacked_width_scale))
+        plot_width = max(base_width, width_scale * max(1, wide.shape[0]))
+        fig, ax = plt.subplots(figsize=(plot_width, base_height))
         colors = [cluster_color_map.get(col, "#808080") for col in wide.columns]
         wide.plot(kind="bar", stacked=True, ax=ax, color=colors, width=0.9)
         ax.set_xlabel(case_key)
@@ -2185,6 +2190,7 @@ def run_cellcharter_neighborhoods(
                     cellcharter_config.composition_stacked_figsize,
                     fallback=(12.0, 6.0),
                 ),
+                stacked_width_scale=float(cellcharter_config.composition_stacked_width_scale),
                 grouped_bar_figsize=_resolve_figsize(
                     cellcharter_config.composition_group_barplot_figsize,
                     fallback=(10.0, 5.0),
