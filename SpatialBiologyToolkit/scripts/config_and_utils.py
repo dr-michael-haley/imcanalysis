@@ -601,6 +601,39 @@ class PairwiseSpatialConfig:
     heatmap_cmap_counts: str = 'viridis'
     barplot_figsize: List[float] = field(default_factory=lambda: [3.0, 3.0])
     barplot_add_points: bool = True
+    # Barplot Y-axis scale controls.
+    # Accepted values: 'linear', 'log', 'intelligent'
+    # Flexible structure examples:
+    # barplot_y_scale: {'default': 'linear'}
+    # barplot_y_scale: {'distance': {'observed': 'log', 'delta': 'linear'}, 'pcf': {'g': 'log'}}
+    # barplot_y_scale: {'squidpy.zscore': 'intelligent', 'default': 'linear'}
+    # Default is explicitly populated by analysis/metric so users can tweak directly.
+    barplot_y_scale: Dict[str, Any] = field(default_factory=lambda: {
+        'default': 'linear',
+        'squidpy': {
+            'count': 'log',
+            'zscore': 'linear',
+            'default': 'linear',
+        },
+        'distance': {
+            'observed': 'intelligent',
+            'bootmean': 'intelligent',
+            'delta': 'intelligent',
+            'zscore': 'linear',
+            'default': 'linear',
+        },
+        'pcf': {
+            'g': 'linear',
+            'g_mean': 'linear',
+            'default': 'linear',
+        },
+    })
+    barplot_y_scale_intelligent_params: Dict[str, Any] = field(default_factory=lambda: {
+        'allow_log1p': True,
+        'dynamic_range_thresh': 100.0,
+        'skew_improve_ratio': 0.7,
+        'crush_frac_thresh': 0.7,
+    })
     make_source_target_barplots: bool = True  # Also plot all selected targets for each source on one figure (hue=group)
     source_target_barplot_width_scale: float = 0.35  # Width scaling constant for source->all-target plots (auto width ~= scale * n_targets)
     figure_extension: str = '.png'

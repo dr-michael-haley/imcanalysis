@@ -288,6 +288,194 @@ def _normalise_population_pairs(
     return normalised
 
 
+def _normalise_barplot_scale_mode(value: Any, *, context: str = "") -> Optional[str]:
+    text = str(value).strip().lower()
+    if text in {"linear", "log", "intelligent"}:
+        return text
+    if context:
+        logging.warning(
+            "Invalid barplot y-scale '%s' for %s. Valid options are: linear, log, intelligent.",
+            value,
+            context,
+        )
+    return None
+
+
+def _resolve_barplot_scale_mode(
+    scale_cfg: Any,
+    *,
+    analysis: str,
+    metric: str,
+) -> str:
+    analysis_key = str(analysis)
+    metric_key = str(metric)
+
+    if isinstance(scale_cfg, dict):
+        # Highest-priority explicit key: "analysis.metric"
+        direct_key = f"{analysis_key}.{metric_key}"
+        if direct_key in scale_cfg:
+            mode = _normalise_barplot_scale_mode(
+                scale_cfg.get(direct_key), context=f"{analysis_key}.{metric_key}"
+            )
+            if mode:
+                return mode
+
+        # Analysis-level config: either direct string or nested dict
+        analysis_cfg = scale_cfg.get(analysis_key)
+        if isinstance(analysis_cfg, dict):
+            for key in [metric_key, "default", "*"]:
+                if key in analysis_cfg:
+                    mode = _normalise_barplot_scale_mode(
+                        analysis_cfg.get(key),
+                        context=f"{analysis_key}.{key}",
+                    )
+                    if mode:
+                        return mode
+        elif analysis_cfg is not None:
+            mode = _normalise_barplot_scale_mode(analysis_cfg, context=analysis_key)
+            if mode:
+                return mode
+
+        # Optional metric-level fallback
+        if metric_key in scale_cfg and not isinstance(scale_cfg.get(metric_key), dict):
+            mode = _normalise_barplot_scale_mode(scale_cfg.get(metric_key), context=metric_key)
+            if mode:
+                return mode
+
+        # Global fallback
+        for key in ["default", "*"]:
+            if key in scale_cfg:
+                mode = _normalise_barplot_scale_mode(scale_cfg.get(key), context=key)
+                if mode:
+                    return mode
+        return "linear"
+
+    mode = _normalise_barplot_scale_mode(scale_cfg, context="barplot_y_scale")
+    return mode or "linear"
+
+
+def _resolve_intelligent_scale_params(params: Any) -> Dict[str, Any]:
+    defaults: Dict[str, Any] = {
+        "allow_log1p": True,
+        "dynamic_range_thresh": 100.0,
+        "skew_improve_ratio": 0.7,
+        "crush_frac_thresh": 0.7,
+    }
+    if not isinstance(params, dict):
+        return defaults
+
+    resolved = defaults.copy()
+    if "allow_log1p" in params:
+        resolved["allow_log1p"] = bool(params.get("allow_log1p"))
+    for key in ["dynamic_range_thresh", "skew_improve_ratio", "crush_frac_thresh"]:
+        if key in params:
+            try:
+                resolved[key] = float(params.get(key))
+            except Exception:
+                logging.warning(
+                    "Invalid barplot_y_scale_intelligent_params['%s']=%s. Using default %s.",
+                    key,
+                    params.get(key),
+                    defaults[key],
+                )
+    return resolved
+
+
+def _choose_scale_1d(
+    x: Any,
+    *,
+    allow_log1p: bool = True,
+    dynamic_range_thresh: float = 100.0,
+    skew_improve_ratio: float = 0.7,
+    crush_frac_thresh: float = 0.7,
+) -> str:
+    """
+    Return "linear" or "log" for plotting 1D values.
+    Uses dynamic range + skewness reduction + linear-axis crush heuristic.
+
+    For axis safety, log is only selected when all finite values are > 0.
+    """
+    arr = np.asarray(x, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    if arr.size < 10:
+        return "linear"
+
+    # A true log axis cannot display zero/negative values.
+    if np.any(arr <= 0):
+        return "linear"
+
+    min_pos = float(np.min(arr))
+    max_pos = float(np.max(arr))
+    if not np.isfinite(min_pos) or not np.isfinite(max_pos) or max_pos <= 0:
+        return "linear"
+
+    dyn = max_pos / min_pos if min_pos > 0 else np.inf
+
+    lo = float(np.min(arr))
+    hi = float(np.max(arr))
+    if np.isclose(hi, lo):
+        return "linear"
+    crush_frac = float(np.mean(arr <= lo + 0.05 * (hi - lo)))
+
+    def _skew(values: np.ndarray) -> float:
+        m = float(np.mean(values))
+        s = float(np.std(values, ddof=0))
+        if np.isclose(s, 0.0):
+            return 0.0
+        z = (values - m) / s
+        return float(np.mean(z**3))
+
+    skew_lin = abs(_skew(arr))
+    if allow_log1p:
+        transformed = np.log1p(arr)
+    else:
+        transformed = np.log(arr)
+    skew_log = abs(_skew(transformed))
+
+    log_helpful = (dyn >= float(dynamic_range_thresh)) and (
+        (skew_log <= skew_lin * float(skew_improve_ratio))
+        or (crush_frac >= float(crush_frac_thresh))
+    )
+    return "log" if log_helpful else "linear"
+
+
+def _apply_barplot_y_scale(
+    ax: Any,
+    values: pd.Series,
+    *,
+    requested_mode: str,
+    analysis: str,
+    metric: str,
+    intelligent_params: Dict[str, Any],
+) -> str:
+    mode = str(requested_mode).lower()
+    if mode == "intelligent":
+        mode = _choose_scale_1d(values.to_numpy(dtype=float), **intelligent_params)
+
+    if mode == "log":
+        finite = values.to_numpy(dtype=float)
+        finite = finite[np.isfinite(finite)]
+        if finite.size == 0 or np.any(finite <= 0):
+            logging.warning(
+                "Requested log y-scale for %s/%s barplot, but values include non-positive entries. Using linear scale.",
+                analysis,
+                metric,
+            )
+            return "linear"
+
+        min_pos = float(np.min(finite))
+        max_val = float(np.max(finite))
+        ax.set_yscale("log")
+        if np.isfinite(min_pos) and np.isfinite(max_val) and max_val > min_pos:
+            lower = max(min_pos * 0.9, np.finfo(float).tiny)
+            upper = max_val * 1.1
+            if upper > lower:
+                ax.set_ylim(bottom=lower, top=upper)
+        return "log"
+
+    return "linear"
+
+
 def _compute_limits(
     matrix: pd.DataFrame, percentile: float, center: Optional[float]
 ) -> Tuple[Optional[float], Optional[float]]:
@@ -748,9 +936,13 @@ def _save_pair_barplots(
     make_source_target_barplots: bool = True,
     source_target_width_scale: float = 0.35,
     group_color_map: Optional[Dict[str, str]] = None,
+    y_scale_mode: str = "linear",
+    y_scale_intelligent_params: Optional[Dict[str, Any]] = None,
 ) -> None:
     if data.empty or not pairs:
         return
+    if y_scale_intelligent_params is None:
+        y_scale_intelligent_params = _resolve_intelligent_scale_params(None)
 
     def _ordered_levels(series: pd.Series) -> List[str]:
         if pd.api.types.is_categorical_dtype(series):
@@ -856,6 +1048,14 @@ def _save_pair_barplots(
             ax.set_xlabel("")
             ax.set_ylabel(value_label)
             ax.tick_params(axis="x", labelrotation=90 if group_col else 0)
+            _apply_barplot_y_scale(
+                ax,
+                subset["value"],
+                requested_mode=y_scale_mode,
+                analysis=analysis,
+                metric=metric,
+                intelligent_params=y_scale_intelligent_params,
+            )
             ax.grid(False)
             fig.tight_layout()
 
@@ -981,6 +1181,14 @@ def _save_pair_barplots(
         ax.set_title(f"{source} -> all selected targets")
         ax.set_xlabel("target_population")
         ax.set_ylabel(value_label)
+        _apply_barplot_y_scale(
+            ax,
+            source_subset["value"],
+            requested_mode=y_scale_mode,
+            analysis=analysis,
+            metric=metric,
+            intelligent_params=y_scale_intelligent_params,
+        )
         ax.grid(False)
         fig.tight_layout()
 
@@ -1159,6 +1367,9 @@ def run_pairwise_spatial_analyses(
     bar_figsize = _figsize(pairwise_config.barplot_figsize, fallback=(3.0, 3.0))
     reload_saved_results = bool(pairwise_config.reload_saved_results)
     cbar_corner = _normalise_cbar_corner(pairwise_config.pairwise_matrices_cbar_corner)
+    barplot_intelligent_params = _resolve_intelligent_scale_params(
+        pairwise_config.barplot_y_scale_intelligent_params
+    )
     analysis_sources: Dict[str, str] = {"squidpy": "skipped", "distance": "skipped", "pcf": "skipped"}
     logging.info("Pairwise reload_saved_results=%s", reload_saved_results)
     logging.info("Pairwise matrix colorbar corner=%s", cbar_corner)
@@ -1320,6 +1531,11 @@ def run_pairwise_spatial_analyses(
                         if pairwise_config.groupby_obs in metric_df.columns
                         else None
                     )
+                    y_scale_mode = _resolve_barplot_scale_mode(
+                        pairwise_config.barplot_y_scale,
+                        analysis="squidpy",
+                        metric=str(metric),
+                    )
                     _save_pair_barplots(
                         metric_df,
                         pairs=pair_map,
@@ -1337,6 +1553,8 @@ def run_pairwise_spatial_analyses(
                         make_source_target_barplots=pairwise_config.make_source_target_barplots,
                         source_target_width_scale=pairwise_config.source_target_barplot_width_scale,
                         group_color_map=group_color_map,
+                        y_scale_mode=y_scale_mode,
+                        y_scale_intelligent_params=barplot_intelligent_params,
                     )
 
     if pairwise_config.run_distance_bootstrap:
@@ -1488,6 +1706,11 @@ def run_pairwise_spatial_analyses(
                         if pairwise_config.groupby_obs in metric_df.columns
                         else None
                     )
+                    y_scale_mode = _resolve_barplot_scale_mode(
+                        pairwise_config.barplot_y_scale,
+                        analysis="distance",
+                        metric=str(metric),
+                    )
                     _save_pair_barplots(
                         metric_df,
                         pairs=pair_map,
@@ -1505,6 +1728,8 @@ def run_pairwise_spatial_analyses(
                         make_source_target_barplots=pairwise_config.make_source_target_barplots,
                         source_target_width_scale=pairwise_config.source_target_barplot_width_scale,
                         group_color_map=group_color_map,
+                        y_scale_mode=y_scale_mode,
+                        y_scale_intelligent_params=barplot_intelligent_params,
                     )
 
     if pairwise_config.run_pcf:
@@ -1800,6 +2025,11 @@ def run_pairwise_spatial_analyses(
         if pairwise_config.make_pair_barplots and pair_map and pcf_roi_long is not None and not pcf_roi_long.empty:
             for metric in sorted(pcf_roi_long["metric"].dropna().unique().tolist()):
                 metric_df = pcf_roi_long[pcf_roi_long["metric"] == metric].copy()
+                y_scale_mode = _resolve_barplot_scale_mode(
+                    pairwise_config.barplot_y_scale,
+                    analysis="pcf",
+                    metric=str(metric),
+                )
                 _save_pair_barplots(
                     metric_df,
                     pairs=pair_map,
@@ -1817,6 +2047,8 @@ def run_pairwise_spatial_analyses(
                     make_source_target_barplots=pairwise_config.make_source_target_barplots,
                     source_target_width_scale=pairwise_config.source_target_barplot_width_scale,
                     group_color_map=group_color_map,
+                    y_scale_mode=y_scale_mode,
+                    y_scale_intelligent_params=barplot_intelligent_params,
                 )
 
     run_metadata = {
@@ -1834,6 +2066,8 @@ def run_pairwise_spatial_analyses(
         "pairwise_matrices_share_vmax_vmin": bool(pairwise_config.pairwise_matrices_share_vmax_vmin),
         "make_source_target_barplots": bool(pairwise_config.make_source_target_barplots),
         "source_target_barplot_width_scale": float(pairwise_config.source_target_barplot_width_scale),
+        "barplot_y_scale": pairwise_config.barplot_y_scale,
+        "barplot_y_scale_intelligent_params": barplot_intelligent_params,
         "analysis_sources": analysis_sources,
         "population_pairs": pair_map,
     }
