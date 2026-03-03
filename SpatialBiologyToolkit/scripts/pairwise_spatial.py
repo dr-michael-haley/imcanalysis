@@ -1533,8 +1533,9 @@ def run_pairwise_spatial_analyses(
                     )
                     barplot_metric_df = metric_df
                     if str(metric) == "count":
-                        # Squidpy count values should be non-negative; guard against
-                        # unexpected negatives and ensure strict positivity for log y-scales.
+                        # Squidpy count values should be non-negative. Guard against
+                        # unexpected negatives, but do not force epsilon values, which
+                        # can collapse log-scaled plots around ~1e-308.
                         barplot_metric_df = metric_df.copy()
                         barplot_metric_df["value"] = pd.to_numeric(
                             barplot_metric_df["value"],
@@ -1544,23 +1545,10 @@ def run_pairwise_spatial_analyses(
                         n_neg = int(neg_mask.sum())
                         if n_neg > 0:
                             logging.warning(
-                                "Squidpy/count contains %d negative values; converting to absolute values before bar plotting.",
+                                "Squidpy/count contains %d negative values; clipping to 0 before bar plotting.",
                                 n_neg,
                             )
-                            barplot_metric_df.loc[neg_mask, "value"] = (
-                                barplot_metric_df.loc[neg_mask, "value"].abs()
-                            )
-
-                        nonpos_mask = barplot_metric_df["value"] <= 0
-                        n_nonpos = int(nonpos_mask.sum())
-                        if n_nonpos > 0:
-                            eps = float(np.finfo(float).tiny)
-                            logging.info(
-                                "Squidpy/count barplot input has %d non-positive values; replacing with %s for log-scale compatibility.",
-                                n_nonpos,
-                                eps,
-                            )
-                            barplot_metric_df.loc[nonpos_mask, "value"] = eps
+                            barplot_metric_df.loc[neg_mask, "value"] = 0.0
 
                         barplot_metric_df = barplot_metric_df.dropna(subset=["value"])
 
@@ -1569,6 +1557,14 @@ def run_pairwise_spatial_analyses(
                         analysis="squidpy",
                         metric=str(metric),
                     )
+                    if str(metric) == "count" and str(y_scale_mode).lower() == "log":
+                        n_nonpos = int((barplot_metric_df["value"] <= 0).sum())
+                        if n_nonpos > 0:
+                            logging.info(
+                                "Overriding squidpy/count y-scale from log to linear because %d values are <= 0.",
+                                n_nonpos,
+                            )
+                            y_scale_mode = "linear"
                     _save_pair_barplots(
                         barplot_metric_df,
                         pairs=pair_map,

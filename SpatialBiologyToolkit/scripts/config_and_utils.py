@@ -640,7 +640,7 @@ class PairwiseSpatialConfig:
     barplot_y_scale: Dict[str, Any] = field(default_factory=lambda: {
         'default': 'linear',
         'squidpy': {
-            'count': 'log',
+            'count': 'intelligent',
             'zscore': 'intelligent',
             'default': 'linear',
         },
