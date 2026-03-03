@@ -612,15 +612,15 @@ class PairwiseSpatialConfig:
         'default': 'linear',
         'squidpy': {
             'count': 'log',
-            'zscore': 'linear',
+            'zscore': 'intelligent',
             'default': 'linear',
         },
         'distance': {
             'observed': 'intelligent',
             'bootmean': 'intelligent',
             'delta': 'intelligent',
-            'zscore': 'linear',
-            'default': 'linear',
+            'zscore': 'intelligent',
+            'default': 'intelligent',
         },
         'pcf': {
             'g': 'linear',
