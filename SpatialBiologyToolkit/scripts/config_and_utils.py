@@ -396,6 +396,35 @@ class VisualizationConfig:
     # MatrixPlot settings
     matrixplot_vmax: float = 0.5  # Maximum value for non-scaled matrix plots
     matrixplot_use_row_colors: bool = True  # Use plotting.matrixplot_with_row_colors when available for MatrixPlot generation
+
+    # Population abundance plotting (create_population_abundance_analysis)
+    abundance_make_all_populations_plots: bool = True  # Also create combined plots with all populations on one axis (hue=groupby_obs)
+    abundance_all_populations_figsize: List[float] = field(default_factory=lambda: [4.0, 3.0])  # Base [width, height]; width auto-scales with number of populations
+    abundance_all_populations_width_scale: float = 0.45  # Auto width ~= max(base_width, scale * n_populations)
+    # Y-axis scale controls for abundance barplots.
+    # Accepted values: 'linear', 'log', 'intelligent'
+    # Uses same flexible dictionary style as pairwise_spatial.barplot_y_scale.
+    # Metrics used by abundance plots:
+    # - proportions_roi_level
+    # - proportions_case_average
+    # - cells_per_mm2_roi_level
+    # - cells_per_mm2_case_average
+    abundance_barplot_y_scale: Dict[str, Any] = field(default_factory=lambda: {
+        'default': 'linear',
+        'abundance': {
+            'proportions_roi_level': 'linear',
+            'proportions_case_average': 'linear',
+            'cells_per_mm2_roi_level': 'intelligent',
+            'cells_per_mm2_case_average': 'intelligent',
+            'default': 'linear',
+        },
+    })
+    abundance_barplot_y_scale_intelligent_params: Dict[str, Any] = field(default_factory=lambda: {
+        'allow_log1p': True,
+        'dynamic_range_thresh': 100.0,
+        'skew_improve_ratio': 0.7,
+        'crush_frac_thresh': 0.7,
+    })
     
     # General visualization settings
     save_high_res: bool = True  # Save high-resolution figures (300 DPI)

@@ -1531,13 +1531,46 @@ def run_pairwise_spatial_analyses(
                         if pairwise_config.groupby_obs in metric_df.columns
                         else None
                     )
+                    barplot_metric_df = metric_df
+                    if str(metric) == "count":
+                        # Squidpy count values should be non-negative; guard against
+                        # unexpected negatives and ensure strict positivity for log y-scales.
+                        barplot_metric_df = metric_df.copy()
+                        barplot_metric_df["value"] = pd.to_numeric(
+                            barplot_metric_df["value"],
+                            errors="coerce",
+                        )
+                        neg_mask = barplot_metric_df["value"] < 0
+                        n_neg = int(neg_mask.sum())
+                        if n_neg > 0:
+                            logging.warning(
+                                "Squidpy/count contains %d negative values; converting to absolute values before bar plotting.",
+                                n_neg,
+                            )
+                            barplot_metric_df.loc[neg_mask, "value"] = (
+                                barplot_metric_df.loc[neg_mask, "value"].abs()
+                            )
+
+                        nonpos_mask = barplot_metric_df["value"] <= 0
+                        n_nonpos = int(nonpos_mask.sum())
+                        if n_nonpos > 0:
+                            eps = float(np.finfo(float).tiny)
+                            logging.info(
+                                "Squidpy/count barplot input has %d non-positive values; replacing with %s for log-scale compatibility.",
+                                n_nonpos,
+                                eps,
+                            )
+                            barplot_metric_df.loc[nonpos_mask, "value"] = eps
+
+                        barplot_metric_df = barplot_metric_df.dropna(subset=["value"])
+
                     y_scale_mode = _resolve_barplot_scale_mode(
                         pairwise_config.barplot_y_scale,
                         analysis="squidpy",
                         metric=str(metric),
                     )
                     _save_pair_barplots(
-                        metric_df,
+                        barplot_metric_df,
                         pairs=pair_map,
                         group_col=group_col,
                         analysis="squidpy",

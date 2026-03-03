@@ -14,6 +14,7 @@ Creates comprehensive visualizations for processed AnnData objects including:
 import logging
 import traceback
 from pathlib import Path
+from typing import Any, Dict, Optional
 
 # Third-party library imports
 import scanpy as sc
@@ -1060,6 +1061,182 @@ def _save_df(df: pd.DataFrame, save_path: Path):
     df.to_csv(save_path, index=False)
 
 
+def _normalise_barplot_scale_mode(value: Any, *, context: str = "") -> Optional[str]:
+    text = str(value).strip().lower()
+    if text in {"linear", "log", "intelligent"}:
+        return text
+    if context:
+        logging.warning(
+            "Invalid barplot y-scale '%s' for %s. Valid options are: linear, log, intelligent.",
+            value,
+            context,
+        )
+    return None
+
+
+def _resolve_barplot_scale_mode(
+    scale_cfg: Any,
+    *,
+    analysis: str,
+    metric: str,
+) -> str:
+    analysis_key = str(analysis)
+    metric_key = str(metric)
+
+    if isinstance(scale_cfg, dict):
+        direct_key = f"{analysis_key}.{metric_key}"
+        if direct_key in scale_cfg:
+            mode = _normalise_barplot_scale_mode(
+                scale_cfg.get(direct_key), context=f"{analysis_key}.{metric_key}"
+            )
+            if mode:
+                return mode
+
+        analysis_cfg = scale_cfg.get(analysis_key)
+        if isinstance(analysis_cfg, dict):
+            for key in [metric_key, "default", "*"]:
+                if key in analysis_cfg:
+                    mode = _normalise_barplot_scale_mode(
+                        analysis_cfg.get(key), context=f"{analysis_key}.{key}"
+                    )
+                    if mode:
+                        return mode
+        elif analysis_cfg is not None:
+            mode = _normalise_barplot_scale_mode(analysis_cfg, context=analysis_key)
+            if mode:
+                return mode
+
+        if metric_key in scale_cfg and not isinstance(scale_cfg.get(metric_key), dict):
+            mode = _normalise_barplot_scale_mode(scale_cfg.get(metric_key), context=metric_key)
+            if mode:
+                return mode
+
+        for key in ["default", "*"]:
+            if key in scale_cfg:
+                mode = _normalise_barplot_scale_mode(scale_cfg.get(key), context=key)
+                if mode:
+                    return mode
+        return "linear"
+
+    mode = _normalise_barplot_scale_mode(scale_cfg, context="abundance_barplot_y_scale")
+    return mode or "linear"
+
+
+def _resolve_intelligent_scale_params(params: Any) -> Dict[str, Any]:
+    defaults: Dict[str, Any] = {
+        "allow_log1p": True,
+        "dynamic_range_thresh": 100.0,
+        "skew_improve_ratio": 0.7,
+        "crush_frac_thresh": 0.7,
+    }
+    if not isinstance(params, dict):
+        return defaults
+
+    resolved = defaults.copy()
+    if "allow_log1p" in params:
+        resolved["allow_log1p"] = bool(params.get("allow_log1p"))
+    for key in ["dynamic_range_thresh", "skew_improve_ratio", "crush_frac_thresh"]:
+        if key in params:
+            try:
+                resolved[key] = float(params.get(key))
+            except Exception:
+                logging.warning(
+                    "Invalid abundance_barplot_y_scale_intelligent_params['%s']=%s. Using default %s.",
+                    key,
+                    params.get(key),
+                    defaults[key],
+                )
+    return resolved
+
+
+def _choose_scale_1d(
+    x: Any,
+    *,
+    allow_log1p: bool = True,
+    dynamic_range_thresh: float = 100.0,
+    skew_improve_ratio: float = 0.7,
+    crush_frac_thresh: float = 0.7,
+) -> str:
+    arr = np.asarray(x, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    if arr.size < 10:
+        return "linear"
+
+    if np.any(arr <= 0):
+        return "linear"
+
+    min_pos = float(np.min(arr))
+    max_pos = float(np.max(arr))
+    if not np.isfinite(min_pos) or not np.isfinite(max_pos) or max_pos <= 0:
+        return "linear"
+
+    dyn = max_pos / min_pos if min_pos > 0 else np.inf
+
+    lo = float(np.min(arr))
+    hi = float(np.max(arr))
+    if np.isclose(hi, lo):
+        return "linear"
+    crush_frac = float(np.mean(arr <= lo + 0.05 * (hi - lo)))
+
+    def _skew(values: np.ndarray) -> float:
+        m = float(np.mean(values))
+        s = float(np.std(values, ddof=0))
+        if np.isclose(s, 0.0):
+            return 0.0
+        z = (values - m) / s
+        return float(np.mean(z**3))
+
+    skew_lin = abs(_skew(arr))
+    if allow_log1p:
+        transformed = np.log1p(arr)
+    else:
+        transformed = np.log(arr)
+    skew_log = abs(_skew(transformed))
+
+    log_helpful = (dyn >= float(dynamic_range_thresh)) and (
+        (skew_log <= skew_lin * float(skew_improve_ratio))
+        or (crush_frac >= float(crush_frac_thresh))
+    )
+    return "log" if log_helpful else "linear"
+
+
+def _apply_barplot_y_scale(
+    ax: Any,
+    values: pd.Series,
+    *,
+    requested_mode: str,
+    analysis: str,
+    metric: str,
+    intelligent_params: Dict[str, Any],
+) -> str:
+    mode = str(requested_mode).lower()
+    if mode == "intelligent":
+        mode = _choose_scale_1d(values.to_numpy(dtype=float), **intelligent_params)
+
+    if mode == "log":
+        finite = values.to_numpy(dtype=float)
+        finite = finite[np.isfinite(finite)]
+        if finite.size == 0 or np.any(finite <= 0):
+            logging.warning(
+                "Requested log y-scale for %s/%s barplot, but values include non-positive entries. Using linear scale.",
+                analysis,
+                metric,
+            )
+            return "linear"
+
+        min_pos = float(np.min(finite))
+        max_val = float(np.max(finite))
+        ax.set_yscale("log")
+        if np.isfinite(min_pos) and np.isfinite(max_val) and max_val > min_pos:
+            lower = max(min_pos * 0.9, np.finfo(float).tiny)
+            upper = max_val * 1.1
+            if upper > lower:
+                ax.set_ylim(bottom=lower, top=upper)
+        return "log"
+
+    return "linear"
+
+
 def _plot_population_bar(
     data: pd.DataFrame,
     x_col: str,
@@ -1070,9 +1247,14 @@ def _plot_population_bar(
     title: str,
     save_path: Path,
     save_high_res: bool,
+    y_scale_mode: str = "linear",
+    y_scale_intelligent_params: Optional[Dict[str, Any]] = None,
+    scale_metric_name: str = "",
 ):
     if data.empty:
         return
+    if y_scale_intelligent_params is None:
+        y_scale_intelligent_params = _resolve_intelligent_scale_params(None)
 
     fig_width = 1.5 if len(order) <= 2 else 2.0
     fig, ax = plt.subplots(figsize=(fig_width, 3))
@@ -1094,7 +1276,127 @@ def _plot_population_bar(
     ax.set_ylabel(ylabel, fontsize=10)
     ax.set_xlabel("")
     ax.set_title(title, fontsize=10)
+    _apply_barplot_y_scale(
+        ax,
+        data[y_col],
+        requested_mode=y_scale_mode,
+        analysis="abundance",
+        metric=scale_metric_name or y_col,
+        intelligent_params=y_scale_intelligent_params,
+    )
+    ax.grid(False)
     fig.tight_layout()
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(save_path, bbox_inches='tight', dpi=300 if save_high_res else 150)
+    plt.close(fig)
+
+
+def _dedupe_legend(ax: Any, *, title: str) -> None:
+    handles, labels = ax.get_legend_handles_labels()
+    if not handles:
+        return
+    seen = set()
+    unique_h = []
+    unique_l = []
+    for handle, label in zip(handles, labels):
+        name = str(label)
+        if not name or name.startswith("_") or name in seen:
+            continue
+        seen.add(name)
+        unique_h.append(handle)
+        unique_l.append(name)
+    if unique_h:
+        ax.legend(
+            unique_h,
+            unique_l,
+            title=title,
+            frameon=True,
+            loc="upper left",
+            bbox_to_anchor=(1.01, 1.0),
+            borderaxespad=0.0,
+        )
+    else:
+        legend = ax.get_legend()
+        if legend is not None:
+            legend.remove()
+
+
+def _plot_all_populations_by_group(
+    data: pd.DataFrame,
+    *,
+    pop_col: str,
+    group_col: str,
+    value_col: str,
+    pop_order,
+    group_order,
+    group_palette: Dict[str, str],
+    ylabel: str,
+    title: str,
+    save_path: Path,
+    save_high_res: bool,
+    base_figsize,
+    width_scale: float,
+    y_scale_mode: str = "linear",
+    y_scale_intelligent_params: Optional[Dict[str, Any]] = None,
+    scale_metric_name: str = "",
+):
+    if data.empty:
+        return
+    if y_scale_intelligent_params is None:
+        y_scale_intelligent_params = _resolve_intelligent_scale_params(None)
+
+    plot_data = data[[pop_col, group_col, value_col]].dropna().copy()
+    if plot_data.empty:
+        return
+
+    plot_data[pop_col] = plot_data[pop_col].astype(str)
+    plot_data[group_col] = plot_data[group_col].astype(str)
+    pop_order = [str(x) for x in pop_order if str(x) in plot_data[pop_col].unique().tolist()]
+    group_order = [str(x) for x in group_order if str(x) in plot_data[group_col].unique().tolist()]
+    if not pop_order or not group_order:
+        return
+
+    base_width = float(base_figsize[0]) if len(base_figsize) > 0 else 4.0
+    base_height = float(base_figsize[1]) if len(base_figsize) > 1 else 3.0
+    width_scale = max(0.05, float(width_scale))
+    plot_width = max(base_width, width_scale * max(1, len(pop_order)))
+
+    fallback = sns.color_palette("tab10", n_colors=max(1, len(group_order))).as_hex()
+    palette = {g: str(group_palette.get(g, fallback[i])) for i, g in enumerate(group_order)}
+
+    fig, ax = plt.subplots(figsize=(plot_width, base_height))
+    sns.barplot(
+        data=plot_data,
+        x=pop_col,
+        y=value_col,
+        hue=group_col,
+        order=pop_order,
+        hue_order=group_order,
+        errorbar="se" if len(plot_data) > 1 else None,
+        palette=palette,
+        edgecolor='black',
+        linewidth=0.6,
+        capsize=0.2,
+        ax=ax,
+    )
+
+    ax.tick_params(axis='x', labelsize=10, rotation=90)
+    ax.tick_params(axis='y', labelsize=10)
+    ax.set_ylabel(ylabel, fontsize=10)
+    ax.set_xlabel(pop_col, fontsize=10)
+    ax.set_title(title, fontsize=10)
+    _apply_barplot_y_scale(
+        ax,
+        plot_data[value_col],
+        requested_mode=y_scale_mode,
+        analysis="abundance",
+        metric=scale_metric_name or value_col,
+        intelligent_params=y_scale_intelligent_params,
+    )
+    _dedupe_legend(ax, title=group_col)
+    ax.grid(False)
+    fig.tight_layout()
+
     save_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(save_path, bbox_inches='tight', dpi=300 if save_high_res else 150)
     plt.close(fig)
@@ -1258,6 +1560,44 @@ def create_population_abundance_analysis(
 
     roi_area_map = _build_roi_area_mm2_map(adata, general_config, roi_col=roi_col)
     has_roi_areas = len(roi_area_map) > 0
+    make_all_pop_plots = bool(getattr(viz_config, 'abundance_make_all_populations_plots', True))
+    raw_all_pop_figsize = getattr(viz_config, 'abundance_all_populations_figsize', [4.0, 3.0])
+    if (
+        not isinstance(raw_all_pop_figsize, (list, tuple))
+        or len(raw_all_pop_figsize) < 2
+    ):
+        all_pop_figsize = (4.0, 3.0)
+    else:
+        all_pop_figsize = (float(raw_all_pop_figsize[0]), float(raw_all_pop_figsize[1]))
+    all_pop_width_scale = max(
+        0.05,
+        float(getattr(viz_config, 'abundance_all_populations_width_scale', 0.45)),
+    )
+    abundance_scale_cfg = getattr(viz_config, 'abundance_barplot_y_scale', {'default': 'linear'})
+    abundance_scale_intelligent_params = _resolve_intelligent_scale_params(
+        getattr(viz_config, 'abundance_barplot_y_scale_intelligent_params', None)
+    )
+    mode_proportions_roi = _resolve_barplot_scale_mode(
+        abundance_scale_cfg,
+        analysis="abundance",
+        metric="proportions_roi_level",
+    )
+    mode_proportions_case = _resolve_barplot_scale_mode(
+        abundance_scale_cfg,
+        analysis="abundance",
+        metric="proportions_case_average",
+    )
+    mode_mm2_roi = _resolve_barplot_scale_mode(
+        abundance_scale_cfg,
+        analysis="abundance",
+        metric="cells_per_mm2_roi_level",
+    )
+    mode_mm2_case = _resolve_barplot_scale_mode(
+        abundance_scale_cfg,
+        analysis="abundance",
+        metric="cells_per_mm2_case_average",
+    )
+    group_palette = _population_palette(adata, group_col, group_order)
 
     for pop_col in population_columns:
         if pop_col not in adata.obs.columns:
@@ -1388,6 +1728,9 @@ def create_population_abundance_analysis(
                     title=pop_label,
                     save_path=pop_plot_root / 'proportions_roi_level' / f'{pop_safe}.{viz_config.figure_format}',
                     save_high_res=viz_config.save_high_res,
+                    y_scale_mode=mode_proportions_roi,
+                    y_scale_intelligent_params=abundance_scale_intelligent_params,
+                    scale_metric_name='proportions_roi_level',
                 )
 
             if case_col and not case_proportions.empty:
@@ -1406,6 +1749,9 @@ def create_population_abundance_analysis(
                         title=pop_label,
                         save_path=pop_plot_root / 'proportions_case_average' / f'{pop_safe}.{viz_config.figure_format}',
                         save_high_res=viz_config.save_high_res,
+                        y_scale_mode=mode_proportions_case,
+                        y_scale_intelligent_params=abundance_scale_intelligent_params,
+                        scale_metric_name='proportions_case_average',
                     )
 
             if has_roi_areas and not counts_mm2.empty:
@@ -1424,6 +1770,9 @@ def create_population_abundance_analysis(
                         title=pop_label,
                         save_path=pop_plot_root / 'cells_per_mm2_roi_level' / f'{pop_safe}.{viz_config.figure_format}',
                         save_high_res=viz_config.save_high_res,
+                        y_scale_mode=mode_mm2_roi,
+                        y_scale_intelligent_params=abundance_scale_intelligent_params,
+                        scale_metric_name='cells_per_mm2_roi_level',
                     )
 
             if case_col and has_roi_areas and not case_mm2.empty:
@@ -1442,6 +1791,107 @@ def create_population_abundance_analysis(
                         title=pop_label,
                         save_path=pop_plot_root / 'cells_per_mm2_case_average' / f'{pop_safe}.{viz_config.figure_format}',
                         save_high_res=viz_config.save_high_res,
+                        y_scale_mode=mode_mm2_case,
+                        y_scale_intelligent_params=abundance_scale_intelligent_params,
+                        scale_metric_name='cells_per_mm2_case_average',
+                    )
+
+        # Combined all-populations plots (x=population, hue=group)
+        if make_all_pop_plots:
+            all_raw_root = pop_raw_root / 'all_populations'
+            all_plot_root = pop_plot_root / 'all_populations'
+            all_raw_root.mkdir(parents=True, exist_ok=True)
+            all_plot_root.mkdir(parents=True, exist_ok=True)
+
+            all_prop = proportions[proportions[group_col].isin(group_order)].copy()
+            if not all_prop.empty:
+                _save_df(all_prop, all_raw_root / 'proportions_roi_level.csv')
+                _plot_all_populations_by_group(
+                    all_prop,
+                    pop_col=pop_col,
+                    group_col=group_col,
+                    value_col='prop_cells',
+                    pop_order=pop_order,
+                    group_order=group_order,
+                    group_palette=group_palette,
+                    ylabel='Proportion of cells\n(ROI level)',
+                    title=f"{pop_col}: all populations by {group_col} (ROI level)",
+                    save_path=all_plot_root / f'proportions_roi_level.{viz_config.figure_format}',
+                    save_high_res=viz_config.save_high_res,
+                    base_figsize=all_pop_figsize,
+                    width_scale=all_pop_width_scale,
+                    y_scale_mode=mode_proportions_roi,
+                    y_scale_intelligent_params=abundance_scale_intelligent_params,
+                    scale_metric_name='proportions_roi_level',
+                )
+
+            if case_col and not case_proportions.empty:
+                all_prop_case = case_proportions[case_proportions[group_col].isin(group_order)].copy()
+                if not all_prop_case.empty:
+                    _save_df(all_prop_case, all_raw_root / 'proportions_case_average.csv')
+                    _plot_all_populations_by_group(
+                        all_prop_case,
+                        pop_col=pop_col,
+                        group_col=group_col,
+                        value_col='prop_cells',
+                        pop_order=pop_order,
+                        group_order=group_order,
+                        group_palette=group_palette,
+                        ylabel='Proportion of cells\n(Case average)',
+                        title=f"{pop_col}: all populations by {group_col} (Case average)",
+                        save_path=all_plot_root / f'proportions_case_average.{viz_config.figure_format}',
+                        save_high_res=viz_config.save_high_res,
+                        base_figsize=all_pop_figsize,
+                        width_scale=all_pop_width_scale,
+                        y_scale_mode=mode_proportions_case,
+                        y_scale_intelligent_params=abundance_scale_intelligent_params,
+                        scale_metric_name='proportions_case_average',
+                    )
+
+            if has_roi_areas and not counts_mm2.empty:
+                all_mm2 = counts_mm2[counts_mm2[group_col].isin(group_order)].copy()
+                if not all_mm2.empty:
+                    _save_df(all_mm2, all_raw_root / 'cells_per_mm2_roi_level.csv')
+                    _plot_all_populations_by_group(
+                        all_mm2,
+                        pop_col=pop_col,
+                        group_col=group_col,
+                        value_col='cells_per_mm2',
+                        pop_order=pop_order,
+                        group_order=group_order,
+                        group_palette=group_palette,
+                        ylabel='Cells per mm$^2$\n(ROI level)',
+                        title=f"{pop_col}: all populations by {group_col} (ROI level)",
+                        save_path=all_plot_root / f'cells_per_mm2_roi_level.{viz_config.figure_format}',
+                        save_high_res=viz_config.save_high_res,
+                        base_figsize=all_pop_figsize,
+                        width_scale=all_pop_width_scale,
+                        y_scale_mode=mode_mm2_roi,
+                        y_scale_intelligent_params=abundance_scale_intelligent_params,
+                        scale_metric_name='cells_per_mm2_roi_level',
+                    )
+
+            if case_col and has_roi_areas and not case_mm2.empty:
+                all_mm2_case = case_mm2[case_mm2[group_col].isin(group_order)].copy()
+                if not all_mm2_case.empty:
+                    _save_df(all_mm2_case, all_raw_root / 'cells_per_mm2_case_average.csv')
+                    _plot_all_populations_by_group(
+                        all_mm2_case,
+                        pop_col=pop_col,
+                        group_col=group_col,
+                        value_col='cells_per_mm2',
+                        pop_order=pop_order,
+                        group_order=group_order,
+                        group_palette=group_palette,
+                        ylabel='Cells per mm$^2$\n(Case average)',
+                        title=f"{pop_col}: all populations by {group_col} (Case average)",
+                        save_path=all_plot_root / f'cells_per_mm2_case_average.{viz_config.figure_format}',
+                        save_high_res=viz_config.save_high_res,
+                        base_figsize=all_pop_figsize,
+                        width_scale=all_pop_width_scale,
+                        y_scale_mode=mode_mm2_case,
+                        y_scale_intelligent_params=abundance_scale_intelligent_params,
+                        scale_metric_name='cells_per_mm2_case_average',
                     )
 
         # Stats (requires case column and exactly two groups for mlm_stats)
