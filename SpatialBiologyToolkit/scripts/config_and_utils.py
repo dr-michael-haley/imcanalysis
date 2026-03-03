@@ -401,6 +401,10 @@ class VisualizationConfig:
     abundance_make_all_populations_plots: bool = True  # Also create combined plots with all populations on one axis (hue=groupby_obs)
     abundance_all_populations_figsize: List[float] = field(default_factory=lambda: [4.0, 3.0])  # Base [width, height]; width auto-scales with number of populations
     abundance_all_populations_width_scale: float = 0.45  # Auto width ~= max(base_width, scale * n_populations)
+    abundance_make_case_stacked_plots: bool = True  # Create case-level stacked proportion plots (all cases + split by groupby_obs)
+    abundance_case_stacked_figsize: List[float] = field(default_factory=lambda: [6.0, 3.0])  # Base [width, height]; width auto-scales with number of cases
+    abundance_case_stacked_width_scale: float = 0.30  # Auto width ~= max(base_width, scale * n_cases)
+    abundance_order_cases_by_population: Optional[str] = None  # Optional population label to order cases by descending abundance
     # Y-axis scale controls for abundance barplots.
     # Accepted values: 'linear', 'log', 'intelligent'
     # Uses same flexible dictionary style as pairwise_spatial.barplot_y_scale.

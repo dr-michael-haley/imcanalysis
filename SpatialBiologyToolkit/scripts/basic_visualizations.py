@@ -1321,6 +1321,16 @@ def _dedupe_legend(ax: Any, *, title: str) -> None:
             legend.remove()
 
 
+def _majority_label(series: pd.Series) -> str:
+    values = series.dropna().astype(str)
+    if values.empty:
+        return ""
+    modes = values.mode()
+    if not modes.empty:
+        return str(modes.iloc[0])
+    return str(values.iloc[0])
+
+
 def _plot_all_populations_by_group(
     data: pd.DataFrame,
     *,
@@ -1399,6 +1409,82 @@ def _plot_all_populations_by_group(
 
     save_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(save_path, bbox_inches='tight', dpi=300 if save_high_res else 150)
+    plt.close(fig)
+
+
+def _plot_case_stacked_proportions(
+    case_props: pd.DataFrame,
+    *,
+    case_col: str,
+    pop_col: str,
+    value_col: str,
+    pop_order,
+    palette: Dict[str, str],
+    title: str,
+    save_path: Path,
+    save_high_res: bool,
+    base_figsize,
+    width_scale: float,
+    order_by_population: Optional[str] = None,
+    wide_csv_path: Optional[Path] = None,
+):
+    if case_props.empty:
+        return
+
+    wide = case_props.pivot_table(
+        index=case_col,
+        columns=pop_col,
+        values=value_col,
+        aggfunc="mean",
+        fill_value=0.0,
+    )
+    if wide.empty:
+        return
+
+    ordered_cols = [str(p) for p in pop_order if str(p) in wide.columns]
+    if ordered_cols:
+        wide = wide.reindex(columns=ordered_cols, fill_value=0.0)
+
+    order_label = str(order_by_population) if order_by_population is not None else ""
+    if order_label and order_label in wide.columns:
+        wide = wide.sort_values(by=order_label, ascending=False)
+    elif order_label:
+        logging.info(
+            "abundance_order_cases_by_population '%s' is not present for '%s'; keeping default case order.",
+            order_label,
+            pop_col,
+        )
+
+    if wide_csv_path is not None:
+        wide_csv_path.parent.mkdir(parents=True, exist_ok=True)
+        wide.to_csv(wide_csv_path, index=True)
+
+    base_width = float(base_figsize[0]) if len(base_figsize) > 0 else 6.0
+    base_height = float(base_figsize[1]) if len(base_figsize) > 1 else 3.0
+    width_scale = max(0.05, float(width_scale))
+    plot_width = max(base_width, width_scale * max(1, wide.shape[0]))
+
+    colors = [palette.get(str(col), "#808080") for col in wide.columns]
+    fig, ax = plt.subplots(figsize=(plot_width, base_height))
+    wide.plot(kind="bar", stacked=True, ax=ax, color=colors, width=0.9)
+    ax.set_xlabel(case_col, fontsize=10)
+    ax.set_ylabel("Proportion", fontsize=10)
+    ax.set_title(title, fontsize=10)
+    ax.tick_params(axis="x", labelsize=10, rotation=90)
+    ax.tick_params(axis="y", labelsize=10)
+    ax.set_ylim(0.0, 1.0)
+    ax.margins(y=0.0)
+    ax.grid(False)
+    ax.legend(
+        title=pop_col,
+        bbox_to_anchor=(1.01, 1.0),
+        loc="upper left",
+        frameon=False,
+        fontsize=8,
+    )
+    fig.tight_layout()
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(save_path, bbox_inches="tight", dpi=300 if save_high_res else 150)
     plt.close(fig)
 
 
@@ -1573,6 +1659,26 @@ def create_population_abundance_analysis(
         0.05,
         float(getattr(viz_config, 'abundance_all_populations_width_scale', 0.45)),
     )
+    make_case_stacked_plots = bool(getattr(viz_config, 'abundance_make_case_stacked_plots', True))
+    raw_case_stacked_figsize = getattr(viz_config, 'abundance_case_stacked_figsize', [6.0, 3.0])
+    if (
+        not isinstance(raw_case_stacked_figsize, (list, tuple))
+        or len(raw_case_stacked_figsize) < 2
+    ):
+        case_stacked_figsize = (6.0, 3.0)
+    else:
+        case_stacked_figsize = (
+            float(raw_case_stacked_figsize[0]),
+            float(raw_case_stacked_figsize[1]),
+        )
+    case_stacked_width_scale = max(
+        0.05,
+        float(getattr(viz_config, 'abundance_case_stacked_width_scale', 0.30)),
+    )
+    order_cases_by_population = getattr(viz_config, 'abundance_order_cases_by_population', None)
+    if order_cases_by_population is not None:
+        order_cases_by_population = str(order_cases_by_population)
+
     abundance_scale_cfg = getattr(viz_config, 'abundance_barplot_y_scale', {'default': 'linear'})
     abundance_scale_intelligent_params = _resolve_intelligent_scale_params(
         getattr(viz_config, 'abundance_barplot_y_scale_intelligent_params', None)
@@ -1708,6 +1814,89 @@ def create_population_abundance_analysis(
                 .mean()
             )
             _save_df(case_mm2, pop_raw_root / 'cells_per_mm2_case_average.csv')
+
+        # Case-level composition from direct case counts (no ROI pre-averaging),
+        # used for stacked composition plots similar to CellCharter outputs.
+        case_level_props = pd.DataFrame()
+        if case_col:
+            case_counts = (
+                obs.groupby([case_col, pop_col], observed=True)
+                .size()
+                .reset_index(name='n_cells')
+            )
+            case_totals = case_counts.groupby(case_col, observed=True)['n_cells'].transform('sum')
+            case_counts['case_proportion'] = case_counts['n_cells'] / case_totals.replace(0, np.nan)
+            case_level_props = case_counts[[case_col, pop_col, 'case_proportion']].copy()
+            case_level_props = (
+                case_level_props
+                .replace([np.inf, -np.inf], np.nan)
+                .dropna(subset=['case_proportion'])
+            )
+
+            case_group_nunique = (
+                obs.groupby(case_col, observed=True)[group_col]
+                .nunique(dropna=True)
+            )
+            ambiguous_cases = case_group_nunique[case_group_nunique > 1].index.tolist()
+            if ambiguous_cases:
+                logging.warning(
+                    "Population '%s': some cases map to multiple '%s' values; using majority assignment for stacked plots.",
+                    pop_col,
+                    group_col,
+                )
+            case_group_map = (
+                obs.groupby(case_col, observed=True)[group_col]
+                .agg(_majority_label)
+                .reset_index()
+            )
+            case_level_props = case_level_props.merge(case_group_map, on=case_col, how='left')
+            _save_df(case_level_props, pop_raw_root / 'case_level_proportions.csv')
+
+        if make_case_stacked_plots and case_col and not case_level_props.empty:
+            stacked_plot_root = pop_plot_root / 'case_stacked_proportions'
+            stacked_raw_root = pop_raw_root / 'case_stacked_proportions'
+            stacked_plot_root.mkdir(parents=True, exist_ok=True)
+            stacked_raw_root.mkdir(parents=True, exist_ok=True)
+
+            _plot_case_stacked_proportions(
+                case_level_props,
+                case_col=case_col,
+                pop_col=pop_col,
+                value_col='case_proportion',
+                pop_order=pop_order,
+                palette=palette,
+                title=f"Case-level {pop_col} proportions",
+                save_path=stacked_plot_root / f'stacked_case_proportion_all.{viz_config.figure_format}',
+                save_high_res=viz_config.save_high_res,
+                base_figsize=case_stacked_figsize,
+                width_scale=case_stacked_width_scale,
+                order_by_population=order_cases_by_population,
+                wide_csv_path=stacked_raw_root / 'stacked_case_proportion_all.csv',
+            )
+
+            available_groups = _ordered_groups(case_level_props[group_col], configured_groups)
+            for group in available_groups:
+                group_subset = case_level_props[
+                    case_level_props[group_col].astype(str) == str(group)
+                ].copy()
+                if group_subset.empty:
+                    continue
+                group_safe = cleanstring(str(group))
+                _plot_case_stacked_proportions(
+                    group_subset,
+                    case_col=case_col,
+                    pop_col=pop_col,
+                    value_col='case_proportion',
+                    pop_order=pop_order,
+                    palette=palette,
+                    title=f"Case-level {pop_col} proportions ({group_col}={group})",
+                    save_path=stacked_plot_root / f'stacked_case_proportion_{group_safe}.{viz_config.figure_format}',
+                    save_high_res=viz_config.save_high_res,
+                    base_figsize=case_stacked_figsize,
+                    width_scale=case_stacked_width_scale,
+                    order_by_population=order_cases_by_population,
+                    wide_csv_path=stacked_raw_root / f'stacked_case_proportion_{group_safe}.csv',
+                )
 
         # Per-population plots
         for pop in pop_order:
