@@ -442,13 +442,13 @@ class CellCharterConfig:
     qc_output_subdir: str = 'CellCharter_QC'
 
     # Features
-    use_rep: Optional[str] = None      # For non-TRVAE mode: adata.obsm key for neighborhood aggregation
+    use_rep: Optional[str] = 'X_biobatchnet'      # For non-TRVAE mode: adata.obsm key for neighborhood aggregation (set None to disable)
     use_layer: Optional[str] = None    # For TRVAE or non-TRVAE mode: adata.layers key (None uses adata.X)
     scale_by_sample: bool = False       # In TRVAE mode: scale TRVAE input per sample; otherwise scale aggregation input
     scaled_rep_key: str = 'X_cellcharter_scaled'
 
     # TRVAE dimensionality reduction (default path, per CellCharter tutorial)
-    use_trvae: bool = True
+    use_trvae: bool = False
     trvae_latent_key: str = 'X_trVAE'
     trvae_condition_key: Optional[str] = 'dataset'
     trvae_use_sample_key_fallback: bool = True

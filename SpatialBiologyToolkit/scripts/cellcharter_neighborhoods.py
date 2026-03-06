@@ -191,14 +191,18 @@ def _select_feature_matrix(
     tuple
         (matrix, obsm_key_if_directly_usable, source_label)
     """
-    if cellcharter_config.use_rep is not None:
-        rep_key = cellcharter_config.use_rep
+    rep_key = cellcharter_config.use_rep
+    if isinstance(rep_key, str) and rep_key.strip().lower() in {"", "none", "null"}:
+        rep_key = None
+    if rep_key is not None:
         if rep_key not in adata.obsm:
             raise KeyError(f"Configured use_rep '{rep_key}' was not found in adata.obsm.")
         return _to_dense_matrix(adata.obsm[rep_key]), rep_key, f"obsm['{rep_key}']"
 
-    if cellcharter_config.use_layer is not None:
-        layer_key = cellcharter_config.use_layer
+    layer_key = cellcharter_config.use_layer
+    if isinstance(layer_key, str) and layer_key.strip().lower() in {"", "none", "null"}:
+        layer_key = None
+    if layer_key is not None:
         if layer_key not in adata.layers:
             raise KeyError(f"Configured use_layer '{layer_key}' was not found in adata.layers.")
         return _to_dense_matrix(adata.layers[layer_key]), None, f"layers['{layer_key}']"

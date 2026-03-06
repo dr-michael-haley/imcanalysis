@@ -7,6 +7,7 @@ This script will:
 1. Load the existing config file
 2. Merge in any missing parameters from the default dataclass definitions
 3. Save the updated config file while preserving all existing user settings
+4. Report config settings that differ from current defaults
 
 Usage:
     python update_config.py [config_file_path]
@@ -17,6 +18,7 @@ If no config_file_path is provided, it defaults to 'config.yaml' in the current 
 import sys
 import os
 from pathlib import Path
+from typing import Any, Dict, List, Tuple
 
 # Add parent directory to path to import config_and_utils
 sys.path.insert(0, str(Path(__file__).parent))
@@ -24,6 +26,46 @@ sys.path.insert(0, str(Path(__file__).parent))
 from config_and_utils import load_config, generate_default_config_dict
 import yaml
 import logging
+
+
+def _collect_non_default_settings(
+    current: Any,
+    default: Any,
+    *,
+    prefix: str = "",
+) -> List[Tuple[str, Any, Any]]:
+    """
+    Recursively collect settings where current config differs from defaults.
+
+    Returns list of tuples: (dot_path, current_value, default_value)
+    """
+    differences: List[Tuple[str, Any, Any]] = []
+
+    if isinstance(default, dict):
+        if not isinstance(current, dict):
+            differences.append((prefix or "<root>", current, default))
+            return differences
+        for key in default.keys():
+            if key not in current:
+                # Missing keys should already be merged by update step.
+                continue
+            path = f"{prefix}.{key}" if prefix else str(key)
+            differences.extend(
+                _collect_non_default_settings(current[key], default[key], prefix=path)
+            )
+        return differences
+
+    if current != default:
+        differences.append((prefix or "<root>", current, default))
+    return differences
+
+
+def _format_value_for_log(value: Any, *, max_len: int = 140) -> str:
+    text = repr(value)
+    if len(text) > max_len:
+        return text[: max_len - 3] + "..."
+    return text
+
 
 def update_config_with_defaults(config_file: str = 'config.yaml', backup: bool = False):
     """
@@ -141,6 +183,27 @@ def update_config_with_defaults(config_file: str = 'config.yaml', backup: bool =
         logging.info(f"{'='*60}\n")
     else:
         logging.info("No changes needed - config file is already up to date!")
+
+    # Report settings that differ from defaults
+    non_default_settings = _collect_non_default_settings(existing_config, defaults)
+    non_default_settings.sort(key=lambda item: item[0])
+
+    logging.info(f"{'='*60}")
+    if non_default_settings:
+        logging.info(
+            "Settings that differ from defaults: %d",
+            len(non_default_settings),
+        )
+        for path, current_value, default_value in non_default_settings:
+            logging.info(
+                "  - %s: current=%s | default=%s",
+                path,
+                _format_value_for_log(current_value),
+                _format_value_for_log(default_value),
+            )
+    else:
+        logging.info("All settings match defaults.")
+    logging.info(f"{'='*60}")
 
 def main():
     """Main entry point for the script."""
