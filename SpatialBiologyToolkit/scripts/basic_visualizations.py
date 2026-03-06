@@ -582,6 +582,9 @@ def create_marker_umaps(adata, qc_umap_dir, viz_config):
                     'umap_marker_gallery_default_colorbar_label',
                     'Nimbus-Inference Score'
                 )
+                gallery_vmax = getattr(viz_config, 'umap_marker_gallery_vmax', None)
+                if isinstance(gallery_vmax, str) and gallery_vmax.strip().lower() in {'', 'none', 'null'}:
+                    gallery_vmax = None
 
                 # 1) Gallery for default matrix (adata.X)
                 gallery_path = qc_umap_dir / f'UMAP_marker_gallery.{viz_config.figure_format}'
@@ -589,6 +592,7 @@ def create_marker_umaps(adata, qc_umap_dir, viz_config):
                     adata,
                     markers=markers,
                     cmap=colormap,
+                    vmax=gallery_vmax,
                     add_colorbar=True,
                     colorbar_label=default_gallery_colorbar_label,
                     show=False,
@@ -607,6 +611,7 @@ def create_marker_umaps(adata, qc_umap_dir, viz_config):
                         markers=markers,
                         cmap=colormap,
                         layer=layer_name,
+                        vmax=gallery_vmax,
                         add_colorbar=True,
                         colorbar_label=f'Expression ({layer_name})',
                         show=False,

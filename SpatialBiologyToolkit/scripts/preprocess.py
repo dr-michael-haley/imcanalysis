@@ -476,6 +476,7 @@ def export_to_tiffstack(
 
     # Save each ROI within the MCD
     for i in range(start_index, num_acquisitions):
+        meta = None
         try:
             # Read data for the acquisition
             data, channels, _, names, meta = read_mcd(path, acquisition_id=i)
