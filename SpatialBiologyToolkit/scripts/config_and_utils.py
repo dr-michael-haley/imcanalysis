@@ -358,6 +358,7 @@ class VisualizationConfig:
     max_categories: int = 50  # Maximum number of unique categories for population/metadata columns
     umap_marker_colormap: str = 'viridis'  # Colormap for marker expression UMAPs (e.g., 'viridis', 'plasma', 'inferno', 'magma', 'cividis')
     umap_marker_gallery_default_colorbar_label: str = 'Nimbus-Inference Score'  # Colorbar label for default-layer (adata.X) marker gallery
+    umap_marker_gallery_vmax: Optional[float] = 0.8  # Maximum value for colorbar scaling in UMAP marker gallery
     
     # Backgating assessment settings
     backgating_cells_per_group: int = 50  # Number of cells to sample per population for backgating
