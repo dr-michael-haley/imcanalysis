@@ -1353,6 +1353,16 @@ def run_pairwise_spatial_analyses(
 
     metadata_cols = _resolve_metadata_columns(adata, pairwise_config)
     source_population_obs = pairwise_config.source_population_obs or pairwise_config.population_obs
+    if pairwise_config.ignore_cells_without_lablel is not None:
+        logging.warning(
+            "Using deprecated config key 'ignore_cells_without_lablel'. "
+            "Please rename it to 'ignore_cells_without_label'."
+        )
+    ignore_cells_without_label = bool(
+        pairwise_config.ignore_cells_without_lablel
+        if pairwise_config.ignore_cells_without_lablel is not None
+        else pairwise_config.ignore_cells_without_label
+    )
 
     output_root = Path(general_config.qc_folder) / pairwise_config.output_subdir
     raw_dir = output_root / "raw_data"
@@ -1373,6 +1383,10 @@ def run_pairwise_spatial_analyses(
     analysis_sources: Dict[str, str] = {"squidpy": "skipped", "distance": "skipped", "pcf": "skipped"}
     logging.info("Pairwise reload_saved_results=%s", reload_saved_results)
     logging.info("Pairwise matrix colorbar corner=%s", cbar_corner)
+    logging.info(
+        "Pairwise distance ignore_cells_without_label=%s",
+        ignore_cells_without_label,
+    )
 
     ordered_pops = _population_order(adata, pairwise_config.population_obs)
     color_map = _population_color_map(adata, pairwise_config.population_obs, ordered_pops)
@@ -1628,6 +1642,7 @@ def run_pairwise_spatial_analyses(
                     n_jobs=int(pairwise_config.distance_n_jobs),
                     source_population_col=source_population_obs,
                     ddof=int(pairwise_config.distance_ddof),
+                    ignore_cells_without_label=ignore_cells_without_label,
                 )
             )
 

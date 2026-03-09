@@ -1,4 +1,5 @@
 import os
+import logging
 import numpy as np
 import pandas as pd
 import anndata as ad
@@ -6,6 +7,72 @@ from typing import Optional, Sequence
 from scipy.spatial import cKDTree
 from tqdm.auto import tqdm
 from joblib import Parallel, delayed
+
+
+def _missing_label_mask(series: pd.Series) -> pd.Series:
+    """Return a boolean mask for missing population labels."""
+    mask = series.isna()
+    try:
+        text = series.astype("string").str.strip()
+        mask = mask | text.eq("").fillna(False)
+    except Exception:
+        pass
+    return mask
+
+
+def _format_missing_label_message(
+    *,
+    missing_counts: dict[str, int],
+    total_missing_rows: int,
+) -> str:
+    parts = [f"{col}={count}" for col, count in missing_counts.items() if count > 0]
+    details = ", ".join(parts) if parts else "unknown columns"
+    return (
+        f"Found {total_missing_rows} cells with missing population labels "
+        f"({details})."
+    )
+
+
+def _filter_adata_for_required_labels(
+    adata: ad.AnnData,
+    *,
+    required_label_cols: Sequence[str],
+    ignore_cells_without_label: bool,
+) -> ad.AnnData:
+    """
+    Validate/drop cells missing required label columns before distance analysis.
+    """
+    label_cols = [str(col) for col in required_label_cols if col]
+    if not label_cols:
+        return adata
+
+    missing_counts: dict[str, int] = {}
+    combined_mask = pd.Series(False, index=adata.obs.index)
+    for col in label_cols:
+        if col not in adata.obs.columns:
+            raise ValueError(f"Required label column {col!r} not found in adata.obs.")
+        col_mask = _missing_label_mask(adata.obs[col])
+        count = int(col_mask.sum())
+        if count > 0:
+            missing_counts[col] = count
+            combined_mask = combined_mask | col_mask
+
+    total_missing_rows = int(combined_mask.sum())
+    if total_missing_rows == 0:
+        return adata
+
+    message = _format_missing_label_message(
+        missing_counts=missing_counts,
+        total_missing_rows=total_missing_rows,
+    )
+    if not ignore_cells_without_label:
+        raise ValueError(message)
+
+    logging.warning(
+        "%s Dropping these cells before nearest-population distance analysis.",
+        message,
+    )
+    return adata[~combined_mask].copy()
 
 
 def get_annulus_proportions_func(
@@ -430,7 +497,8 @@ def summarize_bootstrap_results(
     source_population_col: str = "cell_type",
     master_index_col: str = "Master_Index",
     id_cols: Sequence[str] = ("master_index", "roi"),
-    ddof: int = 1
+    ddof: int = 1,
+    ignore_cells_without_label: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Summarize bootstrap results by computing bootstrap means, deltas, and z-scores,
@@ -452,6 +520,9 @@ def summarize_bootstrap_results(
         Identifier columns to exclude from statistics.
     ddof : int
         Delta degrees of freedom for bootstrap std.
+    ignore_cells_without_label : bool
+        If True, cells lacking source population labels are dropped with a warning.
+        If False, missing source population labels raise a ValueError.
 
     Returns
     -------
@@ -516,14 +587,19 @@ def summarize_bootstrap_results(
         out = df[list(id_cols)].copy()
         out["source_population"] = out[master_index_df_col].map(master_to_pop)
 
-        if out["source_population"].isna().any():
-            missing = out.loc[out["source_population"].isna(), master_index_df_col].unique()
-            raise ValueError(
+        missing_mask = _missing_label_mask(out["source_population"])
+        if bool(missing_mask.any()):
+            missing = out.loc[missing_mask, master_index_df_col].unique()
+            message = (
                 "Missing source population labels for master_index values: "
                 + ", ".join(map(str, missing))
             )
+            if not ignore_cells_without_label:
+                raise ValueError(message)
+            logging.warning("%s. Dropping these cells from ROI-level summaries.", message)
+            out = out.loc[~missing_mask].copy()
 
-        values = df[value_cols].copy()
+        values = df.loc[out.index, value_cols].copy()
         values["roi"] = out["roi"].values
         values["source_population"] = out["source_population"].values
 
@@ -555,11 +631,16 @@ def bootstrap_nearest_population_distances_all_rois(
     n_bootstraps: int = 100,
     n_jobs: int = -1,
     source_population_col: str = "cell_type",
-    ddof: int = 1
+    ddof: int = 1,
+    ignore_cells_without_label: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Run nearest-population distance bootstraps for each ROI and return
     summary matrices for all ROIs.
+
+    If `ignore_cells_without_label=True`, cells missing either the target
+    population label (`cell_type_col`) or source population label
+    (`source_population_col`) are dropped with a warning before analysis.
 
     Returns
     -------
@@ -571,12 +652,25 @@ def bootstrap_nearest_population_distances_all_rois(
     if roi_ids is None:
         roi_ids = pd.unique(adata.obs[roi_col]).tolist()
 
+    adata = _filter_adata_for_required_labels(
+        adata,
+        required_label_cols=[cell_type_col, source_population_col],
+        ignore_cells_without_label=ignore_cells_without_label,
+    )
+
     observed_list: list[pd.DataFrame] = []
     bootmean_list: list[pd.DataFrame] = []
     delta_list: list[pd.DataFrame] = []
     zscore_list: list[pd.DataFrame] = []
 
     for roi_id in tqdm(roi_ids, desc="ROIs"):
+        if not bool((adata.obs[roi_col] == roi_id).any()):
+            logging.warning(
+                "Skipping ROI '%s' for nearest-population distance analysis because no labeled cells remain.",
+                roi_id,
+            )
+            continue
+
         observed_df, bootstrap_dfs = bootstrap_nearest_population_distances_parallel(
             adata=adata,
             roi_id=roi_id,
@@ -597,13 +691,19 @@ def bootstrap_nearest_population_distances_all_rois(
             source_population_col=source_population_col,
             master_index_col=master_index_col,
             id_cols=("master_index", "roi"),
-            ddof=ddof
+            ddof=ddof,
+            ignore_cells_without_label=ignore_cells_without_label,
         )
 
         observed_list.append(observed_roi)
         bootmean_list.append(bootmean_roi)
         delta_list.append(delta_roi)
         zscore_list.append(zscore_roi)
+
+    if not observed_list:
+        logging.warning("No labeled cells remained for nearest-population distance analysis.")
+        empty = pd.DataFrame()
+        return empty, empty, empty, empty
 
     observed_all = pd.concat(observed_list, axis=0)
     bootmean_all = pd.concat(bootmean_list, axis=0)
