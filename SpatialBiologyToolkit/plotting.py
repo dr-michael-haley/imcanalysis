@@ -1405,7 +1405,7 @@ def obs_to_mask(
     adata_colormap: bool = True,
     # Mask file location
     masks_folder: str = 'Masks',
-    masks_ext: str = 'tiff',
+    masks_ext: str | None = None,
     voronoi_transform_mask: bool = False,
     # Numeric scaling for quant_obs
     min_val: float = None,
@@ -1458,7 +1458,30 @@ def obs_to_mask(
     # ------------------------------------------------------------
     # 1) Load the base segmentation mask and subset AnnData to ROI
     # ------------------------------------------------------------
-    mask_path = Path(masks_folder) / f"{roi}.{masks_ext}"
+    if masks_ext is None:
+        candidate_paths = [
+            Path(masks_folder) / f"{roi}.tiff",
+            Path(masks_folder) / f"{roi}.tif",
+        ]
+        existing_paths = [p for p in candidate_paths if p.exists()]
+
+        if len(existing_paths) == 0:
+            raise FileNotFoundError(
+                f"Could not find mask file for ROI '{roi}' in '{masks_folder}'. "
+                "Tried extensions: .tiff, .tif"
+            )
+        if len(existing_paths) > 1:
+            logging.warning(
+                "obs_to_mask: Found both .tiff and .tif for ROI '%s'. Using '%s'.",
+                roi,
+                existing_paths[0],
+            )
+
+        mask_path = existing_paths[0]
+    else:
+        normalized_ext = masks_ext.lstrip('.')
+        mask_path = Path(masks_folder) / f"{roi}.{normalized_ext}"
+
     base_mask = io.imread(mask_path)
     if base_mask.ndim != 2:
         raise ValueError(f"Expected 2D mask, got shape {base_mask.shape} for ROI '{roi}'.")
