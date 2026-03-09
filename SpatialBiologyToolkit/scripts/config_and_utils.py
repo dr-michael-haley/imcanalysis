@@ -600,7 +600,6 @@ class PairwiseSpatialConfig:
     distance_n_jobs: int = -1
     distance_ddof: int = 1
     ignore_cells_without_label: bool = False  # If True, drop cells lacking target/source population labels for distance analysis
-    ignore_cells_without_lablel: Optional[bool] = None  # Backward-compatible typo alias; if set, overrides ignore_cells_without_label
 
     # Pair-correlation function (PCF)
     run_pcf: bool = True

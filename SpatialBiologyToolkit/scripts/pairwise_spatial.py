@@ -1353,16 +1353,7 @@ def run_pairwise_spatial_analyses(
 
     metadata_cols = _resolve_metadata_columns(adata, pairwise_config)
     source_population_obs = pairwise_config.source_population_obs or pairwise_config.population_obs
-    if pairwise_config.ignore_cells_without_lablel is not None:
-        logging.warning(
-            "Using deprecated config key 'ignore_cells_without_lablel'. "
-            "Please rename it to 'ignore_cells_without_label'."
-        )
-    ignore_cells_without_label = bool(
-        pairwise_config.ignore_cells_without_lablel
-        if pairwise_config.ignore_cells_without_lablel is not None
-        else pairwise_config.ignore_cells_without_label
-    )
+    ignore_cells_without_label = bool(pairwise_config.ignore_cells_without_label)
 
     output_root = Path(general_config.qc_folder) / pairwise_config.output_subdir
     raw_dir = output_root / "raw_data"
