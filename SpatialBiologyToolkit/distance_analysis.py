@@ -47,17 +47,18 @@ def _filter_adata_for_required_labels(
         return adata
 
     missing_counts: dict[str, int] = {}
-    combined_mask = pd.Series(False, index=adata.obs.index)
+    combined_mask = np.zeros(adata.n_obs, dtype=bool)
     for col in label_cols:
         if col not in adata.obs.columns:
             raise ValueError(f"Required label column {col!r} not found in adata.obs.")
         col_mask = _missing_label_mask(adata.obs[col])
-        count = int(col_mask.sum())
+        col_mask_np = col_mask.to_numpy(dtype=bool, na_value=True)
+        count = int(np.sum(col_mask_np))
         if count > 0:
             missing_counts[col] = count
-            combined_mask = combined_mask | col_mask
+            combined_mask |= col_mask_np
 
-    total_missing_rows = int(combined_mask.sum())
+    total_missing_rows = int(np.sum(combined_mask))
     if total_missing_rows == 0:
         return adata
 
