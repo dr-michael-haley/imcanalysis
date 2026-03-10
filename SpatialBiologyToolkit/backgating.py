@@ -1167,6 +1167,7 @@ def backgating_assessment(
     population_overlay_scale_bar_outline_thickness: int = 3,
     population_overlay_scale_bar_text: str | None = None,
     population_overlay_scale_bar_text_size: int = 10,
+    population_overlay_extension: str = "png",
     # Intensity scaling
     minimum: float = 0.4,
     max_quantile: str = 'q0.98',
@@ -1581,7 +1582,7 @@ def backgating_assessment(
                             logging.warning(f"CSV mask mapping not yet implemented for population overlays")
                     
                     # Create overlay
-                    overlay_output_path = overlay_dir / f"{roi}_population_overlay.png"
+                    overlay_output_path = overlay_dir / f"{roi}_population_overlay.{population_overlay_extension}"
                     
                     create_population_overlay(
                         adata=adata,

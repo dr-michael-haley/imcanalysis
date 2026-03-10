@@ -38,6 +38,7 @@ from dataclasses import dataclass, field
 from typing import Optional, List
 import warnings
 import seaborn as sb
+import random
 
 from .config_and_utils import (
     process_config_with_overrides,
@@ -618,11 +619,35 @@ def parameter_scan_cpsam(general_config: GeneralConfig, mask_config: CreateMasks
         # Find all .tiff files in input folder
         image_files = list(input_folder.glob("*.tiff")) + list(input_folder.glob("*.tif"))
         rois_to_process = [f.stem for f in image_files]
-        logging.info(f"Parameter scanning all {len(rois_to_process)} ROIs found in {input_folder}")
+        logging.info(f"Parameter scanning discovered {len(rois_to_process)} ROIs in {input_folder}")
         
         if not rois_to_process:
             logging.error(f"No .tiff files found in {input_folder}")
             return
+
+        # Optional ROI subsampling for faster parameter scans
+        num_rois_to_scan = mask_config.num_rois_to_scan
+        if isinstance(num_rois_to_scan, str):
+            num_rois_to_scan = None if num_rois_to_scan.strip().lower() in ('none', 'null', '') else int(num_rois_to_scan)
+
+        if num_rois_to_scan is not None:
+            if num_rois_to_scan <= 0:
+                logging.warning(
+                    f"num_rois_to_scan={num_rois_to_scan} is <= 0; no ROIs selected for parameter scan."
+                )
+                return
+
+            if num_rois_to_scan >= len(rois_to_process):
+                logging.info(
+                    f"num_rois_to_scan={num_rois_to_scan} >= available ROIs ({len(rois_to_process)}); processing all ROIs."
+                )
+            else:
+                rois_to_process = random.sample(rois_to_process, num_rois_to_scan)
+                logging.info(
+                    f"Parameter scanning random subset of {len(rois_to_process)} ROIs: {rois_to_process}"
+                )
+        else:
+            logging.info(f"num_rois_to_scan is None; parameter scanning all {len(rois_to_process)} ROIs")
     
     # Initialize CellPose model once
     use_gpu = torch.cuda.is_available()

@@ -971,19 +971,15 @@ def _save_enrichment_outputs(
     qc_dir: Path,
 ) -> None:
     """Save CellCharter enrichment tables and optional heatmap figure."""
-    key = f"{cluster_key}_{label_key}_enrichment"
-    result = adata.uns.get(key)
-    if result is None:
-        alt_key = f"{cluster_key}_{label_key}_nhood_enrichment"
-        result = adata.uns.get(alt_key)
-        if result is not None:
-            key = alt_key
-
-    if result is None:
+    key = _resolve_enrichment_uns_key(adata, cluster_key, label_key)
+    if key is None:
         logging.warning(
-            "Enrichment result not found in adata.uns (expected '%s' or fallback).", key
+            "Enrichment result not found in adata.uns for cluster_key='%s', label_key='%s'.",
+            cluster_key,
+            label_key,
         )
         return
+    result = adata.uns.get(key)
 
     enrichment = result.get("enrichment") if isinstance(result, dict) else None
     if enrichment is None:
@@ -1237,13 +1233,45 @@ def _resolve_figsize(value: Any, fallback: Tuple[float, float]) -> Tuple[float, 
     return fallback
 
 
+def _resolve_repeat_flag(
+    explicit_value: Optional[bool],
+    legacy_value: Optional[bool],
+) -> bool:
+    """Resolve a stage-specific repeat flag with deprecated legacy fallback."""
+    if explicit_value is not None:
+        return bool(explicit_value)
+    if legacy_value is not None:
+        return bool(legacy_value)
+    return True
+
+
+def _resolve_enrichment_uns_key(
+    adata: ad.AnnData,
+    cluster_key: str,
+    label_key: str,
+) -> Optional[str]:
+    """Return the existing CellCharter enrichment uns key, if present."""
+    for key in (
+        f"{cluster_key}_{label_key}_enrichment",
+        f"{cluster_key}_{label_key}_nhood_enrichment",
+    ):
+        result = adata.uns.get(key)
+        if isinstance(result, dict) and any(
+            result.get(metric) is not None for metric in ("enrichment", "pvalue")
+        ):
+            return key
+    return None
+
+
 def _run_nhood_enrichment(
     adata: ad.AnnData,
     cellcharter_config: CellCharterConfig,
     qc_dir: Path,
+    *,
+    repeat_analysis: bool = True,
 ) -> Dict[str, Any]:
     """Run CellCharter neighborhood enrichment and save outputs."""
-    details: Dict[str, Any] = {"enabled": True, "ran": False}
+    details: Dict[str, Any] = {"enabled": True, "ran": False, "reused_existing": False}
     cluster_key = cellcharter_config.cluster_key
 
     if not _ensure_categorical_obs(adata, cluster_key):
@@ -1256,32 +1284,44 @@ def _run_nhood_enrichment(
     out_dir = qc_dir / "nhood_enrichment"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    logging.info(
-        "Running CellCharter nhood enrichment (cluster_key=%s, pvalues=%s, n_perms=%d).",
-        cluster_key,
-        cellcharter_config.nhood_with_pvalues,
-        int(cellcharter_config.nhood_n_perms),
-    )
-    try:
-        cc.gr.nhood_enrichment(
-            adata,
-            cluster_key=cluster_key,
-            connectivity_key=cellcharter_config.nhood_connectivity_key,
-            log_fold_change=bool(cellcharter_config.nhood_log_fold_change),
-            only_inter=bool(cellcharter_config.nhood_only_inter),
-            symmetric=bool(cellcharter_config.nhood_symmetric),
-            pvalues=bool(cellcharter_config.nhood_with_pvalues),
-            n_perms=int(cellcharter_config.nhood_n_perms),
-            n_jobs=int(cellcharter_config.nhood_n_jobs),
-            batch_size=int(cellcharter_config.nhood_batch_size),
-            observed_expected=bool(cellcharter_config.nhood_observed_expected),
-        )
-    except Exception as exc:
-        logging.warning("CellCharter nhood enrichment failed: %s", exc)
-        return details
-
     uns_key = f"{cluster_key}_nhood_enrichment"
     result = adata.uns.get(uns_key)
+    has_existing = isinstance(result, dict) and any(
+        result.get(key) is not None for key in ("enrichment", "pvalue", "observed", "expected")
+    )
+    if has_existing and not repeat_analysis:
+        logging.info(
+            "Reusing existing CellCharter nhood enrichment from adata.uns['%s']; skipping recomputation.",
+            uns_key,
+        )
+        details["reused_existing"] = True
+    else:
+        logging.info(
+            "Running CellCharter nhood enrichment (cluster_key=%s, pvalues=%s, n_perms=%d).",
+            cluster_key,
+            cellcharter_config.nhood_with_pvalues,
+            int(cellcharter_config.nhood_n_perms),
+        )
+        try:
+            cc.gr.nhood_enrichment(
+                adata,
+                cluster_key=cluster_key,
+                connectivity_key=cellcharter_config.nhood_connectivity_key,
+                log_fold_change=bool(cellcharter_config.nhood_log_fold_change),
+                only_inter=bool(cellcharter_config.nhood_only_inter),
+                symmetric=bool(cellcharter_config.nhood_symmetric),
+                pvalues=bool(cellcharter_config.nhood_with_pvalues),
+                n_perms=int(cellcharter_config.nhood_n_perms),
+                n_jobs=int(cellcharter_config.nhood_n_jobs),
+                batch_size=int(cellcharter_config.nhood_batch_size),
+                observed_expected=bool(cellcharter_config.nhood_observed_expected),
+            )
+        except Exception as exc:
+            logging.warning("CellCharter nhood enrichment failed: %s", exc)
+            return details
+        result = adata.uns.get(uns_key)
+        details["ran"] = True
+
     if not isinstance(result, dict):
         logging.warning("Neighborhood enrichment output '%s' not found or invalid.", uns_key)
         return details
@@ -1322,7 +1362,7 @@ def _run_nhood_enrichment(
         finally:
             plt.close("all")
 
-    details.update({"ran": True, "uns_key": uns_key, "output_dir": str(out_dir)})
+    details.update({"uns_key": uns_key, "output_dir": str(out_dir)})
     return details
 
 
@@ -1332,9 +1372,11 @@ def _run_diff_nhood_enrichment(
     cellcharter_config: CellCharterConfig,
     sample_key: str,
     qc_dir: Path,
+    *,
+    repeat_analysis: bool = True,
 ) -> Dict[str, Any]:
     """Run differential neighborhood enrichment and save outputs."""
-    details: Dict[str, Any] = {"enabled": True, "ran": False}
+    details: Dict[str, Any] = {"enabled": True, "ran": False, "reused_existing": False}
     cluster_key = cellcharter_config.cluster_key
     condition_key = coalesce_config_text(
         cellcharter_config.diff_nhood_condition_key,
@@ -1398,38 +1440,48 @@ def _run_diff_nhood_enrichment(
     out_dir = qc_dir / "diff_nhood_enrichment"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    logging.info(
-        "Running differential nhood enrichment (%s by %s, pvalues=%s, n_perms=%d).",
-        cluster_key,
-        condition_key,
-        cellcharter_config.diff_nhood_with_pvalues,
-        int(cellcharter_config.diff_nhood_n_perms),
-    )
-    kwargs: Dict[str, Any] = {
-        "log_fold_change": bool(cellcharter_config.diff_nhood_log_fold_change),
-        "only_inter": bool(cellcharter_config.diff_nhood_only_inter),
-        "symmetric": bool(cellcharter_config.diff_nhood_symmetric),
-    }
-    n_jobs = cellcharter_config.diff_nhood_n_jobs
-    try:
-        cc.gr.diff_nhood_enrichment(
-            adata,
-            cluster_key=cluster_key,
-            condition_key=condition_key,
-            condition_groups=condition_groups,
-            connectivity_key=cellcharter_config.diff_nhood_connectivity_key,
-            pvalues=bool(cellcharter_config.diff_nhood_with_pvalues),
-            library_key=library_key,
-            n_perms=int(cellcharter_config.diff_nhood_n_perms),
-            n_jobs=int(n_jobs) if n_jobs is not None else None,
-            **kwargs,
-        )
-    except Exception as exc:
-        logging.warning("CellCharter differential nhood enrichment failed: %s", exc)
-        return details
-
     uns_key = f"{cluster_key}_{condition_key}_diff_nhood_enrichment"
     result = adata.uns.get(uns_key)
+    has_existing = isinstance(result, dict) and bool(result)
+    if has_existing and not repeat_analysis:
+        logging.info(
+            "Reusing existing differential nhood enrichment from adata.uns['%s']; skipping recomputation.",
+            uns_key,
+        )
+        details["reused_existing"] = True
+    else:
+        logging.info(
+            "Running differential nhood enrichment (%s by %s, pvalues=%s, n_perms=%d).",
+            cluster_key,
+            condition_key,
+            cellcharter_config.diff_nhood_with_pvalues,
+            int(cellcharter_config.diff_nhood_n_perms),
+        )
+        kwargs: Dict[str, Any] = {
+            "log_fold_change": bool(cellcharter_config.diff_nhood_log_fold_change),
+            "only_inter": bool(cellcharter_config.diff_nhood_only_inter),
+            "symmetric": bool(cellcharter_config.diff_nhood_symmetric),
+        }
+        n_jobs = cellcharter_config.diff_nhood_n_jobs
+        try:
+            cc.gr.diff_nhood_enrichment(
+                adata,
+                cluster_key=cluster_key,
+                condition_key=condition_key,
+                condition_groups=condition_groups,
+                connectivity_key=cellcharter_config.diff_nhood_connectivity_key,
+                pvalues=bool(cellcharter_config.diff_nhood_with_pvalues),
+                library_key=library_key,
+                n_perms=int(cellcharter_config.diff_nhood_n_perms),
+                n_jobs=int(n_jobs) if n_jobs is not None else None,
+                **kwargs,
+            )
+        except Exception as exc:
+            logging.warning("CellCharter differential nhood enrichment failed: %s", exc)
+            return details
+        result = adata.uns.get(uns_key)
+        details["ran"] = True
+
     if not isinstance(result, dict) or not result:
         logging.warning("Differential nhood enrichment output '%s' not found or empty.", uns_key)
         return details
@@ -1479,7 +1531,6 @@ def _run_diff_nhood_enrichment(
 
     details.update(
         {
-            "ran": True,
             "uns_key": uns_key,
             "condition_key": condition_key,
             "condition_groups": condition_groups,
@@ -1495,79 +1546,142 @@ def _run_shape_characterisation(
     cellcharter_config: CellCharterConfig,
     sample_key: str,
     qc_dir: Path,
+    *,
+    repeat_analysis: bool = True,
 ) -> Dict[str, Any]:
     """Run CellCharter shape characterisation pipeline and save outputs."""
-    details: Dict[str, Any] = {"enabled": True, "ran": False}
+    details: Dict[str, Any] = {"enabled": True, "ran": False, "reused_existing": False}
     cluster_key = cellcharter_config.cluster_key
     component_key = cellcharter_config.shape_component_key
     component_cluster_key = (
         cellcharter_config.shape_component_cluster_key or cluster_key
     )
+    shape_uns_key = f"shape_{component_key}"
+    existing_component_labels = (
+        component_key in adata.obs.columns and bool(adata.obs[component_key].notna().any())
+    )
+    existing_shape_data = adata.uns.get(shape_uns_key)
+    has_existing_shape_data = isinstance(existing_shape_data, dict) and bool(existing_shape_data)
 
-    if component_cluster_key not in adata.obs.columns:
-        logging.warning(
-            "Skipping shape characterisation: component cluster key '%s' missing in adata.obs.",
-            component_cluster_key,
-        )
-        return details
-
-    _ensure_categorical_obs(adata, component_cluster_key)
+    if component_cluster_key in adata.obs.columns:
+        _ensure_categorical_obs(adata, component_cluster_key)
 
     out_dir = qc_dir / "shape_characterisation"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    logging.info(
-        "Running connected components (cluster_key=%s, min_cells=%d, out_key=%s).",
-        component_cluster_key,
-        int(cellcharter_config.shape_min_cells),
-        component_key,
-    )
-    try:
-        cc.gr.connected_components(
-            adata,
-            cluster_key=component_cluster_key,
-            min_cells=int(cellcharter_config.shape_min_cells),
-            connectivity_key=cellcharter_config.shape_connectivity_key,
-            out_key=component_key,
+    reuse_existing = (not repeat_analysis) and existing_component_labels and has_existing_shape_data
+    if reuse_existing:
+        logging.info(
+            "Reusing existing shape characterisation outputs (component_key=%s, uns_key=%s); skipping recomputation.",
+            component_key,
+            shape_uns_key,
         )
-    except Exception as exc:
-        logging.warning("Connected components failed: %s", exc)
-        return details
+        details["reused_existing"] = True
+    else:
+        if component_cluster_key not in adata.obs.columns:
+            logging.warning(
+                "Skipping shape characterisation: component cluster key '%s' missing in adata.obs.",
+                component_cluster_key,
+            )
+            return details
 
-    cols = [component_key]
-    for opt_col in (sample_key, cluster_key, component_cluster_key):
-        if opt_col in adata.obs.columns and opt_col not in cols:
-            cols.append(opt_col)
-    component_table = adata.obs[cols].copy()
-    component_table.to_csv(out_dir / "components_per_cell.csv")
-
-    if sample_key in component_table.columns:
-        counts = (
-            component_table.dropna(subset=[component_key])
-            .groupby([sample_key, component_key], dropna=False)
-            .size()
-            .reset_index(name="n_cells")
+        logging.info(
+            "Running connected components (cluster_key=%s, min_cells=%d, out_key=%s).",
+            component_cluster_key,
+            int(cellcharter_config.shape_min_cells),
+            component_key,
         )
-        counts.to_csv(out_dir / "components_by_sample.csv", index=False)
+        try:
+            cc.gr.connected_components(
+                adata,
+                cluster_key=component_cluster_key,
+                min_cells=int(cellcharter_config.shape_min_cells),
+                connectivity_key=cellcharter_config.shape_connectivity_key,
+                out_key=component_key,
+            )
+        except Exception as exc:
+            logging.warning("Connected components failed: %s", exc)
+            return details
 
-    logging.info(
-        "Computing shape boundaries (component_key=%s, min_hole_area_ratio=%.3f, alpha_start=%d).",
-        component_key,
-        float(cellcharter_config.shape_min_hole_area_ratio),
-        int(cellcharter_config.shape_alpha_start),
-    )
-    try:
-        cc.tl.boundaries(
-            adata,
-            cluster_key=component_key,
-            min_hole_area_ratio=float(cellcharter_config.shape_min_hole_area_ratio),
-            alpha_start=int(cellcharter_config.shape_alpha_start),
+        logging.info(
+            "Computing shape boundaries (component_key=%s, min_hole_area_ratio=%.3f, alpha_start=%d).",
+            component_key,
+            float(cellcharter_config.shape_min_hole_area_ratio),
+            int(cellcharter_config.shape_alpha_start),
         )
-    except Exception as exc:
-        logging.warning("Shape boundary computation failed: %s", exc)
-        return details
+        try:
+            cc.tl.boundaries(
+                adata,
+                cluster_key=component_key,
+                min_hole_area_ratio=float(cellcharter_config.shape_min_hole_area_ratio),
+                alpha_start=int(cellcharter_config.shape_alpha_start),
+            )
+        except Exception as exc:
+            logging.warning("Shape boundary computation failed: %s", exc)
+            return details
 
-    shape_uns_key = f"shape_{component_key}"
+        if cellcharter_config.shape_compute_linearity:
+            try:
+                if hasattr(cc.tl, "linearity_metric"):
+                    cc.tl.linearity_metric(
+                        adata,
+                        cluster_key=component_key,
+                        out_key=cellcharter_config.shape_linearity_key,
+                        height=int(cellcharter_config.shape_linearity_height),
+                        min_ratio=float(cellcharter_config.shape_linearity_min_ratio),
+                    )
+                else:
+                    cc.tl.linearity(
+                        adata,
+                        cluster_key=component_key,
+                        out_key=cellcharter_config.shape_linearity_key,
+                        height=int(cellcharter_config.shape_linearity_height),
+                        min_ratio=float(cellcharter_config.shape_linearity_min_ratio),
+                    )
+            except Exception as exc:
+                logging.warning("Linearity metric failed: %s", exc)
+
+        if cellcharter_config.shape_compute_curl:
+            try:
+                if hasattr(cc.tl, "curl_metric"):
+                    cc.tl.curl_metric(
+                        adata,
+                        cluster_key=component_key,
+                        out_key=cellcharter_config.shape_curl_key,
+                    )
+                else:
+                    cc.tl.curl(
+                        adata,
+                        cluster_key=component_key,
+                        out_key=cellcharter_config.shape_curl_key,
+                    )
+            except Exception as exc:
+                logging.warning("Curl metric failed: %s", exc)
+
+        details["ran"] = True
+
+    if component_key in adata.obs.columns:
+        cols = [component_key]
+        for opt_col in (sample_key, cluster_key, component_cluster_key):
+            if opt_col in adata.obs.columns and opt_col not in cols:
+                cols.append(opt_col)
+        component_table = adata.obs[cols].copy()
+        component_table.to_csv(out_dir / "components_per_cell.csv")
+
+        if sample_key in component_table.columns:
+            counts = (
+                component_table.dropna(subset=[component_key])
+                .groupby([sample_key, component_key], dropna=False)
+                .size()
+                .reset_index(name="n_cells")
+            )
+            counts.to_csv(out_dir / "components_by_sample.csv", index=False)
+    else:
+        logging.warning(
+            "Shape characterisation component key '%s' is missing in adata.obs; skipping component-table exports.",
+            component_key,
+        )
+
     shape_data = adata.uns.get(shape_uns_key, {})
     boundaries = shape_data.get("boundary") if isinstance(shape_data, dict) else None
     if isinstance(boundaries, dict):
@@ -1590,56 +1704,21 @@ def _run_shape_characterisation(
                 index=False,
             )
 
-    computed_metrics: List[str] = []
+    configured_metric_keys: List[str] = []
     if cellcharter_config.shape_compute_linearity:
-        try:
-            if hasattr(cc.tl, "linearity_metric"):
-                cc.tl.linearity_metric(
-                    adata,
-                    cluster_key=component_key,
-                    out_key=cellcharter_config.shape_linearity_key,
-                    height=int(cellcharter_config.shape_linearity_height),
-                    min_ratio=float(cellcharter_config.shape_linearity_min_ratio),
-                )
-            else:
-                cc.tl.linearity(
-                    adata,
-                    cluster_key=component_key,
-                    out_key=cellcharter_config.shape_linearity_key,
-                    height=int(cellcharter_config.shape_linearity_height),
-                    min_ratio=float(cellcharter_config.shape_linearity_min_ratio),
-                )
-            computed_metrics.append(cellcharter_config.shape_linearity_key)
-        except Exception as exc:
-            logging.warning("Linearity metric failed: %s", exc)
-
+        configured_metric_keys.append(cellcharter_config.shape_linearity_key)
     if cellcharter_config.shape_compute_curl:
-        try:
-            if hasattr(cc.tl, "curl_metric"):
-                cc.tl.curl_metric(
-                    adata,
-                    cluster_key=component_key,
-                    out_key=cellcharter_config.shape_curl_key,
-                )
-            else:
-                cc.tl.curl(
-                    adata,
-                    cluster_key=component_key,
-                    out_key=cellcharter_config.shape_curl_key,
-                )
-            computed_metrics.append(cellcharter_config.shape_curl_key)
-        except Exception as exc:
-            logging.warning("Curl metric failed: %s", exc)
+        configured_metric_keys.append(cellcharter_config.shape_curl_key)
 
-    shape_data = adata.uns.get(shape_uns_key, {})
     metric_cols: Dict[str, pd.Series] = {}
-    for metric_key in computed_metrics:
+    for metric_key in configured_metric_keys:
         metric_dict = shape_data.get(metric_key) if isinstance(shape_data, dict) else None
         if isinstance(metric_dict, dict) and metric_dict:
             metric_series = pd.Series(metric_dict, name=metric_key, dtype=float)
             metric_series.index = metric_series.index.astype(str)
             metric_cols[metric_key] = metric_series
 
+    computed_metrics = list(metric_cols.keys())
     metrics_df = None
     if metric_cols:
         metrics_df = pd.concat(metric_cols.values(), axis=1)
@@ -1715,7 +1794,6 @@ def _run_shape_characterisation(
 
     details.update(
         {
-            "ran": True,
             "component_key": component_key,
             "shape_uns_key": shape_uns_key,
             "metrics": computed_metrics,
@@ -1839,6 +1917,40 @@ def run_cellcharter_neighborhoods(
         cellcharter_config.diff_nhood_condition_groups = coalesce_config_list(
             resolved_groupby_obs_groups,
         )
+    legacy_repeat_analysis = cellcharter_config.repeat_analysis
+    if legacy_repeat_analysis is not None:
+        logging.warning(
+            "cellcharter.repeat_analysis is deprecated. Use the stage-specific "
+            "repeat_*_analysis flags instead."
+        )
+    repeat_cluster_analysis = _resolve_repeat_flag(
+        cellcharter_config.repeat_cluster_analysis,
+        legacy_repeat_analysis,
+    )
+    repeat_enrichment_analysis = _resolve_repeat_flag(
+        cellcharter_config.repeat_enrichment_analysis,
+        legacy_repeat_analysis,
+    )
+    repeat_nhood_enrichment_analysis = _resolve_repeat_flag(
+        cellcharter_config.repeat_nhood_enrichment_analysis,
+        legacy_repeat_analysis,
+    )
+    repeat_diff_nhood_enrichment_analysis = _resolve_repeat_flag(
+        cellcharter_config.repeat_diff_nhood_enrichment_analysis,
+        legacy_repeat_analysis,
+    )
+    repeat_shape_characterisation_analysis = _resolve_repeat_flag(
+        cellcharter_config.repeat_shape_characterisation_analysis,
+        legacy_repeat_analysis,
+    )
+    logging.info(
+        "CellCharter repeat policy: cluster=%s, enrichment=%s, nhood=%s, diff_nhood=%s, shape=%s.",
+        repeat_cluster_analysis,
+        repeat_enrichment_analysis,
+        repeat_nhood_enrichment_analysis,
+        repeat_diff_nhood_enrichment_analysis,
+        repeat_shape_characterisation_analysis,
+    )
 
     input_path = _resolve_input_adata_path(general_config, cellcharter_config)
     output_path = _resolve_output_adata_path(general_config, cellcharter_config)
@@ -1879,7 +1991,24 @@ def run_cellcharter_neighborhoods(
     if cluster_key in adata.obs.columns:
         existing_cluster_non_null = int(adata.obs[cluster_key].notna().sum())
     skip_existing_cluster_analysis = (
-        (not bool(cellcharter_config.repeat_analysis)) and existing_cluster_non_null > 0
+        (not repeat_cluster_analysis) and existing_cluster_non_null > 0
+    )
+    legacy_skip_all_downstream = bool(
+        skip_existing_cluster_analysis and legacy_repeat_analysis is False
+    )
+    use_legacy_enrichment_skip = (
+        legacy_skip_all_downstream and cellcharter_config.repeat_enrichment_analysis is None
+    )
+    use_legacy_nhood_skip = (
+        legacy_skip_all_downstream and cellcharter_config.repeat_nhood_enrichment_analysis is None
+    )
+    use_legacy_diff_nhood_skip = (
+        legacy_skip_all_downstream
+        and cellcharter_config.repeat_diff_nhood_enrichment_analysis is None
+    )
+    use_legacy_shape_skip = (
+        legacy_skip_all_downstream
+        and cellcharter_config.repeat_shape_characterisation_analysis is None
     )
 
     trvae_details: Dict[str, Any] = {"enabled": False}
@@ -1887,8 +2016,8 @@ def run_cellcharter_neighborhoods(
 
     if skip_existing_cluster_analysis:
         logging.info(
-            "cellcharter.repeat_analysis=False and cluster key '%s' already exists for %d/%d cells. "
-            "Skipping TRVAE/aggregation/clustering and reusing existing labels for plotting/export.",
+            "Reusing existing cluster key '%s' for %d/%d cells. "
+            "Skipping TRVAE/graph/aggregation/clustering.",
             cluster_key,
             existing_cluster_non_null,
             adata.n_obs,
@@ -2035,35 +2164,28 @@ def run_cellcharter_neighborhoods(
     )
     figure_format = _normalise_figure_format(cellcharter_config.figure_format)
 
+    enrichment_details: Dict[str, Any] = {
+        "enabled": bool(cellcharter_config.run_enrichment),
+        "ran": False,
+        "reused_existing": False,
+    }
     nhood_details: Dict[str, Any] = {
         "enabled": bool(cellcharter_config.run_nhood_enrichment),
         "ran": False,
+        "reused_existing": False,
     }
     diff_nhood_details: Dict[str, Any] = {
         "enabled": bool(cellcharter_config.run_diff_nhood_enrichment),
         "ran": False,
+        "reused_existing": False,
     }
     shape_details: Dict[str, Any] = {
         "enabled": bool(cellcharter_config.run_shape_characterisation),
         "ran": False,
+        "reused_existing": False,
     }
 
-    if skip_existing_cluster_analysis:
-        nhood_details["skipped_existing_cluster"] = True
-        diff_nhood_details["skipped_existing_cluster"] = True
-        shape_details["skipped_existing_cluster"] = True
-        if (
-            cellcharter_config.run_enrichment
-            or cellcharter_config.run_nhood_enrichment
-            or cellcharter_config.run_diff_nhood_enrichment
-            or cellcharter_config.run_shape_characterisation
-        ):
-            logging.info(
-                "Skipping enrichment and shape analysis because cellcharter.repeat_analysis=False "
-                "and existing cluster labels were reused."
-            )
-
-    if (not skip_existing_cluster_analysis) and cellcharter_config.run_enrichment:
+    if cellcharter_config.run_enrichment:
         if not population_obs_primary:
             logging.warning(
                 "Skipping enrichment because general.population_obs_primary is not set."
@@ -2073,21 +2195,46 @@ def run_cellcharter_neighborhoods(
                 "Skipping enrichment because general.population_obs_primary '%s' is missing in adata.obs.",
                 population_obs_primary,
             )
-        else:
+        elif use_legacy_enrichment_skip:
+            enrichment_details["skipped_existing_cluster"] = True
             logging.info(
-                "Running enrichment for %s vs %s (pvalues=%s, n_perms=%d).",
+                "Skipping enrichment because deprecated cellcharter.repeat_analysis=False "
+                "reused existing cluster labels. Set repeat_enrichment_analysis to control this stage directly."
+            )
+        else:
+            enrichment_uns_key = _resolve_enrichment_uns_key(
+                adata,
                 cellcharter_config.cluster_key,
                 population_obs_primary,
-                cellcharter_config.enrichment_with_pvalues,
-                int(cellcharter_config.enrichment_n_perms),
             )
-            cc.gr.enrichment(
-                adata,
-                group_key=cellcharter_config.cluster_key,
-                label_key=population_obs_primary,
-                pvalues=bool(cellcharter_config.enrichment_with_pvalues),
-                n_perms=int(cellcharter_config.enrichment_n_perms),
-            )
+            if enrichment_uns_key is not None and not repeat_enrichment_analysis:
+                logging.info(
+                    "Reusing existing enrichment from adata.uns['%s']; skipping recomputation.",
+                    enrichment_uns_key,
+                )
+                enrichment_details["reused_existing"] = True
+            else:
+                logging.info(
+                    "Running enrichment for %s vs %s (pvalues=%s, n_perms=%d).",
+                    cellcharter_config.cluster_key,
+                    population_obs_primary,
+                    cellcharter_config.enrichment_with_pvalues,
+                    int(cellcharter_config.enrichment_n_perms),
+                )
+                cc.gr.enrichment(
+                    adata,
+                    group_key=cellcharter_config.cluster_key,
+                    label_key=population_obs_primary,
+                    pvalues=bool(cellcharter_config.enrichment_with_pvalues),
+                    n_perms=int(cellcharter_config.enrichment_n_perms),
+                )
+                enrichment_details["ran"] = True
+                enrichment_uns_key = _resolve_enrichment_uns_key(
+                    adata,
+                    cellcharter_config.cluster_key,
+                    population_obs_primary,
+                )
+
             _save_enrichment_outputs(
                 adata,
                 cluster_key=cellcharter_config.cluster_key,
@@ -2101,31 +2248,62 @@ def run_cellcharter_neighborhoods(
                 label_key=population_obs_primary,
                 qc_dir=qc_dir,
             )
+            enrichment_details.update(
+                {
+                    "label_key": population_obs_primary,
+                    "uns_key": enrichment_uns_key,
+                    "output_dir": str(qc_dir),
+                }
+            )
 
-    if (not skip_existing_cluster_analysis) and cellcharter_config.run_nhood_enrichment:
-        nhood_details = _run_nhood_enrichment(
-            adata=adata,
-            cellcharter_config=cellcharter_config,
-            qc_dir=qc_dir,
-        )
+    if cellcharter_config.run_nhood_enrichment:
+        if use_legacy_nhood_skip:
+            nhood_details["skipped_existing_cluster"] = True
+            logging.info(
+                "Skipping neighborhood enrichment because deprecated cellcharter.repeat_analysis=False "
+                "reused existing cluster labels. Set repeat_nhood_enrichment_analysis to control this stage directly."
+            )
+        else:
+            nhood_details = _run_nhood_enrichment(
+                adata=adata,
+                cellcharter_config=cellcharter_config,
+                qc_dir=qc_dir,
+                repeat_analysis=repeat_nhood_enrichment_analysis,
+            )
 
-    if (not skip_existing_cluster_analysis) and cellcharter_config.run_diff_nhood_enrichment:
-        diff_nhood_details = _run_diff_nhood_enrichment(
-            adata=adata,
-            general_config=general_config,
-            cellcharter_config=cellcharter_config,
-            sample_key=sample_key,
-            qc_dir=qc_dir,
-        )
+    if cellcharter_config.run_diff_nhood_enrichment:
+        if use_legacy_diff_nhood_skip:
+            diff_nhood_details["skipped_existing_cluster"] = True
+            logging.info(
+                "Skipping differential neighborhood enrichment because deprecated cellcharter.repeat_analysis=False "
+                "reused existing cluster labels. Set repeat_diff_nhood_enrichment_analysis to control this stage directly."
+            )
+        else:
+            diff_nhood_details = _run_diff_nhood_enrichment(
+                adata=adata,
+                general_config=general_config,
+                cellcharter_config=cellcharter_config,
+                sample_key=sample_key,
+                qc_dir=qc_dir,
+                repeat_analysis=repeat_diff_nhood_enrichment_analysis,
+            )
 
-    if (not skip_existing_cluster_analysis) and cellcharter_config.run_shape_characterisation:
-        shape_details = _run_shape_characterisation(
-            adata=adata,
-            general_config=general_config,
-            cellcharter_config=cellcharter_config,
-            sample_key=sample_key,
-            qc_dir=qc_dir,
-        )
+    if cellcharter_config.run_shape_characterisation:
+        if use_legacy_shape_skip:
+            shape_details["skipped_existing_cluster"] = True
+            logging.info(
+                "Skipping shape characterisation because deprecated cellcharter.repeat_analysis=False "
+                "reused existing cluster labels. Set repeat_shape_characterisation_analysis to control this stage directly."
+            )
+        else:
+            shape_details = _run_shape_characterisation(
+                adata=adata,
+                general_config=general_config,
+                cellcharter_config=cellcharter_config,
+                sample_key=sample_key,
+                qc_dir=qc_dir,
+                repeat_analysis=repeat_shape_characterisation_analysis,
+            )
 
     _save_cluster_tables(
         adata,
@@ -2208,7 +2386,12 @@ def run_cellcharter_neighborhoods(
         "spatial_key": spatial_key,
         "population_obs_primary": population_obs_primary,
         "cluster_key": cellcharter_config.cluster_key,
-        "repeat_analysis": bool(cellcharter_config.repeat_analysis),
+        "repeat_analysis": legacy_repeat_analysis,
+        "repeat_cluster_analysis": repeat_cluster_analysis,
+        "repeat_enrichment_analysis": repeat_enrichment_analysis,
+        "repeat_nhood_enrichment_analysis": repeat_nhood_enrichment_analysis,
+        "repeat_diff_nhood_enrichment_analysis": repeat_diff_nhood_enrichment_analysis,
+        "repeat_shape_characterisation_analysis": repeat_shape_characterisation_analysis,
         "reused_existing_cluster_key": bool(skip_existing_cluster_analysis),
         "existing_cluster_non_null_count": int(existing_cluster_non_null),
         "cluster_default_cmap": cellcharter_config.cluster_default_cmap,
@@ -2218,6 +2401,7 @@ def run_cellcharter_neighborhoods(
         "aggregated_rep_key": cellcharter_config.aggregated_rep_key,
         "aggregation_use_rep": aggregation_rep,
         "trvae": trvae_details,
+        "enrichment": enrichment_details,
         "nhood_enrichment": nhood_details,
         "diff_nhood_enrichment": diff_nhood_details,
         "shape_characterisation": shape_details,

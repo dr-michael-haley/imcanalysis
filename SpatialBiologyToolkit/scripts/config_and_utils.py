@@ -489,7 +489,12 @@ class CellCharterConfig:
     trainer_devices: Optional[int] = None
     trainer_max_epochs: int = 100
     cluster_key: str = 'spatial_cluster'
-    repeat_analysis: bool = True  # If False and cluster_key already exists in input AnnData, skip analysis and run plotting/export only
+    repeat_analysis: Optional[bool] = None  # Deprecated fallback for stage-specific repeat flags (None = ignore, otherwise used where stage-specific flags are unset)
+    repeat_cluster_analysis: Optional[bool] = None  # If False and cluster_key already exists, reuse existing cluster labels instead of rerunning TRVAE/graph/aggregation/clustering
+    repeat_enrichment_analysis: Optional[bool] = None  # If False and enrichment results already exist in adata.uns, reuse them instead of recomputing
+    repeat_nhood_enrichment_analysis: Optional[bool] = None  # If False and CellCharter nhood enrichment results already exist in adata.uns, reuse them
+    repeat_diff_nhood_enrichment_analysis: Optional[bool] = None  # If False and differential nhood enrichment results already exist in adata.uns, reuse them
+    repeat_shape_characterisation_analysis: Optional[bool] = None  # If False and shape/component outputs already exist, reuse them instead of recomputing
 
     # Optional enrichment
     run_enrichment: bool = True
