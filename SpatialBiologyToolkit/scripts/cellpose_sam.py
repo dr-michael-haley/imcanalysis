@@ -24,6 +24,7 @@ import numpy as np
 import pandas as pd
 import logging
 import os
+import re
 from pathlib import Path
 from skimage import io as skio
 from skimage.measure import regionprops
@@ -35,7 +36,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
 from tqdm import tqdm
 from dataclasses import dataclass, field
-from typing import Optional, List
+from typing import Any, Optional, List
 import warnings
 import seaborn as sb
 import random
@@ -186,6 +187,52 @@ def load_preprocessed_image(image_path: Path) -> np.ndarray:
     
     img = skio.imread(image_path)
     return img
+
+
+def _parameter_value_slug(value: Any) -> str:
+    """
+    Create a filesystem-safe parameter value slug while preserving numeric signs.
+    """
+    value_str = str(value).strip()
+    numeric_match = re.fullmatch(r'([+-]?)(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?', value_str)
+
+    if numeric_match:
+        sign = numeric_match.group(1)
+        magnitude = value_str[1:] if sign in "+-" else value_str
+        value_slug = cleanstring(magnitude)
+        if sign == '-':
+            return f"neg_{value_slug}"
+        if sign == '+':
+            return f"pos_{value_slug}"
+        return value_slug
+
+    return cleanstring(value_str)
+
+
+def _parameter_set_slug(param_set: dict[str, Any], param_a: str, param_b: str) -> str:
+    """
+    Create a unique slug for a parameter scan combination.
+    """
+    return (
+        f"{cleanstring(param_a)}-{_parameter_value_slug(param_set[param_a])}"
+        f"_{cleanstring(param_b)}-{_parameter_value_slug(param_set[param_b])}"
+    )
+
+
+def _validate_parameter_set_slugs(param_sets: list[dict[str, Any]], param_a: str, param_b: str) -> None:
+    """
+    Ensure distinct parameter sets do not collapse onto the same filesystem slug.
+    """
+    slug_to_param_set: dict[str, dict[str, Any]] = {}
+    for param_set in param_sets:
+        slug = _parameter_set_slug(param_set, param_a, param_b)
+        existing = slug_to_param_set.get(slug)
+        if existing is not None and existing != param_set:
+            raise ValueError(
+                "Parameter scan folder naming collision detected: "
+                f"{existing} and {param_set} both map to '{slug}'."
+            )
+        slug_to_param_set[slug] = param_set
 
 
 def segment_single_roi(
@@ -659,6 +706,8 @@ def parameter_scan_cpsam(general_config: GeneralConfig, mask_config: CreateMasks
     for a_val in param_a_values:
         for b_val in param_b_values:
             param_sets.append({param_a: a_val, param_b: b_val})
+
+    _validate_parameter_set_slugs(param_sets, param_a, param_b)
     
     logging.info(f"Running {len(param_sets)} parameter combinations on {len(rois_to_process)} ROIs")
     
@@ -669,7 +718,7 @@ def parameter_scan_cpsam(general_config: GeneralConfig, mask_config: CreateMasks
         logging.info(f"Parameter set {i+1}/{len(param_sets)}: {param_set}")
         
         # Create output folders with parameter identifiers
-        param_string = f"{cleanstring(param_a)}-{cleanstring(param_set[param_a])}_{cleanstring(param_b)}-{cleanstring(param_set[param_b])}"
+        param_string = _parameter_set_slug(param_set, param_a, param_b)
         
         # Create temporary config with current parameters
         temp_config = CreateMasksConfig(**mask_config.__dict__)

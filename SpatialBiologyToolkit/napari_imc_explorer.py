@@ -15,7 +15,7 @@ import skimage as sk
 from skimage import color, io, transform, segmentation
 import vispy
 from matplotlib import colormaps
-from qtpy.QtWidgets import QWidget, QVBoxLayout
+from qtpy.QtWidgets import QDockWidget, QWidget, QVBoxLayout
 from napari.utils.colormaps import Colormap  # For colormap reconstruction
 from napari.utils import DirectLabelColormap
 
@@ -580,33 +580,15 @@ def napari_imc_explorer(
 
     # --- Add 'Update Layer List' Button ---
     update_layer_list_button = widgets.PushButton(text='Update layer list')
-    def update_layer_list():
+    def update_layer_list(silent=False):
         layer_names = get_layer_names()
         resize_layers_widget.target_layer.choices = layer_names
         transfer_colormap_widget.source_layer.choices = layer_names
         mask_layer_widget.layer_to_mask.choices = layer_names
-        print('Layer list updated.')
+        if not silent:
+            print('Layer list updated.')
     update_layer_list_button.clicked.connect(update_layer_list)
     layout.addWidget(update_layer_list_button.native)
-
-    # Add the Layer Management widget to the viewer
-    viewer.window.add_dock_widget(
-        layer_management_widget,
-        name='Layer management'
-    )
-
-    # Add the main control widget
-    viewer.window.add_dock_widget(
-        [
-            add_roi_label.native,
-            roi_selector.native,
-            hide_all_layers_button.native,
-            delete_all_layers_button.native,
-            add_roi_images_button.native,
-            add_masks_button.native
-        ],
-        name='Controls'
-    )
 
     # Widgets for adjusting quantile normalization and minimum pixel counts
     quant_select_label = widgets.Label(value='Normalize intensity to quantile:')
@@ -653,18 +635,6 @@ def napari_imc_explorer(
             print(f'Loading image from: {file}')
             _load_imc_image(file, quantile=quant_select.value, minimum_pixel_counts=minimum_pixel_counts_select.value, colormap=vispy.color.Colormap([[0, 0, 0], colour]))
 
-    # Add the image selector widget to the viewer
-    viewer.window.add_dock_widget(
-        [
-            _image_selector,
-            quant_select_label.native,
-            quant_select.native,
-            minimum_pixel_counts_select_label.native,
-            minimum_pixel_counts_select.native
-        ],
-        name='Add raw images'
-    )
-
     # Identify categorical observation columns
     categorical_obs_columns = [col for col in adata.obs.columns if adata.obs[col].dtype == 'category']
     
@@ -697,15 +667,6 @@ def napari_imc_explorer(
     # Checkbox to toggle adding individual populations as separate masks
     individual_pops_toggle = widgets.CheckBox(value=False, text='Add individual groups from .obs as masks')
 
-    # Add the categorical observations widget to the viewer
-    viewer.window.add_dock_widget(
-        [
-            _obs_selector,
-            individual_pops_toggle.native
-        ],
-        name='Categories as masks'
-    )
-
     # Identify numerical observation columns
     numerical_obs_columns = [col for col in adata.obs.columns if adata.obs[col].dtype in ['float32', 'float64', 'int32']]
 
@@ -735,8 +696,168 @@ def napari_imc_explorer(
                 add_individual_pops=individual_pops_toggle.value
             )
 
-    # Add the numerical observations widget to the viewer
-    viewer.window.add_dock_widget(_quant_selector, name='Numeric as masks')
+    def build_dock_panel(widget_items):
+        """
+        Build a reusable QWidget panel from existing controls.
+        """
+        panel_widget = QWidget()
+        panel_layout = QVBoxLayout()
+        panel_layout.setContentsMargins(8, 8, 8, 8)
+        panel_widget.setLayout(panel_layout)
+
+        for item in widget_items:
+            panel_layout.addWidget(getattr(item, 'native', item))
+
+        return panel_widget
+
+    dock_panels = {
+        'Controls': build_dock_panel([
+            add_roi_label,
+            roi_selector,
+            hide_all_layers_button,
+            delete_all_layers_button,
+            add_roi_images_button,
+            add_masks_button,
+        ]),
+        'Add raw images': build_dock_panel([
+            _image_selector,
+            quant_select_label,
+            quant_select,
+            minimum_pixel_counts_select_label,
+            minimum_pixel_counts_select,
+        ]),
+        'Categories as masks': build_dock_panel([
+            _obs_selector,
+            individual_pops_toggle,
+        ]),
+        'Numeric as masks': build_dock_panel([
+            _quant_selector,
+        ]),
+        'Layer management': layer_management_widget,
+    }
+    dock_order = [
+        'Controls',
+        'Add raw images',
+        'Categories as masks',
+        'Numeric as masks',
+        'Layer management',
+    ]
+    dock_widgets = {}
+
+    def center_dock_on_main_window(dock_widget):
+        """
+        Center a floating dock on the Napari window while keeping it onscreen.
+        """
+        qt_window = getattr(viewer.window, '_qt_window', None)
+        screen = None
+        if qt_window is not None:
+            screen = qt_window.screen()
+            if screen is None and qt_window.windowHandle() is not None:
+                screen = qt_window.windowHandle().screen()
+        if screen is None:
+            screen = dock_widget.screen()
+
+        screen_geometry = screen.availableGeometry() if screen is not None else dock_widget.frameGeometry()
+        target_geometry = qt_window.frameGeometry() if qt_window is not None else screen_geometry
+
+        dock_widget.adjustSize()
+        dock_width = dock_widget.frameGeometry().width() or dock_widget.sizeHint().width()
+        dock_height = dock_widget.frameGeometry().height() or dock_widget.sizeHint().height()
+
+        x_pos = target_geometry.x() + max((target_geometry.width() - dock_width) // 2, 0)
+        y_pos = target_geometry.y() + max((target_geometry.height() - dock_height) // 2, 0)
+
+        max_x = screen_geometry.x() + max(screen_geometry.width() - dock_width, 0)
+        max_y = screen_geometry.y() + max(screen_geometry.height() - dock_height, 0)
+        x_pos = min(max(x_pos, screen_geometry.x()), max_x)
+        y_pos = min(max(y_pos, screen_geometry.y()), max_y)
+
+        dock_widget.move(x_pos, y_pos)
+
+    def show_dock(dock_name):
+        """
+        Recreate and show a dock widget so closed docked panels can be restored.
+        """
+        dock_widget = dock_widgets.get(dock_name)
+        dock_panel = dock_panels[dock_name]
+        qt_window = getattr(viewer.window, '_qt_window', None)
+
+        if dock_widget is not None:
+            current_panel = dock_widget.widget()
+            if current_panel is not None:
+                current_panel.setParent(None)
+                dock_panel = current_panel
+                dock_panels[dock_name] = current_panel
+            if qt_window is not None:
+                qt_window.removeDockWidget(dock_widget)
+            dock_widget.deleteLater()
+
+        dock_widget = viewer.window.add_dock_widget(
+            dock_panel,
+            name=dock_name,
+            area='right',
+        )
+        dock_widgets[dock_name] = dock_widget
+
+        dock_widget.setFloating(True)
+        dock_widget.setVisible(True)
+        dock_widget.show()
+
+        toggle_action = dock_widget.toggleViewAction()
+        if toggle_action is not None:
+            toggle_action.setChecked(True)
+
+        if dock_name == 'Layer management':
+            update_layer_list(silent=True)
+
+        center_dock_on_main_window(dock_widget)
+        dock_widget.activateWindow()
+        dock_widget.raise_()
+        return dock_widget
+
+    def show_all_docks():
+        """
+        Open all registered dock widgets from the launcher.
+        """
+        for dock_name in dock_order:
+            show_dock(dock_name)
+
+    def sync_layer_widgets(event=None):
+        """
+        Keep layer-dependent selectors in sync with the current viewer state.
+        """
+        update_layer_list(silent=True)
+
+    viewer.layers.events.inserted.connect(sync_layer_widgets)
+    viewer.layers.events.removed.connect(sync_layer_widgets)
+
+    panel_launcher_widget = QWidget()
+    panel_launcher_layout = QVBoxLayout()
+    panel_launcher_widget.setLayout(panel_launcher_layout)
+
+    panel_launcher_layout.addWidget(
+        widgets.Label(value='Open or restore explorer panels:').native
+    )
+
+    open_all_docks_button = widgets.PushButton(text='Open all panels')
+    open_all_docks_button.clicked.connect(show_all_docks)
+    panel_launcher_layout.addWidget(open_all_docks_button.native)
+
+    dock_launcher_buttons = {}
+    for dock_name in dock_order:
+        button = widgets.PushButton(text=f'Open {dock_name}')
+        button.clicked.connect(lambda checked=False, dock_name=dock_name: show_dock(dock_name))
+        panel_launcher_layout.addWidget(button.native)
+        dock_launcher_buttons[dock_name] = button
+
+    panel_launcher_dock = viewer.window.add_dock_widget(
+        panel_launcher_widget,
+        name='Panels',
+        area='left',
+    )
+    panel_launcher_dock.setFeatures(
+        panel_launcher_dock.features() & ~QDockWidget.DockWidgetClosable
+    )
 
     # --- Include Functions for Saving and Loading Workspace ---
 
@@ -928,6 +1049,11 @@ def napari_imc_explorer(
         get_selected_images=get_selected_images,
         get_selected_obs_categories=get_selected_obs_categories,
         get_selected_numeric=get_selected_numeric,
+        show_dock=show_dock,
+        show_all_docks=show_all_docks,
+        panel_launcher_dock=panel_launcher_dock,
+        dock_widgets=dock_widgets,
+        dock_launcher_buttons=dock_launcher_buttons,
     )
 
     # Start the Napari event loop
