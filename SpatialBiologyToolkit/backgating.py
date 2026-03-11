@@ -1680,6 +1680,215 @@ def backgating_assessment(
     logging.info("Backgating assessment complete.")
 
 
+def _parse_population_overlay_roi_name(path: Union[str, Path]) -> Optional[str]:
+    """Extract ROI name from a backgating population overlay filename."""
+    match = re.match(r"^(?P<roi>.+)_population_overlay\.[^.]+$", Path(path).name)
+    if match is None:
+        return None
+    return match.group("roi")
+
+
+def _find_population_overlay_image(
+    backgating_output_folder: Union[str, Path],
+    population: Union[str, int],
+    roi: Union[str, int],
+) -> Optional[Path]:
+    """Locate a saved population overlay image for one population/ROI pair."""
+    overlay_dir = Path(backgating_output_folder) / clean_text(str(population)) / "population_overlays"
+    if not overlay_dir.exists():
+        return None
+
+    matches = []
+    roi_str = str(roi)
+    for candidate in overlay_dir.glob("*_population_overlay.*"):
+        parsed_roi = _parse_population_overlay_roi_name(candidate)
+        if parsed_roi == roi_str:
+            matches.append(candidate)
+
+    if not matches:
+        return None
+
+    if len(matches) > 1:
+        logging.warning(
+            "Found multiple population overlay images for population '%s', ROI '%s'. Using %s.",
+            population,
+            roi,
+            matches[0],
+        )
+    return matches[0]
+
+
+def create_population_overlay_galleries(
+    backgating_output_folder: Union[str, Path],
+    populations: List[Union[str, int]],
+    ncols: int,
+    nrows: int,
+    output_subfolder: str = "population_overlay_galleries",
+    roi_list: Optional[List[Union[str, int]]] = None,
+    dpi: int = 200,
+    population_title_fontsize: Optional[int] = 12,
+    roi_title_fontsize: Optional[int] = 16,
+) -> Path:
+    """
+    Create one per-ROI gallery grid from saved backgating population overlay images.
+
+    Expected input layout is the output of ``backgating_assessment``:
+      backgating_output_folder/
+        <cleaned_population_name>/
+          population_overlays/
+            <ROI>_population_overlay.png
+
+    Parameters
+    ----------
+    backgating_output_folder : str or Path
+        Root output directory previously written by ``backgating_assessment``.
+    populations : list
+        Ordered list of populations as they should appear in the gallery.
+    ncols, nrows : int
+        Layout of the gallery grid.
+    output_subfolder : str, optional
+        New subdirectory inside ``backgating_output_folder`` where ROI galleries are saved.
+    roi_list : list, optional
+        Optional explicit ROI order/subset. If None, all ROIs found across requested populations are used.
+    dpi : int, optional
+        Output DPI for saved gallery figures.
+    population_title_fontsize : int or None, optional
+        Title font size for each population panel. If None, population panel
+        titles are not plotted.
+    roi_title_fontsize : int or None, optional
+        Suptitle font size for the ROI label. If None, ROI suptitle is not plotted.
+
+    Returns
+    -------
+    Path
+        Directory containing the saved ROI gallery images.
+    """
+    base_dir = Path(backgating_output_folder)
+    if not base_dir.exists():
+        raise FileNotFoundError(f"Backgating output folder not found: {base_dir}")
+
+    if ncols <= 0 or nrows <= 0:
+        raise ValueError("ncols and nrows must both be positive integers.")
+
+    if not populations:
+        raise ValueError("At least one population must be provided.")
+
+    if len(populations) > int(ncols) * int(nrows):
+        raise ValueError(
+            f"Layout {nrows}x{ncols} cannot fit {len(populations)} populations."
+        )
+
+    output_dir = base_dir / output_subfolder
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if roi_list is None:
+        discovered_rois = set()
+        for population in populations:
+            overlay_dir = base_dir / clean_text(str(population)) / "population_overlays"
+            if not overlay_dir.exists():
+                logging.warning(
+                    "Population overlay directory not found for population '%s': %s",
+                    population,
+                    overlay_dir,
+                )
+                continue
+            for candidate in overlay_dir.glob("*_population_overlay.*"):
+                roi_name = _parse_population_overlay_roi_name(candidate)
+                if roi_name:
+                    discovered_rois.add(roi_name)
+        roi_names = sorted(discovered_rois)
+    else:
+        roi_names = [str(roi) for roi in roi_list]
+
+    if not roi_names:
+        raise FileNotFoundError(
+            f"No population overlay images were found in {base_dir} for populations {populations}."
+        )
+
+    missing_pairs: List[str] = []
+    for roi in roi_names:
+        fig, axes = plt.subplots(
+            nrows=nrows,
+            ncols=ncols,
+            figsize=(max(1, ncols) * 4.0, max(1, nrows) * 4.0),
+        )
+        axes_array = np.atleast_1d(axes).ravel()
+
+        for idx, population in enumerate(populations):
+            ax = axes_array[idx]
+            overlay_path = _find_population_overlay_image(base_dir, population, roi)
+            if overlay_path is None:
+                ax.set_facecolor("white")
+                ax.text(
+                    0.5,
+                    0.5,
+                    "Missing",
+                    ha="center",
+                    va="center",
+                    fontsize=12,
+                    color="black",
+                )
+                missing_pairs.append(f"{population}::{roi}")
+            else:
+                try:
+                    overlay_image = io.imread(str(overlay_path))
+                    if overlay_image.ndim == 2:
+                        ax.imshow(overlay_image, cmap="gray")
+                    else:
+                        ax.imshow(overlay_image)
+                except Exception as exc:
+                    logging.warning(
+                        "Failed to load population overlay image for population '%s', ROI '%s': %s",
+                        population,
+                        roi,
+                        exc,
+                    )
+                    ax.set_facecolor("white")
+                    ax.text(
+                        0.5,
+                        0.5,
+                        "Load failed",
+                        ha="center",
+                        va="center",
+                        fontsize=12,
+                        color="black",
+                    )
+
+            if population_title_fontsize is not None:
+                ax.set_title(str(population), fontsize=population_title_fontsize)
+            ax.axis("off")
+
+        for ax in axes_array[len(populations):]:
+            ax.axis("off")
+
+        if roi_title_fontsize is not None:
+            fig.suptitle(str(roi), fontsize=roi_title_fontsize)
+            fig.tight_layout(rect=[0, 0, 1, 0.96])
+        else:
+            fig.tight_layout()
+        save_path = output_dir / f"{clean_text(str(roi))}_population_gallery.png"
+        fig.savefig(save_path, dpi=int(dpi), bbox_inches="tight")
+        plt.close(fig)
+
+    if missing_pairs:
+        preview = ", ".join(missing_pairs[:10])
+        if len(missing_pairs) > 10:
+            preview += ", ..."
+        logging.warning(
+            "Population overlay galleries were created with %d missing population/ROI panels: %s",
+            len(missing_pairs),
+            preview,
+        )
+    else:
+        logging.info(
+            "Population overlay galleries created successfully for %d ROIs in %s.",
+            len(roi_names),
+            output_dir,
+        )
+
+    return output_dir
+
+
 def update_settings_from_marker_dict(
     settings_path: Union[str, Path],
     marker_settings: Optional[Dict[str, Union[str, float, Tuple[float, Union[str, float]]]]] = None,

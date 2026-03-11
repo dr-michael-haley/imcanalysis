@@ -14,7 +14,7 @@ import pandas as pd
 from scipy.spatial.distance import cdist
 import seaborn as sns
 from matplotlib.cm import get_cmap
-from matplotlib.colors import TwoSlopeNorm
+from matplotlib.colors import Colormap, TwoSlopeNorm
 
 AnnDataLike = Union[ad.AnnData, str, Path]
 
@@ -234,7 +234,13 @@ def _build_conditions_mapping(
 
 
 def _build_annotations(stats_df: pd.DataFrame, cluster_column: str) -> pd.DataFrame:
-    clusters = sorted(stats_df[cluster_column].unique())
+    cluster_values = pd.Series(stats_df[cluster_column]).dropna().unique().tolist()
+
+    try:
+        clusters = sorted(cluster_values)
+    except TypeError:
+        clusters = sorted(cluster_values, key=lambda value: str(value))
+
     return pd.DataFrame(
         {
             "ClusterNumber": clusters,
