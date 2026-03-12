@@ -29,6 +29,8 @@ class GeneralConfig:
     groupby_obs_primary_pairwise: Optional[List[str]] = None  # Optional preferred 2-group subset for pairwise analyses
     population_obs_all: Optional[List[str]] = None  # Optional full list of population/cluster obs columns
     population_obs_primary: Optional[str] = None  # Optional primary population obs used by downstream analyses
+    compartment_obs: Optional[str] = None  # Optional tissue-compartment obs column used for compartment-specific abundance outputs
+    compartment_obs_list: Optional[List[str]] = None  # Optional ordered subset of compartment_obs values to analyze separately
     spatial_key: str = 'spatial'  # Canonical adata.obsm key for XY coordinates
     x_coord_obs: str = 'X_loc'  # Fallback X coordinate obs column when spatial_key is missing
     y_coord_obs: str = 'Y_loc'  # Fallback Y coordinate obs column when spatial_key is missing

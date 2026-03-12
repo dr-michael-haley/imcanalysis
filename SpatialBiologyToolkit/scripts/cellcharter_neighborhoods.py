@@ -596,6 +596,91 @@ def _majority_label(series: pd.Series) -> str:
     return str(values.iloc[0])
 
 
+def _resolve_compartment_scopes(
+    adata: ad.AnnData,
+    *,
+    compartment_key: Optional[str],
+    configured_compartments: Optional[Sequence[Any]],
+) -> List[Dict[str, Any]]:
+    scopes: List[Dict[str, Any]] = [
+        {
+            "label": "all",
+            "folder_name": "all",
+            "mask": None,
+        }
+    ]
+
+    compartment_col = coalesce_config_text(compartment_key)
+    if not compartment_col:
+        return scopes
+
+    if compartment_col not in adata.obs.columns:
+        logging.warning(
+            "Compartment column '%s' not found in adata.obs; creating CellCharter composition plots for all cells only.",
+            compartment_col,
+        )
+        return scopes
+
+    compartment_list = coalesce_config_list(configured_compartments)
+    if not compartment_list:
+        logging.warning(
+            "Compartment column '%s' is configured but compartment_obs_list is empty; "
+            "creating CellCharter composition plots for all cells only.",
+            compartment_col,
+        )
+        return scopes
+
+    compartment_values = adata.obs[compartment_col].astype("string")
+    seen_labels = set()
+    used_folder_names = {"all"}
+
+    for idx, raw_label in enumerate(compartment_list, start=1):
+        label = str(raw_label)
+        if label in seen_labels:
+            logging.warning(
+                "Duplicate compartment '%s' in compartment_obs_list; skipping repeated CellCharter composition scope.",
+                label,
+            )
+            continue
+        seen_labels.add(label)
+
+        scope_mask = compartment_values.eq(label).fillna(False).astype(bool)
+        n_cells = int(scope_mask.sum())
+        if n_cells == 0:
+            logging.warning(
+                "Configured compartment '%s' was not found in adata.obs['%s']; skipping it for CellCharter composition plots.",
+                label,
+                compartment_col,
+            )
+            continue
+
+        folder_name = cleanstring(label) or f"compartment_{idx}"
+        if folder_name in used_folder_names:
+            suffix = 2
+            base_name = folder_name
+            while folder_name in used_folder_names:
+                folder_name = f"{base_name}_{suffix}"
+                suffix += 1
+        used_folder_names.add(folder_name)
+
+        scopes.append(
+            {
+                "label": label,
+                "folder_name": folder_name,
+                "mask": scope_mask,
+            }
+        )
+
+    if len(scopes) > 1:
+        logging.info(
+            "Compartment-specific CellCharter composition plots enabled using '%s' for compartments: %s",
+            compartment_col,
+            [scope["label"] for scope in scopes[1:]],
+        )
+
+    return scopes
+
+
 def _save_cluster_umap(
     adata: ad.AnnData,
     *,
@@ -643,6 +728,8 @@ def _save_cluster_composition_plots(
     case_key: str,
     groupby_key: Optional[str],
     configured_groups: Optional[Sequence[Any]],
+    compartment_key: Optional[str],
+    configured_compartments: Optional[Sequence[Any]],
     cluster_color_map: Dict[str, str],
     order_by_environment: str,
     qc_dir: Path,
@@ -664,8 +751,8 @@ def _save_cluster_composition_plots(
 
     fmt = _normalise_figure_format(figure_format)
     dpi = 300 if bool(save_high_res) else 150
-    out_dir = qc_dir / "cluster_composition"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    composition_root = qc_dir / "cluster_composition"
+    composition_root.mkdir(parents=True, exist_ok=True)
 
     use_group = bool(groupby_key and groupby_key in adata.obs.columns)
     if groupby_key and not use_group:
@@ -675,178 +762,198 @@ def _save_cluster_composition_plots(
         )
 
     obs_cols = [cluster_key, sample_key, case_key] + ([str(groupby_key)] if use_group else [])
-    obs = adata.obs[obs_cols].copy()
-    obs = obs.dropna(subset=[cluster_key, sample_key, case_key])
-    if obs.empty:
-        logging.warning("No rows available after dropping NA values; skipping composition plots.")
-        return
-
-    for col in obs_cols:
-        obs[col] = obs[col].astype(str)
-
-    agg_spec: Dict[str, Any] = {case_key: _majority_label}
-    if use_group and groupby_key:
-        agg_spec[groupby_key] = _majority_label
-    roi_meta = obs.groupby(sample_key, observed=True).agg(agg_spec).reset_index()
-
-    roi_counts = (
-        obs.groupby([sample_key, cluster_key], observed=True)
-        .size()
-        .reset_index(name="n_cells")
+    scopes = _resolve_compartment_scopes(
+        adata,
+        compartment_key=compartment_key,
+        configured_compartments=configured_compartments,
     )
-    roi_totals = roi_counts.groupby(sample_key, observed=True)["n_cells"].transform("sum")
-    roi_counts["roi_proportion"] = roi_counts["n_cells"] / roi_totals.replace(0, np.nan)
-    roi_props = roi_counts.merge(roi_meta, on=sample_key, how="left")
-    roi_props.to_csv(out_dir / "roi_level_cluster_proportions.csv", index=False)
+    use_scope_folders = len(scopes) > 1
 
-    # Case-level composition: aggregate counts directly by case (no ROI pre-averaging).
-    case_counts = (
-        obs.groupby([case_key, cluster_key], observed=True)
-        .size()
-        .reset_index(name="n_cells")
-    )
-    case_totals = case_counts.groupby(case_key, observed=True)["n_cells"].transform("sum")
-    case_counts["case_proportion"] = case_counts["n_cells"] / case_totals.replace(0, np.nan)
-    case_props = case_counts[[case_key, cluster_key, "case_proportion"]].copy()
+    for scope in scopes:
+        out_dir = composition_root / scope["folder_name"] if use_scope_folders else composition_root
+        out_dir.mkdir(parents=True, exist_ok=True)
 
-    case_props = (
-        case_props.groupby([case_key, cluster_key], observed=True)["case_proportion"]
-        .mean()
-        .reset_index(name="case_proportion")
-    )
-    if use_group and groupby_key:
-        case_group_nunique = (
-            obs.groupby(case_key, observed=True)[groupby_key]
-            .nunique(dropna=True)
-        )
-        ambiguous_cases = case_group_nunique[case_group_nunique > 1].index.tolist()
-        if ambiguous_cases:
+        scope_mask = scope["mask"]
+        scope_obs = adata.obs if scope_mask is None else adata.obs.loc[scope_mask]
+        obs = scope_obs[obs_cols].copy()
+        obs = obs.dropna(subset=[cluster_key, sample_key, case_key])
+        if obs.empty:
             logging.warning(
-                "Some cases map to multiple '%s' values; using majority assignment for grouped composition plots.",
-                groupby_key,
+                "No rows available after dropping NA values for CellCharter composition scope '%s'; skipping it.",
+                scope["label"],
             )
-        case_group_map = (
-            obs.groupby(case_key, observed=True)[groupby_key]
-            .agg(_majority_label)
-            .reset_index()
+            continue
+
+        for col in obs_cols:
+            obs[col] = obs[col].astype(str)
+
+        agg_spec: Dict[str, Any] = {case_key: _majority_label}
+        if use_group and groupby_key:
+            agg_spec[groupby_key] = _majority_label
+        roi_meta = obs.groupby(sample_key, observed=True).agg(agg_spec).reset_index()
+
+        roi_counts = (
+            obs.groupby([sample_key, cluster_key], observed=True)
+            .size()
+            .reset_index(name="n_cells")
         )
-        case_props = case_props.merge(case_group_map, on=case_key, how="left")
-    case_props.to_csv(out_dir / "case_level_cluster_proportions.csv", index=False)
+        roi_totals = roi_counts.groupby(sample_key, observed=True)["n_cells"].transform("sum")
+        roi_counts["roi_proportion"] = roi_counts["n_cells"] / roi_totals.replace(0, np.nan)
+        roi_props = roi_counts.merge(roi_meta, on=sample_key, how="left")
+        roi_props.to_csv(out_dir / "roi_level_cluster_proportions.csv", index=False)
 
-    if isinstance(adata.obs[cluster_key].dtype, pd.CategoricalDtype):
-        cluster_order = [str(c) for c in adata.obs[cluster_key].cat.categories.tolist()]
-    else:
-        cluster_order = sorted(case_props[cluster_key].dropna().astype(str).unique().tolist(), key=_category_sort_key)
-    cluster_order = [c for c in cluster_order if c in case_props[cluster_key].astype(str).unique().tolist()]
-    if not cluster_order:
-        logging.warning("No valid clusters found for composition plotting.")
-        return
-
-    def _plot_stacked(df_in: pd.DataFrame, *, title: str, stem: str) -> None:
-        wide = df_in.pivot_table(
-            index=case_key,
-            columns=cluster_key,
-            values="case_proportion",
-            aggfunc="mean",
-            fill_value=0.0,
+        case_counts = (
+            obs.groupby([case_key, cluster_key], observed=True)
+            .size()
+            .reset_index(name="n_cells")
         )
-        if wide.empty:
-            return
+        case_totals = case_counts.groupby(case_key, observed=True)["n_cells"].transform("sum")
+        case_counts["case_proportion"] = case_counts["n_cells"] / case_totals.replace(0, np.nan)
+        case_props = case_counts[[case_key, cluster_key, "case_proportion"]].copy()
+        case_props = (
+            case_props.groupby([case_key, cluster_key], observed=True)["case_proportion"]
+            .mean()
+            .reset_index(name="case_proportion")
+        )
+        if use_group and groupby_key:
+            case_group_nunique = (
+                obs.groupby(case_key, observed=True)[groupby_key]
+                .nunique(dropna=True)
+            )
+            ambiguous_cases = case_group_nunique[case_group_nunique > 1].index.tolist()
+            if ambiguous_cases:
+                logging.warning(
+                    "Some cases map to multiple '%s' values; using majority assignment for grouped composition plots.",
+                    groupby_key,
+                )
+            case_group_map = (
+                obs.groupby(case_key, observed=True)[groupby_key]
+                .agg(_majority_label)
+                .reset_index()
+            )
+            case_props = case_props.merge(case_group_map, on=case_key, how="left")
+        case_props.to_csv(out_dir / "case_level_cluster_proportions.csv", index=False)
 
-        columns = [c for c in cluster_order if c in wide.columns]
-        if not columns:
-            return
-        wide = wide.reindex(columns=columns, fill_value=0.0)
-
-        env_label = str(order_by_environment)
-        if env_label in wide.columns:
-            wide = wide.sort_values(by=env_label, ascending=False)
+        if isinstance(adata.obs[cluster_key].dtype, pd.CategoricalDtype):
+            cluster_order = [str(c) for c in adata.obs[cluster_key].cat.categories.tolist()]
         else:
-            logging.info(
-                "composition_order_by_environment '%s' not present in this subset; using default case order.",
-                env_label,
+            cluster_order = sorted(
+                case_props[cluster_key].dropna().astype(str).unique().tolist(),
+                key=_category_sort_key,
             )
-
-        wide.to_csv(out_dir / f"{stem}.csv", index=True)
-        base_width = float(stacked_figsize[0])
-        base_height = float(stacked_figsize[1])
-        width_scale = max(0.05, float(stacked_width_scale))
-        plot_width = max(base_width, width_scale * max(1, wide.shape[0]))
-        fig, ax = plt.subplots(figsize=(plot_width, base_height))
-        colors = [cluster_color_map.get(col, "#808080") for col in wide.columns]
-        wide.plot(kind="bar", stacked=True, ax=ax, color=colors, width=0.9)
-        ax.set_xlabel(case_key)
-        ax.set_ylabel("Proportion")
-        ax.set_title(title)
-        ax.tick_params(axis="x", rotation=90)
-        ax.set_ylim(0.0, 1.0)
-        ax.margins(y=0.0)
-        ax.grid(False)
-        ax.legend(
-            title=cluster_key,
-            bbox_to_anchor=(1.02, 1.0),
-            loc="upper left",
-            frameon=False,
-            fontsize=8,
-        )
-        fig.tight_layout()
-        fig.savefig(out_dir / f"{stem}.{fmt}", dpi=dpi, bbox_inches="tight")
-        plt.close(fig)
-
-    _plot_stacked(
-        case_props,
-        title=f"Case-level cluster proportions ({cluster_key})",
-        stem="stacked_case_proportion_all",
-    )
-
-    if use_group and groupby_key:
-        available_groups = _ordered_groups(case_props[groupby_key], configured_groups)
-        for group in available_groups:
-            subset = case_props[case_props[groupby_key].astype(str) == str(group)].copy()
-            if subset.empty:
-                continue
-            _plot_stacked(
-                subset,
-                title=f"Case-level cluster proportions ({groupby_key}={group})",
-                stem=f"stacked_case_proportion_{cleanstring(group)}",
+        cluster_order = [c for c in cluster_order if c in case_props[cluster_key].astype(str).unique().tolist()]
+        if not cluster_order:
+            logging.warning(
+                "No valid clusters found for CellCharter composition plotting in scope '%s'.",
+                scope["label"],
             )
+            continue
 
-        bar_df = case_props.dropna(subset=[groupby_key]).copy()
-        bar_df = bar_df[~bar_df[groupby_key].astype(str).isin({"", "nan", "NaN", "None", "none"})]
-        if not bar_df.empty:
-            hue_order = _ordered_groups(bar_df[groupby_key], configured_groups)
-            palette = _palette_from_adata_uns(adata, groupby_key)
-            fig, ax = plt.subplots(figsize=grouped_bar_figsize)
-            sns.barplot(
-                data=bar_df,
-                x=cluster_key,
-                y="case_proportion",
-                hue=groupby_key,
-                order=cluster_order,
-                hue_order=hue_order if hue_order else None,
-                errorbar="se",
-                palette=palette,
-                ax=ax,
+        def _plot_stacked(df_in: pd.DataFrame, *, title: str, stem: str) -> None:
+            wide = df_in.pivot_table(
+                index=case_key,
+                columns=cluster_key,
+                values="case_proportion",
+                aggfunc="mean",
+                fill_value=0.0,
             )
-            ax.set_xlabel(cluster_key)
-            ax.set_ylabel("Case-level proportion")
-            ax.set_title(f"Spatial cluster case-level proportions by {groupby_key}")
+            if wide.empty:
+                return
+
+            columns = [c for c in cluster_order if c in wide.columns]
+            if not columns:
+                return
+            wide = wide.reindex(columns=columns, fill_value=0.0)
+
+            env_label = str(order_by_environment)
+            if env_label in wide.columns:
+                wide = wide.sort_values(by=env_label, ascending=False)
+            else:
+                logging.info(
+                    "composition_order_by_environment '%s' not present in this subset; using default case order.",
+                    env_label,
+                )
+
+            wide.to_csv(out_dir / f"{stem}.csv", index=True)
+            base_width = float(stacked_figsize[0])
+            base_height = float(stacked_figsize[1])
+            width_scale = max(0.05, float(stacked_width_scale))
+            plot_width = max(base_width, width_scale * max(1, wide.shape[0]))
+            fig, ax = plt.subplots(figsize=(plot_width, base_height))
+            colors = [cluster_color_map.get(col, "#808080") for col in wide.columns]
+            wide.plot(kind="bar", stacked=True, ax=ax, color=colors, width=0.9)
+            ax.set_xlabel(case_key)
+            ax.set_ylabel("Proportion")
+            ax.set_title(title)
             ax.tick_params(axis="x", rotation=90)
+            ax.set_ylim(0.0, 1.0)
             ax.margins(y=0.0)
             ax.grid(False)
             ax.legend(
-                title=groupby_key,
+                title=cluster_key,
                 bbox_to_anchor=(1.02, 1.0),
                 loc="upper left",
                 frameon=False,
+                fontsize=8,
             )
             fig.tight_layout()
-            fig.savefig(
-                out_dir / f"barplot_case_proportion_by_{cleanstring(groupby_key)}.{fmt}",
-                dpi=dpi,
-                bbox_inches="tight",
-            )
+            fig.savefig(out_dir / f"{stem}.{fmt}", dpi=dpi, bbox_inches="tight")
             plt.close(fig)
+
+        _plot_stacked(
+            case_props,
+            title=f"Case-level cluster proportions ({cluster_key})",
+            stem="stacked_case_proportion_all",
+        )
+
+        if use_group and groupby_key:
+            available_groups = _ordered_groups(case_props[groupby_key], configured_groups)
+            for group in available_groups:
+                subset = case_props[case_props[groupby_key].astype(str) == str(group)].copy()
+                if subset.empty:
+                    continue
+                _plot_stacked(
+                    subset,
+                    title=f"Case-level cluster proportions ({groupby_key}={group})",
+                    stem=f"stacked_case_proportion_{cleanstring(group)}",
+                )
+
+            bar_df = case_props.dropna(subset=[groupby_key]).copy()
+            bar_df = bar_df[~bar_df[groupby_key].astype(str).isin({"", "nan", "NaN", "None", "none"})]
+            if not bar_df.empty:
+                hue_order = _ordered_groups(bar_df[groupby_key], configured_groups)
+                palette = _palette_from_adata_uns(adata, groupby_key)
+                fig, ax = plt.subplots(figsize=grouped_bar_figsize)
+                sns.barplot(
+                    data=bar_df,
+                    x=cluster_key,
+                    y="case_proportion",
+                    hue=groupby_key,
+                    order=cluster_order,
+                    hue_order=hue_order if hue_order else None,
+                    errorbar="se",
+                    palette=palette,
+                    ax=ax,
+                )
+                ax.set_xlabel(cluster_key)
+                ax.set_ylabel("Case-level proportion")
+                ax.set_title(f"Spatial cluster case-level proportions by {groupby_key}")
+                ax.tick_params(axis="x", rotation=90)
+                ax.margins(y=0.0)
+                ax.grid(False)
+                ax.legend(
+                    title=groupby_key,
+                    bbox_to_anchor=(1.02, 1.0),
+                    loc="upper left",
+                    frameon=False,
+                )
+                fig.tight_layout()
+                fig.savefig(
+                    out_dir / f"barplot_case_proportion_by_{cleanstring(groupby_key)}.{fmt}",
+                    dpi=dpi,
+                    bbox_inches="tight",
+                )
+                plt.close(fig)
 
 def _save_cluster_tables(
     adata: ad.AnnData,
@@ -2363,6 +2470,10 @@ def run_cellcharter_neighborhoods(
                 case_key=str(case_key),
                 groupby_key=groupby_key,
                 configured_groups=resolved_groupby_obs_groups,
+                compartment_key=coalesce_config_text(getattr(general_config, "compartment_obs", None)),
+                configured_compartments=coalesce_config_list(
+                    getattr(general_config, "compartment_obs_list", None)
+                ),
                 cluster_color_map=cluster_color_map,
                 order_by_environment=str(cellcharter_config.composition_order_by_environment),
                 qc_dir=qc_dir,
