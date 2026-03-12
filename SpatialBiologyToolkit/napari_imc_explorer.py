@@ -15,13 +15,31 @@ import skimage as sk
 from skimage import color, io, transform, segmentation
 import vispy
 from matplotlib import colormaps
-from qtpy.QtWidgets import QDockWidget, QWidget, QVBoxLayout
+from matplotlib.colors import to_hex
+from qtpy.QtGui import QColor
+from qtpy.QtWidgets import (
+    QAbstractItemView,
+    QComboBox,
+    QColorDialog,
+    QDockWidget,
+    QHeaderView,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPushButton,
+    QSpinBox,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 from napari.utils.colormaps import Colormap  # For colormap reconstruction
 from napari.utils import DirectLabelColormap
 
 def napari_imc_explorer(
     masks_folder: str = 'Masks',
     image_folders: list = ['Images'],
+    annotations_folder: str = 'Annotations',
     roi_obs: str = 'ROI',
     cell_id_in_mask_obs: str = 'ObjectNumber',
     adata: ad.AnnData = ad.AnnData(),
@@ -37,6 +55,8 @@ def napari_imc_explorer(
         Directory containing a mask for each ROI, each file named after the ROI. Masks should be uint16 image files.
     image_folders : list
         Directories containing subdirectories, each named after ROIs in the AnnData. Images are named after channels (`adata.var_names`), uint16 image files.
+    annotations_folder : str
+        Directory containing manual annotation subfolders. Each annotation subfolder contains a label mapping CSV and one TIFF label image per ROI.
     roi_obs : str
         Column in `adata.obs` indicating the ROI.
     cell_id_in_mask_obs : str
@@ -56,6 +76,9 @@ def napari_imc_explorer(
     # Ensure image_folders is a list
     if not isinstance(image_folders, list):
         image_folders = [image_folders]
+
+    annotations_folder = Path(annotations_folder)
+    annotations_folder.mkdir(parents=True, exist_ok=True)
         
     # Automatically determine mask_extension if not provided
     if mask_extension is None:
@@ -121,6 +144,132 @@ def napari_imc_explorer(
         List all folders in a specified directory.
         """
         return [name for name in os.listdir(directory) if os.path.isdir(os.path.join(directory, name))]
+
+    annotation_mapping_filename = 'label_mapping.csv'
+    annotation_background_label = 'Unlabelled'
+    annotation_default_colours = [to_hex(colour) for colour in colormaps['tab20'].colors]
+
+    def _annotation_dir(annotation_name):
+        return annotations_folder / str(annotation_name)
+
+    def _annotation_mapping_path(annotation_name):
+        return _annotation_dir(annotation_name) / annotation_mapping_filename
+
+    def _annotation_roi_path(annotation_name, roi_name):
+        return _annotation_dir(annotation_name) / f'{roi_name}.tiff'
+
+    def _list_annotation_names():
+        return sorted(
+            path.name for path in annotations_folder.iterdir()
+            if path.is_dir()
+        )
+
+    def _default_annotation_column(annotation_name):
+        return f'annots_{annotation_name}'
+
+    def _default_annotation_colour(index):
+        return annotation_default_colours[index % len(annotation_default_colours)]
+
+    def _normalise_annotation_colour(colour_value):
+        colour = QColor(str(colour_value))
+        return colour.name() if colour.isValid() else str(colour_value)
+
+    def _load_annotation_mapping(annotation_name):
+        mapping_path = _annotation_mapping_path(annotation_name)
+        if not mapping_path.exists():
+            raise FileNotFoundError(f'Annotation mapping not found: {mapping_path}')
+
+        mapping_df = pd.read_csv(mapping_path)
+        required_columns = {'value', 'label', 'color'}
+        if not required_columns.issubset(mapping_df.columns):
+            raise ValueError(
+                f"Annotation mapping '{mapping_path}' must contain columns: {sorted(required_columns)}"
+            )
+
+        mapping_df = mapping_df.loc[:, ['value', 'label', 'color']].copy()
+        mapping_df['value'] = mapping_df['value'].astype(int)
+        mapping_df['label'] = mapping_df['label'].astype(str)
+        mapping_df['color'] = mapping_df['color'].astype(str)
+        mapping_df['color'] = mapping_df['color'].map(_normalise_annotation_colour)
+        mapping_df = mapping_df.drop_duplicates(subset='value', keep='last').sort_values('value')
+
+        if 0 not in mapping_df['value'].values:
+            mapping_df = pd.concat(
+                [
+                    pd.DataFrame(
+                        [{'value': 0, 'label': annotation_background_label, 'color': 'transparent'}]
+                    ),
+                    mapping_df,
+                ],
+                ignore_index=True,
+            )
+        else:
+            mapping_df.loc[mapping_df['value'] == 0, 'label'] = annotation_background_label
+            mapping_df.loc[mapping_df['value'] == 0, 'color'] = 'transparent'
+
+        return mapping_df.sort_values('value').reset_index(drop=True)
+
+    def _write_annotation_mapping(annotation_name, mapping_df):
+        annotation_dir = _annotation_dir(annotation_name)
+        annotation_dir.mkdir(parents=True, exist_ok=True)
+        mapping_df.loc[:, ['value', 'label', 'color']].sort_values('value').to_csv(
+            _annotation_mapping_path(annotation_name),
+            index=False,
+        )
+
+    def _blank_annotation_array(roi_name):
+        mask = sk.io.imread(Path(masks_folder, f'{roi_name}{mask_extension}'))
+        return np.zeros(mask.shape, dtype='uint16')
+
+    def _save_annotation_array(annotation_name, roi_name, annotation_array):
+        annotation_array = np.asarray(annotation_array)
+        if annotation_array.size > 0 and annotation_array.max() > np.iinfo(np.uint16).max:
+            raise ValueError('Annotation label values must be <= 65535 to save as uint16 TIFF.')
+
+        annotation_array = annotation_array.astype('uint16', copy=False)
+        expected_shape = _blank_annotation_array(roi_name).shape
+        if annotation_array.shape != expected_shape:
+            raise ValueError(
+                f"Annotation for ROI '{roi_name}' has shape {annotation_array.shape}, expected {expected_shape}."
+            )
+
+        annotation_dir = _annotation_dir(annotation_name)
+        annotation_dir.mkdir(parents=True, exist_ok=True)
+        io.imsave(
+            _annotation_roi_path(annotation_name, roi_name),
+            annotation_array,
+            check_contrast=False,
+        )
+
+    def _load_annotation_array(annotation_name, roi_name):
+        annotation_path = _annotation_roi_path(annotation_name, roi_name)
+        if annotation_path.exists():
+            return sk.io.imread(annotation_path).astype('uint16', copy=False)
+
+        blank_annotation = _blank_annotation_array(roi_name)
+        _save_annotation_array(annotation_name, roi_name, blank_annotation)
+        return blank_annotation
+
+    def _build_annotation_colormap(mapping_df):
+        color_dict = {None: 'transparent', 0: 'transparent'}
+        for _, row in mapping_df.iterrows():
+            value = int(row['value'])
+            if value == 0:
+                continue
+            color_dict[value] = row['color']
+        return DirectLabelColormap(color_dict=color_dict)
+
+    def _dominant_annotation_value(values):
+        values = np.asarray(values, dtype=int)
+        if values.size == 0:
+            return 0
+
+        non_zero_values = values[values != 0]
+        if non_zero_values.size == 0:
+            return 0
+
+        unique_values, counts = np.unique(non_zero_values, return_counts=True)
+        return int(unique_values[np.argmax(counts)])
 
     def _load_imc_image(file, quantile=0.999, colormap=None, recolour_image=False, minimum_pixel_counts=0.1):
         """
@@ -696,6 +845,466 @@ def napari_imc_explorer(
                 add_individual_pops=individual_pops_toggle.value
             )
 
+    annotation_state = SimpleNamespace(active_annotation=None, active_roi=None)
+    annotation_creator_rows = []
+
+    def _annotation_layer_name(annotation_name):
+        return f'annotation::{annotation_name}'
+
+    def _get_active_annotation_layer():
+        for layer in reversed(list(viewer.layers)):
+            if getattr(layer, 'metadata', {}).get('manual_annotation_layer'):
+                return layer
+        return None
+
+    def _set_annotation_status(message):
+        annotation_status_label.setText(message)
+        print(message)
+
+    def _set_colour_button_style(button, colour_value):
+        colour = QColor(_normalise_annotation_colour(colour_value))
+        if not colour.isValid():
+            colour = QColor('#808080')
+        text_colour = '#000000' if colour.lightness() > 127 else '#ffffff'
+        button.setText(colour.name())
+        button.setStyleSheet(
+            f'background-color: {colour.name()}; color: {text_colour}; border: 1px solid #666666;'
+        )
+        button.setProperty('annotation_colour', colour.name())
+
+    def _choose_annotation_colour(button):
+        current_colour = QColor(button.property('annotation_colour') or '#808080')
+        selected_colour = QColorDialog.getColor(current_colour, annotation_widget, 'Select annotation colour')
+        if selected_colour.isValid():
+            _set_colour_button_style(button, selected_colour.name())
+
+    def _clear_qt_layout(layout_to_clear):
+        while layout_to_clear.count():
+            item = layout_to_clear.takeAt(0)
+            widget = item.widget()
+            child_layout = item.layout()
+            if widget is not None:
+                widget.setParent(None)
+                widget.deleteLater()
+            elif child_layout is not None:
+                _clear_qt_layout(child_layout)
+
+    def _populate_annotation_mapping_table(mapping_df):
+        annotation_mapping_table.setRowCount(len(mapping_df))
+        for row_index, row in enumerate(mapping_df.itertuples(index=False)):
+            value_item = QTableWidgetItem(str(row.value))
+            label_item = QTableWidgetItem(str(row.label))
+            color_item = QTableWidgetItem(str(row.color))
+            color_value = QColor(str(row.color))
+            if color_value.isValid() and str(row.color).lower() != 'transparent':
+                color_item.setBackground(color_value)
+                text_colour = QColor('#000000') if color_value.lightness() > 127 else QColor('#ffffff')
+                color_item.setForeground(text_colour)
+            annotation_mapping_table.setItem(row_index, 0, value_item)
+            annotation_mapping_table.setItem(row_index, 1, label_item)
+            annotation_mapping_table.setItem(row_index, 2, color_item)
+        annotation_mapping_table.resizeRowsToContents()
+
+    def _get_selected_annotation_name():
+        annotation_name = annotation_selector_combo.currentText().strip()
+        return annotation_name or None
+
+    def _update_annotation_summary():
+        selected_annotation = _get_selected_annotation_name()
+        if not selected_annotation:
+            selected_annotation_label.setText('Selected annotation: none')
+            if annotation_state.active_annotation and annotation_state.active_roi:
+                loaded_annotation_label.setText(
+                    f'Loaded in viewer: {annotation_state.active_annotation} ({annotation_state.active_roi})'
+                )
+            else:
+                loaded_annotation_label.setText('Loaded in viewer: none')
+            annotation_mapping_table.setRowCount(0)
+            sync_annotation_column_input.setText('')
+            return
+
+        selected_annotation_label.setText(f'Selected annotation: {selected_annotation}')
+        sync_annotation_column_input.setText(_default_annotation_column(selected_annotation))
+
+        try:
+            mapping_df = _load_annotation_mapping(selected_annotation)
+        except Exception as exc:
+            annotation_mapping_table.setRowCount(0)
+            loaded_annotation_label.setText('Loaded in viewer: none')
+            _set_annotation_status(f'Could not read mapping for "{selected_annotation}": {exc}')
+            return
+
+        _populate_annotation_mapping_table(mapping_df)
+        if annotation_state.active_annotation and annotation_state.active_roi:
+            loaded_annotation_label.setText(
+                f'Loaded in viewer: {annotation_state.active_annotation} ({annotation_state.active_roi})'
+            )
+        else:
+            loaded_annotation_label.setText('Loaded in viewer: none')
+
+    def _refresh_annotation_choices(selected_annotation=None):
+        annotation_names = _list_annotation_names()
+        annotation_selector_combo.blockSignals(True)
+        annotation_selector_combo.clear()
+        if annotation_names:
+            annotation_selector_combo.addItems(annotation_names)
+            annotation_selector_combo.setEnabled(True)
+            if selected_annotation in annotation_names:
+                annotation_selector_combo.setCurrentText(selected_annotation)
+            else:
+                annotation_selector_combo.setCurrentIndex(0)
+        else:
+            annotation_selector_combo.setEnabled(False)
+        annotation_selector_combo.blockSignals(False)
+        _update_annotation_summary()
+
+    def _build_annotation_creator_row(row_index):
+        row_widget = QWidget()
+        row_layout = QHBoxLayout()
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_widget.setLayout(row_layout)
+
+        category_label = QLabel(f'Category {row_index + 1}')
+        value_spinbox = QSpinBox()
+        value_spinbox.setRange(1, np.iinfo(np.uint16).max)
+        value_spinbox.setValue(row_index + 1)
+
+        label_edit = QLineEdit()
+        label_edit.setPlaceholderText('Region label')
+
+        colour_button = QPushButton()
+        _set_colour_button_style(colour_button, _default_annotation_colour(row_index))
+        colour_button.clicked.connect(
+            lambda checked=False, button=colour_button: _choose_annotation_colour(button)
+        )
+
+        row_layout.addWidget(category_label)
+        row_layout.addWidget(QLabel('Value'))
+        row_layout.addWidget(value_spinbox)
+        row_layout.addWidget(QLabel('Label'))
+        row_layout.addWidget(label_edit)
+        row_layout.addWidget(QLabel('Colour'))
+        row_layout.addWidget(colour_button)
+
+        return SimpleNamespace(
+            widget=row_widget,
+            value_spinbox=value_spinbox,
+            label_edit=label_edit,
+            colour_button=colour_button,
+        )
+
+    def _rebuild_annotation_creator_rows():
+        _clear_qt_layout(annotation_creator_rows_layout)
+        annotation_creator_rows.clear()
+        for row_index in range(new_annotation_categories_input.value()):
+            row = _build_annotation_creator_row(row_index)
+            annotation_creator_rows.append(row)
+            annotation_creator_rows_layout.addWidget(row.widget)
+
+    def _load_selected_annotation_for_current_roi():
+        annotation_name = _get_selected_annotation_name()
+        if annotation_name is None:
+            _set_annotation_status('No annotation selected.')
+            return
+
+        roi_name = str(roi_selector.value)
+        try:
+            mapping_df = _load_annotation_mapping(annotation_name)
+            annotation_data = _load_annotation_array(annotation_name, roi_name)
+        except Exception as exc:
+            _set_annotation_status(f'Could not load annotation "{annotation_name}" for ROI "{roi_name}": {exc}')
+            return
+
+        active_layer = _get_active_annotation_layer()
+        if active_layer is not None:
+            viewer.layers.remove(active_layer)
+
+        annotation_layer = viewer.add_labels(
+            annotation_data.astype('uint16', copy=False),
+            name=_annotation_layer_name(annotation_name),
+            colormap=_build_annotation_colormap(mapping_df),
+            opacity=0.7,
+        )
+        editable_values = mapping_df.loc[mapping_df['value'] != 0, 'value'].astype(int).tolist()
+        if editable_values:
+            annotation_layer.selected_label = editable_values[0]
+        annotation_layer.mode = 'paint'
+        annotation_layer.metadata = {
+            'manual_annotation_layer': True,
+            'annotation_name': annotation_name,
+            'roi_name': roi_name,
+        }
+
+        viewer.layers.selection.clear()
+        viewer.layers.selection.add(annotation_layer)
+
+        annotation_state.active_annotation = annotation_name
+        annotation_state.active_roi = roi_name
+        _update_annotation_summary()
+        _set_annotation_status(f'Loaded annotation "{annotation_name}" for ROI "{roi_name}".')
+
+    def _save_selected_annotation_for_current_roi(silent=False):
+        annotation_name = _get_selected_annotation_name()
+        if annotation_name is None:
+            if not silent:
+                _set_annotation_status('No annotation selected.')
+            return False
+
+        roi_name = str(roi_selector.value)
+        annotation_layer = _get_active_annotation_layer()
+        if annotation_layer is None:
+            if not silent:
+                _set_annotation_status('No manual annotation Labels layer is currently loaded.')
+            return False
+
+        layer_annotation = annotation_layer.metadata.get('annotation_name')
+        layer_roi = annotation_layer.metadata.get('roi_name')
+        if layer_annotation != annotation_name or layer_roi != roi_name:
+            if not silent:
+                _set_annotation_status(
+                    f'Loaded annotation layer is "{layer_annotation}" for ROI "{layer_roi}". '
+                    'Load the selected annotation/ROI before saving.'
+                )
+            return False
+
+        try:
+            _save_annotation_array(annotation_name, roi_name, annotation_layer.data)
+        except Exception as exc:
+            if not silent:
+                _set_annotation_status(f'Could not save annotation "{annotation_name}" for ROI "{roi_name}": {exc}')
+            return False
+
+        if not silent:
+            _set_annotation_status(f'Saved annotation "{annotation_name}" for ROI "{roi_name}".')
+        return True
+
+    def _create_annotation_definition():
+        annotation_name = new_annotation_name_input.text().strip()
+        if not annotation_name:
+            _set_annotation_status('Enter a name for the new annotation.')
+            return
+        if annotation_name != Path(annotation_name).name:
+            _set_annotation_status('Annotation names cannot contain path separators.')
+            return
+        if _annotation_dir(annotation_name).exists():
+            _set_annotation_status(f'Annotation "{annotation_name}" already exists.')
+            return
+
+        if not annotation_creator_rows:
+            _rebuild_annotation_creator_rows()
+
+        mapping_rows = [{'value': 0, 'label': annotation_background_label, 'color': 'transparent'}]
+        seen_values = {0}
+        seen_labels = {annotation_background_label}
+
+        for row in annotation_creator_rows:
+            value = int(row.value_spinbox.value())
+            label_name = row.label_edit.text().strip()
+            colour = row.colour_button.property('annotation_colour')
+
+            if not label_name:
+                _set_annotation_status('Each annotation category must have a label.')
+                return
+            if value in seen_values:
+                _set_annotation_status('Annotation pixel values must be unique.')
+                return
+            if label_name in seen_labels:
+                _set_annotation_status('Annotation labels must be unique.')
+                return
+
+            seen_values.add(value)
+            seen_labels.add(label_name)
+            mapping_rows.append({'value': value, 'label': label_name, 'color': str(colour)})
+
+        mapping_df = pd.DataFrame(mapping_rows).sort_values('value').reset_index(drop=True)
+
+        try:
+            _write_annotation_mapping(annotation_name, mapping_df)
+            for roi_name in roi_list:
+                _save_annotation_array(annotation_name, roi_name, _blank_annotation_array(roi_name))
+        except Exception as exc:
+            _set_annotation_status(f'Could not create annotation "{annotation_name}": {exc}')
+            return
+
+        _refresh_annotation_choices(selected_annotation=annotation_name)
+        _load_selected_annotation_for_current_roi()
+        _set_annotation_status(
+            f'Created annotation "{annotation_name}" with blank TIFF labels for {len(roi_list)} ROI(s).'
+        )
+
+    def _sync_selected_annotation_to_adata():
+        annotation_name = _get_selected_annotation_name()
+        if annotation_name is None:
+            _set_annotation_status('No annotation selected.')
+            return
+
+        current_roi = str(roi_selector.value)
+        if annotation_state.active_annotation == annotation_name and annotation_state.active_roi == current_roi:
+            _save_selected_annotation_for_current_roi(silent=True)
+
+        column_name = sync_annotation_column_input.text().strip() or _default_annotation_column(annotation_name)
+
+        try:
+            mapping_df = _load_annotation_mapping(annotation_name)
+        except Exception as exc:
+            _set_annotation_status(f'Could not read annotation mapping for "{annotation_name}": {exc}')
+            return
+
+        value_to_label = {
+            int(row.value): str(row.label)
+            for row in mapping_df.itertuples(index=False)
+        }
+        new_values = pd.Series(annotation_background_label, index=adata.obs.index, dtype='object')
+        rois_in_adata = adata.obs[roi_obs].astype(str).unique().tolist()
+
+        try:
+            for roi_name in rois_in_adata:
+                annotation_data = _load_annotation_array(annotation_name, roi_name)
+                mask = sk.io.imread(Path(masks_folder, f'{roi_name}{mask_extension}'))
+                if annotation_data.shape != mask.shape:
+                    raise ValueError(
+                        f"Annotation/mask shape mismatch for ROI '{roi_name}': "
+                        f'{annotation_data.shape} vs {mask.shape}.'
+                    )
+
+                roi_index = adata.obs[adata.obs[roi_obs].astype(str) == str(roi_name)].index
+                roi_obs_df = adata.obs.loc[roi_index, :].copy()
+
+                if cell_id_in_mask_obs:
+                    object_ids = pd.to_numeric(roi_obs_df[cell_id_in_mask_obs], errors='coerce').to_numpy()
+                else:
+                    object_ids = np.arange(len(roi_obs_df)) + 1
+
+                roi_labels = []
+                for object_id in object_ids:
+                    if pd.isna(object_id):
+                        dominant_value = 0
+                    else:
+                        dominant_value = _dominant_annotation_value(annotation_data[mask == int(object_id)])
+                    roi_labels.append(value_to_label.get(dominant_value, annotation_background_label))
+
+                new_values.loc[roi_index] = roi_labels
+        except Exception as exc:
+            _set_annotation_status(f'Could not sync annotation "{annotation_name}" to AnnData: {exc}')
+            return
+
+        new_values = new_values.fillna(annotation_background_label)
+        changed_count = len(new_values)
+        if column_name in adata.obs.columns:
+            old_values = adata.obs[column_name].astype('string').fillna(annotation_background_label)
+            changed_count = int((old_values != new_values.astype('string')).sum())
+
+        mapping_df_sorted = mapping_df.sort_values('value')
+        categories = mapping_df_sorted['label'].astype(str).tolist()
+        adata.obs[column_name] = pd.Categorical(new_values, categories=categories)
+        adata.uns[f'{column_name}_colors'] = mapping_df_sorted['color'].astype(str).tolist()
+
+        if changed_count == 0:
+            _set_annotation_status(
+                f'Annotation "{annotation_name}" is already in sync with adata.obs["{column_name}"].'
+            )
+        else:
+            _set_annotation_status(
+                f'Synced annotation "{annotation_name}" to adata.obs["{column_name}"] and updated {changed_count} cell labels.'
+            )
+
+    annotation_widget = QWidget()
+    annotation_layout = QVBoxLayout()
+    annotation_widget.setLayout(annotation_layout)
+
+    annotation_folder_title = QLabel('<b>Annotations folder</b>')
+    annotation_folder_path = QLineEdit(str(annotations_folder))
+    annotation_folder_path.setReadOnly(True)
+
+    annotation_selector_title = QLabel('<b>Annotation selection</b>')
+    annotation_selector_combo = QComboBox()
+    annotation_refresh_button = QPushButton('Refresh annotation list')
+    selected_annotation_label = QLabel('Selected annotation: none')
+    loaded_annotation_label = QLabel('Loaded in viewer: none')
+
+    annotation_mapping_title = QLabel('<b>Label mapping</b>')
+    annotation_mapping_table = QTableWidget(0, 3)
+    annotation_mapping_table.setHorizontalHeaderLabels(['Value', 'Label', 'Colour'])
+    annotation_mapping_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+    annotation_mapping_table.setSelectionMode(QAbstractItemView.NoSelection)
+    annotation_mapping_table.verticalHeader().setVisible(False)
+    annotation_mapping_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+
+    create_annotation_title = QLabel('<b>Create new annotation</b>')
+    create_annotation_note = QLabel(
+        'Value 0 is reserved for background / Unlabelled. Choose the label values, names, and colours for the remaining categories.'
+    )
+    create_annotation_note.setWordWrap(True)
+    new_annotation_name_input = QLineEdit()
+    new_annotation_name_input.setPlaceholderText('Annotation name')
+    new_annotation_categories_input = QSpinBox()
+    new_annotation_categories_input.setRange(1, 64)
+    new_annotation_categories_input.setValue(3)
+    annotation_creator_rows_widget = QWidget()
+    annotation_creator_rows_layout = QVBoxLayout()
+    annotation_creator_rows_layout.setContentsMargins(0, 0, 0, 0)
+    annotation_creator_rows_widget.setLayout(annotation_creator_rows_layout)
+    create_annotation_button = QPushButton('Create annotation set')
+
+    annotation_workflow_title = QLabel('<b>Load / save selected ROI</b>')
+    annotation_workflow_note = QLabel(
+        'Use the ROI selected in Controls. Load the annotation labels into napari, edit the Labels layer, then save back to disk.'
+    )
+    annotation_workflow_note.setWordWrap(True)
+    load_annotation_button = QPushButton('Load selected ROI annotation')
+    save_annotation_button = QPushButton('Save selected ROI annotation')
+
+    sync_annotation_title = QLabel('<b>Sync to AnnData</b>')
+    sync_annotation_note = QLabel(
+        'Maps each cell to the dominant non-zero annotation value inside its mask and writes labels to adata.obs.'
+    )
+    sync_annotation_note.setWordWrap(True)
+    sync_annotation_column_input = QLineEdit()
+    sync_annotation_button = QPushButton('Sync selected annotation to AnnData')
+    annotation_status_label = QLabel('No annotation selected.')
+    annotation_status_label.setWordWrap(True)
+
+    annotation_layout.addWidget(annotation_folder_title)
+    annotation_layout.addWidget(annotation_folder_path)
+    annotation_layout.addWidget(annotation_selector_title)
+    annotation_layout.addWidget(annotation_selector_combo)
+    annotation_layout.addWidget(annotation_refresh_button)
+    annotation_layout.addWidget(selected_annotation_label)
+    annotation_layout.addWidget(loaded_annotation_label)
+    annotation_layout.addWidget(annotation_mapping_title)
+    annotation_layout.addWidget(annotation_mapping_table)
+    annotation_layout.addWidget(create_annotation_title)
+    annotation_layout.addWidget(create_annotation_note)
+    annotation_layout.addWidget(QLabel('New annotation name'))
+    annotation_layout.addWidget(new_annotation_name_input)
+    annotation_layout.addWidget(QLabel('Number of categories'))
+    annotation_layout.addWidget(new_annotation_categories_input)
+    annotation_layout.addWidget(annotation_creator_rows_widget)
+    annotation_layout.addWidget(create_annotation_button)
+    annotation_layout.addWidget(annotation_workflow_title)
+    annotation_layout.addWidget(annotation_workflow_note)
+    annotation_layout.addWidget(load_annotation_button)
+    annotation_layout.addWidget(save_annotation_button)
+    annotation_layout.addWidget(sync_annotation_title)
+    annotation_layout.addWidget(sync_annotation_note)
+    annotation_layout.addWidget(QLabel('AnnData obs column name'))
+    annotation_layout.addWidget(sync_annotation_column_input)
+    annotation_layout.addWidget(sync_annotation_button)
+    annotation_layout.addWidget(annotation_status_label)
+
+    annotation_selector_combo.currentTextChanged.connect(lambda text: _update_annotation_summary())
+    annotation_refresh_button.clicked.connect(
+        lambda checked=False: _refresh_annotation_choices(_get_selected_annotation_name())
+    )
+    new_annotation_categories_input.valueChanged.connect(lambda value: _rebuild_annotation_creator_rows())
+    create_annotation_button.clicked.connect(lambda checked=False: _create_annotation_definition())
+    load_annotation_button.clicked.connect(lambda checked=False: _load_selected_annotation_for_current_roi())
+    save_annotation_button.clicked.connect(lambda checked=False: _save_selected_annotation_for_current_roi())
+    sync_annotation_button.clicked.connect(lambda checked=False: _sync_selected_annotation_to_adata())
+
+    _rebuild_annotation_creator_rows()
+    _refresh_annotation_choices()
+
     def build_dock_panel(widget_items):
         """
         Build a reusable QWidget panel from existing controls.
@@ -733,6 +1342,7 @@ def napari_imc_explorer(
         'Numeric as masks': build_dock_panel([
             _quant_selector,
         ]),
+        'Manual annotations': annotation_widget,
         'Layer management': layer_management_widget,
     }
     dock_order = [
@@ -740,6 +1350,7 @@ def napari_imc_explorer(
         'Add raw images',
         'Categories as masks',
         'Numeric as masks',
+        'Manual annotations',
         'Layer management',
     ]
     dock_widgets = {}
@@ -827,6 +1438,17 @@ def napari_imc_explorer(
         Keep layer-dependent selectors in sync with the current viewer state.
         """
         update_layer_list(silent=True)
+        annotation_layer = _get_active_annotation_layer()
+        if annotation_layer is None:
+            annotation_state.active_annotation = None
+            annotation_state.active_roi = None
+            loaded_annotation_label.setText('Loaded in viewer: none')
+        else:
+            annotation_state.active_annotation = annotation_layer.metadata.get('annotation_name')
+            annotation_state.active_roi = annotation_layer.metadata.get('roi_name')
+            loaded_annotation_label.setText(
+                f'Loaded in viewer: {annotation_state.active_annotation} ({annotation_state.active_roi})'
+            )
 
     viewer.layers.events.inserted.connect(sync_layer_widgets)
     viewer.layers.events.removed.connect(sync_layer_widgets)
@@ -1049,6 +1671,13 @@ def napari_imc_explorer(
         get_selected_images=get_selected_images,
         get_selected_obs_categories=get_selected_obs_categories,
         get_selected_numeric=get_selected_numeric,
+        annotations_folder=annotations_folder,
+        annotation_widget=annotation_widget,
+        annotation_selector=annotation_selector_combo,
+        annotation_sync_column_input=sync_annotation_column_input,
+        load_annotation_for_current_roi=_load_selected_annotation_for_current_roi,
+        save_annotation_for_current_roi=_save_selected_annotation_for_current_roi,
+        sync_annotation_to_adata=_sync_selected_annotation_to_adata,
         show_dock=show_dock,
         show_all_docks=show_all_docks,
         panel_launcher_dock=panel_launcher_dock,

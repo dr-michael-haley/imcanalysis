@@ -198,7 +198,7 @@ def _parameter_value_slug(value: Any) -> str:
 
     if numeric_match:
         sign = numeric_match.group(1)
-        magnitude = value_str[1:] if sign in "+-" else value_str
+        magnitude = value_str[1:] if sign else value_str
         value_slug = cleanstring(magnitude)
         if sign == '-':
             return f"neg_{value_slug}"
