@@ -178,6 +178,17 @@ def _parse_graph_radius(value: Any) -> Optional[Any]:
     return float(vals[0]), float(vals[1])
 
 
+def _parse_optional_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        text = value.strip()
+        if text.lower() in {"", "none", "null"}:
+            return None
+        return int(text)
+    return int(value)
+
+
 def _resolve_num_workers(requested: int, n_rois: int) -> int:
     slurm_hint = os.environ.get("SLURM_CPUS_PER_TASK") or os.environ.get("SLURM_NTASKS")
     try:
@@ -469,7 +480,7 @@ def _build_squidpy_graph(
     y_coord_obs: str,
     graph_coord_type: str,
     graph_delaunay: bool,
-    graph_n_neighs: int,
+    graph_n_neighs: Optional[int],
     graph_radius: Optional[Any],
     graph_percentile: Optional[float],
     graph_transform: Optional[str],
@@ -483,10 +494,11 @@ def _build_squidpy_graph(
     kwargs: Dict[str, Any] = {
         "coord_type": str(graph_coord_type),
         "delaunay": bool(graph_delaunay),
-        "n_neighs": int(graph_n_neighs),
         "spatial_key": spatial_key,
         "set_diag": bool(graph_set_diag),
     }
+    if graph_n_neighs is not None:
+        kwargs["n_neighs"] = int(graph_n_neighs)
     if graph_radius is not None:
         kwargs["radius"] = graph_radius
     if graph_percentile is not None:
@@ -518,7 +530,7 @@ def _analyze_single_roi(
     spatial_key: str,
     graph_coord_type: str,
     graph_delaunay: bool,
-    graph_n_neighs: int,
+    graph_n_neighs: Optional[int],
     graph_radius: Optional[Any],
     graph_percentile: Optional[float],
     graph_transform: Optional[str],
@@ -808,6 +820,7 @@ def run_networkx_spatial_analyses(
         static_populations = static_populations.intersection(set(populations))
 
     graph_radius = _parse_graph_radius(networkx_config.graph_radius)
+    graph_n_neighs = _parse_optional_int(networkx_config.graph_n_neighs)
     run_bootstrap = bool(networkx_config.run_bootstrap) and int(networkx_config.bootstrap_n_permutations) > 0
 
     roi_ids = [str(x) for x in _ordered_unique(analysis_obs["roi"])]
@@ -845,7 +858,7 @@ def run_networkx_spatial_analyses(
                 spatial_key=networkx_config.spatial_key,
                 graph_coord_type=networkx_config.graph_coord_type,
                 graph_delaunay=bool(networkx_config.graph_delaunay),
-                graph_n_neighs=int(networkx_config.graph_n_neighs),
+                graph_n_neighs=graph_n_neighs,
                 graph_radius=graph_radius,
                 graph_percentile=networkx_config.graph_percentile,
                 graph_transform=networkx_config.graph_transform,
@@ -1013,7 +1026,7 @@ def run_networkx_spatial_analyses(
         "spatial_key": networkx_config.spatial_key,
         "graph_coord_type": networkx_config.graph_coord_type,
         "graph_delaunay": bool(networkx_config.graph_delaunay),
-        "graph_n_neighs": int(networkx_config.graph_n_neighs),
+        "graph_n_neighs": graph_n_neighs,
         "graph_radius": graph_radius,
         "graph_percentile": networkx_config.graph_percentile,
         "graph_transform": networkx_config.graph_transform,

@@ -711,7 +711,7 @@ class NetworkxSpatialConfig:
     # Squidpy graph construction
     graph_coord_type: str = 'generic'
     graph_delaunay: bool = False
-    graph_n_neighs: int = 6
+    graph_n_neighs: Optional[int] = 6  # If None, do not pass n_neighs and let Squidpy decide based on other graph settings
     graph_radius: Optional[List[float]] = None  # Optional [max] or [min, max] radius in coordinate units
     graph_percentile: Optional[float] = None
     graph_transform: Optional[str] = None
