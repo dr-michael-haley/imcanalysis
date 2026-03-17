@@ -483,6 +483,37 @@ def _normalise_figure_format(value: str) -> str:
     return text or "png"
 
 
+def _normalise_figure_extension(value: Optional[str]) -> str:
+    """Return a safe file extension with a leading dot."""
+    text = str(value or ".png").strip().lower()
+    if not text:
+        return ".png"
+    return text if text.startswith(".") else f".{text}"
+
+
+def _resolve_cellcharter_figure_format(cellcharter_config: CellCharterConfig) -> str:
+    """Resolve the figure format from the preferred extension config and legacy format."""
+    extension = _normalise_figure_extension(cellcharter_config.figure_extension)
+    legacy_format = _normalise_figure_format(cellcharter_config.figure_format)
+    legacy_extension = f".{legacy_format}"
+
+    if extension == ".png" and legacy_extension != ".png":
+        logging.info(
+            "Using legacy cellcharter.figure_format='%s' because cellcharter.figure_extension is still at the default '.png'.",
+            legacy_format,
+        )
+        return legacy_format
+
+    if extension != legacy_extension and legacy_extension != ".png":
+        logging.warning(
+            "cellcharter.figure_extension='%s' overrides legacy cellcharter.figure_format='%s'.",
+            extension,
+            legacy_format,
+        )
+
+    return extension.lstrip(".")
+
+
 def _build_discrete_colors_from_cmap(cmap_name: Optional[str], n_colors: int) -> List[str]:
     """Sample n discrete colors from a configured cmap or default scanpy palette."""
     n = max(0, int(n_colors))
@@ -1076,6 +1107,7 @@ def _save_enrichment_outputs(
     label_key: str,
     save_heatmap: bool,
     qc_dir: Path,
+    figure_format: str,
 ) -> None:
     """Save CellCharter enrichment tables and optional heatmap figure."""
     key = _resolve_enrichment_uns_key(adata, cluster_key, label_key)
@@ -1105,6 +1137,7 @@ def _save_enrichment_outputs(
     if not save_heatmap or enrich_df.empty:
         return
 
+    fmt = _normalise_figure_format(figure_format)
     matrix = enrich_df.to_numpy(dtype=float)
     finite = matrix[np.isfinite(matrix)]
     vmax = float(np.max(np.abs(finite))) if finite.size else 1.0
@@ -1123,7 +1156,7 @@ def _save_enrichment_outputs(
     cbar = fig.colorbar(image, ax=ax, fraction=0.046, pad=0.04)
     cbar.set_label("log2 enrichment")
     fig.tight_layout()
-    fig.savefig(qc_dir / "enrichment_heatmap.png", dpi=240, bbox_inches="tight")
+    fig.savefig(qc_dir / f"enrichment_heatmap.{fmt}", dpi=240, bbox_inches="tight")
     plt.close(fig)
 
 
@@ -1132,15 +1165,40 @@ def _save_cellcharter_enrichment_plot(
     cluster_key: str,
     label_key: str,
     qc_dir: Path,
+    cellcharter_config: CellCharterConfig,
+    figure_format: str,
 ) -> None:
     """Save CellCharter's native enrichment plot via cc.pl.enrichment."""
-    out_path = qc_dir / "enrichment_cellcharter_plot.png"
+    fmt = _normalise_figure_format(figure_format)
+    out_path = qc_dir / f"enrichment_cellcharter_plot.{fmt}"
+    figsize = _resolve_figsize(
+        cellcharter_config.enrichment_plot_figsize,
+        fallback=(8.0, 6.0),
+    )
+    show_pvalues = bool(cellcharter_config.enrichment_plot_show_pvalues)
+    significant_only = bool(cellcharter_config.enrichment_plot_significant_only)
+
+    if show_pvalues or significant_only:
+        enrichment_key = _resolve_enrichment_uns_key(adata, cluster_key, label_key)
+        enrichment_result = adata.uns.get(enrichment_key) if enrichment_key is not None else None
+        has_pvalues = isinstance(enrichment_result, dict) and enrichment_result.get("pvalue") is not None
+        if not has_pvalues:
+            logging.warning(
+                "CellCharter enrichment plot requested pvalue-based display options, but no enrichment pvalues are available. "
+                "Re-run with cellcharter.enrichment_with_pvalues=True or disable enrichment_plot_show_pvalues/significant_only."
+            )
+            show_pvalues = False
+            significant_only = False
+
     try:
         cc.pl.enrichment(
             adata,
             group_key=cluster_key,
             label_key=label_key,
-            figsize=(8, 6),
+            figsize=figsize,
+            dot_scale=float(cellcharter_config.enrichment_plot_dot_scale),
+            show_pvalues=show_pvalues,
+            significant_only=significant_only,
             save=str(out_path),
         )
     except Exception as exc:
@@ -1374,12 +1432,14 @@ def _run_nhood_enrichment(
     adata: ad.AnnData,
     cellcharter_config: CellCharterConfig,
     qc_dir: Path,
+    figure_format: str,
     *,
     repeat_analysis: bool = True,
 ) -> Dict[str, Any]:
     """Run CellCharter neighborhood enrichment and save outputs."""
     details: Dict[str, Any] = {"enabled": True, "ran": False, "reused_existing": False}
     cluster_key = cellcharter_config.cluster_key
+    fmt = _normalise_figure_format(figure_format)
 
     if not _ensure_categorical_obs(adata, cluster_key):
         logging.warning(
@@ -1441,7 +1501,7 @@ def _run_nhood_enrichment(
         if key == "enrichment" and bool(cellcharter_config.save_enrichment_heatmap):
             _save_matrix_heatmap(
                 table,
-                out_path=out_dir / "enrichment_heatmap.png",
+                out_path=out_dir / f"enrichment_heatmap.{fmt}",
                 title=f"Neighborhood enrichment ({cluster_key})",
                 cbar_label="enrichment",
                 cmap="coolwarm",
@@ -1462,7 +1522,7 @@ def _run_nhood_enrichment(
                 cluster_key=cluster_key,
                 figsize=nhood_figsize,
                 significance=cellcharter_config.nhood_enrichment_significance,
-                save=str(out_dir / "nhood_enrichment_cellcharter_plot.png"),
+                save=str(out_dir / f"nhood_enrichment_cellcharter_plot.{fmt}"),
             )
         except Exception as exc:
             logging.warning("Could not generate CellCharter nhood enrichment plot: %s", exc)
@@ -1479,12 +1539,14 @@ def _run_diff_nhood_enrichment(
     cellcharter_config: CellCharterConfig,
     sample_key: str,
     qc_dir: Path,
+    figure_format: str,
     *,
     repeat_analysis: bool = True,
 ) -> Dict[str, Any]:
     """Run differential neighborhood enrichment and save outputs."""
     details: Dict[str, Any] = {"enabled": True, "ran": False, "reused_existing": False}
     cluster_key = cellcharter_config.cluster_key
+    fmt = _normalise_figure_format(figure_format)
     condition_key = coalesce_config_text(
         cellcharter_config.diff_nhood_condition_key,
         general_config.groupby_obs,
@@ -1629,7 +1691,7 @@ def _run_diff_nhood_enrichment(
                 condition_groups=condition_groups,
                 ncols=int(cellcharter_config.diff_nhood_plot_ncols),
                 cmap="PRGn_r",
-                save=str(out_dir / "diff_nhood_enrichment_cellcharter_plot.png"),
+                save=str(out_dir / f"diff_nhood_enrichment_cellcharter_plot.{fmt}"),
             )
         except Exception as exc:
             logging.warning("Could not generate CellCharter differential nhood plot: %s", exc)
@@ -1653,12 +1715,14 @@ def _run_shape_characterisation(
     cellcharter_config: CellCharterConfig,
     sample_key: str,
     qc_dir: Path,
+    figure_format: str,
     *,
     repeat_analysis: bool = True,
 ) -> Dict[str, Any]:
     """Run CellCharter shape characterisation pipeline and save outputs."""
     details: Dict[str, Any] = {"enabled": True, "ran": False, "reused_existing": False}
     cluster_key = cellcharter_config.cluster_key
+    fmt = _normalise_figure_format(figure_format)
     component_key = cellcharter_config.shape_component_key
     component_cluster_key = (
         cellcharter_config.shape_component_cluster_key or cluster_key
@@ -1892,7 +1956,7 @@ def _run_shape_characterisation(
                     component_key=component_key,
                     metrics=computed_metrics,
                     ncols=int(cellcharter_config.shape_metrics_ncols),
-                    save=out_dir / "shape_metrics_cellcharter_plot.png",
+                    save=str(out_dir / f"shape_metrics_cellcharter_plot.{fmt}"),
                 )
             except Exception as exc:
                 logging.warning("Could not generate shape metrics plot: %s", exc)
@@ -2269,7 +2333,7 @@ def run_cellcharter_neighborhoods(
         cluster_key,
         cmap_label,
     )
-    figure_format = _normalise_figure_format(cellcharter_config.figure_format)
+    figure_format = _resolve_cellcharter_figure_format(cellcharter_config)
 
     enrichment_details: Dict[str, Any] = {
         "enabled": bool(cellcharter_config.run_enrichment),
@@ -2348,12 +2412,15 @@ def run_cellcharter_neighborhoods(
                 label_key=population_obs_primary,
                 save_heatmap=cellcharter_config.save_enrichment_heatmap,
                 qc_dir=qc_dir,
+                figure_format=figure_format,
             )
             _save_cellcharter_enrichment_plot(
                 adata,
                 cluster_key=cellcharter_config.cluster_key,
                 label_key=population_obs_primary,
                 qc_dir=qc_dir,
+                cellcharter_config=cellcharter_config,
+                figure_format=figure_format,
             )
             enrichment_details.update(
                 {
@@ -2375,6 +2442,7 @@ def run_cellcharter_neighborhoods(
                 adata=adata,
                 cellcharter_config=cellcharter_config,
                 qc_dir=qc_dir,
+                figure_format=figure_format,
                 repeat_analysis=repeat_nhood_enrichment_analysis,
             )
 
@@ -2392,6 +2460,7 @@ def run_cellcharter_neighborhoods(
                 cellcharter_config=cellcharter_config,
                 sample_key=sample_key,
                 qc_dir=qc_dir,
+                figure_format=figure_format,
                 repeat_analysis=repeat_diff_nhood_enrichment_analysis,
             )
 
@@ -2409,6 +2478,7 @@ def run_cellcharter_neighborhoods(
                 cellcharter_config=cellcharter_config,
                 sample_key=sample_key,
                 qc_dir=qc_dir,
+                figure_format=figure_format,
                 repeat_analysis=repeat_shape_characterisation_analysis,
             )
 
@@ -2506,6 +2576,7 @@ def run_cellcharter_neighborhoods(
         "reused_existing_cluster_key": bool(skip_existing_cluster_analysis),
         "existing_cluster_non_null_count": int(existing_cluster_non_null),
         "cluster_default_cmap": cellcharter_config.cluster_default_cmap,
+        "figure_extension": f".{figure_format}",
         "case_obs": resolved_case_obs,
         "groupby_obs": resolved_groupby_obs,
         "groupby_obs_groups": resolved_groupby_obs_groups,

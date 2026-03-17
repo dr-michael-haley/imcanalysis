@@ -502,6 +502,10 @@ class CellCharterConfig:
     run_enrichment: bool = True
     enrichment_with_pvalues: bool = False
     enrichment_n_perms: int = 1000
+    enrichment_plot_figsize: List[float] = field(default_factory=lambda: [8.0, 6.0])
+    enrichment_plot_dot_scale: float = 3.0
+    enrichment_plot_show_pvalues: bool = False
+    enrichment_plot_significant_only: bool = False
 
     # Neighborhood enrichment (CellCharter graph enrichment)
     run_nhood_enrichment: bool = True
@@ -568,6 +572,7 @@ class CellCharterConfig:
     composition_stacked_figsize: List[float] = field(default_factory=lambda: [6.0, 3.0])
     composition_stacked_width_scale: float = 0.30  # Auto width for stacked case plots ~= max(base_width, scale * n_cases)
     composition_group_barplot_figsize: List[float] = field(default_factory=lambda: [6.0, 3.0])
+    figure_extension: str = '.png'  # Preferred image extension for all CellCharter outputs (e.g. '.png', '.pdf', '.svg')
     figure_format: str = 'png'
     save_high_res: bool = True
 
