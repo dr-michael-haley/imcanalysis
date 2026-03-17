@@ -688,6 +688,48 @@ class PairwiseSpatialConfig:
     figure_dpi: int = 300
 
 @dataclass
+class NetworkxSpatialConfig:
+    # Input/output
+    input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
+    output_subdir: str = 'NetworkX_Spatial'
+
+    # Core metadata keys
+    population_obs: Optional[str] = None  # Optional override (None = use general.population_obs_primary or legacy 'population')
+    roi_obs: Optional[str] = None  # Optional override (None = use general.roi_obs)
+    case_obs: Optional[str] = None  # Optional override (None = use general.case_obs)
+    groupby_obs: Optional[str] = None  # Optional override (None = use general.groupby_obs)
+    x_coord_obs: Optional[str] = None  # Optional override (None = use general.x_coord_obs)
+    y_coord_obs: Optional[str] = None  # Optional override (None = use general.y_coord_obs)
+    spatial_key: Optional[str] = None  # Optional override (None = use general.spatial_key)
+    master_index_obs: Optional[str] = None  # Optional override (None = use general.master_index_obs)
+
+    # Metadata export controls
+    include_all_obs_metadata: bool = True
+    metadata_obs_columns: List[str] = field(default_factory=list)
+    ignore_cells_without_label: bool = False  # If True, drop cells with missing population labels before graph construction
+
+    # Squidpy graph construction
+    graph_coord_type: str = 'generic'
+    graph_delaunay: bool = False
+    graph_n_neighs: int = 6
+    graph_radius: Optional[List[float]] = None  # Optional [max] or [min, max] radius in coordinate units
+    graph_percentile: Optional[float] = None
+    graph_transform: Optional[str] = None
+    graph_set_diag: bool = False
+
+    # Metrics
+    minimum_cells_per_population: int = 5  # Skip per-population clustering when fewer cells are present
+
+    # Bootstrapping / threading
+    run_bootstrap: bool = True
+    bootstrap_n_permutations: int = 1000
+    bootstrap_static_populations: List[str] = field(default_factory=list)  # Keep these labels fixed while shuffling all others within each ROI
+    bootstrap_ddof: int = 1
+    bootstrap_seed: Optional[int] = 12345
+    n_threads: int = -1  # One ROI per thread; -1 uses all available CPU threads
+    save_bootstrap_samples: bool = False
+
+@dataclass
 class SubclusteringConfig:
     # Input/output
     input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
@@ -742,6 +784,7 @@ DEFAULT_CONFIG_CLASSES = {
     'visualization': VisualizationConfig,
     'cellcharter': CellCharterConfig,
     'pairwise_spatial': PairwiseSpatialConfig,
+    'networkx_spatial': NetworkxSpatialConfig,
     'subclustering': SubclusteringConfig,
     'logging': LoggingConfig,
 }

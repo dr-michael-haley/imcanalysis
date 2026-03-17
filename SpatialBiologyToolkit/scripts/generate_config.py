@@ -1,36 +1,14 @@
 # generate_config_template.py
 
 import yaml
-from dataclasses import asdict
-from .config_and_utils import (
-    GeneralConfig,
-    PreprocessConfig,
-    CreateMasksConfig,
-    SegmentationConfig,
-    DenoisingConfig,
-    LoggingConfig,
-    BioBatchNetConfig,
-    BasicProcessConfig,
-    VisualizationConfig
-)
+from .config_and_utils import generate_default_config_dict
 
 def generate_config_template(output_file: str = 'config.yaml'):
     """
     Generate a configuration template by extracting configuration parameters
     from the dataclasses defined in config_and_utils.py.
     """
-    # Create instances of the dataclasses with default values
-    config = {
-        'general': asdict(GeneralConfig()),
-        'preprocess': asdict(PreprocessConfig()),
-        'createmasks': asdict(CreateMasksConfig()),
-        'segmentation': asdict(SegmentationConfig()),
-        'denoising': asdict(DenoisingConfig()),
-        'biobatchnet': asdict(BioBatchNetConfig()),
-        'process': asdict(BasicProcessConfig()),
-        'visualization': asdict(VisualizationConfig()),
-        'logging': asdict(LoggingConfig()),
-    }
+    config = generate_default_config_dict()
 
     # Write the configuration to a YAML file
     with open(output_file, 'w') as f:

@@ -11,7 +11,7 @@
 #@OUT:  config.yaml (updated in place)
 #@ENV:  imc_segmentation
 #@MODULE:  SpatialBiologyToolkit.scripts.update_config
-#@CONFIG: all blocks (sync defaults): general, preprocess, denoising, createmasks, segmentation, nimbus, process, visualization, cellcharter, logging
+#@CONFIG: all blocks (sync defaults): general, preprocess, denoising, createmasks, segmentation, nimbus, process, visualization, cellcharter, pairwise_spatial, networkx_spatial, subclustering, logging
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
