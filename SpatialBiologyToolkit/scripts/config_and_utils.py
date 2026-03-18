@@ -368,6 +368,7 @@ class VisualizationConfig:
     backgating_output_folder: str = 'Backgating'  # Output folder for backgating results
     backgating_use_masks: bool = True  # Whether to use segmentation masks in backgating
     backgating_mask_folder: str = 'masks'  # Folder containing segmentation masks
+    backgating_pops_list: Optional[Dict[str, Any]] = None  # Optional dict mapping population obs columns to population subsets for backgating; non-dict values are reused for all population obs
     backgating_max_rois_to_save: Optional[int] = None  # Maximum number of per-population ROIs to save (None = save all; normalization still uses the full ROI set)
     
     # Backgating intensity and marker settings
@@ -733,6 +734,7 @@ class NetworkxSpatialConfig:
 
     # Plotting
     make_plots: bool = True
+    plot_kind: str = 'barplot'  # One of: barplot, boxplot
     plot_summary_level: str = 'case_if_available'  # One of: case_if_available, case, roi
     plot_value_columns: List[str] = field(default_factory=lambda: ['observed', 'zscore'])
     make_all_populations_plots: bool = True  # Plot all populations on one axis with hue=groupby_obs when available

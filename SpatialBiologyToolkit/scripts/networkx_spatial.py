@@ -265,6 +265,19 @@ def _parse_plot_value_columns(value: Any) -> List[str]:
     return resolved
 
 
+def _normalise_plot_kind(value: Any) -> str:
+    text = str(value or "").strip().lower()
+    if text in {"bar", "barplot"}:
+        return "barplot"
+    if text in {"box", "boxplot"}:
+        return "boxplot"
+    logging.warning(
+        "Invalid networkx_spatial.plot_kind='%s'. Using 'barplot'.",
+        value,
+    )
+    return "barplot"
+
+
 def _obs_color_map(
     adata: ad.AnnData,
     obs_key: str,
@@ -369,6 +382,7 @@ def _plot_all_populations_by_group(
     width_scale: float,
     dpi: int,
     add_points: bool,
+    plot_kind: str,
 ) -> None:
     plot_data = data[["population", group_col, value_col]].dropna().copy()
     if plot_data.empty:
@@ -386,20 +400,34 @@ def _plot_all_populations_by_group(
     else:
         figsize = fixed_figsize
     fig, ax = plt.subplots(figsize=figsize)
-    sns.barplot(
-        data=plot_data,
-        x="population",
-        y=value_col,
-        hue=group_col,
-        order=pop_order,
-        hue_order=group_order,
-        errorbar="se" if len(plot_data) > 1 else None,
-        palette=group_palette,
-        edgecolor="black",
-        linewidth=0.6,
-        capsize=0.2,
-        ax=ax,
-    )
+    if plot_kind == "boxplot":
+        sns.boxplot(
+            data=plot_data,
+            x="population",
+            y=value_col,
+            hue=group_col,
+            order=pop_order,
+            hue_order=group_order,
+            palette=group_palette,
+            showfliers=False,
+            linewidth=0.8,
+            ax=ax,
+        )
+    else:
+        sns.barplot(
+            data=plot_data,
+            x="population",
+            y=value_col,
+            hue=group_col,
+            order=pop_order,
+            hue_order=group_order,
+            errorbar="se" if len(plot_data) > 1 else None,
+            palette=group_palette,
+            edgecolor="black",
+            linewidth=0.6,
+            capsize=0.2,
+            ax=ax,
+        )
     if add_points:
         sns.stripplot(
             data=plot_data,
@@ -441,6 +469,7 @@ def _plot_all_populations_no_group(
     width_scale: float,
     dpi: int,
     add_points: bool,
+    plot_kind: str,
 ) -> None:
     plot_data = data[["population", value_col]].dropna().copy()
     if plot_data.empty:
@@ -457,21 +486,36 @@ def _plot_all_populations_no_group(
         figsize = fixed_figsize
     palette = {str(pop): str(pop_palette.get(str(pop), "#4c72b0")) for pop in pop_order}
     fig, ax = plt.subplots(figsize=figsize)
-    sns.barplot(
-        data=plot_data,
-        x="population",
-        y=value_col,
-        order=pop_order,
-        hue="population",
-        hue_order=pop_order,
-        dodge=False,
-        errorbar="se" if len(plot_data) > 1 else None,
-        palette=palette,
-        edgecolor="black",
-        linewidth=0.6,
-        capsize=0.2,
-        ax=ax,
-    )
+    if plot_kind == "boxplot":
+        sns.boxplot(
+            data=plot_data,
+            x="population",
+            y=value_col,
+            order=pop_order,
+            hue="population",
+            hue_order=pop_order,
+            dodge=False,
+            palette=palette,
+            showfliers=False,
+            linewidth=0.8,
+            ax=ax,
+        )
+    else:
+        sns.barplot(
+            data=plot_data,
+            x="population",
+            y=value_col,
+            order=pop_order,
+            hue="population",
+            hue_order=pop_order,
+            dodge=False,
+            errorbar="se" if len(plot_data) > 1 else None,
+            palette=palette,
+            edgecolor="black",
+            linewidth=0.6,
+            capsize=0.2,
+            ax=ax,
+        )
     if add_points:
         sns.stripplot(
             data=plot_data,
@@ -511,6 +555,7 @@ def _plot_single_population_by_group(
     figsize: Tuple[float, float],
     dpi: int,
     add_points: bool,
+    plot_kind: str,
 ) -> None:
     plot_data = data[[group_col, value_col]].dropna().copy()
     if plot_data.empty:
@@ -522,21 +567,36 @@ def _plot_single_population_by_group(
     palette = {str(group): str(group_palette.get(str(group), "#4c72b0")) for group in group_order}
 
     fig, ax = plt.subplots(figsize=figsize)
-    sns.barplot(
-        data=plot_data,
-        x=group_col,
-        y=value_col,
-        order=group_order,
-        hue=group_col,
-        hue_order=group_order,
-        dodge=False,
-        errorbar="se" if len(plot_data) > 1 else None,
-        palette=palette,
-        edgecolor="black",
-        linewidth=0.6,
-        capsize=0.2,
-        ax=ax,
-    )
+    if plot_kind == "boxplot":
+        sns.boxplot(
+            data=plot_data,
+            x=group_col,
+            y=value_col,
+            order=group_order,
+            hue=group_col,
+            hue_order=group_order,
+            dodge=False,
+            palette=palette,
+            showfliers=False,
+            linewidth=0.8,
+            ax=ax,
+        )
+    else:
+        sns.barplot(
+            data=plot_data,
+            x=group_col,
+            y=value_col,
+            order=group_order,
+            hue=group_col,
+            hue_order=group_order,
+            dodge=False,
+            errorbar="se" if len(plot_data) > 1 else None,
+            palette=palette,
+            edgecolor="black",
+            linewidth=0.6,
+            capsize=0.2,
+            ax=ax,
+        )
     if add_points:
         sns.stripplot(
             data=plot_data,
@@ -578,6 +638,7 @@ def _save_summary_plots(
         "plot_source_level": None,
         "plot_value_columns": [],
         "groupby_obs": groupby_obs,
+        "plot_kind": None,
         "all_populations_order": [],
         "all_populations_figsize": None,
         "all_populations_figsize_mode": "auto",
@@ -608,10 +669,12 @@ def _save_summary_plots(
     extension = _ensure_extension(networkx_config.figure_extension)
     base_figsize = _figsize(networkx_config.barplot_figsize, fallback=(4.0, 3.0))
     width_scale = max(0.05, float(networkx_config.all_populations_width_scale))
+    plot_kind = _normalise_plot_kind(networkx_config.plot_kind)
     value_columns = [col for col in _parse_plot_value_columns(networkx_config.plot_value_columns) if col in plot_df.columns]
     if not value_columns:
         details["status"] = "no_value_columns"
         return details
+    details["plot_kind"] = plot_kind
 
     all_populations_order = _resolve_population_subset(
         networkx_config.all_populations_plot_populations,
@@ -663,6 +726,7 @@ def _save_summary_plots(
                     width_scale=width_scale,
                     dpi=int(networkx_config.figure_dpi),
                     add_points=bool(networkx_config.barplot_add_points),
+                    plot_kind=plot_kind,
                 )
             else:
                 _plot_all_populations_no_group(
@@ -678,6 +742,7 @@ def _save_summary_plots(
                     width_scale=width_scale,
                     dpi=int(networkx_config.figure_dpi),
                     add_points=bool(networkx_config.barplot_add_points),
+                    plot_kind=plot_kind,
                 )
 
         if bool(networkx_config.make_population_group_plots) and group_col and group_order and not clustering_df.empty:
@@ -699,6 +764,7 @@ def _save_summary_plots(
                     figsize=base_figsize,
                     dpi=int(networkx_config.figure_dpi),
                     add_points=bool(networkx_config.barplot_add_points),
+                    plot_kind=plot_kind,
                 )
 
         if bool(networkx_config.make_assortativity_group_plots) and not assort_df.empty:
@@ -716,6 +782,7 @@ def _save_summary_plots(
                     figsize=base_figsize,
                     dpi=int(networkx_config.figure_dpi),
                     add_points=bool(networkx_config.barplot_add_points),
+                    plot_kind=plot_kind,
                 )
 
     details["status"] = "created"
@@ -1638,6 +1705,7 @@ def run_networkx_spatial_analyses(
         "save_bootstrap_samples": bool(networkx_config.save_bootstrap_samples),
         "ignore_cells_without_label": bool(networkx_config.ignore_cells_without_label),
         "make_plots": bool(networkx_config.make_plots),
+        "plot_kind": str(networkx_config.plot_kind),
         "plot_summary_level": str(networkx_config.plot_summary_level),
         "plot_value_columns": list(networkx_config.plot_value_columns or []),
         "all_populations_plot_populations": list(networkx_config.all_populations_plot_populations or []),

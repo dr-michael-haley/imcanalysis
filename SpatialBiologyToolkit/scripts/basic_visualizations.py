@@ -746,7 +746,13 @@ def create_backgating_assessment(adata, population_columns, viz_config, general_
                     # Debug configuration being used
                     use_de = getattr(viz_config, 'backgating_use_differential_expression', True)
                     mode = getattr(viz_config, 'backgating_mode', 'full')
+                    pops_list = _resolve_backgating_pops_list(viz_config, pop_col)
                     logging.info(f"Backgating config - use_differential_expression: {use_de}, mode: {mode}")
+                    logging.info(
+                        "Backgating populations for '%s': %s",
+                        pop_col,
+                        pops_list if pops_list is not None else "all",
+                    )
                     logging.info(f"Specify overrides - red: {viz_config.backgating_specify_red}, "
                                 f"green: {viz_config.backgating_specify_green}, blue: {viz_config.backgating_specify_blue}")
                     
@@ -757,7 +763,7 @@ def create_backgating_assessment(adata, population_columns, viz_config, general_
                         pop_obs=pop_col,
                         mean_expression_file=f'markers_mean_expression_{pop_col}.csv',
                         backgating_settings_file=f'backgating_settings_{pop_col}.csv',
-                        pops_list=None,  # Use all populations
+                        pops_list=pops_list,
                         cells_per_group=viz_config.backgating_cells_per_group,
                         radius=viz_config.backgating_radius,
                         roi_obs=roi_obs,
@@ -805,6 +811,31 @@ def create_backgating_assessment(adata, population_columns, viz_config, general_
         logging.info("Backgating assessment for all populations completed.")
     except Exception as e:
         log_detailed_error(e, "backgating assessment step")
+
+
+def _resolve_backgating_pops_list(viz_config, pop_col: str):
+    """
+    Resolve an optional backgating population subset for one population obs column.
+
+    Supports either:
+    - a dict mapping population obs column -> list of population labels
+    - a flat list/scalar reused for all population obs columns
+    """
+    configured = getattr(viz_config, 'backgating_pops_list', None)
+    if configured is None:
+        return None
+
+    if isinstance(configured, dict):
+        resolved_value = None
+        for key in (pop_col, str(pop_col), 'default'):
+            if key in configured:
+                resolved_value = configured[key]
+                break
+        if resolved_value is None:
+            return None
+        return coalesce_config_list(resolved_value, default=None)
+
+    return coalesce_config_list(configured, default=None)
 
 
 def create_population_metadata_analysis(adata, population_columns, metadata_columns, qc_base, max_categories=20):

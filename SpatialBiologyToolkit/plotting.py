@@ -1742,8 +1742,7 @@ def obs_to_mask(
             str(save_path_obj),
             exclude_zero=True,
             smoothing_factor=svg_smoothing_factor,
-            background_color=background_color,
-            dpi=dpi
+            background_color=background_color
         )
     else:
         save_labelled_image(
