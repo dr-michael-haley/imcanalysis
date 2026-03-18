@@ -692,6 +692,7 @@ class NetworkxSpatialConfig:
     # Input/output
     input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
     output_subdir: str = 'NetworkX_Spatial'
+    reload_saved_results: bool = True  # Reuse saved summary tables when present (useful for plot-only reruns)
 
     # Core metadata keys
     population_obs: Optional[str] = None  # Optional override (None = use general.population_obs_primary or legacy 'population')
@@ -728,6 +729,19 @@ class NetworkxSpatialConfig:
     bootstrap_seed: Optional[int] = 12345
     n_threads: int = -1  # One ROI per thread; -1 uses all available CPU threads
     save_bootstrap_samples: bool = False
+
+    # Plotting
+    make_plots: bool = True
+    plot_summary_level: str = 'case_if_available'  # One of: case_if_available, case, roi
+    plot_value_columns: List[str] = field(default_factory=lambda: ['observed', 'zscore'])
+    make_all_populations_plots: bool = True  # Plot all populations on one axis with hue=groupby_obs when available
+    make_population_group_plots: bool = True  # Plot one figure per population across groups
+    make_assortativity_group_plots: bool = True
+    barplot_figsize: List[float] = field(default_factory=lambda: [4.0, 3.0])
+    all_populations_width_scale: float = 0.45  # Auto width ~= max(base_width, scale * n_populations)
+    barplot_add_points: bool = True
+    figure_extension: str = '.png'
+    figure_dpi: int = 300
 
 @dataclass
 class SubclusteringConfig:
