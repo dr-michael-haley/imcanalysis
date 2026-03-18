@@ -207,6 +207,12 @@ def _figsize(values: Sequence[float], fallback: Tuple[float, float]) -> Tuple[fl
     return float(values[0]), float(values[1])
 
 
+def _optional_figsize(values: Any) -> Optional[Tuple[float, float]]:
+    if not isinstance(values, (list, tuple, np.ndarray, pd.Index)) or len(values) < 2:
+        return None
+    return float(values[0]), float(values[1])
+
+
 def _load_saved_csv(
     path: Path,
     *,
@@ -316,6 +322,37 @@ def _ordered_plot_levels(series: pd.Series, configured: Optional[Sequence[str]] 
     return sorted(observed)
 
 
+def _resolve_population_subset(
+    configured: Optional[Sequence[str]],
+    available: Sequence[str],
+    *,
+    context: str,
+) -> List[str]:
+    available_order = [str(x) for x in available]
+    if not configured:
+        return available_order
+
+    available_set = set(available_order)
+    ordered: List[str] = []
+    missing: List[str] = []
+    seen: set[str] = set()
+    for item in configured:
+        label = str(item).strip()
+        if not label or label in seen:
+            continue
+        seen.add(label)
+        if label in available_set:
+            ordered.append(label)
+        else:
+            missing.append(label)
+
+    if missing:
+        logging.warning("%s: ignoring populations not present in the summaries: %s", context, missing)
+    if configured and not ordered:
+        logging.warning("%s: no configured populations were found in the summaries.", context)
+    return ordered
+
+
 def _plot_all_populations_by_group(
     data: pd.DataFrame,
     *,
@@ -327,6 +364,7 @@ def _plot_all_populations_by_group(
     ylabel: str,
     title: str,
     save_path: Path,
+    fixed_figsize: Optional[Tuple[float, float]],
     base_figsize: Tuple[float, float],
     width_scale: float,
     dpi: int,
@@ -342,8 +380,12 @@ def _plot_all_populations_by_group(
     if not pop_order or not group_order:
         return
 
-    plot_width = max(float(base_figsize[0]), max(0.05, float(width_scale)) * max(1, len(pop_order)))
-    fig, ax = plt.subplots(figsize=(plot_width, float(base_figsize[1])))
+    if fixed_figsize is None:
+        plot_width = max(float(base_figsize[0]), max(0.05, float(width_scale)) * max(1, len(pop_order)))
+        figsize = (plot_width, float(base_figsize[1]))
+    else:
+        figsize = fixed_figsize
+    fig, ax = plt.subplots(figsize=figsize)
     sns.barplot(
         data=plot_data,
         x="population",
@@ -394,6 +436,7 @@ def _plot_all_populations_no_group(
     ylabel: str,
     title: str,
     save_path: Path,
+    fixed_figsize: Optional[Tuple[float, float]],
     base_figsize: Tuple[float, float],
     width_scale: float,
     dpi: int,
@@ -407,9 +450,13 @@ def _plot_all_populations_no_group(
     if not pop_order:
         return
 
-    plot_width = max(float(base_figsize[0]), max(0.05, float(width_scale)) * max(1, len(pop_order)))
+    if fixed_figsize is None:
+        plot_width = max(float(base_figsize[0]), max(0.05, float(width_scale)) * max(1, len(pop_order)))
+        figsize = (plot_width, float(base_figsize[1]))
+    else:
+        figsize = fixed_figsize
     palette = {str(pop): str(pop_palette.get(str(pop), "#4c72b0")) for pop in pop_order}
-    fig, ax = plt.subplots(figsize=(plot_width, float(base_figsize[1])))
+    fig, ax = plt.subplots(figsize=figsize)
     sns.barplot(
         data=plot_data,
         x="population",
@@ -531,6 +578,9 @@ def _save_summary_plots(
         "plot_source_level": None,
         "plot_value_columns": [],
         "groupby_obs": groupby_obs,
+        "all_populations_order": [],
+        "all_populations_figsize": None,
+        "all_populations_figsize_mode": "auto",
     }
     if not bool(networkx_config.make_plots):
         details["status"] = "disabled"
@@ -563,6 +613,20 @@ def _save_summary_plots(
         details["status"] = "no_value_columns"
         return details
 
+    all_populations_order = _resolve_population_subset(
+        networkx_config.all_populations_plot_populations,
+        populations,
+        context="networkx_spatial.all_populations_plot_populations",
+    )
+    all_populations_fixed_figsize = _optional_figsize(networkx_config.all_populations_figsize)
+    details["all_populations_order"] = list(all_populations_order)
+    details["all_populations_figsize"] = (
+        [float(all_populations_fixed_figsize[0]), float(all_populations_fixed_figsize[1])]
+        if all_populations_fixed_figsize is not None
+        else None
+    )
+    details["all_populations_figsize_mode"] = "fixed" if all_populations_fixed_figsize is not None else "auto"
+
     group_col = None
     group_order: List[str] = []
     group_palette: Dict[str, str] = {}
@@ -582,11 +646,11 @@ def _save_summary_plots(
     for value_col in value_columns:
         pretty_label = value_col.replace("_", " ").title()
 
-        if bool(networkx_config.make_all_populations_plots) and not clustering_df.empty:
+        if bool(networkx_config.make_all_populations_plots) and all_populations_order and not clustering_df.empty:
             if group_col and group_order:
                 _plot_all_populations_by_group(
                     clustering_df,
-                    pop_order=populations,
+                    pop_order=all_populations_order,
                     group_col=group_col,
                     group_order=group_order,
                     group_palette=group_palette,
@@ -594,6 +658,7 @@ def _save_summary_plots(
                     ylabel=f"Average clustering ({pretty_label})",
                     title=f"Average clustering by population ({pretty_label}, {plot_source})",
                     save_path=plots_root / "average_clustering_all_populations" / f"{value_col}{extension}",
+                    fixed_figsize=all_populations_fixed_figsize,
                     base_figsize=base_figsize,
                     width_scale=width_scale,
                     dpi=int(networkx_config.figure_dpi),
@@ -602,12 +667,13 @@ def _save_summary_plots(
             else:
                 _plot_all_populations_no_group(
                     clustering_df,
-                    pop_order=populations,
+                    pop_order=all_populations_order,
                     pop_palette=pop_palette,
                     value_col=value_col,
                     ylabel=f"Average clustering ({pretty_label})",
                     title=f"Average clustering by population ({pretty_label}, {plot_source})",
                     save_path=plots_root / "average_clustering_all_populations" / f"{value_col}{extension}",
+                    fixed_figsize=all_populations_fixed_figsize,
                     base_figsize=base_figsize,
                     width_scale=width_scale,
                     dpi=int(networkx_config.figure_dpi),
@@ -1574,6 +1640,12 @@ def run_networkx_spatial_analyses(
         "make_plots": bool(networkx_config.make_plots),
         "plot_summary_level": str(networkx_config.plot_summary_level),
         "plot_value_columns": list(networkx_config.plot_value_columns or []),
+        "all_populations_plot_populations": list(networkx_config.all_populations_plot_populations or []),
+        "all_populations_figsize": (
+            list(networkx_config.all_populations_figsize)
+            if isinstance(networkx_config.all_populations_figsize, (list, tuple))
+            else None
+        ),
         "plot_details": plot_details,
         "n_rois": int(len(roi_ids)),
         "n_populations": int(len(populations)),

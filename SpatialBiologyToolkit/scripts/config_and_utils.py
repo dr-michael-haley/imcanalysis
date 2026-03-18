@@ -736,6 +736,8 @@ class NetworkxSpatialConfig:
     plot_summary_level: str = 'case_if_available'  # One of: case_if_available, case, roi
     plot_value_columns: List[str] = field(default_factory=lambda: ['observed', 'zscore'])
     make_all_populations_plots: bool = True  # Plot all populations on one axis with hue=groupby_obs when available
+    all_populations_plot_populations: List[str] = field(default_factory=list)  # Ordered subset for combined all-population plots; empty = use all observed populations
+    all_populations_figsize: Optional[List[float]] = None  # Optional fixed [width, height] for combined all-population plots; None = auto width scaling
     make_population_group_plots: bool = True  # Plot one figure per population across groups
     make_assortativity_group_plots: bool = True
     barplot_figsize: List[float] = field(default_factory=lambda: [4.0, 3.0])
