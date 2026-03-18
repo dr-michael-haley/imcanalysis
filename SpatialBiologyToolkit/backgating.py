@@ -36,6 +36,46 @@ def clean_text(text: str) -> str:
     return text
 
 
+def _normalize_roi_names(roi_names: Optional[List[Union[str, int]]]) -> List[str]:
+    """Return ordered, de-duplicated ROI names as strings."""
+    normalized = []
+    seen = set()
+    for roi in roi_names or []:
+        if pd.isna(roi):
+            continue
+        roi_text = str(roi)
+        if roi_text in seen:
+            continue
+        seen.add(roi_text)
+        normalized.append(roi_text)
+    return normalized
+
+
+def _select_rois_to_save(
+    roi_names: Optional[List[Union[str, int]]],
+    max_rois_to_save: Optional[int],
+) -> List[str]:
+    """
+    Reproducibly pseudo-randomly select up to ``max_rois_to_save`` ROI names
+    while preserving the original order of the selected ROI subset.
+    """
+    normalized_rois = _normalize_roi_names(roi_names)
+    if max_rois_to_save is None:
+        return normalized_rois
+
+    max_rois_to_save = int(max_rois_to_save)
+    if max_rois_to_save < 0:
+        raise ValueError("max_rois_to_save must be >= 0 or None.")
+    if max_rois_to_save == 0:
+        return []
+    if len(normalized_rois) <= max_rois_to_save:
+        return normalized_rois
+
+    rng = np.random.default_rng(0)
+    selected_set = set(rng.choice(normalized_rois, size=max_rois_to_save, replace=False).tolist())
+    return [roi for roi in normalized_rois if roi in selected_set]
+
+
 def load_single_img(filename: str) -> np.ndarray:
     """
     Load a single 2D .tif or .tiff image as float32.
@@ -258,6 +298,7 @@ def make_images(
     white_range: Optional[Tuple[float, Union[str, float]]] = None,
     roi_folder_save: bool = False,
     simple_file_names: bool = False,
+    save_samples_list: Optional[List[str]] = None,
     save_subfolder: str = '',
     save_rescale_csv: bool = True,
     rescale_csv_name: str = 'rescale_values.csv'
@@ -279,6 +320,9 @@ def make_images(
         {color}_range (tuple): Lower and upper intensity specs, can be numeric or 'q0.95', etc.
         roi_folder_save (bool): Whether each ROI gets its own subfolder in output.
         simple_file_names (bool): If True, save images as 'ROI.png' only (otherwise includes channel info).
+        save_samples_list (List[str] or None): Optional subset of ROI names to save.
+            If None, save all loaded ROIs. Intensity rescaling is still computed
+            from the full ``samples_list`` scope.
         save_subfolder (str): Subdirectory under output_folder for saving images.
 
     Returns:
@@ -338,6 +382,14 @@ def make_images(
     num_rois = max(len(r) for r in loaded_rois.values()) if loaded_rois else 0
     logging.info(f'Found {num_rois} ROIs total (across requested channels).')
 
+    save_roi_set = None
+    if save_samples_list is not None:
+        save_roi_set = set(_normalize_roi_names(save_samples_list))
+        logging.info(
+            "Saving composite images for %d ROI(s) while retaining full normalization scope.",
+            len(save_roi_set),
+        )
+
     # Build the final composite images ROI by ROI
     # Note: The assumption here is that channels align in the same "ROI index" order,
     # because we used the same sample_list for each. If your data is misaligned, you'll
@@ -363,7 +415,9 @@ def make_images(
         if some_color is None:
             continue  # no channels have i-th ROI (unlikely)
 
-        roi_name = loaded_rois[some_color][i]
+        roi_name = str(loaded_rois[some_color][i])
+        if save_roi_set is not None and roi_name not in save_roi_set:
+            continue
 
         # Now gather the images for each color, matching the ROI name
         # by index if it matches, else a blank array of the same shape.
@@ -442,7 +496,7 @@ def make_images(
             if save_subfolder:
                 out_dir = out_dir / save_subfolder
                 out_dir.mkdir(parents=True, exist_ok=True)
-        save_path = out_dir / f'{filename}.png'
+            save_path = out_dir / f'{filename}.png'
 
         # Suppress low contrast warnings when saving images per ROI
         with warnings.catch_warnings():
@@ -595,6 +649,11 @@ def backgating(
         image_samples_list = all_roi_list
 
     logging.info(f"Backgating on {len(adata_obs_cells)} cells across {len(roi_list)} ROIs.")
+    logging.info(
+        "Composite images will be normalized using %d ROI(s) and saved for %d ROI(s).",
+        len(_normalize_roi_names(image_samples_list)),
+        len(_normalize_roi_names(roi_list)),
+    )
 
     # ----------------------------------------------------------------
     # 2) Build composite images for each ROI (from your existing function)
@@ -622,6 +681,7 @@ def backgating(
         yellow_range=yellow_range,
         white=white,
         white_range=white_range,
+        save_samples_list=roi_list,
         save_subfolder=save_subfolder
     )
     logging.info("Composite images created.")
@@ -1143,6 +1203,7 @@ def backgating_assessment(
     # Mask parameters:
     use_masks=True,
     mask_folder='masks',
+    max_rois_to_save: Optional[int] = None,
     exclude_rois_without_mask=True,
     # Subplot spacing for the final "Cells.png":
     cell_plot_spacing=(0.1, 0.1),
@@ -1216,6 +1277,9 @@ def backgating_assessment(
 
         use_masks:        Bool or CSV path for ROI->mask mapping (passed to backgating).
         mask_folder:      Folder where we expect <ROI>.tif or <ROI>.tiff if use_masks=True.
+        max_rois_to_save: Maximum number of ROIs to save per population.
+                          If None, save all population ROIs. Normalization still
+                          uses the full image_samples_list / full dataset scope.
         exclude_rois_without_mask:
                           If True, skip all ROIs that have no mask file.
 
@@ -1460,10 +1524,41 @@ def backgating_assessment(
         return
 
     # 6) If we get here, we either 'full' or 'load_markers' => run the actual backgating
+    all_rois_for_images = _normalize_roi_names(adata.obs[roi_obs].astype(str).unique().tolist())
+
     for pop in pop_categories:
         # Ensure consistent string comparison to handle leiden categories stored as strings
         pop_mask = adata.obs[pop_obs].astype(str) == str(pop)
-        pop_cells = adata.obs.loc[pop_mask, cell_index_obs]
+        pop_rois = _normalize_roi_names(adata.obs.loc[pop_mask, roi_obs].astype(str).tolist())
+        rois_to_save = _select_rois_to_save(pop_rois, max_rois_to_save)
+
+        if not rois_to_save:
+            logging.warning(
+                "No ROIs selected for population '%s' after applying max_rois_to_save=%s. Skipping.",
+                pop,
+                max_rois_to_save,
+            )
+            continue
+
+        if max_rois_to_save is None:
+            logging.info(
+                "Backgating population '%s': saving all %d ROI(s).",
+                pop,
+                len(rois_to_save),
+            )
+        else:
+            logging.info(
+                "Backgating population '%s': saving %d of %d ROI(s) after random selection.",
+                pop,
+                len(rois_to_save),
+                len(pop_rois),
+            )
+            logging.debug("Selected ROIs for population '%s': %s", pop, rois_to_save)
+
+        pop_cells = adata.obs.loc[
+            pop_mask & adata.obs[roi_obs].astype(str).isin(rois_to_save),
+            cell_index_obs,
+        ]
         
         logging.debug(f"Population '{pop}' (type: {type(pop)}): checking {pop_mask.sum()} cells")
         if pop_cells.empty:
@@ -1487,8 +1582,6 @@ def backgating_assessment(
         logging.info(f"  -> Red={red_marker}, range={red_range}")
         logging.info(f"  -> Green={green_marker}, range={green_range}")
         logging.info(f"  -> Blue={blue_marker}, range={blue_range}")
-
-        all_rois_for_images = adata.obs[roi_obs].astype(str).unique().tolist()
 
         # Call your backgating function
         # Make sure it supports the new parameters: mask_folder, exclude_rois_without_mask, cell_plot_spacing
@@ -1518,6 +1611,7 @@ def backgating_assessment(
             cell_plot_spacing=cell_plot_spacing,
             overview_images=overview_images,
             show_gallery_titles=show_gallery_titles,
+            roi_list=rois_to_save,
             # Output
             output_folder=output_folder,
             save_subfolder=clean_text(pop),
@@ -1532,9 +1626,7 @@ def backgating_assessment(
         if population_overlays:
             logging.info(f"Creating population overlay visualizations for '{pop}'...")
             
-            # Get all ROIs that contain cells of this population
-            pop_rois = adata.obs[adata.obs[pop_obs].astype(str) == str(pop)][roi_obs].unique()
-            logging.info(f"Population '{pop}' found in ROIs: {pop_rois}")
+            logging.info(f"Population '{pop}' overlays will be saved for ROIs: {rois_to_save}")
             pop_subfolder = Path(output_folder) / clean_text(pop)
             
             # Create population overlays subdirectory
@@ -1561,7 +1653,7 @@ def backgating_assessment(
                         legend_colors.append(channel_palette[channel_name])
             
         if population_overlays:
-            for roi in pop_rois:
+            for roi in rois_to_save:
                 try:
                     # Path to composite image (created by earlier make_images call)
                     composite_img_path = pop_subfolder / f"{roi}.png"

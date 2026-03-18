@@ -768,6 +768,7 @@ def create_backgating_assessment(adata, population_columns, viz_config, general_
                         # Mask parameters
                         use_masks=viz_config.backgating_use_masks,
                         mask_folder=viz_config.backgating_mask_folder,
+                        max_rois_to_save=getattr(viz_config, 'backgating_max_rois_to_save', None),
                         exclude_rois_without_mask=True,
                         # Output settings
                         output_folder=str(backgating_output),

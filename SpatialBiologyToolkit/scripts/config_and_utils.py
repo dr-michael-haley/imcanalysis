@@ -368,6 +368,7 @@ class VisualizationConfig:
     backgating_output_folder: str = 'Backgating'  # Output folder for backgating results
     backgating_use_masks: bool = True  # Whether to use segmentation masks in backgating
     backgating_mask_folder: str = 'masks'  # Folder containing segmentation masks
+    backgating_max_rois_to_save: Optional[int] = None  # Maximum number of per-population ROIs to save (None = save all; normalization still uses the full ROI set)
     
     # Backgating intensity and marker settings
     backgating_minimum: float = 0.2  # Minimum intensity for backgating normalization
