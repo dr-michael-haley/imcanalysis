@@ -1,7 +1,7 @@
 #! /bin/bash --login
 #SBATCH -p himem 
 #SBATCH -t 2-0
-#SBATCH -n 2
+#SBATCH -n 4
 
 #SBATCH --mail-user=${IMC_EMAIL}
 #SBATCH --mail-type=ALL
