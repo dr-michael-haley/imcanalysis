@@ -16,8 +16,9 @@ import logging
 import math
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+import numpy as np
 import pandas as pd
 
 from .config_and_utils import (
@@ -181,9 +182,22 @@ def _resolve_source_obs(
 
 def _ignored_apply_columns(remap_config: RemapObsConfig) -> set[str]:
     ignored = {str(col).strip() for col in (remap_config.ignore_csv_columns_exact or []) if str(col).strip()}
-    if bool(remap_config.generate_include_counts) and str(remap_config.generate_count_column_name).strip():
-        ignored.add(str(remap_config.generate_count_column_name).strip())
+    ignored.update(_generated_helper_columns(remap_config))
     return ignored
+
+
+def _generated_helper_columns(remap_config: RemapObsConfig) -> set[str]:
+    helper_cols: set[str] = set()
+    if bool(remap_config.generate_include_counts) and str(remap_config.generate_count_column_name).strip():
+        helper_cols.add(str(remap_config.generate_count_column_name).strip())
+    if bool(remap_config.generate_include_top_markers) and str(remap_config.generate_top_markers_column_name).strip():
+        helper_cols.add(str(remap_config.generate_top_markers_column_name).strip())
+    if (
+        bool(remap_config.generate_include_roi_distribution_evenness)
+        and str(remap_config.generate_roi_distribution_evenness_column_name).strip()
+    ):
+        helper_cols.add(str(remap_config.generate_roi_distribution_evenness_column_name).strip())
+    return helper_cols
 
 
 def _prepare_remap_targets(
@@ -285,6 +299,210 @@ def _existing_values_lookup(
     return working.set_index("__source_key__")
 
 
+def _mean_over_rows(matrix: Any) -> np.ndarray:
+    if getattr(matrix, "shape", (0, 0))[0] == 0:
+        return np.array([], dtype=float)
+    mean_value = matrix.mean(axis=0)
+    return np.asarray(mean_value).ravel().astype(float, copy=False)
+
+
+def _marker_names_from_source(
+    *,
+    var_names: Sequence[Any],
+    var_df: Optional[pd.DataFrame],
+    marker_label_col: Optional[str],
+) -> List[str]:
+    base_names = [str(v) for v in var_names]
+    if not marker_label_col:
+        return base_names
+    if var_df is None or marker_label_col not in var_df.columns:
+        logging.warning(
+            "generate_top_markers_var_column='%s' was not found. Falling back to var_names.",
+            marker_label_col,
+        )
+        return base_names
+
+    labels = pd.Series(var_df[marker_label_col]).copy()
+    resolved: List[str] = []
+    for default_name, label in zip(base_names, labels.tolist()):
+        if pd.isna(label):
+            resolved.append(default_name)
+            continue
+        text = str(label).strip()
+        resolved.append(text if text else default_name)
+    return resolved
+
+
+def _resolve_top_marker_matrix(
+    *,
+    adata: Any,
+    remap_config: RemapObsConfig,
+) -> Tuple[Any, List[str], str]:
+    requested = str(remap_config.generate_top_markers_layer or "").strip()
+    marker_label_col = (
+        str(remap_config.generate_top_markers_var_column).strip()
+        if remap_config.generate_top_markers_var_column
+        else None
+    )
+
+    if requested:
+        req_lower = requested.lower()
+        if req_lower == "raw":
+            if getattr(adata, "raw", None) is None:
+                raise ValueError(
+                    "generate_top_markers_layer='raw' was requested, but adata.raw is not available."
+                )
+            return (
+                adata.raw.X,
+                _marker_names_from_source(
+                    var_names=adata.raw.var_names,
+                    var_df=getattr(adata.raw, "var", None),
+                    marker_label_col=marker_label_col,
+                ),
+                "adata.raw.X",
+            )
+        if req_lower in {"x", "adata.x"}:
+            return (
+                adata.X,
+                _marker_names_from_source(
+                    var_names=adata.var_names,
+                    var_df=getattr(adata, "var", None),
+                    marker_label_col=marker_label_col,
+                ),
+                "adata.X",
+            )
+        if requested not in adata.layers:
+            raise KeyError(
+                f"generate_top_markers_layer='{requested}' was requested but is not present in adata.layers."
+            )
+        return (
+            adata.layers[requested],
+            _marker_names_from_source(
+                var_names=adata.var_names,
+                var_df=getattr(adata, "var", None),
+                marker_label_col=marker_label_col,
+            ),
+            f"adata.layers['{requested}']",
+        )
+
+    if bool(remap_config.generate_top_markers_use_raw) and getattr(adata, "raw", None) is not None:
+        return (
+            adata.raw.X,
+            _marker_names_from_source(
+                var_names=adata.raw.var_names,
+                var_df=getattr(adata.raw, "var", None),
+                marker_label_col=marker_label_col,
+            ),
+            "adata.raw.X",
+        )
+    return (
+        adata.X,
+        _marker_names_from_source(
+            var_names=adata.var_names,
+            var_df=getattr(adata, "var", None),
+            marker_label_col=marker_label_col,
+        ),
+        "adata.X",
+    )
+
+
+def _compute_top_markers_lookup(
+    *,
+    adata: Any,
+    source_keys: pd.Series,
+    ordered_source_values: Sequence[str],
+    remap_config: RemapObsConfig,
+) -> Tuple[Dict[str, Any], str]:
+    n_top = int(remap_config.generate_top_markers_n)
+    if n_top <= 0:
+        return {}, "disabled"
+
+    matrix, marker_names, matrix_source = _resolve_top_marker_matrix(
+        adata=adata,
+        remap_config=remap_config,
+    )
+    if len(marker_names) == 0:
+        logging.warning("No marker names were available for generate_top_markers. Leaving the column blank.")
+        return {}, matrix_source
+
+    separator = str(remap_config.generate_top_markers_separator or "; ")
+    lookup: Dict[str, Any] = {}
+    source_array = source_keys.to_numpy()
+    for source_value in ordered_source_values:
+        mask = source_array == source_value
+        if not bool(mask.any()):
+            lookup[source_value] = pd.NA
+            continue
+
+        group_mean = _mean_over_rows(matrix[mask])
+        if group_mean.size == 0:
+            lookup[source_value] = pd.NA
+            continue
+
+        if bool((~mask).any()):
+            rest_mean = _mean_over_rows(matrix[~mask])
+            score = group_mean - rest_mean
+        else:
+            score = group_mean
+
+        if score.size == 0:
+            lookup[source_value] = pd.NA
+            continue
+
+        order = np.argsort(np.where(np.isfinite(score), score, -np.inf))[::-1]
+        chosen: List[str] = []
+        seen: set[str] = set()
+        for idx in order.tolist():
+            if not np.isfinite(score[idx]):
+                continue
+            name = str(marker_names[idx]).strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            chosen.append(name)
+            if len(chosen) >= n_top:
+                break
+        lookup[source_value] = separator.join(chosen) if chosen else pd.NA
+
+    return lookup, matrix_source
+
+
+def _compute_roi_distribution_evenness_lookup(
+    *,
+    adata: Any,
+    source_keys: pd.Series,
+    ordered_source_values: Sequence[str],
+    roi_obs: str,
+) -> Dict[str, Any]:
+    if roi_obs not in adata.obs.columns:
+        raise KeyError(f"Configured roi_obs '{roi_obs}' not found in adata.obs.")
+
+    roi_series = adata.obs[roi_obs]
+    valid_roi_values = roi_series.dropna()
+    n_total_rois = int(pd.unique(valid_roi_values).size)
+    if n_total_rois == 0:
+        logging.warning("No non-null ROI values were found in adata.obs['%s']; leaving ROI evenness blank.", roi_obs)
+        return {}
+
+    lookup: Dict[str, Any] = {}
+    for source_value in ordered_source_values:
+        mask = source_keys == source_value
+        roi_counts = roi_series.loc[mask].dropna().value_counts()
+        roi_counts = roi_counts.loc[roi_counts > 0]
+        if roi_counts.empty:
+            lookup[source_value] = pd.NA
+            continue
+        if n_total_rois <= 1:
+            lookup[source_value] = 1.0
+            continue
+        proportions = roi_counts.to_numpy(dtype=float)
+        proportions = proportions / proportions.sum()
+        entropy = float(-(proportions * np.log(proportions)).sum())
+        evenness = float(entropy / np.log(float(n_total_rois)))
+        lookup[source_value] = evenness
+    return lookup
+
+
 def apply_remap_obs(
     *,
     adata: Any,
@@ -379,6 +597,7 @@ def generate_blank_remap(
     *,
     adata: Any,
     remap_config: RemapObsConfig,
+    general_config: GeneralConfig,
 ) -> Dict[str, Any]:
     source_obs = str(remap_config.source_obs or "").strip()
     if not source_obs:
@@ -406,11 +625,48 @@ def generate_blank_remap(
         remap_config.generate_columns or _default_generate_columns(source_obs)
     )
     note_columns = _dedupe_ordered(remap_config.generate_note_columns or [])
+    helper_columns = _generated_helper_columns(remap_config)
 
     template_df = pd.DataFrame({source_obs: ordered_source_values})
     if bool(remap_config.generate_include_counts) and count_col:
         counts = source_keys.value_counts(dropna=True).to_dict()
         template_df[count_col] = template_df[source_obs].map(counts).astype("Int64")
+
+    top_markers_source = None
+    if (
+        bool(remap_config.generate_include_top_markers)
+        and str(remap_config.generate_top_markers_column_name).strip()
+    ):
+        top_markers_col = str(remap_config.generate_top_markers_column_name).strip()
+        top_marker_lookup, top_markers_source = _compute_top_markers_lookup(
+            adata=adata,
+            source_keys=source_keys,
+            ordered_source_values=ordered_source_values,
+            remap_config=remap_config,
+        )
+        template_df[top_markers_col] = template_df[source_obs].map(top_marker_lookup)
+
+    roi_evenness_obs = str(remap_config.roi_obs or general_config.roi_obs).strip()
+    roi_evenness_generated = False
+    if (
+        bool(remap_config.generate_include_roi_distribution_evenness)
+        and str(remap_config.generate_roi_distribution_evenness_column_name).strip()
+    ):
+        roi_evenness_col = str(remap_config.generate_roi_distribution_evenness_column_name).strip()
+        if roi_evenness_obs and roi_evenness_obs in adata.obs.columns:
+            roi_evenness_lookup = _compute_roi_distribution_evenness_lookup(
+                adata=adata,
+                source_keys=source_keys,
+                ordered_source_values=ordered_source_values,
+                roi_obs=roi_evenness_obs,
+            )
+            template_df[roi_evenness_col] = template_df[source_obs].map(roi_evenness_lookup)
+            roi_evenness_generated = True
+        else:
+            logging.warning(
+                "Could not generate ROI distribution evenness because roi_obs '%s' was not found in adata.obs.",
+                roi_evenness_obs or remap_config.roi_obs,
+            )
 
     for col in target_columns:
         template_df[col] = pd.NA
@@ -431,6 +687,7 @@ def generate_blank_remap(
                 for col in existing_df.columns[1:]
                 if str(col).strip()
                 and str(col).strip() != count_col
+                and str(col).strip() not in helper_columns
                 and str(col).strip() not in target_columns
                 and str(col).strip() not in note_columns
             ]
@@ -450,6 +707,16 @@ def generate_blank_remap(
     ordered_cols = [source_obs]
     if bool(remap_config.generate_include_counts) and count_col and count_col in template_df.columns:
         ordered_cols.append(count_col)
+    if (
+        bool(remap_config.generate_include_top_markers)
+        and str(remap_config.generate_top_markers_column_name).strip() in template_df.columns
+    ):
+        ordered_cols.append(str(remap_config.generate_top_markers_column_name).strip())
+    if (
+        bool(remap_config.generate_include_roi_distribution_evenness)
+        and str(remap_config.generate_roi_distribution_evenness_column_name).strip() in template_df.columns
+    ):
+        ordered_cols.append(str(remap_config.generate_roi_distribution_evenness_column_name).strip())
     for col in target_columns:
         if col in template_df.columns and col not in ordered_cols:
             ordered_cols.append(col)
@@ -471,6 +738,9 @@ def generate_blank_remap(
         "force_string_mapping": bool(integer_like_strings),
         "generated_columns": target_columns,
         "generated_note_columns": note_columns,
+        "generated_helper_columns": sorted(helper_columns.intersection(set(template_df.columns))),
+        "top_markers_matrix_source": top_markers_source,
+        "roi_distribution_evenness_obs": roi_evenness_obs if roi_evenness_generated else None,
         "preserved_columns": sorted(set(preserved_columns)),
         "n_rows": int(template_df.shape[0]),
     }
@@ -501,7 +771,11 @@ def run_remap_obs(
         )
 
     if mode == "generate_blank":
-        summary = generate_blank_remap(adata=adata, remap_config=remap_config)
+        summary = generate_blank_remap(
+            adata=adata,
+            remap_config=remap_config,
+            general_config=general_config,
+        )
         logging.info("Generated remap template summary: %s", summary)
         return _resolve_csv_path(remap_config.remap_csv_path)
 

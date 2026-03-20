@@ -757,6 +757,7 @@ class RemapObsConfig:
 
     # Mapping behavior
     source_obs: Optional[str] = None  # In apply mode: defaults to first CSV column header; in generate_blank mode this is required
+    roi_obs: Optional[str] = None  # Optional override (None = use general.roi_obs) for ROI-based helper metrics in generate_blank mode
     overwrite_existing_obs_columns: bool = False
     require_complete_mapping: bool = False  # If True, raise if any non-null source values are missing from the remap table
     set_output_as_categorical: bool = True
@@ -769,6 +770,15 @@ class RemapObsConfig:
     generate_note_columns: List[str] = field(default_factory=lambda: ['notes'])
     generate_include_counts: bool = True
     generate_count_column_name: str = 'n_cells'
+    generate_include_top_markers: bool = True
+    generate_top_markers_n: int = 3
+    generate_top_markers_column_name: str = 'top_markers'
+    generate_top_markers_use_raw: bool = True  # If True and adata.raw exists, use it by default for marker summaries
+    generate_top_markers_layer: Optional[str] = None  # Optional explicit matrix source: 'raw', 'X', or a named adata.layers key
+    generate_top_markers_var_column: Optional[str] = None  # Optional var annotation to use instead of var_names in the marker summary
+    generate_top_markers_separator: str = '; '
+    generate_include_roi_distribution_evenness: bool = True  # 0 = population concentrated in one ROI; 1 = evenly spread over all ROIs
+    generate_roi_distribution_evenness_column_name: str = 'roi_distribution_evenness'
     generate_preserve_existing_values: bool = True
 
 @dataclass
