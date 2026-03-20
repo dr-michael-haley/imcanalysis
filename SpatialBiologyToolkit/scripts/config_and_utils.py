@@ -749,6 +749,29 @@ class NetworkxSpatialConfig:
     figure_dpi: int = 300
 
 @dataclass
+class RemapObsConfig:
+    # Input/output
+    input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
+    remap_csv_path: str = 'metadata/remap.csv'
+    mode: str = 'apply'  # One of: apply, generate_blank
+
+    # Mapping behavior
+    source_obs: Optional[str] = None  # In apply mode: defaults to first CSV column header; in generate_blank mode this is required
+    overwrite_existing_obs_columns: bool = False
+    require_complete_mapping: bool = False  # If True, raise if any non-null source values are missing from the remap table
+    set_output_as_categorical: bool = True
+    force_string_mapping: bool = False  # Auto-enabled when source_obs contains 'leiden'
+    ignore_csv_columns_exact: List[str] = field(default_factory=list)
+    ignore_csv_columns_contains: List[str] = field(default_factory=lambda: ['notes'])
+
+    # Blank-template generation
+    generate_columns: List[str] = field(default_factory=list)  # Blank target columns to scaffold; empty -> [f'{source_obs}_label']
+    generate_note_columns: List[str] = field(default_factory=lambda: ['notes'])
+    generate_include_counts: bool = True
+    generate_count_column_name: str = 'n_cells'
+    generate_preserve_existing_values: bool = True
+
+@dataclass
 class SubclusteringConfig:
     # Input/output
     input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
@@ -804,6 +827,7 @@ DEFAULT_CONFIG_CLASSES = {
     'cellcharter': CellCharterConfig,
     'pairwise_spatial': PairwiseSpatialConfig,
     'networkx_spatial': NetworkxSpatialConfig,
+    'remap_obs': RemapObsConfig,
     'subclustering': SubclusteringConfig,
     'logging': LoggingConfig,
 }

@@ -2000,7 +2000,9 @@ def _save_roi_cluster_masks(
     roi_dir.mkdir(parents=True, exist_ok=True)
     voronoi_dir.mkdir(parents=True, exist_ok=True)
     rois = sorted(pd.unique(adata.obs[sample_key].astype(str)))
-    fmt = _normalise_figure_format(figure_format)
+    
+    # Going to force this to be .png for time being - should also work with svg
+    fmt = "png"  # _normalise_figure_format(figure_format)
 
     for roi in rois:
         save_path_standard = roi_dir / f"{cleanstring(roi)}.{fmt}"

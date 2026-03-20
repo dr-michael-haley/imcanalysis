@@ -12,5 +12,5 @@ Stage-based entry points that can run locally or via the SLURM templates. They s
 - Image prep and segmentation: `preprocess.py`, `segmentation.py`, `segmentation_nimbus.py`, `cellpose_sam.py`, `createmasks_cellpose3.py`, `preprocess_dna.py`.
 - Denoising and QC: `denoising.py`, `denoising_qc.py`.
 - Core analysis: `basic_process.py`, `basic_process_ai.py`, `basic_process_biobatchnet.py`, `ai_interpretation.py`.
-- Visualization and downstream: `basic_visualizations.py`, `cellcharter_neighborhoods.py`, `pairwise_spatial.py`, `networkx_spatial.py`, `reintegrate_markers.py`.
+- Visualization and downstream: `basic_visualizations.py`, `cellcharter_neighborhoods.py`, `pairwise_spatial.py`, `networkx_spatial.py`, `remap_obs.py`, `reintegrate_markers.py`.
 
