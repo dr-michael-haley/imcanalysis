@@ -788,6 +788,7 @@ class SubclusteringConfig:
     input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
     output_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
     output_subdir: str = 'subclustering'
+    mode: Any = 'all'  # One of: 'all', 'generate', 'apply', or integer/string stage selector 1, 2, 3
 
     # Template/remap files
     settings_filename: str = 'sublustering_settings.csv'  # Intentionally matches existing notebook naming

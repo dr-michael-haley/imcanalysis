@@ -83,6 +83,36 @@ def _resolve_figure_ext(ext: str) -> str:
     return ext if ext.startswith(".") else f".{ext}"
 
 
+def _resolve_subclustering_mode(value: Any) -> Tuple[str, Tuple[int, ...]]:
+    if isinstance(value, (int, np.integer)):
+        stage = int(value)
+        if stage in {1, 2, 3}:
+            return str(stage), (stage,)
+        raise ValueError("subclustering.mode integer must be one of: 1, 2, 3")
+
+    text = str(value).strip().lower() if value is not None else "all"
+    aliases = {
+        "all": ("all", (1, 2, 3)),
+        "full": ("all", (1, 2, 3)),
+        "generate": ("generate", (1, 2)),
+        "apply": ("apply", (3,)),
+        "1": ("1", (1,)),
+        "stage1": ("1", (1,)),
+        "2": ("2", (2,)),
+        "stage2": ("2", (2,)),
+        "3": ("3", (3,)),
+        "stage3": ("3", (3,)),
+    }
+    if text in aliases:
+        return aliases[text]
+
+    raise ValueError(
+        "Invalid subclustering.mode={!r}. Accepted values are 'all', 'generate', 'apply', 1, 2, or 3.".format(
+            value
+        )
+    )
+
+
 def _resolve_marker_selector_column(
     marker_selector: Any,
     marker_df: pd.DataFrame,
@@ -395,6 +425,22 @@ def _is_remap_modified(remap_df: pd.DataFrame) -> bool:
     return bool((left != right).any())
 
 
+def _load_existing_remap_table(remap_path: Path) -> pd.DataFrame:
+    if not remap_path.exists():
+        raise FileNotFoundError(
+            f"Remap file not found: {remap_path}. Run subclustering mode 'generate' or stage 2 first."
+        )
+
+    remap_df = pd.read_csv(remap_path)
+    required = {"subcluster_column", "subcluster", "final_population"}
+    missing = sorted(required.difference(set(remap_df.columns)))
+    if missing:
+        raise ValueError(
+            f"Remap file is missing required columns {missing}: {remap_path}"
+        )
+    return remap_df
+
+
 def _apply_subcluster_remap_adapted(
     adata: ad.AnnData,
     remap_df: pd.DataFrame,
@@ -465,6 +511,7 @@ def run_subclustering_stage(
     )
     resolved_base_label_key = subclustering_config.base_label_key
     resolved_master_index_obs = subclustering_config.master_index_obs
+    mode_label, selected_stages = _resolve_subclustering_mode(getattr(subclustering_config, "mode", "all"))
 
     _checkpoint("Load Input")
     input_path = _resolve_input_adata_path(general_config, subclustering_config)
@@ -486,259 +533,311 @@ def run_subclustering_stage(
         resolved_base_label_key,
         resolved_master_index_obs,
     )
+    logging.info(
+        "Resolved subclustering mode '%s' to checkpoints %s.",
+        mode_label,
+        list(selected_stages),
+    )
 
     output_dir = Path(subclustering_config.output_subdir)
     output_dir.mkdir(parents=True, exist_ok=True)
     logging.info("Subclustering output directory: %s", output_dir)
 
-    _checkpoint("Checkpoint 1 - Template files")
-    settings_path, marker_list_path, created_any = _ensure_templates(
-        adata=adata,
-        subclustering_config=subclustering_config,
-        output_dir=output_dir,
-        base_label_key=resolved_base_label_key,
-    )
-    if created_any:
-        logging.info(
-            "Template files were created. Edit '%s' and '%s', then rerun this stage.",
-            settings_path.name,
-            marker_list_path.name,
+    settings_path = output_dir / subclustering_config.settings_filename
+    marker_list_path = output_dir / subclustering_config.marker_list_filename
+    remap_path = output_dir / subclustering_config.remap_filename
+
+    if 1 in selected_stages:
+        _checkpoint("Checkpoint 1 - Template files")
+        settings_path, marker_list_path, created_any = _ensure_templates(
+            adata=adata,
+            subclustering_config=subclustering_config,
+            output_dir=output_dir,
+            base_label_key=resolved_base_label_key,
         )
-        return None
-
-    _checkpoint("Checkpoint 2 - Run subclustering")
-    settings_df = _load_settings_table(settings_path)
-    marker_df = _load_marker_table(marker_list_path)
-    logging.info("Loaded %d subclustering row(s) from settings.", settings_df.shape[0])
-
-    fig_ext = _resolve_figure_ext(subclustering_config.figure_extension)
-    figures_dir = output_dir / "figures"
-    combined_umap_dir = figures_dir / "combined_umap"
-    matrixplot_dir = figures_dir / "matrixplot"
-    individual_umap_dir = figures_dir / "individual_umap"
-    combined_umap_dir.mkdir(parents=True, exist_ok=True)
-    matrixplot_dir.mkdir(parents=True, exist_ok=True)
-    if subclustering_config.save_individual_umaps:
-        individual_umap_dir.mkdir(parents=True, exist_ok=True)
-
-    _ensure_umap_for_plots(
-        adata=adata,
-        use_rep=subclustering_config.use_rep,
-        enabled=bool(subclustering_config.compute_umap_if_missing),
-    )
-
-    remap_rows: List[Dict[str, Any]] = []
-    seen_subcluster_cols: set[str] = set()
-    used_marker_cols: set[str] = set()
-
-    for row_idx, row in settings_df.reset_index(drop=True).iterrows():
-        try:
-            base_label = str(row["base_label"]).strip()
-            population = str(row["population"]).strip()
-            resolution = float(row["resolution"])
-            marker_selector = row.get("marker_list", subclustering_config.default_marker_list)
-
-            if base_label not in adata.obs.columns:
-                logging.warning(
-                    "Row %d skipped: base_label '%s' not found in adata.obs.",
-                    row_idx,
-                    base_label,
-                )
-                continue
-
-            pop_values = set(adata.obs[base_label].astype(str).dropna().tolist())
-            if population not in pop_values:
-                logging.warning(
-                    "Row %d skipped: population '%s' not found in adata.obs['%s'].",
-                    row_idx,
-                    population,
-                    base_label,
-                )
-                continue
-
-            marker_col = _resolve_marker_selector_column(
-                marker_selector=marker_selector,
-                marker_df=marker_df,
-                default_selector=subclustering_config.default_marker_list,
+        if created_any:
+            logging.info(
+                "Template files were created. Edit '%s' and '%s', then rerun this stage.",
+                settings_path.name,
+                marker_list_path.name,
             )
-            selected_markers = marker_df.index[marker_df[marker_col]].tolist()
-            selected_markers = [m for m in selected_markers if m in adata.var_names]
-            if not selected_markers:
-                logging.warning(
-                    "Row %d (%s/%s) had zero selected markers in '%s'. Falling back to all markers.",
+            return None
+        if selected_stages == (1,):
+            logging.info("Subclustering mode '%s' completed after checkpoint 1.", mode_label)
+            return None
+
+    if 2 in selected_stages and 1 not in selected_stages:
+        missing_inputs = [path.name for path in [settings_path, marker_list_path] if not path.exists()]
+        if missing_inputs:
+            raise FileNotFoundError(
+                "Checkpoint 2 requires existing template files: {}. Run subclustering mode 'generate' or stage 1 first.".format(
+                    ", ".join(missing_inputs)
+                )
+            )
+
+    settings_df: Optional[pd.DataFrame] = None
+    remap_df: Optional[pd.DataFrame] = None
+    existing_pipeline = adata.uns.get("subclustering_pipeline", {})
+    if not isinstance(existing_pipeline, dict):
+        existing_pipeline = {}
+    marker_list_var_columns: Dict[str, str] = {}
+    existing_marker_list_var_columns = existing_pipeline.get("marker_list_var_columns", {})
+    if isinstance(existing_marker_list_var_columns, dict):
+        marker_list_var_columns = {str(k): str(v) for k, v in existing_marker_list_var_columns.items()}
+    used_marker_lists_for_uns = [
+        str(x) for x in existing_pipeline.get("used_marker_lists", []) if pd.notna(x)
+    ]
+
+    if 2 in selected_stages:
+        _checkpoint("Checkpoint 2 - Run subclustering")
+        settings_df = _load_settings_table(settings_path)
+        marker_df = _load_marker_table(marker_list_path)
+        logging.info("Loaded %d subclustering row(s) from settings.", settings_df.shape[0])
+
+        fig_ext = _resolve_figure_ext(subclustering_config.figure_extension)
+        figures_dir = output_dir / "figures"
+        combined_umap_dir = figures_dir / "combined_umap"
+        matrixplot_dir = figures_dir / "matrixplot"
+        individual_umap_dir = figures_dir / "individual_umap"
+        combined_umap_dir.mkdir(parents=True, exist_ok=True)
+        matrixplot_dir.mkdir(parents=True, exist_ok=True)
+        if subclustering_config.save_individual_umaps:
+            individual_umap_dir.mkdir(parents=True, exist_ok=True)
+
+        _ensure_umap_for_plots(
+            adata=adata,
+            use_rep=subclustering_config.use_rep,
+            enabled=bool(subclustering_config.compute_umap_if_missing),
+        )
+
+        remap_rows: List[Dict[str, Any]] = []
+        seen_subcluster_cols: set[str] = set()
+        used_marker_cols: set[str] = set()
+
+        for row_idx, row in settings_df.reset_index(drop=True).iterrows():
+            try:
+                base_label = str(row["base_label"]).strip()
+                population = str(row["population"]).strip()
+                resolution = float(row["resolution"])
+                marker_selector = row.get("marker_list", subclustering_config.default_marker_list)
+
+                if base_label not in adata.obs.columns:
+                    logging.warning(
+                        "Row %d skipped: base_label '%s' not found in adata.obs.",
+                        row_idx,
+                        base_label,
+                    )
+                    continue
+
+                pop_values = set(adata.obs[base_label].astype(str).dropna().tolist())
+                if population not in pop_values:
+                    logging.warning(
+                        "Row %d skipped: population '%s' not found in adata.obs['%s'].",
+                        row_idx,
+                        population,
+                        base_label,
+                    )
+                    continue
+
+                marker_col = _resolve_marker_selector_column(
+                    marker_selector=marker_selector,
+                    marker_df=marker_df,
+                    default_selector=subclustering_config.default_marker_list,
+                )
+                selected_markers = marker_df.index[marker_df[marker_col]].tolist()
+                selected_markers = [m for m in selected_markers if m in adata.var_names]
+                if not selected_markers:
+                    logging.warning(
+                        "Row %d (%s/%s) had zero selected markers in '%s'. Falling back to all markers.",
+                        row_idx,
+                        base_label,
+                        population,
+                        marker_col,
+                    )
+                    selected_markers = [str(x) for x in adata.var_names]
+                used_marker_cols.add(marker_col)
+
+                subcluster_col = _build_subcluster_column(
+                    base_label=base_label,
+                    population=population,
+                    resolution=resolution,
+                )
+                if subcluster_col in seen_subcluster_cols or subcluster_col in adata.obs.columns:
+                    subcluster_col = f"{subcluster_col}_r{row_idx+1}"
+                seen_subcluster_cols.add(subcluster_col)
+
+                logging.info(
+                    "Row %d: subclustering base_label='%s', population='%s', resolution=%s, markers='%s' (%d markers).",
                     row_idx,
                     base_label,
                     population,
+                    f"{resolution:g}",
                     marker_col,
+                    len(selected_markers),
                 )
-                selected_markers = [str(x) for x in adata.var_names]
-            used_marker_cols.add(marker_col)
 
-            subcluster_col = _build_subcluster_column(
-                base_label=base_label,
-                population=population,
-                resolution=resolution,
-            )
-            if subcluster_col in seen_subcluster_cols or subcluster_col in adata.obs.columns:
-                subcluster_col = f"{subcluster_col}_r{row_idx+1}"
-            seen_subcluster_cols.add(subcluster_col)
-
-            logging.info(
-                "Row %d: subclustering base_label='%s', population='%s', resolution=%s, markers='%s' (%d markers).",
-                row_idx,
-                base_label,
-                population,
-                f"{resolution:g}",
-                marker_col,
-                len(selected_markers),
-            )
-
-            adata, new_pops = sbt_utils.leiden_on_subset(
-                adata=adata,
-                restrict_to=(base_label, [population]),
-                genes=selected_markers,
-                subset_key_name=subcluster_col,
-                base_label_key=base_label,
-                leiden_resolution=resolution,
-                use_rep=subclustering_config.use_rep,
-                return_new_names=True,
-            )
-            new_pops = [str(x) for x in new_pops]
-            logging.info(
-                "Row %d produced %d subcluster(s): %s",
-                row_idx,
-                len(new_pops),
-                ", ".join(new_pops) if new_pops else "none",
-            )
-
-            if "X_umap" in adata.obsm:
-                combined_path = combined_umap_dir / f"{cleanstring(subcluster_col)}_umap{fig_ext}"
-                _save_combined_umap(
+                adata, new_pops = sbt_utils.leiden_on_subset(
                     adata=adata,
-                    subcluster_col=subcluster_col,
-                    title=f"{population} (res={resolution:g})",
-                    out_path=combined_path,
-                    point_size=float(subclustering_config.umap_dot_size),
-                    dpi=int(subclustering_config.figure_dpi),
+                    restrict_to=(base_label, [population]),
+                    genes=selected_markers,
+                    subset_key_name=subcluster_col,
+                    base_label_key=base_label,
+                    leiden_resolution=resolution,
+                    use_rep=subclustering_config.use_rep,
+                    return_new_names=True,
                 )
-                logging.info("Saved combined UMAP: %s", combined_path)
+                new_pops = [str(x) for x in new_pops]
+                logging.info(
+                    "Row %d produced %d subcluster(s): %s",
+                    row_idx,
+                    len(new_pops),
+                    ", ".join(new_pops) if new_pops else "none",
+                )
 
-                if subclustering_config.save_individual_umaps and new_pops:
-                    subcluster_indiv_dir = individual_umap_dir / cleanstring(subcluster_col)
-                    subcluster_indiv_dir.mkdir(parents=True, exist_ok=True)
-                    sbt_utils.plot_umap_highlight_clusters(
+                if "X_umap" in adata.obsm:
+                    combined_path = combined_umap_dir / f"{cleanstring(subcluster_col)}_umap{fig_ext}"
+                    _save_combined_umap(
                         adata=adata,
                         subcluster_col=subcluster_col,
+                        title=f"{population} (res={resolution:g})",
+                        out_path=combined_path,
                         point_size=float(subclustering_config.umap_dot_size),
-                        legend_loc="none",
-                        show=False,
-                        clusters=new_pops,
-                        save_dir=str(subcluster_indiv_dir),
-                        save_dpi=int(subclustering_config.figure_dpi),
+                        dpi=int(subclustering_config.figure_dpi),
                     )
-                    logging.info("Saved individual UMAP highlights in: %s", subcluster_indiv_dir)
+                    logging.info("Saved combined UMAP: %s", combined_path)
 
-            matrixplot_path = matrixplot_dir / f"{cleanstring(subcluster_col)}_matrixplot{fig_ext}"
-            _save_matrixplot(
-                adata=adata[adata.obs[subcluster_col].isin(new_pops)].copy(),
-                subcluster_col=subcluster_col,
-                markers=selected_markers,
-                title=f"{population} (res={resolution:g})",
-                out_path=matrixplot_path,
-                vmax=float(subclustering_config.matrixplot_vmax),
-            )
-            logging.info("Saved matrixplot: %s", matrixplot_path)
+                    if subclustering_config.save_individual_umaps and new_pops:
+                        subcluster_indiv_dir = individual_umap_dir / cleanstring(subcluster_col)
+                        subcluster_indiv_dir.mkdir(parents=True, exist_ok=True)
+                        sbt_utils.plot_umap_highlight_clusters(
+                            adata=adata,
+                            subcluster_col=subcluster_col,
+                            point_size=float(subclustering_config.umap_dot_size),
+                            legend_loc="none",
+                            show=False,
+                            clusters=new_pops,
+                            save_dir=str(subcluster_indiv_dir),
+                            save_dpi=int(subclustering_config.figure_dpi),
+                        )
+                        logging.info("Saved individual UMAP highlights in: %s", subcluster_indiv_dir)
 
-            for subcluster in new_pops:
-                remap_rows.append(
-                    {
-                        "subcluster_column": subcluster_col,
-                        "parent_population": population,
-                        "resolution": resolution,
-                        "subcluster": subcluster,
-                        "final_population": subcluster,
-                    }
+                matrixplot_path = matrixplot_dir / f"{cleanstring(subcluster_col)}_matrixplot{fig_ext}"
+                _save_matrixplot(
+                    adata=adata[adata.obs[subcluster_col].isin(new_pops)].copy(),
+                    subcluster_col=subcluster_col,
+                    markers=selected_markers,
+                    title=f"{population} (res={resolution:g})",
+                    out_path=matrixplot_path,
+                    vmax=float(subclustering_config.matrixplot_vmax),
                 )
-        except Exception as exc:
-            logging.exception("Row %d failed during subclustering and was skipped: %s", row_idx, exc)
-            continue
+                logging.info("Saved matrixplot: %s", matrixplot_path)
 
-    if not remap_rows:
-        raise RuntimeError(
-            "Subclustering did not generate any rows. Check subclustering settings and population names."
-        )
+                for subcluster in new_pops:
+                    remap_rows.append(
+                        {
+                            "subcluster_column": subcluster_col,
+                            "parent_population": population,
+                            "resolution": resolution,
+                            "subcluster": subcluster,
+                            "final_population": subcluster,
+                        }
+                    )
+            except Exception as exc:
+                logging.exception("Row %d failed during subclustering and was skipped: %s", row_idx, exc)
+                continue
 
-    remap_df = (
-        pd.DataFrame(remap_rows)
-        .sort_values(["parent_population", "resolution", "subcluster"])
-        .reset_index(drop=True)
-    )
-
-    remap_path = output_dir / subclustering_config.remap_filename
-    remap_df = _merge_existing_remap(remap_df=remap_df, remap_path=remap_path)
-    remap_df.to_csv(remap_path, index=False)
-    logging.info("Saved remap table: %s", remap_path)
-
-    marker_list_var_columns = _persist_used_marker_lists_to_var(
-        adata=adata,
-        marker_df=marker_df,
-        used_marker_cols=sorted(used_marker_cols),
-    )
-
-    _checkpoint("Checkpoint 3 - Apply edited remap")
-    remap_modified = _is_remap_modified(remap_df)
-    if subclustering_config.apply_remap_only_if_modified and not remap_modified:
-        logging.info(
-            "Remap file has no edits (final_population matches subcluster for all rows). "
-            "Skipping remap application; edit '%s' then rerun to integrate final labels.",
-            remap_path.name,
-        )
-    else:
-        fallback_base_labels = [resolved_base_label_key]
-        fallback_base_labels.extend(
-            [str(x) for x in pd.unique(settings_df["base_label"].dropna()) if str(x) not in fallback_base_labels]
-        )
-        adata = _apply_subcluster_remap_adapted(
-            adata=adata,
-            remap_df=remap_df,
-            fallback_base_labels=fallback_base_labels,
-            new_label_key=subclustering_config.final_label_key,
-        )
-        logging.info(
-            "Applied subcluster remap and populated obs['%s'].",
-            subclustering_config.final_label_key,
-        )
-
-        master_col = resolved_master_index_obs
-        if master_col in adata.obs.columns:
-            master_values = adata.obs[master_col].tolist()
-        else:
-            logging.warning(
-                "Master index column '%s' not found in adata.obs. Using obs_names instead.",
-                master_col,
+        if not remap_rows:
+            raise RuntimeError(
+                "Subclustering did not generate any rows. Check subclustering settings and population names."
             )
-            master_values = adata.obs_names.astype(str).tolist()
 
-        mapping_path = output_dir / subclustering_config.master_index_mapping_filename
-        mapping_df = pd.DataFrame(
-            {
-                master_col: master_values,
-                subclustering_config.final_label_key: adata.obs[subclustering_config.final_label_key].astype(str).tolist(),
-            }
+        remap_df = (
+            pd.DataFrame(remap_rows)
+            .sort_values(["parent_population", "resolution", "subcluster"])
+            .reset_index(drop=True)
         )
-        mapping_df.to_csv(mapping_path, index=False)
-        logging.info("Saved %s to final population mapping: %s", master_col, mapping_path)
+        remap_df = _merge_existing_remap(remap_df=remap_df, remap_path=remap_path)
+        remap_df.to_csv(remap_path, index=False)
+        logging.info("Saved remap table: %s", remap_path)
+
+        marker_list_var_columns = _persist_used_marker_lists_to_var(
+            adata=adata,
+            marker_df=marker_df,
+            used_marker_cols=sorted(used_marker_cols),
+        )
+        used_marker_lists_for_uns = sorted([str(x) for x in used_marker_cols])
+
+    if 3 in selected_stages:
+        if settings_df is None:
+            if not settings_path.exists():
+                raise FileNotFoundError(
+                    f"Settings file not found: {settings_path}. Run subclustering mode 'generate' or stage 1 first."
+                )
+            settings_df = _load_settings_table(settings_path)
+        if remap_df is None:
+            remap_df = _load_existing_remap_table(remap_path)
+
+        _checkpoint("Checkpoint 3 - Apply edited remap")
+        remap_modified = _is_remap_modified(remap_df)
+        if subclustering_config.apply_remap_only_if_modified and not remap_modified:
+            logging.info(
+                "Remap file has no edits (final_population matches subcluster for all rows). "
+                "Skipping remap application; edit '%s' then rerun to integrate final labels.",
+                remap_path.name,
+            )
+        else:
+            fallback_base_labels = [resolved_base_label_key]
+            fallback_base_labels.extend(
+                [str(x) for x in pd.unique(settings_df["base_label"].dropna()) if str(x) not in fallback_base_labels]
+            )
+            adata = _apply_subcluster_remap_adapted(
+                adata=adata,
+                remap_df=remap_df,
+                fallback_base_labels=fallback_base_labels,
+                new_label_key=subclustering_config.final_label_key,
+            )
+            logging.info(
+                "Applied subcluster remap and populated obs['%s'].",
+                subclustering_config.final_label_key,
+            )
+
+            master_col = resolved_master_index_obs
+            if master_col in adata.obs.columns:
+                master_values = adata.obs[master_col].tolist()
+            else:
+                logging.warning(
+                    "Master index column '%s' not found in adata.obs. Using obs_names instead.",
+                    master_col,
+                )
+                master_values = adata.obs_names.astype(str).tolist()
+
+            mapping_path = output_dir / subclustering_config.master_index_mapping_filename
+            mapping_df = pd.DataFrame(
+                {
+                    master_col: master_values,
+                    subclustering_config.final_label_key: adata.obs[subclustering_config.final_label_key].astype(str).tolist(),
+                }
+            )
+            mapping_df.to_csv(mapping_path, index=False)
+            logging.info("Saved %s to final population mapping: %s", master_col, mapping_path)
+
+    if settings_df is None:
+        settings_df = _load_settings_table(settings_path)
+    if remap_df is None:
+        remap_df = _load_existing_remap_table(remap_path)
 
     adata.uns["subclustering_pipeline"] = {
         "input_adata_path": str(input_path),
         "settings_path": str(settings_path),
         "marker_list_path": str(marker_list_path),
         "remap_path": str(remap_path),
+        "mode": mode_label,
+        "executed_stages": list(selected_stages),
         "base_label_key": resolved_base_label_key,
         "final_label_key": subclustering_config.final_label_key,
         "n_settings_rows": int(settings_df.shape[0]),
         "n_remap_rows": int(remap_df.shape[0]),
-        "used_marker_lists": sorted([str(x) for x in used_marker_cols]),
+        "used_marker_lists": used_marker_lists_for_uns,
         "marker_list_var_columns": marker_list_var_columns,
     }
 
@@ -773,4 +872,4 @@ if __name__ == "__main__":
         stage_name=pipeline_stage,
     )
     if output is None:
-        logging.info("Subclustering stage exited after template generation.")
+        logging.info("Subclustering stage finished without saving an AnnData output.")
