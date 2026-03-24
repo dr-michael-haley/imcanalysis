@@ -410,6 +410,7 @@ class VisualizationConfig:
     abundance_case_stacked_figsize: List[float] = field(default_factory=lambda: [6.0, 3.0])  # Base [width, height]; width auto-scales with number of cases
     abundance_case_stacked_width_scale: float = 0.30  # Auto width ~= max(base_width, scale * n_cases)
     abundance_order_cases_by_population: Optional[str] = None  # Optional population label to order cases by descending abundance
+    abundance_plot_style: str = 'bar'  # One of: 'bar', 'strip', 'swarm'; strip/swarm show individual points with mean +/- SE overlays
     # Y-axis scale controls for abundance barplots.
     # Accepted values: 'linear', 'log', 'intelligent'
     # Uses same flexible dictionary style as pairwise_spatial.barplot_y_scale.
@@ -773,7 +774,7 @@ class RemapObsConfig:
     generate_include_top_markers: bool = True
     generate_top_markers_n: int = 3
     generate_top_markers_column_name: str = 'top_markers'
-    generate_top_markers_use_raw: bool = True  # If True and adata.raw exists, use it by default for marker summaries
+    generate_top_markers_use_raw: bool = False  # If True and adata.raw exists, use it by default for marker summaries
     generate_top_markers_layer: Optional[str] = None  # Optional explicit matrix source: 'raw', 'X', or a named adata.layers key
     generate_top_markers_var_column: Optional[str] = None  # Optional var annotation to use instead of var_names in the marker summary
     generate_top_markers_separator: str = '; '

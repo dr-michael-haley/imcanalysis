@@ -96,7 +96,7 @@ def _ordered_unique_normalised_values(
     *,
     integer_like_strings: bool,
 ) -> List[str]:
-    if pd.api.types.is_categorical_dtype(series):
+    if isinstance(series.dtype, pd.CategoricalDtype):
         values = list(series.cat.categories)
     else:
         values = list(pd.unique(series.dropna()))

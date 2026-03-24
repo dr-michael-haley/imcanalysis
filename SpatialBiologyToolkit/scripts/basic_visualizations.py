@@ -1274,6 +1274,163 @@ def _apply_barplot_y_scale(
     return "linear"
 
 
+def _normalise_abundance_plot_style(value: Any) -> str:
+    if value is None:
+        return "bar"
+
+    style = str(value).strip().lower()
+    aliases = {
+        "bar": "bar",
+        "barplot": "bar",
+        "strip": "strip",
+        "stripplot": "strip",
+        "swarm": "swarm",
+        "swarmplot": "swarm",
+    }
+    if style in aliases:
+        return aliases[style]
+
+    logging.warning(
+        "Invalid abundance_plot_style=%r. Using 'bar'. Accepted values: 'bar', 'strip', 'swarm'.",
+        value,
+    )
+    return "bar"
+
+
+def _categorical_hue_offsets(n_hues: int, width: float = 0.8) -> np.ndarray:
+    if n_hues <= 1:
+        return np.array([0.0], dtype=float)
+
+    step = width / float(n_hues)
+    start = -width / 2.0 + step / 2.0
+    return np.array([start + i * step for i in range(n_hues)], dtype=float)
+
+
+def _overlay_mean_se_errorbars(
+    ax: Any,
+    data: pd.DataFrame,
+    *,
+    x_col: str,
+    y_col: str,
+    order,
+    hue_col: Optional[str] = None,
+    hue_order=None,
+) -> None:
+    group_cols = [x_col]
+    if hue_col is not None:
+        group_cols.append(hue_col)
+
+    summary = (
+        data.groupby(group_cols, observed=True)[y_col]
+        .agg(['mean', 'std', 'count'])
+        .reset_index()
+    )
+    if summary.empty:
+        return
+
+    summary['se'] = summary['std'] / np.sqrt(summary['count'].clip(lower=1).astype(float))
+    summary.loc[summary['count'] <= 1, 'se'] = 0.0
+    summary['mean'] = pd.to_numeric(summary['mean'], errors='coerce')
+    summary['se'] = pd.to_numeric(summary['se'], errors='coerce').fillna(0.0)
+
+    x_lookup = {str(category): idx for idx, category in enumerate(order)}
+
+    if hue_col is None:
+        for _, row in summary.iterrows():
+            category = str(row[x_col])
+            if category not in x_lookup or not np.isfinite(row['mean']):
+                continue
+            yerr = float(row['se']) if float(row['count']) > 1 and np.isfinite(row['se']) else None
+            ax.errorbar(
+                x_lookup[category],
+                float(row['mean']),
+                yerr=yerr,
+                fmt='_',
+                color='black',
+                linestyle='none',
+                markersize=18,
+                elinewidth=1.8,
+                capsize=4,
+                zorder=5,
+            )
+        return
+
+    hue_order = [str(hue) for hue in (hue_order or [])]
+    if not hue_order:
+        hue_order = sorted(summary[hue_col].astype(str).unique().tolist())
+    hue_lookup = {str(hue): idx for idx, hue in enumerate(hue_order)}
+    offsets = _categorical_hue_offsets(len(hue_order))
+
+    for _, row in summary.iterrows():
+        category = str(row[x_col])
+        hue_value = str(row[hue_col])
+        if category not in x_lookup or hue_value not in hue_lookup or not np.isfinite(row['mean']):
+            continue
+        yerr = float(row['se']) if float(row['count']) > 1 and np.isfinite(row['se']) else None
+        ax.errorbar(
+            x_lookup[category] + offsets[hue_lookup[hue_value]],
+            float(row['mean']),
+            yerr=yerr,
+            fmt='_',
+            color='black',
+            linestyle='none',
+            markersize=14,
+            elinewidth=1.5,
+            capsize=3,
+            zorder=5,
+        )
+
+
+def _plot_population_points(
+    ax: Any,
+    data: pd.DataFrame,
+    *,
+    x_col: str,
+    y_col: str,
+    order,
+    plot_style: str,
+    color,
+    hue_col: Optional[str] = None,
+    hue_order=None,
+    palette: Optional[Dict[str, str]] = None,
+) -> None:
+    plot_kwargs = {
+        'data': data,
+        'x': x_col,
+        'y': y_col,
+        'order': order,
+        'ax': ax,
+        'size': 4,
+        'alpha': 0.85,
+        'linewidth': 0.3,
+        'edgecolor': 'black',
+    }
+    if plot_style == 'strip':
+        plot_kwargs['jitter'] = 0.25
+        plot_func = sns.stripplot
+    else:
+        plot_func = sns.swarmplot
+
+    if hue_col is None:
+        plot_kwargs['color'] = color
+    else:
+        plot_kwargs['hue'] = hue_col
+        plot_kwargs['hue_order'] = hue_order
+        plot_kwargs['palette'] = palette
+        plot_kwargs['dodge'] = True
+
+    plot_func(**plot_kwargs)
+    _overlay_mean_se_errorbars(
+        ax,
+        data,
+        x_col=x_col,
+        y_col=y_col,
+        order=order,
+        hue_col=hue_col,
+        hue_order=hue_order,
+    )
+
+
 def _plot_population_bar(
     data: pd.DataFrame,
     x_col: str,
@@ -1287,27 +1444,40 @@ def _plot_population_bar(
     y_scale_mode: str = "linear",
     y_scale_intelligent_params: Optional[Dict[str, Any]] = None,
     scale_metric_name: str = "",
+    plot_style: str = "bar",
 ):
     if data.empty:
         return
     if y_scale_intelligent_params is None:
         y_scale_intelligent_params = _resolve_intelligent_scale_params(None)
+    plot_style = _normalise_abundance_plot_style(plot_style)
 
     fig_width = 1.5 if len(order) <= 2 else 2.0
     fig, ax = plt.subplots(figsize=(fig_width, 3))
-    sns.barplot(
-        data=data,
-        x=x_col,
-        y=y_col,
-        order=order,
-        color=color,
-        edgecolor='black',
-        linewidth=0.8,
-        errorbar='se',
-        err_kws={'linewidth': 2},
-        capsize=0.2,
-        ax=ax
-    )
+    if plot_style == "bar":
+        sns.barplot(
+            data=data,
+            x=x_col,
+            y=y_col,
+            order=order,
+            color=color,
+            edgecolor='black',
+            linewidth=0.8,
+            errorbar='se',
+            err_kws={'linewidth': 2},
+            capsize=0.2,
+            ax=ax
+        )
+    else:
+        _plot_population_points(
+            ax,
+            data,
+            x_col=x_col,
+            y_col=y_col,
+            order=order,
+            plot_style=plot_style,
+            color=color,
+        )
     ax.tick_params(axis='y', labelsize=10)
     ax.tick_params(axis='x', labelsize=10, rotation=90)
     ax.set_ylabel(ylabel, fontsize=10)
@@ -1386,11 +1556,13 @@ def _plot_all_populations_by_group(
     y_scale_mode: str = "linear",
     y_scale_intelligent_params: Optional[Dict[str, Any]] = None,
     scale_metric_name: str = "",
+    plot_style: str = "bar",
 ):
     if data.empty:
         return
     if y_scale_intelligent_params is None:
         y_scale_intelligent_params = _resolve_intelligent_scale_params(None)
+    plot_style = _normalise_abundance_plot_style(plot_style)
 
     plot_data = data[[pop_col, group_col, value_col]].dropna().copy()
     if plot_data.empty:
@@ -1412,20 +1584,34 @@ def _plot_all_populations_by_group(
     palette = {g: str(group_palette.get(g, fallback[i])) for i, g in enumerate(group_order)}
 
     fig, ax = plt.subplots(figsize=(plot_width, base_height))
-    sns.barplot(
-        data=plot_data,
-        x=pop_col,
-        y=value_col,
-        hue=group_col,
-        order=pop_order,
-        hue_order=group_order,
-        errorbar="se" if len(plot_data) > 1 else None,
-        palette=palette,
-        edgecolor='black',
-        linewidth=0.6,
-        capsize=0.2,
-        ax=ax,
-    )
+    if plot_style == "bar":
+        sns.barplot(
+            data=plot_data,
+            x=pop_col,
+            y=value_col,
+            hue=group_col,
+            order=pop_order,
+            hue_order=group_order,
+            errorbar="se" if len(plot_data) > 1 else None,
+            palette=palette,
+            edgecolor='black',
+            linewidth=0.6,
+            capsize=0.2,
+            ax=ax,
+        )
+    else:
+        _plot_population_points(
+            ax,
+            plot_data,
+            x_col=pop_col,
+            y_col=value_col,
+            order=pop_order,
+            plot_style=plot_style,
+            color=None,
+            hue_col=group_col,
+            hue_order=group_order,
+            palette=palette,
+        )
 
     ax.tick_params(axis='x', labelsize=10, rotation=90)
     ax.tick_params(axis='y', labelsize=10)
@@ -1775,6 +1961,9 @@ def _run_population_abundance_analysis_scope(
     abundance_scale_intelligent_params = _resolve_intelligent_scale_params(
         getattr(viz_config, 'abundance_barplot_y_scale_intelligent_params', None)
     )
+    abundance_plot_style = _normalise_abundance_plot_style(
+        getattr(viz_config, 'abundance_plot_style', 'bar')
+    )
     mode_proportions_roi = _resolve_barplot_scale_mode(
         abundance_scale_cfg,
         analysis="abundance",
@@ -1991,6 +2180,7 @@ def _run_population_abundance_analysis_scope(
                     y_scale_mode=mode_proportions_roi,
                     y_scale_intelligent_params=abundance_scale_intelligent_params,
                     scale_metric_name='proportions_roi_level',
+                    plot_style=abundance_plot_style,
                 )
 
             if case_col and not case_proportions.empty:
@@ -2012,6 +2202,7 @@ def _run_population_abundance_analysis_scope(
                         y_scale_mode=mode_proportions_case,
                         y_scale_intelligent_params=abundance_scale_intelligent_params,
                         scale_metric_name='proportions_case_average',
+                        plot_style=abundance_plot_style,
                     )
 
             if allow_mm2 and has_roi_areas and not counts_mm2.empty:
@@ -2033,6 +2224,7 @@ def _run_population_abundance_analysis_scope(
                         y_scale_mode=mode_mm2_roi,
                         y_scale_intelligent_params=abundance_scale_intelligent_params,
                         scale_metric_name='cells_per_mm2_roi_level',
+                        plot_style=abundance_plot_style,
                     )
 
             if case_col and allow_mm2 and has_roi_areas and not case_mm2.empty:
@@ -2054,6 +2246,7 @@ def _run_population_abundance_analysis_scope(
                         y_scale_mode=mode_mm2_case,
                         y_scale_intelligent_params=abundance_scale_intelligent_params,
                         scale_metric_name='cells_per_mm2_case_average',
+                        plot_style=abundance_plot_style,
                     )
 
         if make_all_pop_plots:
@@ -2082,6 +2275,7 @@ def _run_population_abundance_analysis_scope(
                     y_scale_mode=mode_proportions_roi,
                     y_scale_intelligent_params=abundance_scale_intelligent_params,
                     scale_metric_name='proportions_roi_level',
+                    plot_style=abundance_plot_style,
                 )
 
             if case_col and not case_proportions.empty:
@@ -2105,6 +2299,7 @@ def _run_population_abundance_analysis_scope(
                         y_scale_mode=mode_proportions_case,
                         y_scale_intelligent_params=abundance_scale_intelligent_params,
                         scale_metric_name='proportions_case_average',
+                        plot_style=abundance_plot_style,
                     )
 
             if allow_mm2 and has_roi_areas and not counts_mm2.empty:
@@ -2128,6 +2323,7 @@ def _run_population_abundance_analysis_scope(
                         y_scale_mode=mode_mm2_roi,
                         y_scale_intelligent_params=abundance_scale_intelligent_params,
                         scale_metric_name='cells_per_mm2_roi_level',
+                        plot_style=abundance_plot_style,
                     )
 
             if case_col and allow_mm2 and has_roi_areas and not case_mm2.empty:
@@ -2151,6 +2347,7 @@ def _run_population_abundance_analysis_scope(
                         y_scale_mode=mode_mm2_case,
                         y_scale_intelligent_params=abundance_scale_intelligent_params,
                         scale_metric_name='cells_per_mm2_case_average',
+                        plot_style=abundance_plot_style,
                     )
 
         if case_col:
@@ -2301,510 +2498,6 @@ def create_population_abundance_analysis(
 
     logging.info("Population abundance analysis completed. Outputs saved under: %s", analysis_base_root)
     return
-
-    analysis_root = qc_base / 'Population_Analysis_Figures' / f"Abundance_by_{cleanstring(str(group_col))}"
-    raw_root = analysis_root / 'Raw_Data'
-    plot_root = analysis_root / 'Plots'
-    stats_root = analysis_root / 'Stats'
-    for out_dir in [analysis_root, raw_root, plot_root, stats_root]:
-        out_dir.mkdir(parents=True, exist_ok=True)
-
-    roi_area_map = _build_roi_area_mm2_map(adata, general_config, roi_col=roi_col)
-    has_roi_areas = len(roi_area_map) > 0
-    make_all_pop_plots = bool(getattr(viz_config, 'abundance_make_all_populations_plots', True))
-    raw_all_pop_figsize = getattr(viz_config, 'abundance_all_populations_figsize', [4.0, 3.0])
-    if (
-        not isinstance(raw_all_pop_figsize, (list, tuple))
-        or len(raw_all_pop_figsize) < 2
-    ):
-        all_pop_figsize = (4.0, 3.0)
-    else:
-        all_pop_figsize = (float(raw_all_pop_figsize[0]), float(raw_all_pop_figsize[1]))
-    all_pop_width_scale = max(
-        0.05,
-        float(getattr(viz_config, 'abundance_all_populations_width_scale', 0.45)),
-    )
-    make_case_stacked_plots = bool(getattr(viz_config, 'abundance_make_case_stacked_plots', True))
-    raw_case_stacked_figsize = getattr(viz_config, 'abundance_case_stacked_figsize', [6.0, 3.0])
-    if (
-        not isinstance(raw_case_stacked_figsize, (list, tuple))
-        or len(raw_case_stacked_figsize) < 2
-    ):
-        case_stacked_figsize = (6.0, 3.0)
-    else:
-        case_stacked_figsize = (
-            float(raw_case_stacked_figsize[0]),
-            float(raw_case_stacked_figsize[1]),
-        )
-    case_stacked_width_scale = max(
-        0.05,
-        float(getattr(viz_config, 'abundance_case_stacked_width_scale', 0.30)),
-    )
-    order_cases_by_population = getattr(viz_config, 'abundance_order_cases_by_population', None)
-    if order_cases_by_population is not None:
-        order_cases_by_population = str(order_cases_by_population)
-
-    abundance_scale_cfg = getattr(viz_config, 'abundance_barplot_y_scale', {'default': 'linear'})
-    abundance_scale_intelligent_params = _resolve_intelligent_scale_params(
-        getattr(viz_config, 'abundance_barplot_y_scale_intelligent_params', None)
-    )
-    mode_proportions_roi = _resolve_barplot_scale_mode(
-        abundance_scale_cfg,
-        analysis="abundance",
-        metric="proportions_roi_level",
-    )
-    mode_proportions_case = _resolve_barplot_scale_mode(
-        abundance_scale_cfg,
-        analysis="abundance",
-        metric="proportions_case_average",
-    )
-    mode_mm2_roi = _resolve_barplot_scale_mode(
-        abundance_scale_cfg,
-        analysis="abundance",
-        metric="cells_per_mm2_roi_level",
-    )
-    mode_mm2_case = _resolve_barplot_scale_mode(
-        abundance_scale_cfg,
-        analysis="abundance",
-        metric="cells_per_mm2_case_average",
-    )
-    group_palette = _population_palette(adata, group_col, group_order)
-
-    for pop_col in population_columns:
-        if pop_col not in adata.obs.columns:
-            logging.warning("Population column '%s' not found in adata.obs; skipping.", pop_col)
-            continue
-
-        pop_name = cleanstring(str(pop_col))
-        pop_root = analysis_root / pop_name
-        pop_raw_root = raw_root / pop_name
-        pop_plot_root = plot_root / pop_name
-        pop_stats_root = stats_root / pop_name
-        for out_dir in [pop_root, pop_raw_root, pop_plot_root, pop_stats_root]:
-            out_dir.mkdir(parents=True, exist_ok=True)
-
-        required_cols = [pop_col, group_col, roi_col]
-        if case_col:
-            required_cols.append(case_col)
-
-        obs = adata.obs[required_cols].copy()
-        obs = obs.dropna(subset=required_cols)
-        if obs.empty:
-            logging.warning("No non-null rows available for population column '%s'; skipping.", pop_col)
-            continue
-
-        for col in required_cols:
-            obs[col] = obs[col].astype(str)
-        obs = obs[obs[group_col].isin(group_order)].copy()
-        if obs.empty:
-            logging.warning(
-                "No rows in '%s' after filtering '%s' to groups %s; skipping.",
-                pop_col,
-                group_col,
-                group_order,
-            )
-            continue
-
-        _save_df(obs, pop_raw_root / 'cell_level_filtered.csv')
-
-        pop_order = _population_order(adata, pop_col)
-        if not pop_order:
-            pop_order = sorted(obs[pop_col].astype(str).unique().tolist())
-        palette = _population_palette(adata, pop_col, pop_order)
-
-        count_group_cols = [pop_col, group_col]
-        if case_col:
-            count_group_cols.append(case_col)
-        count_group_cols.append(roi_col)
-        counts = (
-            obs.groupby(count_group_cols, observed=True)
-            .size()
-            .reset_index(name='n_cells')
-        )
-        counts['n_cells'] = counts['n_cells'].astype(float)
-        _save_df(counts, pop_raw_root / 'counts_by_population_group_roi.csv')
-
-        total_group_cols = [group_col, roi_col]
-        if case_col:
-            total_group_cols.append(case_col)
-        totals = (
-            obs.groupby(total_group_cols, observed=True)
-            .size()
-            .reset_index(name='total_cells')
-        )
-        _save_df(totals, pop_raw_root / 'totals_by_group_roi.csv')
-
-        # Proportions
-        proportions = counts.merge(totals, on=total_group_cols, how='left')
-        proportions['prop_cells'] = proportions['n_cells'] / proportions['total_cells']
-        proportions = proportions.replace([np.inf, -np.inf], np.nan).dropna(subset=['prop_cells'])
-        _save_df(proportions, pop_raw_root / 'proportions_roi_level.csv')
-
-        # Cells/mm2
-        counts_mm2 = counts.copy()
-        if has_roi_areas:
-            counts_mm2['area_mm2'] = counts_mm2[roi_col].map(roi_area_map)
-            missing_area = int(counts_mm2['area_mm2'].isna().sum())
-            if missing_area > 0:
-                logging.warning(
-                    "Population column '%s': %d rows missing ROI area in masks/sample table; "
-                    "those rows are excluded from cells/mm2.",
-                    pop_col,
-                    missing_area,
-                )
-            counts_mm2 = counts_mm2.dropna(subset=['area_mm2']).copy()
-            if not counts_mm2.empty:
-                counts_mm2['cells_per_mm2'] = counts_mm2['n_cells'] / counts_mm2['area_mm2']
-                counts_mm2 = counts_mm2.replace([np.inf, -np.inf], np.nan).dropna(subset=['cells_per_mm2'])
-                _save_df(counts_mm2, pop_raw_root / 'cells_per_mm2_roi_level.csv')
-        else:
-            logging.warning(
-                "Population column '%s': no ROI area map available; skipping cells/mm2 plots and stats.",
-                pop_col,
-            )
-
-        # Optional case-averaged raw outputs
-        case_proportions = pd.DataFrame()
-        if case_col:
-            case_proportions = (
-                proportions.groupby([pop_col, group_col, case_col], observed=True, as_index=False)['prop_cells']
-                .mean()
-            )
-            _save_df(case_proportions, pop_raw_root / 'proportions_case_average.csv')
-
-        case_mm2 = pd.DataFrame()
-        if case_col and has_roi_areas and not counts_mm2.empty:
-            case_mm2 = (
-                counts_mm2.groupby([pop_col, group_col, case_col], observed=True, as_index=False)['cells_per_mm2']
-                .mean()
-            )
-            _save_df(case_mm2, pop_raw_root / 'cells_per_mm2_case_average.csv')
-
-        # Case-level composition from direct case counts (no ROI pre-averaging),
-        # used for stacked composition plots similar to CellCharter outputs.
-        case_level_props = pd.DataFrame()
-        if case_col:
-            case_counts = (
-                obs.groupby([case_col, pop_col], observed=True)
-                .size()
-                .reset_index(name='n_cells')
-            )
-            case_totals = case_counts.groupby(case_col, observed=True)['n_cells'].transform('sum')
-            case_counts['case_proportion'] = case_counts['n_cells'] / case_totals.replace(0, np.nan)
-            case_level_props = case_counts[[case_col, pop_col, 'case_proportion']].copy()
-            case_level_props = (
-                case_level_props
-                .replace([np.inf, -np.inf], np.nan)
-                .dropna(subset=['case_proportion'])
-            )
-
-            case_group_nunique = (
-                obs.groupby(case_col, observed=True)[group_col]
-                .nunique(dropna=True)
-            )
-            ambiguous_cases = case_group_nunique[case_group_nunique > 1].index.tolist()
-            if ambiguous_cases:
-                logging.warning(
-                    "Population '%s': some cases map to multiple '%s' values; using majority assignment for stacked plots.",
-                    pop_col,
-                    group_col,
-                )
-            case_group_map = (
-                obs.groupby(case_col, observed=True)[group_col]
-                .agg(_majority_label)
-                .reset_index()
-            )
-            case_level_props = case_level_props.merge(case_group_map, on=case_col, how='left')
-            _save_df(case_level_props, pop_raw_root / 'case_level_proportions.csv')
-
-        if make_case_stacked_plots and case_col and not case_level_props.empty:
-            stacked_plot_root = pop_plot_root / 'case_stacked_proportions'
-            stacked_raw_root = pop_raw_root / 'case_stacked_proportions'
-            stacked_plot_root.mkdir(parents=True, exist_ok=True)
-            stacked_raw_root.mkdir(parents=True, exist_ok=True)
-
-            _plot_case_stacked_proportions(
-                case_level_props,
-                case_col=case_col,
-                pop_col=pop_col,
-                value_col='case_proportion',
-                pop_order=pop_order,
-                palette=palette,
-                title=f"Case-level {pop_col} proportions",
-                save_path=stacked_plot_root / f'stacked_case_proportion_all.{viz_config.figure_format}',
-                save_high_res=viz_config.save_high_res,
-                base_figsize=case_stacked_figsize,
-                width_scale=case_stacked_width_scale,
-                order_by_population=order_cases_by_population,
-                wide_csv_path=stacked_raw_root / 'stacked_case_proportion_all.csv',
-            )
-
-            available_groups = _ordered_groups(case_level_props[group_col], configured_groups)
-            for group in available_groups:
-                group_subset = case_level_props[
-                    case_level_props[group_col].astype(str) == str(group)
-                ].copy()
-                if group_subset.empty:
-                    continue
-                group_safe = cleanstring(str(group))
-                _plot_case_stacked_proportions(
-                    group_subset,
-                    case_col=case_col,
-                    pop_col=pop_col,
-                    value_col='case_proportion',
-                    pop_order=pop_order,
-                    palette=palette,
-                    title=f"Case-level {pop_col} proportions ({group_col}={group})",
-                    save_path=stacked_plot_root / f'stacked_case_proportion_{group_safe}.{viz_config.figure_format}',
-                    save_high_res=viz_config.save_high_res,
-                    base_figsize=case_stacked_figsize,
-                    width_scale=case_stacked_width_scale,
-                    order_by_population=order_cases_by_population,
-                    wide_csv_path=stacked_raw_root / f'stacked_case_proportion_{group_safe}.csv',
-                )
-
-        # Per-population plots
-        for pop in pop_order:
-            pop_label = str(pop)
-            pop_safe = cleanstring(pop_label)
-            pop_color = palette.get(pop_label, '#4C72B0')
-
-            pop_prop = proportions[(proportions[pop_col] == pop_label) & (proportions[group_col].isin(group_order))].copy()
-            if not pop_prop.empty:
-                _save_df(pop_prop, pop_raw_root / 'per_population' / 'proportions_roi_level' / f'{pop_safe}.csv')
-                _plot_population_bar(
-                    data=pop_prop,
-                    x_col=group_col,
-                    y_col='prop_cells',
-                    order=group_order,
-                    color=pop_color,
-                    ylabel='Proportion of cells\n(ROI level)',
-                    title=pop_label,
-                    save_path=pop_plot_root / 'proportions_roi_level' / f'{pop_safe}.{viz_config.figure_format}',
-                    save_high_res=viz_config.save_high_res,
-                    y_scale_mode=mode_proportions_roi,
-                    y_scale_intelligent_params=abundance_scale_intelligent_params,
-                    scale_metric_name='proportions_roi_level',
-                )
-
-            if case_col and not case_proportions.empty:
-                pop_prop_case = case_proportions[
-                    (case_proportions[pop_col] == pop_label) & (case_proportions[group_col].isin(group_order))
-                ].copy()
-                if not pop_prop_case.empty:
-                    _save_df(pop_prop_case, pop_raw_root / 'per_population' / 'proportions_case_average' / f'{pop_safe}.csv')
-                    _plot_population_bar(
-                        data=pop_prop_case,
-                        x_col=group_col,
-                        y_col='prop_cells',
-                        order=group_order,
-                        color=pop_color,
-                        ylabel='Proportion of cells\n(Case average)',
-                        title=pop_label,
-                        save_path=pop_plot_root / 'proportions_case_average' / f'{pop_safe}.{viz_config.figure_format}',
-                        save_high_res=viz_config.save_high_res,
-                        y_scale_mode=mode_proportions_case,
-                        y_scale_intelligent_params=abundance_scale_intelligent_params,
-                        scale_metric_name='proportions_case_average',
-                    )
-
-            if has_roi_areas and not counts_mm2.empty:
-                pop_mm2 = counts_mm2[
-                    (counts_mm2[pop_col] == pop_label) & (counts_mm2[group_col].isin(group_order))
-                ].copy()
-                if not pop_mm2.empty:
-                    _save_df(pop_mm2, pop_raw_root / 'per_population' / 'cells_per_mm2_roi_level' / f'{pop_safe}.csv')
-                    _plot_population_bar(
-                        data=pop_mm2,
-                        x_col=group_col,
-                        y_col='cells_per_mm2',
-                        order=group_order,
-                        color=pop_color,
-                        ylabel='Cells per mm$^2$\n(ROI level)',
-                        title=pop_label,
-                        save_path=pop_plot_root / 'cells_per_mm2_roi_level' / f'{pop_safe}.{viz_config.figure_format}',
-                        save_high_res=viz_config.save_high_res,
-                        y_scale_mode=mode_mm2_roi,
-                        y_scale_intelligent_params=abundance_scale_intelligent_params,
-                        scale_metric_name='cells_per_mm2_roi_level',
-                    )
-
-            if case_col and has_roi_areas and not case_mm2.empty:
-                pop_mm2_case = case_mm2[
-                    (case_mm2[pop_col] == pop_label) & (case_mm2[group_col].isin(group_order))
-                ].copy()
-                if not pop_mm2_case.empty:
-                    _save_df(pop_mm2_case, pop_raw_root / 'per_population' / 'cells_per_mm2_case_average' / f'{pop_safe}.csv')
-                    _plot_population_bar(
-                        data=pop_mm2_case,
-                        x_col=group_col,
-                        y_col='cells_per_mm2',
-                        order=group_order,
-                        color=pop_color,
-                        ylabel='Cells per mm$^2$\n(Case average)',
-                        title=pop_label,
-                        save_path=pop_plot_root / 'cells_per_mm2_case_average' / f'{pop_safe}.{viz_config.figure_format}',
-                        save_high_res=viz_config.save_high_res,
-                        y_scale_mode=mode_mm2_case,
-                        y_scale_intelligent_params=abundance_scale_intelligent_params,
-                        scale_metric_name='cells_per_mm2_case_average',
-                    )
-
-        # Combined all-populations plots (x=population, hue=group)
-        if make_all_pop_plots:
-            all_raw_root = pop_raw_root / 'all_populations'
-            all_plot_root = pop_plot_root / 'all_populations'
-            all_raw_root.mkdir(parents=True, exist_ok=True)
-            all_plot_root.mkdir(parents=True, exist_ok=True)
-
-            all_prop = proportions[proportions[group_col].isin(group_order)].copy()
-            if not all_prop.empty:
-                _save_df(all_prop, all_raw_root / 'proportions_roi_level.csv')
-                _plot_all_populations_by_group(
-                    all_prop,
-                    pop_col=pop_col,
-                    group_col=group_col,
-                    value_col='prop_cells',
-                    pop_order=pop_order,
-                    group_order=group_order,
-                    group_palette=group_palette,
-                    ylabel='Proportion of cells\n(ROI level)',
-                    title=f"{pop_col}: all populations by {group_col} (ROI level)",
-                    save_path=all_plot_root / f'proportions_roi_level.{viz_config.figure_format}',
-                    save_high_res=viz_config.save_high_res,
-                    base_figsize=all_pop_figsize,
-                    width_scale=all_pop_width_scale,
-                    y_scale_mode=mode_proportions_roi,
-                    y_scale_intelligent_params=abundance_scale_intelligent_params,
-                    scale_metric_name='proportions_roi_level',
-                )
-
-            if case_col and not case_proportions.empty:
-                all_prop_case = case_proportions[case_proportions[group_col].isin(group_order)].copy()
-                if not all_prop_case.empty:
-                    _save_df(all_prop_case, all_raw_root / 'proportions_case_average.csv')
-                    _plot_all_populations_by_group(
-                        all_prop_case,
-                        pop_col=pop_col,
-                        group_col=group_col,
-                        value_col='prop_cells',
-                        pop_order=pop_order,
-                        group_order=group_order,
-                        group_palette=group_palette,
-                        ylabel='Proportion of cells\n(Case average)',
-                        title=f"{pop_col}: all populations by {group_col} (Case average)",
-                        save_path=all_plot_root / f'proportions_case_average.{viz_config.figure_format}',
-                        save_high_res=viz_config.save_high_res,
-                        base_figsize=all_pop_figsize,
-                        width_scale=all_pop_width_scale,
-                        y_scale_mode=mode_proportions_case,
-                        y_scale_intelligent_params=abundance_scale_intelligent_params,
-                        scale_metric_name='proportions_case_average',
-                    )
-
-            if has_roi_areas and not counts_mm2.empty:
-                all_mm2 = counts_mm2[counts_mm2[group_col].isin(group_order)].copy()
-                if not all_mm2.empty:
-                    _save_df(all_mm2, all_raw_root / 'cells_per_mm2_roi_level.csv')
-                    _plot_all_populations_by_group(
-                        all_mm2,
-                        pop_col=pop_col,
-                        group_col=group_col,
-                        value_col='cells_per_mm2',
-                        pop_order=pop_order,
-                        group_order=group_order,
-                        group_palette=group_palette,
-                        ylabel='Cells per mm$^2$\n(ROI level)',
-                        title=f"{pop_col}: all populations by {group_col} (ROI level)",
-                        save_path=all_plot_root / f'cells_per_mm2_roi_level.{viz_config.figure_format}',
-                        save_high_res=viz_config.save_high_res,
-                        base_figsize=all_pop_figsize,
-                        width_scale=all_pop_width_scale,
-                        y_scale_mode=mode_mm2_roi,
-                        y_scale_intelligent_params=abundance_scale_intelligent_params,
-                        scale_metric_name='cells_per_mm2_roi_level',
-                    )
-
-            if case_col and has_roi_areas and not case_mm2.empty:
-                all_mm2_case = case_mm2[case_mm2[group_col].isin(group_order)].copy()
-                if not all_mm2_case.empty:
-                    _save_df(all_mm2_case, all_raw_root / 'cells_per_mm2_case_average.csv')
-                    _plot_all_populations_by_group(
-                        all_mm2_case,
-                        pop_col=pop_col,
-                        group_col=group_col,
-                        value_col='cells_per_mm2',
-                        pop_order=pop_order,
-                        group_order=group_order,
-                        group_palette=group_palette,
-                        ylabel='Cells per mm$^2$\n(Case average)',
-                        title=f"{pop_col}: all populations by {group_col} (Case average)",
-                        save_path=all_plot_root / f'cells_per_mm2_case_average.{viz_config.figure_format}',
-                        save_high_res=viz_config.save_high_res,
-                        base_figsize=all_pop_figsize,
-                        width_scale=all_pop_width_scale,
-                        y_scale_mode=mode_mm2_case,
-                        y_scale_intelligent_params=abundance_scale_intelligent_params,
-                        scale_metric_name='cells_per_mm2_case_average',
-                    )
-
-        # Stats (requires case column and exactly two groups for mlm_stats)
-        if case_col:
-            stats_prefix_base = f"{cleanstring(str(pop_col))}_{cleanstring(str(group_col))}"
-            _run_mlm_stats_and_save(
-                data=proportions,
-                pop_col=pop_col,
-                group_col=group_col,
-                case_col=case_col,
-                roi_col=roi_col,
-                value_col='prop_cells',
-                average_cases=False,
-                stats_dir=pop_stats_root,
-                out_prefix=f'{stats_prefix_base}_proportions',
-            )
-            _run_mlm_stats_and_save(
-                data=proportions,
-                pop_col=pop_col,
-                group_col=group_col,
-                case_col=case_col,
-                roi_col=roi_col,
-                value_col='prop_cells',
-                average_cases=True,
-                stats_dir=pop_stats_root,
-                out_prefix=f'{stats_prefix_base}_proportions',
-            )
-
-            if has_roi_areas and not counts_mm2.empty:
-                _run_mlm_stats_and_save(
-                    data=counts_mm2,
-                    pop_col=pop_col,
-                    group_col=group_col,
-                    case_col=case_col,
-                    roi_col=roi_col,
-                    value_col='cells_per_mm2',
-                    average_cases=False,
-                    stats_dir=pop_stats_root,
-                    out_prefix=f'{stats_prefix_base}_cells_per_mm2',
-                )
-                _run_mlm_stats_and_save(
-                    data=counts_mm2,
-                    pop_col=pop_col,
-                    group_col=group_col,
-                    case_col=case_col,
-                    roi_col=roi_col,
-                    value_col='cells_per_mm2',
-                    average_cases=True,
-                    stats_dir=pop_stats_root,
-                    out_prefix=f'{stats_prefix_base}_cells_per_mm2',
-                )
-        else:
-            logging.info(
-                "Population column '%s': case_obs not configured or missing, so MLM stats and case-average "
-                "plots are skipped.",
-                pop_col,
-            )
-
-    logging.info("Population abundance analysis completed. Outputs saved to: %s", analysis_root)
 
 
 def create_population_analysis(

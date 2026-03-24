@@ -2,6 +2,7 @@
 import itertools
 import os
 import pickle  # For saving and loading
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -44,7 +45,10 @@ def napari_imc_explorer(
     cell_id_in_mask_obs: str = 'ObjectNumber',
     adata: ad.AnnData = ad.AnnData(),
     check_masks: bool = True,
-    mask_extension: str = None 
+    mask_extension: str = None,
+    initial_roi_count: int = 10,
+    randomize_initial_rois: bool = False,
+    initial_roi_random_seed: int = 0,
 ) -> napari.Viewer:
     """
     Start an interactive Napari viewer for exploring IMC data.
@@ -67,6 +71,12 @@ def napari_imc_explorer(
         If True, will check that all the masks match the number of cells in the AnnData object.
     mask_extension : str, optional
         Extension for mask files (e.g., `'.tiff'` or `'.tif'`). If `None`, the extension will be automatically determined from the first file found in the `masks_folder`.
+    initial_roi_count : int, optional
+        Number of ROI buttons to show in the Population QC ROI shortcut list. If `None`, all matching ROIs are shown.
+    randomize_initial_rois : bool
+        If True, randomly choose/order the Population QC ROI shortcut list instead of ordering by abundance.
+    initial_roi_random_seed : int
+        Seed used when `randomize_initial_rois=True`.
 
     Returns
     -------
@@ -76,6 +86,13 @@ def napari_imc_explorer(
     # Ensure image_folders is a list
     if not isinstance(image_folders, list):
         image_folders = [image_folders]
+
+    if initial_roi_count is not None:
+        initial_roi_count = int(initial_roi_count)
+        if initial_roi_count <= 0:
+            raise ValueError('initial_roi_count must be > 0 or None.')
+
+    population_qc_roi_button_limit = initial_roi_count
 
     annotations_folder = Path(annotations_folder)
     annotations_folder.mkdir(parents=True, exist_ok=True)
@@ -144,6 +161,25 @@ def napari_imc_explorer(
         List all folders in a specified directory.
         """
         return [name for name in os.listdir(directory) if os.path.isdir(os.path.join(directory, name))]
+
+    def _select_population_qc_roi_choices(ordered_rois):
+        """
+        Choose which ROI shortcuts appear in the Population QC panel.
+        """
+        ordered_rois = [str(roi_name) for roi_name in ordered_rois]
+        if not ordered_rois:
+            return []
+
+        if randomize_initial_rois:
+            rng = np.random.default_rng(initial_roi_random_seed)
+            selected_rois = rng.permutation(ordered_rois).tolist()
+        else:
+            selected_rois = list(ordered_rois)
+
+        if population_qc_roi_button_limit is not None:
+            selected_rois = selected_rois[:population_qc_roi_button_limit]
+
+        return selected_rois
 
     annotation_mapping_filename = 'label_mapping.csv'
     annotation_background_label = 'Unlabelled'
@@ -271,7 +307,7 @@ def napari_imc_explorer(
         unique_values, counts = np.unique(non_zero_values, return_counts=True)
         return int(unique_values[np.argmax(counts)])
 
-    def _load_imc_image(file, quantile=0.999, colormap=None, recolour_image=False, minimum_pixel_counts=0.1):
+    def _load_imc_image(file, quantile=0.999, colormap=None, recolour_image=False, minimum_pixel_counts=0.1, layer_name=None):
         """
         Load a single IMC image, including removing some background and normalising to a percentile.
 
@@ -303,7 +339,7 @@ def napari_imc_explorer(
         image = image / max_quant
         image = np.clip(image, 0, 1)
         # Get image name from file name
-        image_name = os.path.splitext(os.path.basename(file))[0]
+        image_name = layer_name or os.path.splitext(os.path.basename(file))[0]
         # Add image to the viewer
         viewer.add_image(image, name=image_name, blending='additive', colormap=colormap)
 
@@ -311,27 +347,63 @@ def napari_imc_explorer(
         """
         Add all images from one ROI folder, cycling through specified colours.
         """
-        # Load the mask to determine the image size (if needed)
-        mask = sk.io.imread(Path(masks_folder, f'{roi_name}{mask_extension}'))
-        tiffs = []
-        # Collect all TIFF files from the image folders for the given ROI
-        for folder in image_folders:
-            tiff_paths = _find_tiff_files(Path(folder, roi_name))
-            tiffs.extend(tiff_paths)
+        roi_image_map = _build_roi_image_map(roi_name)
+        if not roi_image_map:
+            print(f'No images found for ROI "{roi_name}".')
+            return
 
-        # Add each image to the viewer with cycling colours
-        for file, colour in zip(tiffs, itertools.cycle(colour_map)):
-            _load_imc_image(file, quantile=quant_select.value, colormap=vispy.color.Colormap([[0, 0, 0], colour]), recolour_image=recolour_image, minimum_pixel_counts=minimum_pixel_counts_select.value)
+        ordered_logical_names = [image_name for image_name in im_list if image_name in roi_image_map]
+        if not ordered_logical_names:
+            ordered_logical_names = list(roi_image_map.keys())
+
+        for logical_name, colour in zip(ordered_logical_names, itertools.cycle(colour_map)):
+            _load_imc_image(
+                roi_image_map[logical_name],
+                quantile=quant_select.value,
+                colormap=vispy.color.Colormap([[0, 0, 0], colour]),
+                recolour_image=recolour_image,
+                minimum_pixel_counts=minimum_pixel_counts_select.value,
+                layer_name=logical_name,
+            )
             viewer.layers[-1].visible = False  # Hide the layer by default
 
-    def _add_masks(roi_name, adata, pop_obs=None, quant=None, roi_obs='ROI', adata_colormap=True, colour_map=colormaps['tab20'].colors, add_individual_pops=False):
+    def _population_values(pop_obs_name):
+        """
+        Return ordered population labels as strings for a categorical obs column.
+        """
+        if pop_obs_name not in adata.obs.columns:
+            return []
+
+        obs_series = adata.obs[pop_obs_name]
+        if isinstance(obs_series.dtype, pd.CategoricalDtype):
+            values = obs_series.cat.categories.tolist()
+        else:
+            values = obs_series.dropna().unique().tolist()
+
+        return [str(value) for value in values if not pd.isna(value)]
+
+    def _add_masks(
+        roi_name,
+        adata,
+        pop_obs=None,
+        quant=None,
+        roi_obs='ROI',
+        adata_colormap=True,
+        colour_map=colormaps['tab20'].colors,
+        add_individual_pops=False,
+        selected_populations=None,
+        add_combined_mask=True,
+        individual_layer_name_prefix='',
+        individual_layers_visible=False,
+        add_base_mask=True,
+    ):
         """
         Add masks to the viewer, optionally with population or quantitative overlays.
         """
         # Load the mask image
         mask = sk.io.imread(Path(masks_folder, f'{roi_name}{mask_extension}'))
         # Add the base cell mask layer if not already added
-        if 'all_cells' not in [layer.name for layer in viewer.layers]:
+        if add_base_mask and 'all_cells' not in [layer.name for layer in viewer.layers]:
             viewer.add_labels(mask, name='all_cells')
             viewer.layers[-1].contour = 1
             viewer.layers[-1].visible = False
@@ -341,34 +413,61 @@ def napari_imc_explorer(
         adata_roi_obs.reset_index(drop=True, inplace=True)
 
         if pop_obs:
-            # Get the unique populations/categories
-            populations = adata.obs[pop_obs].cat.categories.tolist()
-            populations_num = np.array(range(len(populations))) + 1
+            populations = _population_values(pop_obs)
+            if not populations:
+                print(f'No populations available for "{pop_obs}".')
+                return
+
+            population_to_code = {population: index + 1 for index, population in enumerate(populations)}
+            if selected_populations is None:
+                populations_to_add = populations
+            else:
+                requested_populations = {str(population) for population in selected_populations}
+                populations_to_add = [population for population in populations if population in requested_populations]
+
+            if not populations_to_add:
+                print(f'No requested populations were found in "{pop_obs}".')
+                return
+
             # Use the colormap from adata if available
             if adata_colormap and (f'{pop_obs}_colors' in adata.uns):
                 colour_map = adata.uns[f'{pop_obs}_colors']
-            pop_colormap = {(x+1): y for x, y in enumerate(colour_map)}
+            pop_colormap = {(x + 1): y for x, y in enumerate(colour_map)}
             pop_colormap.update({None:'magenta'})
-            all_pops_mask = np.zeros(mask.shape, dtype='uint16')
+            all_pops_mask = np.zeros(mask.shape, dtype='uint16') if add_combined_mask else None
 
             # Create a mask for each population
-            for pop, pop_num in zip(populations, populations_num):
+            for pop in populations_to_add:
+                pop_num = population_to_code[pop]
                 try:
                     if cell_id_in_mask_obs:
-                        objects = adata_roi_obs.loc[adata_roi_obs[pop_obs] == pop, cell_id_in_mask_obs].to_numpy()
+                        objects = adata_roi_obs.loc[
+                            adata_roi_obs[pop_obs].astype(str) == pop,
+                            cell_id_in_mask_obs,
+                        ].to_numpy()
                     else:
-                        objects = adata_roi_obs.loc[adata_roi_obs[pop_obs] == pop, :].index.to_numpy() + 1
+                        objects = adata_roi_obs.loc[
+                            adata_roi_obs[pop_obs].astype(str) == pop,
+                            :,
+                        ].index.to_numpy() + 1
 
                     pop_mask = np.isin(mask, objects)
-                    all_pops_mask = np.where(pop_mask, pop_num, all_pops_mask)
+                    if add_combined_mask:
+                        all_pops_mask = np.where(pop_mask, pop_num, all_pops_mask)
                     if add_individual_pops:
-                        viewer.add_labels(pop_mask, name=pop, colormap=DirectLabelColormap(color_dict={None: 'magenta', 1: pop_colormap[pop_num]}))
+                        layer_name = f'{individual_layer_name_prefix}{pop}' if individual_layer_name_prefix else pop
+                        viewer.add_labels(
+                            pop_mask.astype('uint8'),
+                            name=layer_name,
+                            colormap=DirectLabelColormap(color_dict={None: 'magenta', 1: pop_colormap[pop_num]}),
+                        )
                         viewer.layers[-1].contour = 1
-                        viewer.layers[-1].visible = False
+                        viewer.layers[-1].visible = individual_layers_visible
                 except Exception as e:
                     print(f'Error adding group {pop} from {pop_obs}: {e}')
-            viewer.add_labels(all_pops_mask, name=pop_obs, colormap=DirectLabelColormap(color_dict=pop_colormap))
-            viewer.layers[-1].contour = 1
+            if add_combined_mask:
+                viewer.add_labels(all_pops_mask, name=pop_obs, colormap=DirectLabelColormap(color_dict=pop_colormap))
+                viewer.layers[-1].contour = 1
         elif quant:
             # Add quantitative data as an overlay
             if cell_id_in_mask_obs:
@@ -405,6 +504,25 @@ def napari_imc_explorer(
     delete_all_layers_button = widgets.PushButton(text='Delete all layers', name='delete_all_layers_button')
     delete_all_layers_button.clicked.connect(_delete_all_layers)
 
+    def _move_selected_layers_to_top():
+        """
+        Move the currently selected layers to the top of the Napari layer list.
+        """
+        selected_layers = [layer for layer in list(viewer.layers) if layer in viewer.layers.selection]
+        if not selected_layers:
+            print('No layers selected.')
+            return
+
+        try:
+            for layer in selected_layers:
+                viewer.layers.move(viewer.layers.index(layer), len(viewer.layers) - 1)
+            print(f'Moved {len(selected_layers)} selected layer(s) to the top.')
+        except Exception as exc:
+            print(f'Could not reorder layers: {exc}')
+
+    layers_to_top_button = widgets.PushButton(text='Layers to top', name='layers_to_top_button')
+    layers_to_top_button.clicked.connect(_move_selected_layers_to_top)
+
     def _add_roi_images():
         """
         Add all images for the selected ROI.
@@ -412,10 +530,43 @@ def napari_imc_explorer(
         selected_item = roi_selector.value
         _add_roi_images_raw(selected_item, quantile=quant_select.value, minimum_pixel_counts=minimum_pixel_counts_select.value)
 
-    # List of available ROIs
-    roi_list = _list_folders_in_directory(image_folders[0])
+    # List of all available ROIs
+    all_roi_list = _list_folders_in_directory(image_folders[0])
+    all_roi_set = set(all_roi_list)
+    roi_list = list(all_roi_list)
+
     # Selector widget for ROIs
     roi_selector = widgets.ComboBox(label='Select ROI:', choices=roi_list)
+    roi_selector_state = SimpleNamespace(choices=list(roi_list))
+
+    def _get_roi_selector_choices():
+        try:
+            current_choices = [str(choice) for choice in roi_selector.choices]
+            roi_selector_state.choices = list(current_choices)
+            return current_choices
+        except Exception:
+            return list(roi_selector_state.choices)
+
+    def _set_roi_selector_choices(choices, selected_roi=None):
+        unique_choices = list(dict.fromkeys(str(choice) for choice in choices if str(choice)))
+        if not unique_choices:
+            return
+        roi_selector_state.choices = list(unique_choices)
+        try:
+            roi_selector.choices = unique_choices
+        except Exception:
+            pass
+        if selected_roi is not None and str(selected_roi) in unique_choices:
+            roi_selector.value = str(selected_roi)
+
+    def _ensure_roi_in_selector(roi_name):
+        roi_name = str(roi_name)
+        if roi_name not in all_roi_set:
+            return False
+        current_choices = _get_roi_selector_choices()
+        if roi_name not in current_choices:
+            _set_roi_selector_choices(current_choices + [roi_name], selected_roi=roi_name)
+        return True
 
     # Button to add all images for the selected ROI
     add_roi_images_button = widgets.PushButton(text='Add ALL images for ROI', name='add_roi_images_button')
@@ -429,7 +580,7 @@ def napari_imc_explorer(
         Add cell masks for the selected ROI.
         """
         selected_item = roi_selector.value
-        _add_masks(selected_item, adata, pop_obs=None)
+        _add_masks(selected_item, adata, pop_obs=None, roi_obs=roi_obs)
 
     # Button to add cell masks
     add_masks_button = widgets.PushButton(text='Add cell mask', name='add_masks_button')
@@ -745,24 +896,178 @@ def napari_imc_explorer(
     minimum_pixel_counts_select_label = widgets.Label(value='Minimum pixel value:')
     minimum_pixel_counts_select = widgets.FloatText(value=0.1, min=0)
 
-    # Build dictionaries mapping image names to folders and extensions
-    image_folder_dict = {}
-    image_ext_dict = {}
-    im_list = []
-    for i in image_folders:
-        im_files = []
-        for roi in roi_list:
-            im_files = _find_tiff_files(Path(i, roi))
-            if im_files:
+    def _normalise_panel_text(value):
+        if value is None:
+            return None
+        try:
+            if pd.isna(value):
+                return None
+        except TypeError:
+            pass
+        text = str(value).strip()
+        return text or None
+
+    def _clean_panel_label(value):
+        text = _normalise_panel_text(value)
+        if text is None:
+            return None
+        return re.sub(r'\W+', '', text)
+
+    def _register_panel_alias(alias_map, ambiguous_aliases, alias_value, logical_name):
+        alias_text = _normalise_panel_text(alias_value)
+        if alias_text is None:
+            return
+
+        alias_key = alias_text.lower()
+        existing_name = alias_map.get(alias_key)
+        if existing_name is None:
+            alias_map[alias_key] = logical_name
+        elif existing_name != logical_name:
+            ambiguous_aliases.add(alias_key)
+
+    def _build_image_alias_map():
+        alias_map = {}
+        ambiguous_aliases = set()
+        channel_name_values = (
+            adata.var['channel_name'].tolist()
+            if 'channel_name' in adata.var.columns
+            else [None] * adata.n_vars
+        )
+        channel_label_values = (
+            adata.var['channel_label'].tolist()
+            if 'channel_label' in adata.var.columns
+            else [None] * adata.n_vars
+        )
+
+        for logical_name, channel_name, channel_label in zip(
+            [str(var_name) for var_name in adata.var_names.tolist()],
+            channel_name_values,
+            channel_label_values,
+        ):
+            clean_logical_name = _clean_panel_label(logical_name)
+            clean_channel_label = _clean_panel_label(channel_label)
+            channel_name_text = _normalise_panel_text(channel_name)
+            channel_label_text = _normalise_panel_text(channel_label)
+
+            for alias_value in [logical_name, clean_logical_name, channel_label_text, clean_channel_label, channel_name_text]:
+                _register_panel_alias(alias_map, ambiguous_aliases, alias_value, logical_name)
+
+            if channel_name_text and channel_label_text:
+                _register_panel_alias(
+                    alias_map,
+                    ambiguous_aliases,
+                    f'{channel_name_text}_{channel_label_text}',
+                    logical_name,
+                )
+            if channel_name_text and clean_channel_label:
+                _register_panel_alias(
+                    alias_map,
+                    ambiguous_aliases,
+                    f'{channel_name_text}_{clean_channel_label}',
+                    logical_name,
+                )
+            if channel_name_text and clean_logical_name:
+                _register_panel_alias(
+                    alias_map,
+                    ambiguous_aliases,
+                    f'{channel_name_text}_{clean_logical_name}',
+                    logical_name,
+                )
+
+        for alias_key in ambiguous_aliases:
+            alias_map.pop(alias_key, None)
+        return alias_map
+
+    def _parse_imc_image_path(image_path):
+        image_path = Path(image_path)
+        stem = image_path.stem
+        parts = stem.split('_')
+        if len(parts) >= 4:
+            channel_name = parts[2]
+            channel_label = '_'.join(parts[3:])
+        else:
+            channel_name = None
+            channel_label = stem
+        return {
+            'path': image_path,
+            'stem': stem,
+            'channel_name': channel_name,
+            'channel_label': channel_label,
+        }
+
+    image_alias_map = _build_image_alias_map()
+    roi_image_map_cache = {}
+
+    def _resolve_logical_image_name(image_path):
+        image_info = _parse_imc_image_path(image_path)
+        candidate_aliases = [
+            image_info['stem'],
+            image_info['channel_label'],
+            _clean_panel_label(image_info['channel_label']),
+            image_info['channel_name'],
+        ]
+        if image_info['channel_name'] and image_info['channel_label']:
+            candidate_aliases.append(f"{image_info['channel_name']}_{image_info['channel_label']}")
+        if image_info['channel_name'] and _clean_panel_label(image_info['channel_label']):
+            candidate_aliases.append(f"{image_info['channel_name']}_{_clean_panel_label(image_info['channel_label'])}")
+
+        for candidate_alias in candidate_aliases:
+            alias_text = _normalise_panel_text(candidate_alias)
+            if alias_text is None:
+                continue
+            logical_name = image_alias_map.get(alias_text.lower())
+            if logical_name is not None:
+                return logical_name
+
+        fallback_name = _normalise_panel_text(image_info['channel_label'])
+        return fallback_name or image_info['stem']
+
+    def _build_roi_image_map(roi_name):
+        roi_name = str(roi_name)
+        if roi_name in roi_image_map_cache:
+            return roi_image_map_cache[roi_name]
+
+        roi_image_map = {}
+        for folder in image_folders:
+            roi_folder = Path(folder, roi_name)
+            if not roi_folder.exists():
+                continue
+
+            for image_path in sorted(roi_folder.iterdir()):
+                if not image_path.is_file() or image_path.suffix.lower() not in ['.tif', '.tiff']:
+                    continue
+                logical_name = _resolve_logical_image_name(image_path)
+                roi_image_map.setdefault(logical_name, image_path)
+
+        roi_image_map_cache[roi_name] = roi_image_map
+        return roi_image_map
+
+    def _discover_available_logical_images():
+        discovered_names = []
+        discovered_set = set()
+
+        for folder in image_folders:
+            for roi_name in all_roi_list:
+                roi_folder = Path(folder, roi_name)
+                if not roi_folder.exists():
+                    continue
+                roi_image_map = _build_roi_image_map(roi_name)
+                if not roi_image_map:
+                    continue
+                for logical_name in roi_image_map.keys():
+                    if logical_name not in discovered_set:
+                        discovered_names.append(logical_name)
+                        discovered_set.add(logical_name)
                 break
-        im_list_new = [os.path.basename(x).split('.')[:-1] for x in im_files]
-        im_list_new = [".".join(x) for x in im_list_new]
-        im_extensions = [os.path.basename(x).split('.')[-1] for x in im_files]
-        for x, ext in zip(im_list_new, im_extensions):
-            image_ext_dict[x] = ext
-        for x in im_list_new:
-            image_folder_dict[x] = str(i)
-        im_list.extend(im_list_new)
+
+        ordered_adata_names = [
+            str(var_name) for var_name in adata.var_names.tolist()
+            if str(var_name) in discovered_set
+        ]
+        remaining_names = [name for name in discovered_names if name not in ordered_adata_names]
+        return ordered_adata_names + remaining_names
+
+    im_list = _discover_available_logical_images()
     
     @magicgui(x=dict(widget_type='Select', choices=im_list, label='Select images'), call_button='Add images')
     def _image_selector(x: list):
@@ -779,13 +1084,56 @@ def napari_imc_explorer(
         """
         Add selected images to the viewer.
         """
+        if selected_images is None:
+            print('No images selected.')
+            return
+
+        if isinstance(selected_images, str):
+            selected_images = [selected_images]
+        else:
+            selected_images = [str(image) for image in selected_images]
+
+        selected_images = [image for image in selected_images if image]
+        if not selected_images:
+            print('No images selected.')
+            return
+
+        roi_image_map = _build_roi_image_map(roi_selector.value)
+        if not roi_image_map:
+            print(f'No images found for ROI "{roi_selector.value}".')
+            return
+
+        loaded_images = 0
         for image, colour in zip(selected_images, itertools.cycle(['r', 'g', 'b', 'c', 'm', 'y'])):
-            file = Path(image_folder_dict[image], roi_selector.value, f'{image}.{image_ext_dict[image]}')
+            file = roi_image_map.get(image)
+            if file is None:
+                print(
+                    f'Could not find image "{image}" for ROI "{roi_selector.value}" in: '
+                    f'{", ".join(str(Path(folder)) for folder in image_folders)}'
+                )
+                continue
+
             print(f'Loading image from: {file}')
-            _load_imc_image(file, quantile=quant_select.value, minimum_pixel_counts=minimum_pixel_counts_select.value, colormap=vispy.color.Colormap([[0, 0, 0], colour]))
+            try:
+                _load_imc_image(
+                    file,
+                    quantile=quant_select.value,
+                    minimum_pixel_counts=minimum_pixel_counts_select.value,
+                    colormap=vispy.color.Colormap([[0, 0, 0], colour]),
+                    layer_name=image,
+                )
+                loaded_images += 1
+            except Exception as exc:
+                print(f'Could not load image "{image}" from "{file}": {exc}')
+
+        if loaded_images == 0:
+            print('No images were loaded.')
 
     # Identify categorical observation columns
-    categorical_obs_columns = [col for col in adata.obs.columns if adata.obs[col].dtype == 'category']
+    categorical_obs_columns = [
+        col for col in adata.obs.columns
+        if isinstance(adata.obs[col].dtype, pd.CategoricalDtype)
+    ]
     
     @magicgui(x=dict(widget_type='Select', choices=categorical_obs_columns, label='Select categories'), call_button='Add as masks')
     def _obs_selector(x: list):
@@ -807,7 +1155,7 @@ def napari_imc_explorer(
                 roi_name=roi_selector.value,
                 adata=adata,
                 pop_obs=obs,
-                roi_obs='ROI',
+                roi_obs=roi_obs,
                 adata_colormap=True,
                 colour_map=colormaps['tab20'].colors,
                 add_individual_pops=individual_pops_toggle.value
@@ -840,7 +1188,7 @@ def napari_imc_explorer(
                 adata=adata,
                 pop_obs=None,
                 quant=quant,
-                roi_obs='ROI',
+                roi_obs=roi_obs,
                 adata_colormap=False,
                 add_individual_pops=individual_pops_toggle.value
             )
@@ -1120,7 +1468,7 @@ def napari_imc_explorer(
 
         try:
             _write_annotation_mapping(annotation_name, mapping_df)
-            for roi_name in roi_list:
+            for roi_name in all_roi_list:
                 _save_annotation_array(annotation_name, roi_name, _blank_annotation_array(roi_name))
         except Exception as exc:
             _set_annotation_status(f'Could not create annotation "{annotation_name}": {exc}')
@@ -1129,7 +1477,7 @@ def napari_imc_explorer(
         _refresh_annotation_choices(selected_annotation=annotation_name)
         _load_selected_annotation_for_current_roi()
         _set_annotation_status(
-            f'Created annotation "{annotation_name}" with blank TIFF labels for {len(roi_list)} ROI(s).'
+            f'Created annotation "{annotation_name}" with blank TIFF labels for {len(all_roi_list)} ROI(s).'
         )
 
     def _sync_selected_annotation_to_adata():
@@ -1305,6 +1653,588 @@ def napari_imc_explorer(
     _rebuild_annotation_creator_rows()
     _refresh_annotation_choices()
 
+    population_qc_image_names = list(dict.fromkeys([str(image_name) for image_name in im_list]))
+    population_qc_var_names = pd.Index([str(var_name) for var_name in adata.var_names.tolist()], dtype='object')
+
+    def _population_qc_marker_aliases(marker_name):
+        marker_text = str(marker_name).strip()
+        if not marker_text:
+            return []
+
+        aliases = [marker_text]
+        tokens = [token for token in re.split(r'[_\-\.\s]+', marker_text) if token]
+        aliases.extend(tokens)
+        aliases.extend(
+            f'{tokens[index]}_{tokens[index + 1]}'
+            for index in range(len(tokens) - 1)
+        )
+        return list(dict.fromkeys(alias.lower() for alias in aliases if alias))
+
+    def _population_qc_display_candidate(marker_name):
+        tokens = [token for token in re.split(r'[_\-\.\s]+', str(marker_name)) if token]
+        return tokens[-1] if tokens else str(marker_name)
+
+    population_qc_display_candidates = {
+        image_name: _population_qc_display_candidate(image_name)
+        for image_name in population_qc_image_names
+    }
+    population_qc_display_candidate_counts = pd.Series(
+        list(population_qc_display_candidates.values()),
+        dtype='object',
+    ).value_counts()
+    population_qc_image_name_to_display = {}
+    population_qc_display_to_image_name = {}
+    for image_name in population_qc_image_names:
+        display_candidate = population_qc_display_candidates[image_name]
+        if population_qc_display_candidate_counts.get(display_candidate, 0) == 1:
+            display_name = display_candidate
+        else:
+            display_name = image_name
+        population_qc_image_name_to_display[image_name] = display_name
+        population_qc_display_to_image_name[display_name] = image_name
+
+    population_qc_image_alias_to_display = {}
+    for image_name, display_name in population_qc_image_name_to_display.items():
+        for alias in _population_qc_marker_aliases(image_name):
+            population_qc_image_alias_to_display.setdefault(alias, display_name)
+        for alias in _population_qc_marker_aliases(display_name):
+            population_qc_image_alias_to_display.setdefault(alias, display_name)
+
+    population_qc_var_alias_to_name = {}
+    for var_name in population_qc_var_names.tolist():
+        for alias in _population_qc_marker_aliases(var_name):
+            population_qc_var_alias_to_name.setdefault(alias, var_name)
+
+    def _resolve_population_qc_display_marker(marker_name):
+        marker_text = str(marker_name).strip()
+        if not marker_text:
+            return None
+
+        if marker_text in population_qc_display_to_image_name:
+            return marker_text
+        if marker_text in population_qc_image_name_to_display:
+            return population_qc_image_name_to_display[marker_text]
+
+        for alias in _population_qc_marker_aliases(marker_text):
+            if alias in population_qc_image_alias_to_display:
+                return population_qc_image_alias_to_display[alias]
+        return None
+
+    def _resolve_population_qc_image_marker(marker_name):
+        display_name = _resolve_population_qc_display_marker(marker_name)
+        if display_name is None:
+            return None
+        return population_qc_display_to_image_name.get(display_name)
+
+    def _resolve_population_qc_var_name(marker_name):
+        marker_text = str(marker_name).strip()
+        if not marker_text:
+            return None
+
+        if marker_text in population_qc_var_names:
+            return marker_text
+
+        image_name = _resolve_population_qc_image_marker(marker_text)
+        if image_name is not None and image_name in population_qc_var_names:
+            return image_name
+
+        for alias in _population_qc_marker_aliases(marker_text):
+            if alias in population_qc_var_alias_to_name:
+                return population_qc_var_alias_to_name[alias]
+        return None
+
+    population_qc_marker_choices = list(population_qc_display_to_image_name.keys())
+    population_qc_rankable_markers = []
+    seen_population_qc_var_names = set()
+    for display_name in population_qc_marker_choices:
+        var_name = _resolve_population_qc_var_name(display_name)
+        if var_name is None or var_name in seen_population_qc_var_names:
+            continue
+        population_qc_rankable_markers.append((display_name, var_name))
+        seen_population_qc_var_names.add(var_name)
+
+    population_qc_settings_columns = [
+        'Red', 'Green', 'Blue',
+        'Red_min', 'Red_max',
+        'Green_min', 'Green_max',
+        'Blue_min', 'Blue_max',
+    ]
+    population_qc_default_minimum = 0.2
+    population_qc_default_maximum = 'q0.999'
+
+    def _population_qc_clean_value(value):
+        if value is None:
+            return ''
+        try:
+            if pd.isna(value):
+                return ''
+        except TypeError:
+            pass
+        return str(value).strip()
+
+    def _population_qc_settings_path(pop_obs_name):
+        if not pop_obs_name:
+            return None
+        return Path.cwd() / f'backgating_settings_{pop_obs_name}.csv'
+
+    def _read_population_qc_settings(pop_obs_name):
+        settings_path = _population_qc_settings_path(pop_obs_name)
+        if settings_path is None:
+            return None, pd.DataFrame(columns=population_qc_settings_columns)
+
+        if settings_path.exists():
+            settings_df = pd.read_csv(settings_path, index_col=0)
+        else:
+            settings_df = pd.DataFrame()
+
+        if settings_df.empty:
+            settings_df = pd.DataFrame(columns=population_qc_settings_columns)
+        else:
+            settings_df.index = settings_df.index.map(str)
+
+        for column_name in population_qc_settings_columns:
+            if column_name not in settings_df.columns:
+                settings_df[column_name] = None
+
+        return settings_path, settings_df
+
+    def _write_population_qc_settings(settings_path, settings_df):
+        if settings_path is None:
+            raise ValueError('No settings path is available for Population QC.')
+
+        settings_df = settings_df.loc[:, population_qc_settings_columns].copy()
+        settings_df.index = settings_df.index.map(str)
+        settings_df.index.name = 'population'
+        settings_df.sort_index().to_csv(settings_path)
+
+    def _population_qc_top_markers(pop_obs_name, population_name, top_n=3):
+        if not pop_obs_name or not population_name or pop_obs_name not in adata.obs.columns:
+            return []
+        if not population_qc_rankable_markers:
+            return []
+
+        population_mask = adata.obs[pop_obs_name].astype(str).to_numpy() == str(population_name)
+        if int(population_mask.sum()) == 0:
+            return []
+
+        display_names = [display_name for display_name, _ in population_qc_rankable_markers]
+        var_names = [var_name for _, var_name in population_qc_rankable_markers]
+        var_positions = population_qc_var_names.get_indexer(var_names)
+        valid_mask = var_positions >= 0
+        if not np.any(valid_mask):
+            return []
+
+        valid_display_names = [display_name for display_name, is_valid in zip(display_names, valid_mask) if is_valid]
+        valid_positions = var_positions[valid_mask]
+
+        population_matrix = adata.X[population_mask, :]
+        population_matrix = population_matrix[:, valid_positions]
+        mean_expression = np.asarray(population_matrix.mean(axis=0)).ravel()
+        marker_means = pd.Series(mean_expression, index=valid_display_names).dropna()
+        return marker_means.nlargest(top_n).index.tolist()
+
+    def _population_qc_default_row(pop_obs_name, population_name):
+        top_markers = _population_qc_top_markers(pop_obs_name, population_name, top_n=3)
+        row = {
+            'Red': top_markers[0] if len(top_markers) > 0 else None,
+            'Green': top_markers[1] if len(top_markers) > 1 else None,
+            'Blue': top_markers[2] if len(top_markers) > 2 else None,
+            'Red_min': population_qc_default_minimum,
+            'Red_max': population_qc_default_maximum,
+            'Green_min': population_qc_default_minimum,
+            'Green_max': population_qc_default_maximum,
+            'Blue_min': population_qc_default_minimum,
+            'Blue_max': population_qc_default_maximum,
+        }
+        return row
+
+    population_qc_widget = QWidget()
+    population_qc_layout = QVBoxLayout()
+    population_qc_widget.setLayout(population_qc_layout)
+
+    population_qc_description = QLabel(
+        'Use a population-specific RGB marker definition and load the selected ROI with only those channels plus the population mask.'
+    )
+    population_qc_description.setWordWrap(True)
+
+    population_qc_obs_combo = QComboBox()
+    population_qc_obs_combo.addItems(categorical_obs_columns)
+    population_qc_population_combo = QComboBox()
+
+    population_qc_settings_path_label = QLabel('Settings CSV: none')
+    population_qc_settings_path_label.setWordWrap(True)
+
+    population_qc_red_combo = QComboBox()
+    population_qc_green_combo = QComboBox()
+    population_qc_blue_combo = QComboBox()
+
+    population_qc_create_button = QPushButton('Create blank settings CSV')
+    population_qc_save_button = QPushButton('Save current RGB row')
+    population_qc_load_button = QPushButton('Load population view')
+
+    population_qc_top_rois_title = QLabel()
+    population_qc_top_rois_widget = QWidget()
+    population_qc_top_rois_layout = QVBoxLayout()
+    population_qc_top_rois_layout.setContentsMargins(0, 0, 0, 0)
+    population_qc_top_rois_widget.setLayout(population_qc_top_rois_layout)
+    population_qc_top_rois_key = None
+    population_qc_clicked_rois = set()
+
+    population_qc_status_label = QLabel('Select a population obs and population.')
+    population_qc_status_label.setWordWrap(True)
+
+    def _set_population_qc_status(message):
+        population_qc_status_label.setText(message)
+        print(message)
+
+    def _update_population_qc_top_rois_title():
+        if randomize_initial_rois:
+            if population_qc_roi_button_limit is None:
+                title_text = 'Random ROIs'
+            else:
+                title_text = f'Random {population_qc_roi_button_limit} ROIs'
+        else:
+            if population_qc_roi_button_limit is None:
+                title_text = 'ROIs by abundance'
+            else:
+                title_text = f'Top {population_qc_roi_button_limit} ROIs by abundance'
+        population_qc_top_rois_title.setText(f'<b>{title_text}</b>')
+
+    def _populate_population_qc_marker_combo(combo_box):
+        combo_box.clear()
+        combo_box.addItem('')
+        combo_box.addItems(population_qc_marker_choices)
+
+    def _set_population_qc_marker_value(combo_box, value):
+        resolved_marker = _resolve_population_qc_display_marker(_population_qc_clean_value(value))
+        if not resolved_marker:
+            combo_box.setCurrentIndex(0)
+            return _population_qc_clean_value(value) == ''
+
+        selected_index = combo_box.findText(resolved_marker)
+        if selected_index >= 0:
+            combo_box.setCurrentIndex(selected_index)
+            return True
+
+        combo_box.setCurrentIndex(0)
+        return False
+
+    def _get_population_qc_selected_obs():
+        value = population_qc_obs_combo.currentText().strip()
+        return value or None
+
+    def _get_population_qc_selected_population():
+        value = population_qc_population_combo.currentText().strip()
+        return value or None
+
+    def _get_population_qc_marker_values():
+        return [
+            _population_qc_clean_value(population_qc_red_combo.currentText()),
+            _population_qc_clean_value(population_qc_green_combo.currentText()),
+            _population_qc_clean_value(population_qc_blue_combo.currentText()),
+        ]
+
+    def _set_population_qc_roi_button_style(button, visited=False):
+        if visited:
+            button.setStyleSheet(
+                'background-color: #b5b5b5; color: #222222; border: 1px solid #7f7f7f;'
+            )
+        else:
+            button.setStyleSheet(
+                'background-color: #8fce8f; color: #1d1d1d; border: 1px solid #4f8a4f;'
+            )
+
+    def _set_population_qc_roi(roi_name):
+        if not _ensure_roi_in_selector(roi_name):
+            _set_population_qc_status(f'ROI "{roi_name}" is not available in Controls.')
+            return False
+        roi_selector.value = roi_name
+        return True
+
+    def _activate_population_qc_roi_button(roi_name, button):
+        if not _set_population_qc_roi(roi_name):
+            return
+        if _load_population_qc_view():
+            population_qc_clicked_rois.add(str(roi_name))
+            _set_population_qc_roi_button_style(button, visited=True)
+
+    def _update_population_qc_top_rois():
+        nonlocal population_qc_top_rois_key
+        _clear_qt_layout(population_qc_top_rois_layout)
+        _update_population_qc_top_rois_title()
+
+        selected_obs = _get_population_qc_selected_obs()
+        selected_population = _get_population_qc_selected_population()
+        current_key = (
+            str(selected_obs) if selected_obs is not None else None,
+            str(selected_population) if selected_population is not None else None,
+        )
+        if current_key != population_qc_top_rois_key:
+            population_qc_top_rois_key = current_key
+            population_qc_clicked_rois.clear()
+
+        if not selected_obs or not selected_population:
+            population_qc_top_rois_layout.addWidget(QLabel('Select a population to see ROI shortcuts.'))
+            return
+
+        roi_counts = (
+            adata.obs.loc[
+                adata.obs[selected_obs].astype(str) == str(selected_population),
+                roi_obs,
+            ]
+            .dropna()
+            .astype(str)
+            .value_counts()
+        )
+        roi_counts = roi_counts.loc[[roi_name for roi_name in roi_counts.index if roi_name in all_roi_set]]
+
+        if roi_counts.empty:
+            population_qc_top_rois_layout.addWidget(QLabel('No ROIs contain this population.'))
+            return
+
+        display_roi_names = _select_population_qc_roi_choices(roi_counts.index.tolist())
+        display_roi_items = [(roi_name, roi_counts.loc[roi_name]) for roi_name in display_roi_names]
+
+        for roi_name, count in display_roi_items:
+            button = QPushButton(f'{roi_name} ({count})')
+            _set_population_qc_roi_button_style(button, visited=str(roi_name) in population_qc_clicked_rois)
+            button.clicked.connect(
+                lambda checked=False, roi_name=roi_name, button=button: _activate_population_qc_roi_button(roi_name, button)
+            )
+            population_qc_top_rois_layout.addWidget(button)
+
+    def _load_population_qc_markers():
+        selected_obs = _get_population_qc_selected_obs()
+        selected_population = _get_population_qc_selected_population()
+
+        settings_path = _population_qc_settings_path(selected_obs)
+        if settings_path is None:
+            population_qc_settings_path_label.setText('Settings CSV: none')
+        else:
+            population_qc_settings_path_label.setText(f'Settings CSV: {settings_path}')
+
+        if not selected_obs or not selected_population:
+            for combo_box in [population_qc_red_combo, population_qc_green_combo, population_qc_blue_combo]:
+                combo_box.setCurrentIndex(0)
+            _update_population_qc_top_rois()
+            return
+
+        settings_path, settings_df = _read_population_qc_settings(selected_obs)
+        invalid_markers = []
+
+        if settings_path.exists() and selected_population in settings_df.index:
+            marker_row = settings_df.loc[selected_population]
+            message = (
+                f'Loaded RGB markers for "{selected_population}" from {settings_path.name}.'
+            )
+        else:
+            marker_row = pd.Series(_population_qc_default_row(selected_obs, selected_population))
+            if settings_path.exists():
+                message = (
+                    f'"{selected_population}" is missing from {settings_path.name}; '
+                    'showing unsaved defaults from mean expression.'
+                )
+            else:
+                message = (
+                    f'No settings file found for "{selected_obs}"; showing unsaved defaults from mean expression.'
+                )
+
+        for combo_box, column_name in zip(
+            [population_qc_red_combo, population_qc_green_combo, population_qc_blue_combo],
+            ['Red', 'Green', 'Blue'],
+        ):
+            if not _set_population_qc_marker_value(combo_box, marker_row.get(column_name)):
+                invalid_markers.append(_population_qc_clean_value(marker_row.get(column_name)))
+
+        if invalid_markers:
+            message = (
+                f'{message} Unavailable marker(s) in settings: {", ".join(marker for marker in invalid_markers if marker)}.'
+            )
+
+        _update_population_qc_top_rois()
+        _set_population_qc_status(message)
+
+    def _refresh_population_qc_population_choices():
+        selected_obs = _get_population_qc_selected_obs()
+        current_population = _get_population_qc_selected_population()
+        population_choices = _population_values(selected_obs) if selected_obs else []
+
+        population_qc_population_combo.blockSignals(True)
+        population_qc_population_combo.clear()
+        population_qc_population_combo.addItems(population_choices)
+        if population_choices:
+            if current_population in population_choices:
+                population_qc_population_combo.setCurrentText(current_population)
+            else:
+                population_qc_population_combo.setCurrentIndex(0)
+            population_qc_population_combo.setEnabled(True)
+        else:
+            population_qc_population_combo.setEnabled(False)
+        population_qc_population_combo.blockSignals(False)
+
+        _load_population_qc_markers()
+
+    def _create_population_qc_settings_file():
+        selected_obs = _get_population_qc_selected_obs()
+        if not selected_obs:
+            _set_population_qc_status('Select a population obs before creating a settings CSV.')
+            return
+        if not population_qc_marker_choices:
+            _set_population_qc_status('No image markers are available to build default Population QC settings.')
+            return
+
+        settings_path, settings_df = _read_population_qc_settings(selected_obs)
+        population_choices = _population_values(selected_obs)
+
+        for population_name in population_choices:
+            default_row = _population_qc_default_row(selected_obs, population_name)
+            if population_name not in settings_df.index:
+                settings_df.loc[population_name, population_qc_settings_columns] = None
+            for column_name in population_qc_settings_columns:
+                current_value = _population_qc_clean_value(settings_df.loc[population_name, column_name])
+                if not current_value:
+                    settings_df.loc[population_name, column_name] = default_row[column_name]
+
+        _write_population_qc_settings(settings_path, settings_df)
+        _load_population_qc_markers()
+        _set_population_qc_status(
+            f'Created or updated Population QC settings at {settings_path}.'
+        )
+
+    def _save_population_qc_settings_row():
+        selected_obs = _get_population_qc_selected_obs()
+        selected_population = _get_population_qc_selected_population()
+        if not selected_obs or not selected_population:
+            _set_population_qc_status('Select a population obs and population before saving settings.')
+            return
+
+        selected_markers = _get_population_qc_marker_values()
+        non_empty_markers = [marker for marker in selected_markers if marker]
+        if not non_empty_markers:
+            _set_population_qc_status('Choose at least one marker before saving the Population QC settings row.')
+            return
+
+        invalid_markers = [
+            marker for marker in non_empty_markers
+            if _resolve_population_qc_image_marker(marker) is None
+        ]
+        if invalid_markers:
+            _set_population_qc_status(
+                f'Cannot save markers that are not available as images: {", ".join(invalid_markers)}.'
+            )
+            return
+
+        settings_path, settings_df = _read_population_qc_settings(selected_obs)
+        if selected_population not in settings_df.index:
+            settings_df.loc[selected_population, population_qc_settings_columns] = None
+
+        default_row = _population_qc_default_row(selected_obs, selected_population)
+        for column_name, marker_value in zip(['Red', 'Green', 'Blue'], selected_markers):
+            settings_df.loc[selected_population, column_name] = marker_value or None
+        for column_name in ['Red_min', 'Red_max', 'Green_min', 'Green_max', 'Blue_min', 'Blue_max']:
+            current_value = _population_qc_clean_value(settings_df.loc[selected_population, column_name])
+            if not current_value:
+                settings_df.loc[selected_population, column_name] = default_row[column_name]
+
+        _write_population_qc_settings(settings_path, settings_df)
+        _set_population_qc_status(
+            f'Saved RGB markers for "{selected_population}" to {settings_path.name}.'
+        )
+
+    def _load_population_qc_view():
+        selected_obs = _get_population_qc_selected_obs()
+        selected_population = _get_population_qc_selected_population()
+        selected_roi = str(roi_selector.value)
+
+        if not selected_obs or not selected_population:
+            _set_population_qc_status('Select a population obs and population before loading a Population QC view.')
+            return False
+
+        selected_markers = _get_population_qc_marker_values()
+        markers_to_load = [marker for marker in selected_markers if marker]
+        if not markers_to_load:
+            _set_population_qc_status('Choose at least one marker before loading a Population QC view.')
+            return False
+        if len(markers_to_load) != len(set(markers_to_load)):
+            _set_population_qc_status('Population QC expects distinct Red, Green, and Blue markers.')
+            return False
+
+        resolved_markers_to_load = [
+            _resolve_population_qc_image_marker(marker)
+            for marker in markers_to_load
+        ]
+        invalid_markers = [
+            marker for marker, resolved_marker in zip(markers_to_load, resolved_markers_to_load)
+            if resolved_marker is None
+        ]
+        if invalid_markers:
+            _set_population_qc_status(
+                f'Cannot load unavailable image marker(s): {", ".join(invalid_markers)}.'
+            )
+            return False
+        if len(resolved_markers_to_load) != len(set(resolved_markers_to_load)):
+            _set_population_qc_status('Population QC expects distinct Red, Green, and Blue markers.')
+            return False
+
+        _delete_all_layers()
+        _add_images_from_list(resolved_markers_to_load)
+        _add_masks(
+            roi_name=selected_roi,
+            adata=adata,
+            pop_obs=selected_obs,
+            roi_obs=roi_obs,
+            adata_colormap=True,
+            colour_map=colormaps['tab20'].colors,
+            add_individual_pops=True,
+            selected_populations=[selected_population],
+            add_combined_mask=False,
+            individual_layer_name_prefix=f'{selected_obs}::',
+            individual_layers_visible=True,
+            add_base_mask=False,
+        )
+        _set_population_qc_status(
+            f'Loaded ROI "{selected_roi}" with {", ".join(markers_to_load)} and the "{selected_population}" mask.'
+        )
+        return True
+
+    for combo_box in [population_qc_red_combo, population_qc_green_combo, population_qc_blue_combo]:
+        _populate_population_qc_marker_combo(combo_box)
+
+    population_qc_layout.addWidget(population_qc_description)
+    population_qc_layout.addWidget(QLabel('Population obs'))
+    population_qc_layout.addWidget(population_qc_obs_combo)
+    population_qc_layout.addWidget(QLabel('Population'))
+    population_qc_layout.addWidget(population_qc_population_combo)
+    population_qc_layout.addWidget(population_qc_settings_path_label)
+    population_qc_layout.addWidget(QLabel('Red marker'))
+    population_qc_layout.addWidget(population_qc_red_combo)
+    population_qc_layout.addWidget(QLabel('Green marker'))
+    population_qc_layout.addWidget(population_qc_green_combo)
+    population_qc_layout.addWidget(QLabel('Blue marker'))
+    population_qc_layout.addWidget(population_qc_blue_combo)
+    population_qc_layout.addWidget(population_qc_create_button)
+    population_qc_layout.addWidget(population_qc_save_button)
+    population_qc_layout.addWidget(population_qc_load_button)
+    population_qc_layout.addWidget(population_qc_top_rois_title)
+    population_qc_layout.addWidget(population_qc_top_rois_widget)
+    population_qc_layout.addWidget(population_qc_status_label)
+
+    population_qc_obs_combo.currentTextChanged.connect(lambda text: _refresh_population_qc_population_choices())
+    population_qc_population_combo.currentTextChanged.connect(lambda text: _load_population_qc_markers())
+    population_qc_create_button.clicked.connect(lambda checked=False: _create_population_qc_settings_file())
+    population_qc_save_button.clicked.connect(lambda checked=False: _save_population_qc_settings_row())
+    population_qc_load_button.clicked.connect(lambda checked=False: _load_population_qc_view())
+
+    if categorical_obs_columns:
+        _refresh_population_qc_population_choices()
+    else:
+        population_qc_obs_combo.setEnabled(False)
+        population_qc_population_combo.setEnabled(False)
+        population_qc_create_button.setEnabled(False)
+        population_qc_save_button.setEnabled(False)
+        population_qc_load_button.setEnabled(False)
+        _set_population_qc_status('No categorical obs columns are available for Population QC.')
+
     def build_dock_panel(widget_items):
         """
         Build a reusable QWidget panel from existing controls.
@@ -1325,9 +2255,11 @@ def napari_imc_explorer(
             roi_selector,
             hide_all_layers_button,
             delete_all_layers_button,
+            layers_to_top_button,
             add_roi_images_button,
             add_masks_button,
         ]),
+        'Population QC': population_qc_widget,
         'Add raw images': build_dock_panel([
             _image_selector,
             quant_select_label,
@@ -1347,6 +2279,7 @@ def napari_imc_explorer(
     }
     dock_order = [
         'Controls',
+        'Population QC',
         'Add raw images',
         'Categories as masks',
         'Numeric as masks',
@@ -1420,6 +2353,8 @@ def napari_imc_explorer(
 
         if dock_name == 'Layer management':
             update_layer_list(silent=True)
+        elif dock_name == 'Population QC':
+            _load_population_qc_markers()
 
         center_dock_on_main_window(dock_widget)
         dock_widget.activateWindow()
@@ -1666,6 +2601,8 @@ def napari_imc_explorer(
         image_select_widget=image_select_widget,
         obs_select_widget=obs_select_widget,
         quant_select_widget=quant_select_widget,
+        all_roi_list=list(all_roi_list),
+        initial_roi_selector_choices=_get_roi_selector_choices,
         get_selected_roi=lambda: roi_selector.value,
         get_selected_layer_name=lambda: (list(viewer.layers.selection)[0].name if viewer.layers.selection else None),
         get_selected_images=get_selected_images,
@@ -1678,6 +2615,15 @@ def napari_imc_explorer(
         load_annotation_for_current_roi=_load_selected_annotation_for_current_roi,
         save_annotation_for_current_roi=_save_selected_annotation_for_current_roi,
         sync_annotation_to_adata=_sync_selected_annotation_to_adata,
+        population_qc_widget=population_qc_widget,
+        population_qc_obs_selector=population_qc_obs_combo,
+        population_qc_population_selector=population_qc_population_combo,
+        population_qc_red_marker=population_qc_red_combo,
+        population_qc_green_marker=population_qc_green_combo,
+        population_qc_blue_marker=population_qc_blue_combo,
+        population_qc_create_settings=_create_population_qc_settings_file,
+        population_qc_save_settings=_save_population_qc_settings_row,
+        population_qc_load_view=_load_population_qc_view,
         show_dock=show_dock,
         show_all_docks=show_all_docks,
         panel_launcher_dock=panel_launcher_dock,
