@@ -1040,18 +1040,18 @@ def _save_pair_barplots(
             if leg is not None:
                 leg.remove()
 
-    def _add_pcf_zero_line(ax: Any) -> None:
+    def _add_pcf_one_line(ax: Any) -> None:
         if not is_pcf_analysis:
             return
         if str(ax.get_yscale()).lower() == "log":
             logging.warning(
-                "PCF barplot for metric '%s' is using log scale, so a y=0 reference line cannot be displayed.",
+                "PCF barplot for metric '%s' is using log scale, so a y=1 reference line cannot be displayed.",
                 metric,
             )
             return
-        ax.axhline(0.0, color="black", linestyle=":", linewidth=1.0, alpha=0.8, zorder=0)
+        ax.axhline(1.0, color="black", linestyle=":", linewidth=1.0, alpha=0.8, zorder=0)
         y_min, y_max = ax.get_ylim()
-        ax.set_ylim(min(float(y_min), 0.0), max(float(y_max), 0.0))
+        ax.set_ylim(min(float(y_min), 1.0), max(float(y_max), 1.0))
 
     for source, targets in pairs.items():
         for target in targets:
@@ -1131,7 +1131,7 @@ def _save_pair_barplots(
                 metric=metric,
                 intelligent_params=y_scale_intelligent_params,
             )
-            _add_pcf_zero_line(ax)
+            _add_pcf_one_line(ax)
             ax.grid(False)
             fig.tight_layout()
 
@@ -1265,7 +1265,7 @@ def _save_pair_barplots(
             metric=metric,
             intelligent_params=y_scale_intelligent_params,
         )
-        _add_pcf_zero_line(ax)
+        _add_pcf_one_line(ax)
         ax.grid(False)
         fig.tight_layout()
 
