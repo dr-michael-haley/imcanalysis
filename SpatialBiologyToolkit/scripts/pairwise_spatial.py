@@ -146,13 +146,25 @@ def _population_order(adata: ad.AnnData, population_obs: str) -> List[str]:
     return [str(x) for x in pd.unique(series.dropna())]
 
 
-def _obs_order(adata: ad.AnnData, obs_key: str) -> List[str]:
+def _obs_order(
+    adata: ad.AnnData,
+    obs_key: str,
+    preferred_order: Optional[Sequence[str]] = None,
+) -> List[str]:
     if obs_key not in adata.obs.columns:
         return []
     series = adata.obs[obs_key]
     if pd.api.types.is_categorical_dtype(series):
-        return [str(x) for x in series.cat.categories if pd.notna(x)]
-    return [str(x) for x in pd.unique(series.dropna())]
+        observed = [str(x) for x in series.cat.categories if pd.notna(x)]
+    else:
+        observed = [str(x) for x in pd.unique(series.dropna())]
+
+    if not preferred_order:
+        return observed
+
+    observed_set = set(observed)
+    ordered = _dedupe_keep_order([str(x) for x in preferred_order if str(x) in observed_set])
+    return ordered or observed
 
 
 def _population_color_map(
@@ -161,6 +173,15 @@ def _population_color_map(
     key = f"{population_obs}_colors"
     if key in adata.uns:
         colors = list(adata.uns[key])
+        series = adata.obs[population_obs] if population_obs in adata.obs.columns else None
+        if series is not None and pd.api.types.is_categorical_dtype(series):
+            categories = [str(x) for x in series.cat.categories if pd.notna(x)]
+            if len(colors) >= len(categories):
+                full_map = {str(pop): str(colors[i]) for i, pop in enumerate(categories)}
+                return {
+                    str(pop): full_map.get(str(pop), str(colors[min(i, len(colors) - 1)]))
+                    for i, pop in enumerate(ordered_pops)
+                }
         if len(colors) >= len(ordered_pops):
             return {str(pop): str(colors[i]) for i, pop in enumerate(ordered_pops)}
         logging.warning(
@@ -180,6 +201,46 @@ def _label_colors(labels: Sequence[str], color_map: Dict[str, str]) -> pd.Series
         index=list(labels),
         dtype=object,
     )
+
+
+def _filter_dataframe_to_allowed_groups(
+    df: Optional[pd.DataFrame],
+    *,
+    group_col: Optional[str],
+    allowed_groups: Optional[Sequence[str]],
+    label: str,
+) -> Optional[pd.DataFrame]:
+    if df is None or df.empty or not group_col or not allowed_groups or group_col not in df.columns:
+        return df
+
+    allowed = [str(x) for x in allowed_groups]
+    group_values = df[group_col].astype("string")
+    mask = group_values.isin(allowed).fillna(False)
+    removed = int((~mask).sum())
+    filtered = df.loc[mask].copy()
+    if removed > 0:
+        logging.info(
+            "Filtered %d row(s) from %s using %s groups %s.",
+            removed,
+            label,
+            group_col,
+            allowed,
+        )
+    if filtered.empty:
+        logging.warning(
+            "%s became empty after filtering %s to configured groups %s.",
+            label,
+            group_col,
+            allowed,
+        )
+        return filtered
+
+    filtered[group_col] = pd.Categorical(
+        filtered[group_col].astype(str),
+        categories=allowed,
+        ordered=True,
+    )
+    return filtered
 
 
 def _normalise_population_pairs(
@@ -943,6 +1004,7 @@ def _save_pair_barplots(
         return
     if y_scale_intelligent_params is None:
         y_scale_intelligent_params = _resolve_intelligent_scale_params(None)
+    is_pcf_analysis = str(analysis).strip().lower() == "pcf"
 
     def _ordered_levels(series: pd.Series) -> List[str]:
         if pd.api.types.is_categorical_dtype(series):
@@ -977,6 +1039,19 @@ def _save_pair_barplots(
             leg = ax.get_legend()
             if leg is not None:
                 leg.remove()
+
+    def _add_pcf_zero_line(ax: Any) -> None:
+        if not is_pcf_analysis:
+            return
+        if str(ax.get_yscale()).lower() == "log":
+            logging.warning(
+                "PCF barplot for metric '%s' is using log scale, so a y=0 reference line cannot be displayed.",
+                metric,
+            )
+            return
+        ax.axhline(0.0, color="black", linestyle=":", linewidth=1.0, alpha=0.8, zorder=0)
+        y_min, y_max = ax.get_ylim()
+        ax.set_ylim(min(float(y_min), 0.0), max(float(y_max), 0.0))
 
     for source, targets in pairs.items():
         for target in targets:
@@ -1056,6 +1131,7 @@ def _save_pair_barplots(
                 metric=metric,
                 intelligent_params=y_scale_intelligent_params,
             )
+            _add_pcf_zero_line(ax)
             ax.grid(False)
             fig.tight_layout()
 
@@ -1189,6 +1265,7 @@ def _save_pair_barplots(
             metric=metric,
             intelligent_params=y_scale_intelligent_params,
         )
+        _add_pcf_zero_line(ax)
         ax.grid(False)
         fig.tight_layout()
 
@@ -1315,6 +1392,11 @@ def run_pairwise_spatial_analyses(
         general_config.master_index_obs,
         default="Master_Index",
     )
+    pairwise_config.groupby_obs_groups = coalesce_config_list(
+        getattr(pairwise_config, "groupby_obs_groups", None),
+        general_config.groupby_obs_groups,
+        default=[],
+    ) or []
     if not pairwise_config.metadata_obs_columns:
         pairwise_config.metadata_obs_columns = (
             coalesce_config_list(general_config.metadata_obs, default=[]) or []
@@ -1336,13 +1418,14 @@ def run_pairwise_spatial_analyses(
 
     logging.info(
         "Resolved Pairwise obs keys: population_obs='%s', groupby_obs='%s', roi_obs='%s', x_coord_obs='%s', "
-        "y_coord_obs='%s', master_index_obs='%s'.",
+        "y_coord_obs='%s', master_index_obs='%s', groupby_obs_groups=%s.",
         pairwise_config.population_obs,
         pairwise_config.groupby_obs,
         pairwise_config.roi_obs,
         pairwise_config.x_coord_obs,
         pairwise_config.y_coord_obs,
         pairwise_config.master_index_obs,
+        pairwise_config.groupby_obs_groups,
     )
 
     if pairwise_config.population_obs not in adata.obs.columns:
@@ -1350,6 +1433,75 @@ def run_pairwise_spatial_analyses(
             f"Configured population_obs '{pairwise_config.population_obs}' not found in AnnData.obs."
         )
     adata.obs[pairwise_config.population_obs] = adata.obs[pairwise_config.population_obs].astype("category")
+
+    allowed_groups: Optional[List[str]] = None
+    original_group_color_map: Optional[Dict[str, str]] = None
+    if pairwise_config.groupby_obs and pairwise_config.groupby_obs in adata.obs.columns:
+        original_group_order = _obs_order(adata, pairwise_config.groupby_obs)
+        if original_group_order:
+            original_group_color_map = _population_color_map(
+                adata,
+                pairwise_config.groupby_obs,
+                original_group_order,
+            )
+    if pairwise_config.groupby_obs and pairwise_config.groupby_obs_groups:
+        if pairwise_config.groupby_obs not in adata.obs.columns:
+            logging.warning(
+                "Configured groupby_obs '%s' is missing from AnnData.obs, so groupby_obs_groups=%s cannot be applied.",
+                pairwise_config.groupby_obs,
+                pairwise_config.groupby_obs_groups,
+            )
+        else:
+            available_groups = set(adata.obs[pairwise_config.groupby_obs].dropna().astype(str).unique().tolist())
+            configured_groups = _dedupe_keep_order([str(x) for x in pairwise_config.groupby_obs_groups])
+            missing_groups = [group for group in configured_groups if group not in available_groups]
+            allowed_groups = [group for group in configured_groups if group in available_groups]
+            if missing_groups:
+                logging.warning(
+                    "Configured groupby_obs_groups for '%s' were not found in AnnData.obs: %s",
+                    pairwise_config.groupby_obs,
+                    missing_groups,
+                )
+            if not allowed_groups:
+                raise ValueError(
+                    "None of the configured groupby_obs_groups were found in AnnData.obs['{}']: {}".format(
+                        pairwise_config.groupby_obs,
+                        configured_groups,
+                    )
+                )
+
+            group_mask = adata.obs[pairwise_config.groupby_obs].astype("string").isin(allowed_groups).fillna(False)
+            removed_cells = int((~group_mask).sum())
+            adata = adata[group_mask].copy()
+            if adata.n_obs == 0:
+                raise ValueError(
+                    "No cells remain after filtering '{}' to groupby_obs_groups={}".format(
+                        pairwise_config.groupby_obs,
+                        allowed_groups,
+                    )
+                )
+            if original_group_color_map is not None:
+                adata.uns[f"{pairwise_config.groupby_obs}_colors"] = [
+                    str(original_group_color_map.get(group, "#808080"))
+                    for group in allowed_groups
+                ]
+            adata.obs[pairwise_config.groupby_obs] = pd.Categorical(
+                adata.obs[pairwise_config.groupby_obs].astype(str),
+                categories=allowed_groups,
+                ordered=True,
+            )
+            logging.info(
+                "Filtered PairwiseSpatial input to %d/%d cells using %s groups %s (removed %d cells).",
+                int(adata.n_obs),
+                int(group_mask.shape[0]),
+                pairwise_config.groupby_obs,
+                allowed_groups,
+                removed_cells,
+            )
+    elif pairwise_config.groupby_obs and pairwise_config.groupby_obs in adata.obs.columns:
+        observed_groups = _obs_order(adata, pairwise_config.groupby_obs)
+        if observed_groups:
+            allowed_groups = observed_groups
 
     metadata_cols = _resolve_metadata_columns(adata, pairwise_config)
     source_population_obs = pairwise_config.source_population_obs or pairwise_config.population_obs
@@ -1383,9 +1535,16 @@ def run_pairwise_spatial_analyses(
     color_map = _population_color_map(adata, pairwise_config.population_obs, ordered_pops)
     group_color_map: Optional[Dict[str, str]] = None
     if pairwise_config.groupby_obs and pairwise_config.groupby_obs in adata.obs.columns:
-        ordered_groups = _obs_order(adata, pairwise_config.groupby_obs)
+        ordered_groups = _obs_order(adata, pairwise_config.groupby_obs, preferred_order=allowed_groups)
         if ordered_groups:
-            group_color_map = _population_color_map(adata, pairwise_config.groupby_obs, ordered_groups)
+            if original_group_color_map is not None:
+                fallback = sns.color_palette("tab10", n_colors=max(1, len(ordered_groups))).as_hex()
+                group_color_map = {
+                    str(group): str(original_group_color_map.get(str(group), fallback[i]))
+                    for i, group in enumerate(ordered_groups)
+                }
+            else:
+                group_color_map = _population_color_map(adata, pairwise_config.groupby_obs, ordered_groups)
     pair_map = _normalise_population_pairs(
         pairwise_config.population_pairs,
         pairwise_config.population_obs,
@@ -1414,7 +1573,12 @@ def run_pairwise_spatial_analyses(
                 required_cols=["source_population", "target_population", "metric", "value"],
             )
             if loaded is not None:
-                squidpy_long = loaded
+                squidpy_long = _filter_dataframe_to_allowed_groups(
+                    loaded,
+                    group_col=pairwise_config.groupby_obs,
+                    allowed_groups=allowed_groups,
+                    label="Squidpy long results",
+                )
                 loaded_squidpy = True
                 analysis_sources["squidpy"] = "loaded"
                 logging.info("Reloaded saved Squidpy results from %s", squidpy_long_path)
@@ -1448,6 +1612,12 @@ def run_pairwise_spatial_analyses(
                     on=subregion_obs,
                     how="left",
                 )
+            squidpy_long = _filter_dataframe_to_allowed_groups(
+                squidpy_long,
+                group_col=pairwise_config.groupby_obs,
+                allowed_groups=allowed_groups,
+                label="Squidpy long results",
+            )
             squidpy_long.to_csv(squidpy_long_path, index=False)
             analysis_sources["squidpy"] = "computed"
 
@@ -1604,7 +1774,12 @@ def run_pairwise_spatial_analyses(
                 required_cols=["source_population", "target_population", "metric", "value"],
             )
             if loaded is not None:
-                distance_long = loaded
+                distance_long = _filter_dataframe_to_allowed_groups(
+                    loaded,
+                    group_col=pairwise_config.groupby_obs,
+                    allowed_groups=allowed_groups,
+                    label="Distance long results",
+                )
                 loaded_distance = True
                 analysis_sources["distance"] = "loaded"
                 logging.info("Reloaded saved distance-bootstrap results from %s", distance_long_path)
@@ -1653,6 +1828,12 @@ def run_pairwise_spatial_analyses(
             if not roi_metadata.empty and not distance_long.empty:
                 merge_roi_meta = roi_metadata.reset_index().rename(columns={pairwise_config.roi_obs: "roi"})
                 distance_long = distance_long.merge(merge_roi_meta, on="roi", how="left")
+            distance_long = _filter_dataframe_to_allowed_groups(
+                distance_long,
+                group_col=pairwise_config.groupby_obs,
+                allowed_groups=allowed_groups,
+                label="Distance long results",
+            )
             distance_long.to_csv(distance_long_path, index=False)
             analysis_sources["distance"] = "computed"
 
@@ -1829,6 +2010,30 @@ def run_pairwise_spatial_analyses(
                         }
                     )
                     pcf_long.to_csv(pcf_long_path, index=False)
+                pcf_summary = _filter_dataframe_to_allowed_groups(
+                    pcf_summary,
+                    group_col="condition",
+                    allowed_groups=allowed_groups,
+                    label="PCF summary results",
+                )
+                pcf_long = _filter_dataframe_to_allowed_groups(
+                    pcf_long,
+                    group_col="condition",
+                    allowed_groups=allowed_groups,
+                    label="PCF long results",
+                )
+                pcf_roi_summary = _filter_dataframe_to_allowed_groups(
+                    pcf_roi_summary,
+                    group_col="condition",
+                    allowed_groups=allowed_groups,
+                    label="PCF ROI summary results",
+                )
+                pcf_roi_long = _filter_dataframe_to_allowed_groups(
+                    pcf_roi_long,
+                    group_col="condition",
+                    allowed_groups=allowed_groups,
+                    label="PCF ROI long results",
+                )
                 analysis_sources["pcf"] = "loaded"
                 logging.info(
                     "Reloaded saved PCF results from %s and %s (ROI-level long).",
@@ -1932,6 +2137,30 @@ def run_pairwise_spatial_analyses(
             pcf_long["condition"] = "All"
         if pcf_roi_long is not None and "condition" not in pcf_roi_long.columns:
             pcf_roi_long["condition"] = "All"
+        pcf_summary = _filter_dataframe_to_allowed_groups(
+            pcf_summary,
+            group_col="condition",
+            allowed_groups=allowed_groups,
+            label="PCF summary results",
+        )
+        pcf_long = _filter_dataframe_to_allowed_groups(
+            pcf_long,
+            group_col="condition",
+            allowed_groups=allowed_groups,
+            label="PCF long results",
+        )
+        pcf_roi_summary = _filter_dataframe_to_allowed_groups(
+            pcf_roi_summary,
+            group_col="condition",
+            allowed_groups=allowed_groups,
+            label="PCF ROI summary results",
+        )
+        pcf_roi_long = _filter_dataframe_to_allowed_groups(
+            pcf_roi_long,
+            group_col="condition",
+            allowed_groups=allowed_groups,
+            label="PCF ROI long results",
+        )
         if (
             pcf_roi_summary is not None
             and not roi_metadata.empty
@@ -2091,6 +2320,7 @@ def run_pairwise_spatial_analyses(
         "output_root": str(output_root),
         "population_obs": pairwise_config.population_obs,
         "groupby_obs": pairwise_config.groupby_obs,
+        "groupby_obs_groups": allowed_groups,
         "roi_obs": pairwise_config.roi_obs,
         "source_population_obs": source_population_obs,
         "ran_squidpy": bool(pairwise_config.run_squidpy_interactions),

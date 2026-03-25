@@ -589,6 +589,7 @@ class PairwiseSpatialConfig:
     # Core metadata keys
     population_obs: Optional[str] = None  # Optional override (None = use general.population_obs_primary or legacy 'population')
     groupby_obs: Optional[str] = None  # Optional override (None = use general.groupby_obs)
+    groupby_obs_groups: Optional[List[str]] = None  # Optional ordered subset override (None = use general.groupby_obs_groups)
     roi_obs: Optional[str] = None  # Optional override (None = use general.roi_obs)
     x_coord_obs: Optional[str] = None  # Optional override (None = use general.x_coord_obs)
     y_coord_obs: Optional[str] = None  # Optional override (None = use general.y_coord_obs)
