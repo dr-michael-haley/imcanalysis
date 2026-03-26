@@ -560,32 +560,116 @@ def _apply_barplot_y_scale(
     metric: str,
     intelligent_params: Dict[str, Any],
 ) -> str:
-    mode = str(requested_mode).lower()
-    if mode == "intelligent":
-        mode = _choose_scale_1d(values.to_numpy(dtype=float), **intelligent_params)
+    mode, limits = _resolve_axis_scale_and_limits(
+        values,
+        requested_mode=requested_mode,
+        analysis=analysis,
+        metric=metric,
+        intelligent_params=intelligent_params,
+        axis="y",
+        plot_kind="barplot",
+        include_linear_limits=False,
+    )
+    _apply_resolved_axis_scale(ax, axis="y", mode=mode, limits=limits)
+    return mode
 
+
+def _compute_axis_limits_1d(
+    values: Any,
+    *,
+    mode: str,
+) -> Optional[Tuple[float, float]]:
+    arr = np.asarray(values, dtype=float)
+    arr = arr[np.isfinite(arr)]
+    if arr.size == 0:
+        return None
+
+    mode_text = str(mode).strip().lower()
+    if mode_text == "log":
+        if np.any(arr <= 0):
+            return None
+        min_pos = float(np.min(arr))
+        max_val = float(np.max(arr))
+        if not np.isfinite(min_pos) or not np.isfinite(max_val) or max_val <= 0:
+            return None
+        lower = max(min_pos * 0.9, np.finfo(float).tiny)
+        upper = max_val * 1.1
+        if not np.isfinite(upper) or upper <= lower:
+            upper = lower * 1.1
+        return float(lower), float(upper)
+
+    lo = float(np.min(arr))
+    hi = float(np.max(arr))
+    if np.isclose(lo, hi):
+        magnitude = max(abs(lo), abs(hi), 1.0)
+        pad = max(0.1 * magnitude, 1e-9)
+        return float(lo - pad), float(hi + pad)
+
+    pad = max(0.05 * (hi - lo), 1e-9)
+    return float(lo - pad), float(hi + pad)
+
+
+def _resolve_axis_scale_and_limits(
+    values: Any,
+    *,
+    requested_mode: str,
+    analysis: str,
+    metric: str,
+    intelligent_params: Dict[str, Any],
+    axis: str,
+    plot_kind: str,
+    include_linear_limits: bool,
+) -> Tuple[str, Optional[Tuple[float, float]]]:
+    mode = str(requested_mode).lower()
+    arr = np.asarray(values, dtype=float)
+    finite = arr[np.isfinite(arr)]
+    if mode == "intelligent":
+        mode = _choose_scale_1d(finite, **intelligent_params)
+
+    axis_label = "x" if str(axis).lower() == "x" else "y"
     if mode == "log":
-        finite = values.to_numpy(dtype=float)
-        finite = finite[np.isfinite(finite)]
         if finite.size == 0 or np.any(finite <= 0):
             logging.warning(
-                "Requested log y-scale for %s/%s barplot, but values include non-positive entries. Using linear scale.",
+                "Requested log %s-scale for %s/%s %s, but values include non-positive entries. Using linear scale.",
+                axis_label,
                 analysis,
                 metric,
+                plot_kind,
             )
-            return "linear"
+            mode = "linear"
+        else:
+            return "log", _compute_axis_limits_1d(finite, mode="log")
 
-        min_pos = float(np.min(finite))
-        max_val = float(np.max(finite))
-        ax.set_yscale("log")
-        if np.isfinite(min_pos) and np.isfinite(max_val) and max_val > min_pos:
-            lower = max(min_pos * 0.9, np.finfo(float).tiny)
-            upper = max_val * 1.1
-            if upper > lower:
-                ax.set_ylim(bottom=lower, top=upper)
-        return "log"
+    if include_linear_limits:
+        return "linear", _compute_axis_limits_1d(finite, mode="linear")
+    return "linear", None
 
-    return "linear"
+
+def _apply_resolved_axis_scale(
+    ax: Any,
+    *,
+    axis: str,
+    mode: str,
+    limits: Optional[Tuple[float, float]] = None,
+) -> None:
+    axis_name = "x" if str(axis).lower() == "x" else "y"
+    if str(mode).strip().lower() == "log":
+        if axis_name == "x":
+            ax.set_xscale("log")
+        else:
+            ax.set_yscale("log")
+
+    if limits is None:
+        return
+
+    lo, hi = limits
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        return
+
+    if axis_name == "x":
+        ax.set_xlim(left=float(lo), right=float(hi))
+    else:
+        ax.set_ylim(bottom=float(lo), top=float(hi))
 
 
 def _compute_limits(
@@ -1417,9 +1501,14 @@ def _save_enrichment_plot(
     group_col: Optional[str] = None,
     color_mode: str = "direction",
     label_box_width: float = 0.03,
+    x_scale_mode: str = "linear",
+    x_scale_intelligent_params: Optional[Dict[str, Any]] = None,
+    share_x_axis_across_groups: bool = False,
 ) -> None:
     if data.empty or (top_n <= 0 and bottom_n <= 0):
         return
+    if x_scale_intelligent_params is None:
+        x_scale_intelligent_params = _resolve_intelligent_scale_params(None)
 
     analysis_key = str(analysis).strip().lower()
     metric_key = str(metric).strip().lower()
@@ -1482,6 +1571,14 @@ def _save_enrichment_plot(
             ref_value = 1.0
         if ref_value is None:
             return
+        if str(ax.get_xscale()).lower() == "log" and ref_value <= 0:
+            logging.warning(
+                "Enrichment plot for %s/%s is using log x-scale, so an x=%s reference line cannot be displayed.",
+                analysis,
+                metric,
+                ref_value,
+            )
+            return
         ax.axvline(ref_value, color="black", linestyle=":", linewidth=1.0, alpha=0.8, zorder=0)
         x_min, x_max = ax.get_xlim()
         ax.set_xlim(min(float(x_min), ref_value), max(float(x_max), ref_value))
@@ -1497,6 +1594,9 @@ def _save_enrichment_plot(
     box_height = 0.8
     strip_x = 1.01
     strip_width = label_box_width
+
+    plot_specs: List[Dict[str, Any]] = []
+    source_scale_values: Dict[str, List[np.ndarray]] = {}
 
     for group_name, group_frame in group_frames:
         group_stub, group_title = _group_outputs(group_name)
@@ -1539,61 +1639,126 @@ def _save_enrichment_plot(
             raw_path = raw_dir / f"{analysis}_{metric}_{source_stub}_{group_stub}_enrichment.csv"
             _safe_write_plot_table_csv(plot_subset, raw_path, label="enrichment raw table")
 
-            plot_height = max(base_height, 0.42 * max(2, len(target_order)))
-            fig, ax = plt.subplots(figsize=(base_width, plot_height))
-            if color_mode == "population":
-                palette = {target: color_map.get(str(target), "#808080") for target in target_order}
-            else:
-                palette = {
-                    target: (enriched_color if target in enriched_targets else depleted_color)
-                    for target in target_order
+            plot_specs.append(
+                {
+                    "group_stub": group_stub,
+                    "group_title": group_title,
+                    "source": str(source),
+                    "source_stub": source_stub,
+                    "target_order": list(target_order),
+                    "enriched_targets": list(enriched_targets),
+                    "depleted_targets": list(depleted_targets),
+                    "plot_subset": plot_subset,
                 }
-            sns.boxplot(
-                data=plot_subset,
-                x="value",
-                y="target_population",
-                order=target_order,
-                orient="h",
-                showfliers=False,
-                palette=palette,
-                linewidth=0.9,
-                width=box_height,
-                ax=ax,
+            )
+            source_scale_values.setdefault(str(source), []).append(
+                plot_subset["value"].to_numpy(dtype=float)
             )
 
-            if enriched_targets and depleted_targets:
-                ax.axhline(len(enriched_targets) - 0.5, color="black", linewidth=1.0, alpha=0.8)
+    shared_scale_by_source: Dict[str, Tuple[str, Optional[Tuple[float, float]]]] = {}
+    if group_col and share_x_axis_across_groups:
+        for source, arrays in source_scale_values.items():
+            valid_arrays: List[np.ndarray] = []
+            for arr in arrays:
+                numeric_arr = np.asarray(arr, dtype=float)
+                numeric_arr = numeric_arr[np.isfinite(numeric_arr)]
+                if numeric_arr.size > 0:
+                    valid_arrays.append(numeric_arr)
+            if not valid_arrays:
+                continue
+            combined = np.concatenate(valid_arrays)
+            shared_scale_by_source[source] = _resolve_axis_scale_and_limits(
+                combined,
+                requested_mode=x_scale_mode,
+                analysis=analysis,
+                metric=metric,
+                intelligent_params=x_scale_intelligent_params,
+                axis="x",
+                plot_kind="enrichment plot",
+                include_linear_limits=True,
+            )
 
-            _add_reference_line(ax)
-            ax.set_title(f"{source}: enriched / depleted interactions ({group_title})")
-            ax.set_xlabel(value_label)
-            ax.set_ylabel("")
-            ax.grid(False)
+    for plot_spec in plot_specs:
+        source = str(plot_spec["source"])
+        source_stub = str(plot_spec["source_stub"])
+        group_stub = str(plot_spec["group_stub"])
+        group_title = str(plot_spec["group_title"])
+        target_order = list(plot_spec["target_order"])
+        enriched_targets = list(plot_spec["enriched_targets"])
+        depleted_targets = list(plot_spec["depleted_targets"])
+        plot_subset = plot_spec["plot_subset"].copy()
 
-            y_positions = ax.get_yticks()
-            y_labels = [tick.get_text() for tick in ax.get_yticklabels()]
-            label_transform = blended_transform_factory(ax.transAxes, ax.transData)
-            for y_pos, label in zip(y_positions, y_labels):
-                rect = Rectangle(
-                    (strip_x, float(y_pos) - (box_height / 2.0)),
-                    strip_width,
-                    box_height,
-                    facecolor=color_map.get(str(label), "#808080"),
-                    edgecolor="black",
-                    linewidth=0.3,
-                    transform=label_transform,
-                    clip_on=False,
-                    zorder=4,
-                )
-                ax.add_patch(rect)
+        plot_height = max(base_height, 0.42 * max(2, len(target_order)))
+        fig, ax = plt.subplots(figsize=(base_width, plot_height))
+        if color_mode == "population":
+            palette = {target: color_map.get(str(target), "#808080") for target in target_order}
+        else:
+            palette = {
+                target: (enriched_color if target in enriched_targets else depleted_color)
+                for target in target_order
+            }
+        sns.boxplot(
+            data=plot_subset,
+            x="value",
+            y="target_population",
+            order=target_order,
+            orient="h",
+            showfliers=False,
+            palette=palette,
+            linewidth=0.9,
+            width=box_height,
+            ax=ax,
+        )
 
-            reserved_right = min(0.20, strip_width + 0.05)
-            fig.tight_layout(rect=(0.0, 0.0, 1.0 - reserved_right, 1.0))
+        if enriched_targets and depleted_targets:
+            ax.axhline(len(enriched_targets) - 0.5, color="black", linewidth=1.0, alpha=0.8)
 
-            plot_path = out_dir / f"{analysis}_{metric}_{source_stub}_{group_stub}_enrichment{extension}"
-            plot_path.parent.mkdir(parents=True, exist_ok=True)
-            fig.savefig(plot_path, dpi=int(dpi), bbox_inches="tight")
-            plt.close(fig)
+        if source in shared_scale_by_source:
+            shared_mode, shared_limits = shared_scale_by_source[source]
+            _apply_resolved_axis_scale(ax, axis="x", mode=shared_mode, limits=shared_limits)
+        else:
+            mode, limits = _resolve_axis_scale_and_limits(
+                plot_subset["value"],
+                requested_mode=x_scale_mode,
+                analysis=analysis,
+                metric=metric,
+                intelligent_params=x_scale_intelligent_params,
+                axis="x",
+                plot_kind="enrichment plot",
+                include_linear_limits=False,
+            )
+            _apply_resolved_axis_scale(ax, axis="x", mode=mode, limits=limits)
+
+        _add_reference_line(ax)
+        ax.set_title(f"{source}: enriched / depleted interactions ({group_title})")
+        ax.set_xlabel(value_label)
+        ax.set_ylabel("")
+        ax.grid(False)
+
+        y_positions = ax.get_yticks()
+        y_labels = [tick.get_text() for tick in ax.get_yticklabels()]
+        label_transform = blended_transform_factory(ax.transAxes, ax.transData)
+        for y_pos, label in zip(y_positions, y_labels):
+            rect = Rectangle(
+                (strip_x, float(y_pos) - (box_height / 2.0)),
+                strip_width,
+                box_height,
+                facecolor=color_map.get(str(label), "#808080"),
+                edgecolor="black",
+                linewidth=0.3,
+                transform=label_transform,
+                clip_on=False,
+                zorder=4,
+            )
+            ax.add_patch(rect)
+
+        reserved_right = min(0.20, strip_width + 0.05)
+        fig.tight_layout(rect=(0.0, 0.0, 1.0 - reserved_right, 1.0))
+
+        plot_path = out_dir / f"{analysis}_{metric}_{source_stub}_{group_stub}_enrichment{extension}"
+        plot_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(plot_path, dpi=int(dpi), bbox_inches="tight")
+        plt.close(fig)
 
 
 def _flatten_squidpy_results(
@@ -1858,6 +2023,9 @@ def run_pairwise_spatial_analyses(
         minimum=0.005,
         label="enrichment_plot_label_box_width",
     )
+    enrichment_share_x_axis_across_groups = bool(
+        getattr(pairwise_config, "enrichment_plot_share_x_axis_across_groups", False)
+    )
     cbar_corner = _normalise_cbar_corner(pairwise_config.pairwise_matrices_cbar_corner)
     barplot_intelligent_params = _resolve_intelligent_scale_params(
         pairwise_config.barplot_y_scale_intelligent_params
@@ -1866,12 +2034,13 @@ def run_pairwise_spatial_analyses(
     logging.info("Pairwise reload_saved_results=%s", reload_saved_results)
     logging.info("Pairwise matrix colorbar corner=%s", cbar_corner)
     logging.info(
-        "Pairwise enrichment plots enabled=%s top_n=%d bottom_n=%d color_mode=%s label_box_width=%.4f restricted_targets=%s",
+        "Pairwise enrichment plots enabled=%s top_n=%d bottom_n=%d color_mode=%s label_box_width=%.4f share_x_axis_across_groups=%s restricted_targets=%s",
         make_enrichment_plots,
         enrichment_top_n,
         enrichment_bottom_n,
         enrichment_color_mode,
         enrichment_label_box_width,
+        enrichment_share_x_axis_across_groups,
         enrichment_target_populations,
     )
     if make_enrichment_plots and enrichment_top_n <= 0 and enrichment_bottom_n <= 0:
@@ -2055,6 +2224,11 @@ def run_pairwise_spatial_analyses(
                         )
 
                 if make_enrichment_plots and (enrichment_top_n > 0 or enrichment_bottom_n > 0):
+                    x_scale_mode = _resolve_barplot_scale_mode(
+                        pairwise_config.barplot_y_scale,
+                        analysis="squidpy",
+                        metric=str(metric),
+                    )
                     _save_enrichment_plot(
                         metric_df,
                         analysis="squidpy",
@@ -2076,6 +2250,9 @@ def run_pairwise_spatial_analyses(
                         ),
                         color_mode=enrichment_color_mode,
                         label_box_width=enrichment_label_box_width,
+                        x_scale_mode=x_scale_mode,
+                        x_scale_intelligent_params=barplot_intelligent_params,
+                        share_x_axis_across_groups=enrichment_share_x_axis_across_groups,
                     )
 
                 if pairwise_config.make_pair_barplots and pair_map:
@@ -2295,6 +2472,11 @@ def run_pairwise_spatial_analyses(
                         )
 
                 if make_enrichment_plots and (enrichment_top_n > 0 or enrichment_bottom_n > 0):
+                    x_scale_mode = _resolve_barplot_scale_mode(
+                        pairwise_config.barplot_y_scale,
+                        analysis="distance",
+                        metric=str(metric),
+                    )
                     _save_enrichment_plot(
                         metric_df,
                         analysis="distance",
@@ -2316,6 +2498,9 @@ def run_pairwise_spatial_analyses(
                         ),
                         color_mode=enrichment_color_mode,
                         label_box_width=enrichment_label_box_width,
+                        x_scale_mode=x_scale_mode,
+                        x_scale_intelligent_params=barplot_intelligent_params,
+                        share_x_axis_across_groups=enrichment_share_x_axis_across_groups,
                     )
 
                 if pairwise_config.make_pair_barplots and pair_map:
@@ -2691,6 +2876,11 @@ def run_pairwise_spatial_analyses(
         if make_enrichment_plots and (enrichment_top_n > 0 or enrichment_bottom_n > 0) and pcf_roi_long is not None and not pcf_roi_long.empty:
             for metric in sorted(pcf_roi_long["metric"].dropna().unique().tolist()):
                 metric_df = pcf_roi_long[pcf_roi_long["metric"] == metric].copy()
+                x_scale_mode = _resolve_barplot_scale_mode(
+                    pairwise_config.barplot_y_scale,
+                    analysis="pcf",
+                    metric=str(metric),
+                )
                 _save_enrichment_plot(
                     metric_df,
                     analysis="pcf",
@@ -2708,6 +2898,9 @@ def run_pairwise_spatial_analyses(
                     group_col=("condition" if "condition" in metric_df.columns else None),
                     color_mode=enrichment_color_mode,
                     label_box_width=enrichment_label_box_width,
+                    x_scale_mode=x_scale_mode,
+                    x_scale_intelligent_params=barplot_intelligent_params,
+                    share_x_axis_across_groups=enrichment_share_x_axis_across_groups,
                 )
 
         if pairwise_config.make_pair_barplots and pair_map and pcf_roi_long is not None and not pcf_roi_long.empty:
@@ -2759,6 +2952,7 @@ def run_pairwise_spatial_analyses(
         "enrichment_plot_top_n": enrichment_top_n,
         "enrichment_plot_bottom_n": enrichment_bottom_n,
         "enrichment_plot_target_populations": enrichment_target_populations,
+        "enrichment_plot_share_x_axis_across_groups": enrichment_share_x_axis_across_groups,
         "enrichment_plot_color_mode": enrichment_color_mode,
         "enrichment_plot_label_box_width": enrichment_label_box_width,
         "barplot_y_scale": pairwise_config.barplot_y_scale,
