@@ -50,6 +50,69 @@ from .config_and_utils import (
 from .segmentation import create_anndata, normalise_markers
 
 
+_INSPECTED_CHANNEL_IMAGE_PATHS: Set[str] = set()
+_NONFINITE_CHANNEL_IMAGE_PATHS: Set[str] = set()
+
+
+def _warn_and_sanitize_channel_image(
+    image: np.ndarray,
+    image_path: Path | str,
+    *,
+    roi: Optional[str] = None,
+    channel: Optional[str] = None,
+) -> np.ndarray:
+    """Warn once per image path when non-finite pixels are present, then replace them with zero."""
+    image_key = str(Path(image_path))
+    if image_key not in _INSPECTED_CHANNEL_IMAGE_PATHS:
+        _INSPECTED_CHANNEL_IMAGE_PATHS.add(image_key)
+        array = np.asarray(image)
+        try:
+            nan_count = int(np.isnan(array).sum())
+            inf_count = int(np.isinf(array).sum())
+        except TypeError:
+            nan_count = 0
+            inf_count = 0
+
+        if nan_count > 0 or inf_count > 0:
+            _NONFINITE_CHANNEL_IMAGE_PATHS.add(image_key)
+            context_parts = []
+            if roi is not None:
+                context_parts.append(f"ROI='{roi}'")
+            if channel is not None:
+                context_parts.append(f"channel='{channel}'")
+            context = f" ({', '.join(context_parts)})" if context_parts else ""
+            logging.warning(
+                "Channel image %s%s contains %d NaN pixel(s) and %d infinite pixel(s) out of %d total; "
+                "replacing non-finite pixels with 0.",
+                image_path,
+                context,
+                nan_count,
+                inf_count,
+                array.size,
+            )
+
+    if image_key not in _NONFINITE_CHANNEL_IMAGE_PATHS:
+        return image
+
+    sanitized = np.asarray(image, dtype=np.float32).copy()
+    sanitized[~np.isfinite(sanitized)] = 0.0
+    return sanitized
+
+
+def _finite_values(values: np.ndarray | Sequence[float]) -> np.ndarray:
+    array = np.asarray(values, dtype=float).reshape(-1)
+    if array.size == 0:
+        return array
+    return array[np.isfinite(array)]
+
+
+def _safe_quantile(values: np.ndarray | Sequence[float], quantile: float) -> Optional[float]:
+    finite = _finite_values(values)
+    if finite.size == 0:
+        return None
+    return float(np.quantile(finite, quantile))
+
+
 class ToolkitNimbusDataset(MultiplexDataset):
     """Nimbus dataset wrapper aware of separate mask folder and mixed raw/denoised channels."""
 
@@ -119,6 +182,7 @@ class ToolkitNimbusDataset(MultiplexDataset):
         except KeyError as exc:  # pragma: no cover - defensive
             raise FileNotFoundError(f"Missing image for ROI '{roi}', channel '{channel}'") from exc
         img = io.imread(image_path)
+        img = _warn_and_sanitize_channel_image(img, image_path, roi=roi, channel=channel)
         if img.ndim == 2:
             return img
         # If channel dimension leaked through (e.g., multichannel format), take first plane
@@ -134,6 +198,7 @@ class ToolkitNimbusDataset(MultiplexDataset):
         # Align mask to the reference channel image shape if needed
         ref_path = next(iter(self._channel_paths[roi].values()))
         ref_img = io.imread(ref_path)
+        ref_img = _warn_and_sanitize_channel_image(ref_img, ref_path, roi=roi)
         ref_shape = np.squeeze(ref_img).shape[-2:] if ref_img.ndim >= 2 else ref_img.shape
 
         if mask.shape != tuple(ref_shape):
@@ -158,13 +223,28 @@ class ToolkitNimbusDataset(MultiplexDataset):
         self.clip_values = tuple(clip_values)
         self.normalization_dict_path = os.path.join(self.output_dir, "normalization_dict.json")
 
+        def _sanitize_saved_normalization(channel: str, value: float) -> float:
+            if np.isfinite(value) and value > 0:
+                return value
+            logging.warning(
+                "Saved normalization value for channel '%s' is non-finite or non-positive (%s); "
+                "using minimum value %.3g instead.",
+                channel,
+                value,
+                self.normalization_min_value,
+            )
+            return self.normalization_min_value
+
         if os.path.exists(self.normalization_dict_path) and reuse_saved:
             logging.info(f"Found existing normalization dictionary at {self.normalization_dict_path}")
             logging.info("Reusing saved normalization values (reuse_saved_normalization=True)")
             with open(self.normalization_dict_path, "r", encoding="utf-8") as handle:
                 data = json.load(handle)
             # Load values as-is without applying minimum constraint (preserves manual edits)
-            self.normalization_dict = {k: float(v) for k, v in data.items()}
+            self.normalization_dict = {
+                k: _sanitize_saved_normalization(k, float(v))
+                for k, v in data.items()
+            }
             logging.info(f"Loaded {len(self.normalization_dict)} channel normalization values (manual edits preserved)")
         else:
             norm_vals: Dict[str, List[float]] = {ch: [] for ch in self._channels}
@@ -176,14 +256,32 @@ class ToolkitNimbusDataset(MultiplexDataset):
                 for ch in self._channels:
                     img = self.get_channel(fov, ch).astype(float)
                     foreground = img[mask_bool]
-                    if foreground.size:
-                        norm_vals[ch].append(float(np.quantile(foreground, quantile)))
+                    foreground_quantile = _safe_quantile(foreground, quantile)
+                    if foreground_quantile is None:
+                        logging.warning(
+                            "Skipping normalization quantile for ROI '%s', channel '%s' because the masked pixels "
+                            "contain no finite values.",
+                            fov,
+                            ch,
+                        )
+                        continue
+                    norm_vals[ch].append(foreground_quantile)
 
             self.normalization_dict = {}
             for ch, vals in norm_vals.items():
                 if vals:
                     computed_val = float(np.mean(vals))
-                    self.normalization_dict[ch] = max(computed_val, self.normalization_min_value)
+                    if np.isfinite(computed_val) and computed_val > 0:
+                        self.normalization_dict[ch] = max(computed_val, self.normalization_min_value)
+                    else:
+                        logging.warning(
+                            "Computed normalization value for channel '%s' is non-finite or non-positive (%s); "
+                            "using minimum value %.3g instead.",
+                            ch,
+                            computed_val,
+                            self.normalization_min_value,
+                        )
+                        self.normalization_dict[ch] = self.normalization_min_value
                 else:
                     self.normalization_dict[ch] = self.normalization_min_value
 
@@ -199,23 +297,35 @@ class ToolkitNimbusDataset(MultiplexDataset):
         os.makedirs(norm_hist_dir, exist_ok=True)
         os.makedirs(pos_hist_dir, exist_ok=True)
 
-        # Histogram of per-ROI norms with marker at final value
-        for ch, vals in self.normalization_dict.items():
-            pass
-
         upper_clip = self.clip_values[1] if len(self.clip_values) > 1 else 2.0
 
         def _save_hist(data: List[float], marker: Optional[float], out_path: str, xlabel: str, title: str):
-            if not data:
+            hist_data = _finite_values(data)
+            if hist_data.size == 0:
+                logging.warning(
+                    "Skipping histogram for '%s' because there are no finite values to plot.",
+                    title,
+                )
                 return
-            plt.figure(figsize=(4, 3))
-            plt.hist(data, bins=30, color="steelblue", edgecolor="black", alpha=0.7)
+            marker_value: Optional[float] = None
             if marker is not None:
-                plt.axvline(marker, color="red", linestyle="--", label=f"marker={marker:.3g}")
+                marker_float = float(marker)
+                if np.isfinite(marker_float):
+                    marker_value = marker_float
+                else:
+                    logging.warning(
+                        "Skipping non-finite histogram marker for '%s': %s",
+                        title,
+                        marker,
+                    )
+            plt.figure(figsize=(4, 3))
+            plt.hist(hist_data, bins=30, color="steelblue", edgecolor="black", alpha=0.7)
+            if marker_value is not None:
+                plt.axvline(marker_value, color="red", linestyle="--", label=f"marker={marker_value:.3g}")
             plt.xlabel(xlabel)
             plt.ylabel("Count")
             plt.title(title)
-            if marker is not None:
+            if marker_value is not None:
                 plt.legend()
             plt.tight_layout()
             plt.savefig(out_path, dpi=150)
@@ -234,26 +344,40 @@ class ToolkitNimbusDataset(MultiplexDataset):
             for ch in self._channels:
                 norm = self.normalization_dict.get(ch, 1.0) or 1.0
                 img_raw = self.get_channel(fov, ch).astype(float)
-                norm_vals[ch].append(float(np.quantile(img_raw[mask_bool], quantile)))
+                foreground_quantile = _safe_quantile(img_raw[mask_bool], quantile)
+                if foreground_quantile is None:
+                    logging.warning(
+                        "Skipping normalization QC quantile for ROI '%s', channel '%s' because the masked pixels "
+                        "contain no finite values.",
+                        fov,
+                        ch,
+                    )
+                else:
+                    norm_vals[ch].append(foreground_quantile)
 
                 img = np.clip(img_raw / norm, 0, upper_clip)
                 props = regionprops_table(label_image=labels, intensity_image=img, properties=["intensity_mean"])
-                means = props.get("intensity_mean", [])
-                if len(means) > 0:
-                    cell_pos_props[ch].append(float(np.mean(np.array(means) > 1.0)))
+                means = _finite_values(props.get("intensity_mean", []))
+                if means.size > 0:
+                    cell_pos_props[ch].append(float(np.mean(means > 1.0)))
 
         for ch in self._channels:
             final_val = self.normalization_dict.get(ch, 1.0)
+            final_label = f"{final_val:.3g}" if np.isfinite(final_val) else "non-finite"
+            pos_marker = None
+            finite_pos_props = _finite_values(cell_pos_props.get(ch, []))
+            if finite_pos_props.size > 0:
+                pos_marker = float(np.mean(finite_pos_props))
             _save_hist(
                 norm_vals.get(ch, []),
                 final_val,
                 os.path.join(norm_hist_dir, f"{ch}.png"),
                 xlabel=f"{ch} per-ROI quantiles",
-                title=f"{ch} norm values (final {final_val:.3g})",
+                title=f"{ch} norm values (final {final_label})",
             )
             _save_hist(
                 cell_pos_props.get(ch, []),
-                None if not cell_pos_props.get(ch, []) else np.mean(cell_pos_props[ch]),
+                pos_marker,
                 os.path.join(pos_hist_dir, f"{ch}.png"),
                 xlabel=f"{ch} proportion of cells > normalized 1.0",
                 title=f"{ch} cell positivity per ROI",
@@ -517,6 +641,7 @@ def _extract_classic_intensities(
             try:
                 image_path = available_channels[channel]
                 image = io.imread(image_path)
+                image = _warn_and_sanitize_channel_image(image, image_path, roi=roi, channel=channel)
                 
                 # Calculate mean intensity for each label
                 mean_intensities = [region.mean_intensity for region in regionprops(mask, image)]
@@ -556,7 +681,9 @@ def _process_roi_expansion(
     for channel in expected_channels:
         if channel in roi_channel_paths:
             try:
-                img = io.imread(roi_channel_paths[channel])
+                img_path = roi_channel_paths[channel]
+                img = io.imread(img_path)
+                img = _warn_and_sanitize_channel_image(img, img_path, roi=roi, channel=channel)
                 img = np.squeeze(img)
                 if img.ndim == 3:
                     img = img[..., 0]
