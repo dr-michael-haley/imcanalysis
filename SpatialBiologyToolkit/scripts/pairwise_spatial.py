@@ -2096,15 +2096,24 @@ def run_pairwise_spatial_analyses(
                 required_cols=["source_population", "target_population", "metric", "value"],
             )
             if loaded is not None:
-                squidpy_long = _filter_dataframe_to_allowed_groups(
+                filtered_loaded = _filter_dataframe_to_allowed_groups(
                     loaded,
                     group_col=pairwise_config.groupby_obs,
                     allowed_groups=allowed_groups,
                     label="Squidpy long results",
                 )
-                loaded_squidpy = True
-                analysis_sources["squidpy"] = "loaded"
-                logging.info("Reloaded saved Squidpy results from %s", squidpy_long_path)
+                if filtered_loaded is None or filtered_loaded.empty:
+                    logging.warning(
+                        "Reloaded Squidpy results from %s became empty after filtering to %s groups %s. Recomputing Squidpy interactions.",
+                        squidpy_long_path,
+                        pairwise_config.groupby_obs,
+                        allowed_groups,
+                    )
+                else:
+                    squidpy_long = filtered_loaded
+                    loaded_squidpy = True
+                    analysis_sources["squidpy"] = "loaded"
+                    logging.info("Reloaded saved Squidpy results from %s", squidpy_long_path)
 
         if not loaded_squidpy:
             logging.info(
@@ -2329,15 +2338,24 @@ def run_pairwise_spatial_analyses(
                 required_cols=["source_population", "target_population", "metric", "value"],
             )
             if loaded is not None:
-                distance_long = _filter_dataframe_to_allowed_groups(
+                filtered_loaded = _filter_dataframe_to_allowed_groups(
                     loaded,
                     group_col=pairwise_config.groupby_obs,
                     allowed_groups=allowed_groups,
                     label="Distance long results",
                 )
-                loaded_distance = True
-                analysis_sources["distance"] = "loaded"
-                logging.info("Reloaded saved distance-bootstrap results from %s", distance_long_path)
+                if filtered_loaded is None or filtered_loaded.empty:
+                    logging.warning(
+                        "Reloaded distance-bootstrap results from %s became empty after filtering to %s groups %s. Recomputing distance analysis.",
+                        distance_long_path,
+                        pairwise_config.groupby_obs,
+                        allowed_groups,
+                    )
+                else:
+                    distance_long = filtered_loaded
+                    loaded_distance = True
+                    analysis_sources["distance"] = "loaded"
+                    logging.info("Reloaded saved distance-bootstrap results from %s", distance_long_path)
 
         if not loaded_distance:
             if source_population_obs not in adata.obs.columns:
@@ -2621,12 +2639,32 @@ def run_pairwise_spatial_analyses(
                     allowed_groups=allowed_groups,
                     label="PCF ROI long results",
                 )
-                analysis_sources["pcf"] = "loaded"
-                logging.info(
-                    "Reloaded saved PCF results from %s and %s (ROI-level long).",
-                    pcf_summary_path,
-                    pcf_roi_long_path,
-                )
+
+                if (
+                    pcf_summary is None
+                    or pcf_summary.empty
+                    or pcf_long is None
+                    or pcf_long.empty
+                    or pcf_roi_long is None
+                    or pcf_roi_long.empty
+                ):
+                    logging.warning(
+                        "Reloaded PCF results from %s/%s are unusable after filtering to condition groups %s. Recomputing PCF analysis.",
+                        pcf_summary_path,
+                        pcf_roi_long_path,
+                        allowed_groups,
+                    )
+                    pcf_summary = None
+                    pcf_long = None
+                    pcf_roi_summary = None
+                    pcf_roi_long = None
+                else:
+                    analysis_sources["pcf"] = "loaded"
+                    logging.info(
+                        "Reloaded saved PCF results from %s and %s (ROI-level long).",
+                        pcf_summary_path,
+                        pcf_roi_long_path,
+                    )
             elif (
                 loaded_summary is not None
                 or loaded_long is not None
