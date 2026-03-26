@@ -72,6 +72,43 @@ def _reversed_cmap_name(cmap: str) -> str:
     return text if text.endswith("_r") else f"{text}_r"
 
 
+def _normalise_enrichment_color_mode(mode: Optional[str]) -> str:
+    text = str(mode).strip().lower()
+    if text in {"population", "population_color", "population_colors", "target_population"}:
+        return "population"
+    if text in {"direction", "enrichment", "enrichment_direction"}:
+        return "direction"
+    logging.warning(
+        "Invalid enrichment_plot_color_mode='%s'. Using default 'direction'.",
+        mode,
+    )
+    return "direction"
+
+
+def _normalise_positive_float(
+    value: Any,
+    *,
+    default: float,
+    minimum: float,
+    label: str,
+) -> float:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        logging.warning("Invalid %s='%s'. Using default %.4f.", label, value, default)
+        return float(default)
+    if numeric < float(minimum):
+        logging.warning(
+            "%s=%.4f is smaller than the minimum %.4f. Using %.4f.",
+            label,
+            numeric,
+            minimum,
+            minimum,
+        )
+        return float(minimum)
+    return numeric
+
+
 def _figsize(values: Sequence[float], fallback: Tuple[float, float]) -> Tuple[float, float]:
     if not values or len(values) < 2:
         return fallback
@@ -1293,9 +1330,10 @@ def _select_enrichment_targets(
     analysis: str,
     metric: str,
     top_n: int,
+    bottom_n: int,
     restricted_targets: Optional[Sequence[str]] = None,
 ) -> Tuple[List[str], List[str], List[str]]:
-    if source_subset.empty or top_n <= 0:
+    if source_subset.empty or (top_n <= 0 and bottom_n <= 0):
         return [], [], []
 
     target_summary = (
@@ -1341,20 +1379,22 @@ def _select_enrichment_targets(
         depleted_pool = target_summary.sort_values("value", ascending=True)
 
     enriched: List[str] = []
-    for target in enriched_pool["target_population"].tolist():
-        if target not in enriched:
-            enriched.append(str(target))
-        if len(enriched) >= int(top_n):
-            break
+    if top_n > 0:
+        for target in enriched_pool["target_population"].tolist():
+            if target not in enriched:
+                enriched.append(str(target))
+            if len(enriched) >= int(top_n):
+                break
 
     depleted: List[str] = []
-    for target in depleted_pool["target_population"].tolist():
-        target = str(target)
-        if target in enriched or target in depleted:
-            continue
-        depleted.append(target)
-        if len(depleted) >= int(top_n):
-            break
+    if bottom_n > 0:
+        for target in depleted_pool["target_population"].tolist():
+            target = str(target)
+            if target in enriched or target in depleted:
+                continue
+            depleted.append(target)
+            if len(depleted) >= int(bottom_n):
+                break
 
     return enriched + depleted, enriched, depleted
 
@@ -1372,14 +1412,24 @@ def _save_enrichment_plot(
     extension: str,
     value_label: str,
     top_n: int,
+    bottom_n: int,
     restricted_targets: Optional[Sequence[str]] = None,
     group_col: Optional[str] = None,
+    color_mode: str = "direction",
+    label_box_width: float = 0.03,
 ) -> None:
-    if data.empty or top_n <= 0:
+    if data.empty or (top_n <= 0 and bottom_n <= 0):
         return
 
     analysis_key = str(analysis).strip().lower()
     metric_key = str(metric).strip().lower()
+    color_mode = _normalise_enrichment_color_mode(color_mode)
+    label_box_width = _normalise_positive_float(
+        label_box_width,
+        default=0.03,
+        minimum=0.005,
+        label="enrichment_plot_label_box_width",
+    )
     base_width = float(figsize[0])
     base_height = float(figsize[1])
     enriched_color = "#2ca02c"
@@ -1446,7 +1496,7 @@ def _save_enrichment_plot(
 
     box_height = 0.8
     strip_x = 1.01
-    strip_width = 0.03
+    strip_width = label_box_width
 
     for group_name, group_frame in group_frames:
         group_stub, group_title = _group_outputs(group_name)
@@ -1460,6 +1510,7 @@ def _save_enrichment_plot(
                 analysis=analysis,
                 metric=metric,
                 top_n=int(top_n),
+                bottom_n=int(bottom_n),
                 restricted_targets=restricted_targets,
             )
             if not target_order:
@@ -1490,10 +1541,13 @@ def _save_enrichment_plot(
 
             plot_height = max(base_height, 0.42 * max(2, len(target_order)))
             fig, ax = plt.subplots(figsize=(base_width, plot_height))
-            palette = {
-                target: (enriched_color if target in enriched_targets else depleted_color)
-                for target in target_order
-            }
+            if color_mode == "population":
+                palette = {target: color_map.get(str(target), "#808080") for target in target_order}
+            else:
+                palette = {
+                    target: (enriched_color if target in enriched_targets else depleted_color)
+                    for target in target_order
+                }
             sns.boxplot(
                 data=plot_subset,
                 x="value",
@@ -1533,7 +1587,8 @@ def _save_enrichment_plot(
                 )
                 ax.add_patch(rect)
 
-            fig.tight_layout(rect=(0.0, 0.0, 0.94, 1.0))
+            reserved_right = min(0.20, strip_width + 0.05)
+            fig.tight_layout(rect=(0.0, 0.0, 1.0 - reserved_right, 1.0))
 
             plot_path = out_dir / f"{analysis}_{metric}_{source_stub}_{group_stub}_enrichment{extension}"
             plot_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1789,10 +1844,20 @@ def run_pairwise_spatial_analyses(
     reload_saved_results = bool(pairwise_config.reload_saved_results)
     make_enrichment_plots = bool(pairwise_config.make_enrichment_plots)
     enrichment_top_n = int(pairwise_config.enrichment_plot_top_n)
+    enrichment_bottom_n = int(getattr(pairwise_config, "enrichment_plot_bottom_n", enrichment_top_n))
     enrichment_target_populations = coalesce_config_list(
         pairwise_config.enrichment_plot_target_populations,
         default=[],
     ) or []
+    enrichment_color_mode = _normalise_enrichment_color_mode(
+        getattr(pairwise_config, "enrichment_plot_color_mode", "direction")
+    )
+    enrichment_label_box_width = _normalise_positive_float(
+        getattr(pairwise_config, "enrichment_plot_label_box_width", 0.03),
+        default=0.03,
+        minimum=0.005,
+        label="enrichment_plot_label_box_width",
+    )
     cbar_corner = _normalise_cbar_corner(pairwise_config.pairwise_matrices_cbar_corner)
     barplot_intelligent_params = _resolve_intelligent_scale_params(
         pairwise_config.barplot_y_scale_intelligent_params
@@ -1801,15 +1866,19 @@ def run_pairwise_spatial_analyses(
     logging.info("Pairwise reload_saved_results=%s", reload_saved_results)
     logging.info("Pairwise matrix colorbar corner=%s", cbar_corner)
     logging.info(
-        "Pairwise enrichment plots enabled=%s top_n=%d restricted_targets=%s",
+        "Pairwise enrichment plots enabled=%s top_n=%d bottom_n=%d color_mode=%s label_box_width=%.4f restricted_targets=%s",
         make_enrichment_plots,
         enrichment_top_n,
+        enrichment_bottom_n,
+        enrichment_color_mode,
+        enrichment_label_box_width,
         enrichment_target_populations,
     )
-    if make_enrichment_plots and enrichment_top_n <= 0:
+    if make_enrichment_plots and enrichment_top_n <= 0 and enrichment_bottom_n <= 0:
         logging.warning(
-            "make_enrichment_plots=True but enrichment_plot_top_n=%d. Enrichment plots will be skipped.",
+            "make_enrichment_plots=True but enrichment_plot_top_n=%d and enrichment_plot_bottom_n=%d. Enrichment plots will be skipped.",
             enrichment_top_n,
+            enrichment_bottom_n,
         )
     logging.info(
         "Pairwise distance ignore_cells_without_label=%s",
@@ -1985,7 +2054,7 @@ def run_pairwise_spatial_analyses(
                             cbar_corner=cbar_corner,
                         )
 
-                if make_enrichment_plots and enrichment_top_n > 0:
+                if make_enrichment_plots and (enrichment_top_n > 0 or enrichment_bottom_n > 0):
                     _save_enrichment_plot(
                         metric_df,
                         analysis="squidpy",
@@ -1998,12 +2067,15 @@ def run_pairwise_spatial_analyses(
                         extension=extension,
                         value_label=f"Squidpy {metric}",
                         top_n=enrichment_top_n,
+                        bottom_n=enrichment_bottom_n,
                         restricted_targets=enrichment_target_populations,
                         group_col=(
                             pairwise_config.groupby_obs
                             if pairwise_config.groupby_obs in metric_df.columns
                             else None
                         ),
+                        color_mode=enrichment_color_mode,
+                        label_box_width=enrichment_label_box_width,
                     )
 
                 if pairwise_config.make_pair_barplots and pair_map:
@@ -2222,7 +2294,7 @@ def run_pairwise_spatial_analyses(
                             cbar_corner=cbar_corner,
                         )
 
-                if make_enrichment_plots and enrichment_top_n > 0:
+                if make_enrichment_plots and (enrichment_top_n > 0 or enrichment_bottom_n > 0):
                     _save_enrichment_plot(
                         metric_df,
                         analysis="distance",
@@ -2235,12 +2307,15 @@ def run_pairwise_spatial_analyses(
                         extension=extension,
                         value_label=f"Distance {metric}",
                         top_n=enrichment_top_n,
+                        bottom_n=enrichment_bottom_n,
                         restricted_targets=enrichment_target_populations,
                         group_col=(
                             pairwise_config.groupby_obs
                             if pairwise_config.groupby_obs in metric_df.columns
                             else None
                         ),
+                        color_mode=enrichment_color_mode,
+                        label_box_width=enrichment_label_box_width,
                     )
 
                 if pairwise_config.make_pair_barplots and pair_map:
@@ -2613,7 +2688,7 @@ def run_pairwise_spatial_analyses(
                             cbar_corner=cbar_corner,
                         )
 
-        if make_enrichment_plots and enrichment_top_n > 0 and pcf_roi_long is not None and not pcf_roi_long.empty:
+        if make_enrichment_plots and (enrichment_top_n > 0 or enrichment_bottom_n > 0) and pcf_roi_long is not None and not pcf_roi_long.empty:
             for metric in sorted(pcf_roi_long["metric"].dropna().unique().tolist()):
                 metric_df = pcf_roi_long[pcf_roi_long["metric"] == metric].copy()
                 _save_enrichment_plot(
@@ -2628,8 +2703,11 @@ def run_pairwise_spatial_analyses(
                     extension=extension,
                     value_label=f"PCF {metric}",
                     top_n=enrichment_top_n,
+                    bottom_n=enrichment_bottom_n,
                     restricted_targets=enrichment_target_populations,
                     group_col=("condition" if "condition" in metric_df.columns else None),
+                    color_mode=enrichment_color_mode,
+                    label_box_width=enrichment_label_box_width,
                 )
 
         if pairwise_config.make_pair_barplots and pair_map and pcf_roi_long is not None and not pcf_roi_long.empty:
@@ -2679,7 +2757,10 @@ def run_pairwise_spatial_analyses(
         "source_target_barplot_width_scale": float(pairwise_config.source_target_barplot_width_scale),
         "make_enrichment_plots": make_enrichment_plots,
         "enrichment_plot_top_n": enrichment_top_n,
+        "enrichment_plot_bottom_n": enrichment_bottom_n,
         "enrichment_plot_target_populations": enrichment_target_populations,
+        "enrichment_plot_color_mode": enrichment_color_mode,
+        "enrichment_plot_label_box_width": enrichment_label_box_width,
         "barplot_y_scale": pairwise_config.barplot_y_scale,
         "barplot_y_scale_intelligent_params": barplot_intelligent_params,
         "analysis_sources": analysis_sources,

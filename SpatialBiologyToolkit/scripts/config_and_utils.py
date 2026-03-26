@@ -690,8 +690,11 @@ class PairwiseSpatialConfig:
     source_target_barplot_width_scale: float = 0.35  # Width scaling constant for source->all-target plots (auto width ~= scale * n_targets)
     make_enrichment_plots: bool = True  # Create per-source enriched/depleted interaction boxplots
     enrichment_plot_figsize: List[float] = field(default_factory=lambda: [5.5, 4.0])  # Base [width, height] for source enrichment plots
-    enrichment_plot_top_n: int = 5  # Number of enriched and depleted target populations to show per source
+    enrichment_plot_top_n: int = 5  # Number of enriched target populations to show per source
+    enrichment_plot_bottom_n: int = 5  # Number of depleted target populations to show per source
     enrichment_plot_target_populations: Optional[List[str]] = None  # Optional target population subset for enrichment plots; None = use all available
+    enrichment_plot_color_mode: str = 'direction'  # One of: direction, population
+    enrichment_plot_label_box_width: float = 0.03  # Width of the right-side population color boxes, in axes coordinates
     figure_extension: str = '.png'
     figure_dpi: int = 300
 
