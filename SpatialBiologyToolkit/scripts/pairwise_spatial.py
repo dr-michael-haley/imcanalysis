@@ -140,7 +140,7 @@ def _population_order(adata: ad.AnnData, population_obs: str) -> List[str]:
         raise KeyError(f"Population column '{population_obs}' not found in AnnData.obs.")
 
     series = adata.obs[population_obs]
-    if pd.api.types.is_categorical_dtype(series):
+    if isinstance(series.dtype, pd.CategoricalDtype):
         return [str(x) for x in series.cat.categories if pd.notna(x)]
 
     return [str(x) for x in pd.unique(series.dropna())]
@@ -154,7 +154,7 @@ def _obs_order(
     if obs_key not in adata.obs.columns:
         return []
     series = adata.obs[obs_key]
-    if pd.api.types.is_categorical_dtype(series):
+    if isinstance(series.dtype, pd.CategoricalDtype):
         observed = [str(x) for x in series.cat.categories if pd.notna(x)]
     else:
         observed = [str(x) for x in pd.unique(series.dropna())]
@@ -174,7 +174,7 @@ def _population_color_map(
     if key in adata.uns:
         colors = list(adata.uns[key])
         series = adata.obs[population_obs] if population_obs in adata.obs.columns else None
-        if series is not None and pd.api.types.is_categorical_dtype(series):
+        if series is not None and isinstance(series.dtype, pd.CategoricalDtype):
             categories = [str(x) for x in series.cat.categories if pd.notna(x)]
             if len(colors) >= len(categories):
                 full_map = {str(pop): str(colors[i]) for i, pop in enumerate(categories)}
@@ -201,6 +201,19 @@ def _label_colors(labels: Sequence[str], color_map: Dict[str, str]) -> pd.Series
         index=list(labels),
         dtype=object,
     )
+
+
+def _safe_write_plot_table_csv(data: pd.DataFrame, path: Path, *, label: str) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data.to_csv(path, index=False)
+    except OSError as exc:
+        logging.warning(
+            "Could not write %s to %s (%s). Continuing without saving this derived CSV.",
+            label,
+            path,
+            exc,
+        )
 
 
 def _filter_dataframe_to_allowed_groups(
@@ -1007,7 +1020,7 @@ def _save_pair_barplots(
     is_pcf_analysis = str(analysis).strip().lower() == "pcf"
 
     def _ordered_levels(series: pd.Series) -> List[str]:
-        if pd.api.types.is_categorical_dtype(series):
+        if isinstance(series.dtype, pd.CategoricalDtype):
             return [str(x) for x in series.cat.categories.tolist() if pd.notna(x)]
         return sorted(series.dropna().astype(str).unique().tolist())
 
@@ -1064,15 +1077,14 @@ def _save_pair_barplots(
 
             pair_stub = f"{cleanstring(source)}_to_{cleanstring(target)}"
             raw_path = raw_dir / f"{analysis}_{metric}_{pair_stub}.csv"
-            raw_path.parent.mkdir(parents=True, exist_ok=True)
-            subset.to_csv(raw_path, index=False)
+            _safe_write_plot_table_csv(subset, raw_path, label="selected-pair raw table")
 
             fig, ax = plt.subplots(figsize=figsize)
             if group_col and group_col in subset.columns and subset[group_col].notna().any():
                 x_col = group_col
                 order = (
                     subset[x_col].cat.categories.tolist()
-                    if pd.api.types.is_categorical_dtype(subset[x_col])
+                    if isinstance(subset[x_col].dtype, pd.CategoricalDtype)
                     else sorted(subset[x_col].dropna().unique().tolist())
                 )
                 errorbar = "se" if subset[x_col].nunique(dropna=True) > 1 else None
@@ -1164,8 +1176,7 @@ def _save_pair_barplots(
 
         source_stub = cleanstring(source)
         raw_path = raw_dir / f"{analysis}_{metric}_{source_stub}_all_targets.csv"
-        raw_path.parent.mkdir(parents=True, exist_ok=True)
-        source_subset.to_csv(raw_path, index=False)
+        _safe_write_plot_table_csv(source_subset, raw_path, label="source-target raw table")
 
         palette = {t: color_map.get(str(t), "#4c72b0") for t in target_order}
 
@@ -1422,8 +1433,7 @@ def _save_enrichment_plot(
 
         source_stub = cleanstring(source)
         raw_path = raw_dir / f"{analysis}_{metric}_{source_stub}_enrichment.csv"
-        raw_path.parent.mkdir(parents=True, exist_ok=True)
-        plot_subset.to_csv(raw_path, index=False)
+        _safe_write_plot_table_csv(plot_subset, raw_path, label="enrichment raw table")
 
         plot_height = max(base_height, 0.42 * max(2, len(target_order)))
         fig, ax = plt.subplots(figsize=(base_width, plot_height))
