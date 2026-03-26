@@ -29,6 +29,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.colors import TwoSlopeNorm
+from matplotlib.patches import Rectangle
 from matplotlib.transforms import Bbox, blended_transform_factory
 
 import SpatialBiologyToolkit.distance_analysis as sbt_distance
@@ -1372,6 +1373,7 @@ def _save_enrichment_plot(
     value_label: str,
     top_n: int,
     restricted_targets: Optional[Sequence[str]] = None,
+    group_col: Optional[str] = None,
 ) -> None:
     if data.empty or top_n <= 0:
         return
@@ -1399,91 +1401,144 @@ def _save_enrichment_plot(
     if numeric.empty:
         return
 
-    for source in _dedupe_keep_order(numeric["source_population"].tolist()):
-        source_subset = numeric[numeric["source_population"] == str(source)].copy()
-        if source_subset.empty:
-            continue
+    if group_col and group_col in numeric.columns:
+        group_series = numeric[group_col]
+        present_groups = set(group_series.dropna().astype(str).unique().tolist())
+        if isinstance(group_series.dtype, pd.CategoricalDtype):
+            ordered_groups = [
+                str(x) for x in group_series.cat.categories if pd.notna(x) and str(x) in present_groups
+            ]
+        else:
+            ordered_groups = sorted(present_groups)
+    else:
+        group_col = None
+        ordered_groups = []
 
-        target_order, enriched_targets, depleted_targets = _select_enrichment_targets(
-            source_subset,
-            analysis=analysis,
-            metric=metric,
-            top_n=int(top_n),
-            restricted_targets=restricted_targets,
-        )
-        if not target_order:
-            continue
+    def _group_outputs(group_name: Optional[str]) -> Tuple[str, str]:
+        if group_name is None:
+            if group_col:
+                return f"{cleanstring(group_col)}_all", "all groups"
+            return "all_data", "all data"
+        group_label = str(group_name)
+        if group_col:
+            return f"{cleanstring(group_col)}_{cleanstring(group_label)}", f"{group_col}={group_label}"
+        return cleanstring(group_label), group_label
 
-        plot_subset = source_subset[source_subset["target_population"].isin(target_order)].copy()
-        if plot_subset.empty:
-            continue
-        plot_subset["target_population"] = pd.Categorical(
-            plot_subset["target_population"].astype(str),
-            categories=target_order,
-            ordered=True,
-        )
-        direction_map = {
-            target: ("enriched" if target in enriched_targets else "depleted")
-            for target in target_order
-        }
-        plot_subset["enrichment_direction"] = plot_subset["target_population"].astype(str).map(direction_map)
-        plot_subset["target_rank"] = plot_subset["target_population"].astype(str).map(
-            {target: idx for idx, target in enumerate(target_order)}
-        )
+    def _add_reference_line(ax: Any) -> None:
+        ref_value: Optional[float] = None
+        if metric_key == "zscore":
+            ref_value = 0.0
+        elif analysis_key == "pcf":
+            ref_value = 1.0
+        if ref_value is None:
+            return
+        ax.axvline(ref_value, color="black", linestyle=":", linewidth=1.0, alpha=0.8, zorder=0)
+        x_min, x_max = ax.get_xlim()
+        ax.set_xlim(min(float(x_min), ref_value), max(float(x_max), ref_value))
 
-        source_stub = cleanstring(source)
-        raw_path = raw_dir / f"{analysis}_{metric}_{source_stub}_enrichment.csv"
-        _safe_write_plot_table_csv(plot_subset, raw_path, label="enrichment raw table")
+    group_frames: List[Tuple[Optional[str], pd.DataFrame]] = [(None, numeric)]
+    if group_col:
+        group_values = numeric[group_col].astype("string")
+        for group_name in ordered_groups:
+            group_frame = numeric[group_values == str(group_name)].copy()
+            if not group_frame.empty:
+                group_frames.append((str(group_name), group_frame))
 
-        plot_height = max(base_height, 0.42 * max(2, len(target_order)))
-        fig, ax = plt.subplots(figsize=(base_width, plot_height))
-        palette = {
-            target: (enriched_color if target in enriched_targets else depleted_color)
-            for target in target_order
-        }
-        sns.boxplot(
-            data=plot_subset,
-            x="value",
-            y="target_population",
-            order=target_order,
-            orient="h",
-            showfliers=False,
-            palette=palette,
-            linewidth=0.9,
-            ax=ax,
-        )
+    box_height = 0.8
+    strip_x = 1.01
+    strip_width = 0.03
 
-        if enriched_targets and depleted_targets:
-            ax.axhline(len(enriched_targets) - 0.5, color="black", linewidth=1.0, alpha=0.8)
+    for group_name, group_frame in group_frames:
+        group_stub, group_title = _group_outputs(group_name)
+        for source in _dedupe_keep_order(group_frame["source_population"].tolist()):
+            source_subset = group_frame[group_frame["source_population"] == str(source)].copy()
+            if source_subset.empty:
+                continue
 
-        ax.set_title(f"{source}: enriched / depleted interactions")
-        ax.set_xlabel(value_label)
-        ax.set_ylabel("")
-        ax.grid(False)
+            target_order, enriched_targets, depleted_targets = _select_enrichment_targets(
+                source_subset,
+                analysis=analysis,
+                metric=metric,
+                top_n=int(top_n),
+                restricted_targets=restricted_targets,
+            )
+            if not target_order:
+                continue
 
-        y_positions = ax.get_yticks()
-        y_labels = [tick.get_text() for tick in ax.get_yticklabels()]
-        square_colors = [color_map.get(str(label), "#808080") for label in y_labels]
-        label_transform = blended_transform_factory(ax.transAxes, ax.transData)
-        ax.scatter(
-            [1.01] * len(y_positions),
-            y_positions,
-            marker="s",
-            s=34,
-            c=square_colors,
-            edgecolors="black",
-            linewidths=0.3,
-            transform=label_transform,
-            clip_on=False,
-            zorder=4,
-        )
+            plot_subset = source_subset[source_subset["target_population"].isin(target_order)].copy()
+            if plot_subset.empty:
+                continue
+            plot_subset["target_population"] = pd.Categorical(
+                plot_subset["target_population"].astype(str),
+                categories=target_order,
+                ordered=True,
+            )
+            direction_map = {
+                target: ("enriched" if target in enriched_targets else "depleted")
+                for target in target_order
+            }
+            plot_subset["enrichment_direction"] = plot_subset["target_population"].astype(str).map(
+                direction_map
+            )
+            plot_subset["target_rank"] = plot_subset["target_population"].astype(str).map(
+                {target: idx for idx, target in enumerate(target_order)}
+            )
 
-        fig.tight_layout(rect=(0.0, 0.0, 0.96, 1.0))
+            source_stub = cleanstring(source)
+            raw_path = raw_dir / f"{analysis}_{metric}_{source_stub}_{group_stub}_enrichment.csv"
+            _safe_write_plot_table_csv(plot_subset, raw_path, label="enrichment raw table")
 
-        plot_path = out_dir / f"{analysis}_{metric}_{source_stub}_enrichment{extension}"
-        plot_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(plot_path, dpi=int(dpi), bbox_inches="tight")
-        plt.close(fig)
+            plot_height = max(base_height, 0.42 * max(2, len(target_order)))
+            fig, ax = plt.subplots(figsize=(base_width, plot_height))
+            palette = {
+                target: (enriched_color if target in enriched_targets else depleted_color)
+                for target in target_order
+            }
+            sns.boxplot(
+                data=plot_subset,
+                x="value",
+                y="target_population",
+                order=target_order,
+                orient="h",
+                showfliers=False,
+                palette=palette,
+                linewidth=0.9,
+                width=box_height,
+                ax=ax,
+            )
+
+            if enriched_targets and depleted_targets:
+                ax.axhline(len(enriched_targets) - 0.5, color="black", linewidth=1.0, alpha=0.8)
+
+            _add_reference_line(ax)
+            ax.set_title(f"{source}: enriched / depleted interactions ({group_title})")
+            ax.set_xlabel(value_label)
+            ax.set_ylabel("")
+            ax.grid(False)
+
+            y_positions = ax.get_yticks()
+            y_labels = [tick.get_text() for tick in ax.get_yticklabels()]
+            label_transform = blended_transform_factory(ax.transAxes, ax.transData)
+            for y_pos, label in zip(y_positions, y_labels):
+                rect = Rectangle(
+                    (strip_x, float(y_pos) - (box_height / 2.0)),
+                    strip_width,
+                    box_height,
+                    facecolor=color_map.get(str(label), "#808080"),
+                    edgecolor="black",
+                    linewidth=0.3,
+                    transform=label_transform,
+                    clip_on=False,
+                    zorder=4,
+                )
+                ax.add_patch(rect)
+
+            fig.tight_layout(rect=(0.0, 0.0, 0.94, 1.0))
+
+            plot_path = out_dir / f"{analysis}_{metric}_{source_stub}_{group_stub}_enrichment{extension}"
+            plot_path.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(plot_path, dpi=int(dpi), bbox_inches="tight")
+            plt.close(fig)
 
 
 def _flatten_squidpy_results(
@@ -1944,6 +1999,11 @@ def run_pairwise_spatial_analyses(
                         value_label=f"Squidpy {metric}",
                         top_n=enrichment_top_n,
                         restricted_targets=enrichment_target_populations,
+                        group_col=(
+                            pairwise_config.groupby_obs
+                            if pairwise_config.groupby_obs in metric_df.columns
+                            else None
+                        ),
                     )
 
                 if pairwise_config.make_pair_barplots and pair_map:
@@ -2176,6 +2236,11 @@ def run_pairwise_spatial_analyses(
                         value_label=f"Distance {metric}",
                         top_n=enrichment_top_n,
                         restricted_targets=enrichment_target_populations,
+                        group_col=(
+                            pairwise_config.groupby_obs
+                            if pairwise_config.groupby_obs in metric_df.columns
+                            else None
+                        ),
                     )
 
                 if pairwise_config.make_pair_barplots and pair_map:
@@ -2564,6 +2629,7 @@ def run_pairwise_spatial_analyses(
                     value_label=f"PCF {metric}",
                     top_n=enrichment_top_n,
                     restricted_targets=enrichment_target_populations,
+                    group_col=("condition" if "condition" in metric_df.columns else None),
                 )
 
         if pairwise_config.make_pair_barplots and pair_map and pcf_roi_long is not None and not pcf_roi_long.empty:
