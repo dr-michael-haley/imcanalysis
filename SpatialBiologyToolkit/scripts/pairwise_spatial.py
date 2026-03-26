@@ -1416,6 +1416,7 @@ def _select_enrichment_targets(
     top_n: int,
     bottom_n: int,
     restricted_targets: Optional[Sequence[str]] = None,
+    exclude_homotypic: bool = True,
 ) -> Tuple[List[str], List[str], List[str]]:
     if source_subset.empty or (top_n <= 0 and bottom_n <= 0):
         return [], [], []
@@ -1430,6 +1431,18 @@ def _select_enrichment_targets(
     target_summary = target_summary.dropna(subset=["value"])
     if target_summary.empty:
         return [], [], []
+
+    if exclude_homotypic and "source_population" in source_subset.columns:
+        source_names = {
+            str(x)
+            for x in source_subset["source_population"].dropna().astype(str).unique().tolist()
+        }
+        if source_names:
+            target_summary = target_summary[
+                ~target_summary["target_population"].isin(source_names)
+            ].copy()
+            if target_summary.empty:
+                return [], [], []
 
     if restricted_targets:
         restricted = _dedupe_keep_order([str(x) for x in restricted_targets])
@@ -1504,6 +1517,7 @@ def _save_enrichment_plot(
     x_scale_mode: str = "linear",
     x_scale_intelligent_params: Optional[Dict[str, Any]] = None,
     share_x_axis_across_groups: bool = False,
+    exclude_homotypic: bool = True,
 ) -> None:
     if data.empty or (top_n <= 0 and bottom_n <= 0):
         return
@@ -1612,6 +1626,7 @@ def _save_enrichment_plot(
                 top_n=int(top_n),
                 bottom_n=int(bottom_n),
                 restricted_targets=restricted_targets,
+                exclude_homotypic=exclude_homotypic,
             )
             if not target_order:
                 continue
@@ -2023,6 +2038,9 @@ def run_pairwise_spatial_analyses(
         minimum=0.005,
         label="enrichment_plot_label_box_width",
     )
+    enrichment_exclude_homotypic = bool(
+        getattr(pairwise_config, "enrichment_plot_exclude_homotypic", True)
+    )
     enrichment_share_x_axis_across_groups = bool(
         getattr(pairwise_config, "enrichment_plot_share_x_axis_across_groups", False)
     )
@@ -2034,12 +2052,13 @@ def run_pairwise_spatial_analyses(
     logging.info("Pairwise reload_saved_results=%s", reload_saved_results)
     logging.info("Pairwise matrix colorbar corner=%s", cbar_corner)
     logging.info(
-        "Pairwise enrichment plots enabled=%s top_n=%d bottom_n=%d color_mode=%s label_box_width=%.4f share_x_axis_across_groups=%s restricted_targets=%s",
+        "Pairwise enrichment plots enabled=%s top_n=%d bottom_n=%d color_mode=%s label_box_width=%.4f exclude_homotypic=%s share_x_axis_across_groups=%s restricted_targets=%s",
         make_enrichment_plots,
         enrichment_top_n,
         enrichment_bottom_n,
         enrichment_color_mode,
         enrichment_label_box_width,
+        enrichment_exclude_homotypic,
         enrichment_share_x_axis_across_groups,
         enrichment_target_populations,
     )
@@ -2262,6 +2281,7 @@ def run_pairwise_spatial_analyses(
                         x_scale_mode=x_scale_mode,
                         x_scale_intelligent_params=barplot_intelligent_params,
                         share_x_axis_across_groups=enrichment_share_x_axis_across_groups,
+                        exclude_homotypic=enrichment_exclude_homotypic,
                     )
 
                 if pairwise_config.make_pair_barplots and pair_map:
@@ -2519,6 +2539,7 @@ def run_pairwise_spatial_analyses(
                         x_scale_mode=x_scale_mode,
                         x_scale_intelligent_params=barplot_intelligent_params,
                         share_x_axis_across_groups=enrichment_share_x_axis_across_groups,
+                        exclude_homotypic=enrichment_exclude_homotypic,
                     )
 
                 if pairwise_config.make_pair_barplots and pair_map:
@@ -2939,6 +2960,7 @@ def run_pairwise_spatial_analyses(
                     x_scale_mode=x_scale_mode,
                     x_scale_intelligent_params=barplot_intelligent_params,
                     share_x_axis_across_groups=enrichment_share_x_axis_across_groups,
+                    exclude_homotypic=enrichment_exclude_homotypic,
                 )
 
         if pairwise_config.make_pair_barplots and pair_map and pcf_roi_long is not None and not pcf_roi_long.empty:
@@ -2990,6 +3012,7 @@ def run_pairwise_spatial_analyses(
         "enrichment_plot_top_n": enrichment_top_n,
         "enrichment_plot_bottom_n": enrichment_bottom_n,
         "enrichment_plot_target_populations": enrichment_target_populations,
+        "enrichment_plot_exclude_homotypic": enrichment_exclude_homotypic,
         "enrichment_plot_share_x_axis_across_groups": enrichment_share_x_axis_across_groups,
         "enrichment_plot_color_mode": enrichment_color_mode,
         "enrichment_plot_label_box_width": enrichment_label_box_width,

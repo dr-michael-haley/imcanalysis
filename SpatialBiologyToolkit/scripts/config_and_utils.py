@@ -693,7 +693,8 @@ class PairwiseSpatialConfig:
     enrichment_plot_top_n: int = 5  # Number of enriched target populations to show per source
     enrichment_plot_bottom_n: int = 5  # Number of depleted target populations to show per source
     enrichment_plot_target_populations: Optional[List[str]] = None  # Optional target population subset for enrichment plots; None = use all available
-    enrichment_plot_share_x_axis_across_groups: bool = False  # If True, reuse one x-axis scale for all group-specific enrichment plots of the same source/metric combination
+    enrichment_plot_exclude_homotypic: bool = True  # If True, exclude source==target populations when ranking enriched/depleted targets
+    enrichment_plot_share_x_axis_across_groups: bool = True  # If True, reuse one x-axis scale for all group-specific enrichment plots of the same source/metric combination
     enrichment_plot_color_mode: str = 'direction'  # One of: direction, population
     enrichment_plot_label_box_width: float = 0.03  # Width of the right-side population color boxes, in axes coordinates
     figure_extension: str = '.png'
