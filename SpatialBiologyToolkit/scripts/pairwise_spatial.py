@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib.colors import TwoSlopeNorm
-from matplotlib.transforms import Bbox
+from matplotlib.transforms import Bbox, blended_transform_factory
 
 import SpatialBiologyToolkit.distance_analysis as sbt_distance
 import SpatialBiologyToolkit.pcf as sbt_pcf
@@ -1275,6 +1275,207 @@ def _save_pair_barplots(
         plt.close(fig)
 
 
+def _select_enrichment_targets(
+    source_subset: pd.DataFrame,
+    *,
+    analysis: str,
+    metric: str,
+    top_n: int,
+    restricted_targets: Optional[Sequence[str]] = None,
+) -> Tuple[List[str], List[str], List[str]]:
+    if source_subset.empty or top_n <= 0:
+        return [], [], []
+
+    target_summary = (
+        source_subset.groupby("target_population", observed=True)["value"]
+        .mean()
+        .reset_index()
+    )
+    target_summary["target_population"] = target_summary["target_population"].astype(str)
+    target_summary["value"] = pd.to_numeric(target_summary["value"], errors="coerce")
+    target_summary = target_summary.dropna(subset=["value"])
+    if target_summary.empty:
+        return [], [], []
+
+    if restricted_targets:
+        restricted = _dedupe_keep_order([str(x) for x in restricted_targets])
+        available = set(target_summary["target_population"].tolist())
+        missing = [target for target in restricted if target not in available]
+        if missing:
+            logging.warning(
+                "Configured enrichment_plot_target_populations were not present for %s/%s: %s",
+                analysis,
+                metric,
+                missing,
+            )
+        target_summary = target_summary[target_summary["target_population"].isin(restricted)].copy()
+        if target_summary.empty:
+            return [], [], []
+
+    analysis_key = str(analysis).strip().lower()
+    metric_key = str(metric).strip().lower()
+
+    if analysis_key == "distance":
+        enriched_pool = target_summary.sort_values("value", ascending=True)
+        depleted_pool = target_summary.sort_values("value", ascending=False)
+    elif analysis_key == "squidpy" and metric_key == "zscore":
+        enriched_pool = target_summary[target_summary["value"] > 0].sort_values("value", ascending=False)
+        depleted_pool = target_summary[target_summary["value"] < 0].sort_values("value", ascending=True)
+        if enriched_pool.empty and depleted_pool.empty:
+            enriched_pool = target_summary.sort_values("value", ascending=False)
+            depleted_pool = target_summary.sort_values("value", ascending=True)
+    else:
+        enriched_pool = target_summary.sort_values("value", ascending=False)
+        depleted_pool = target_summary.sort_values("value", ascending=True)
+
+    enriched: List[str] = []
+    for target in enriched_pool["target_population"].tolist():
+        if target not in enriched:
+            enriched.append(str(target))
+        if len(enriched) >= int(top_n):
+            break
+
+    depleted: List[str] = []
+    for target in depleted_pool["target_population"].tolist():
+        target = str(target)
+        if target in enriched or target in depleted:
+            continue
+        depleted.append(target)
+        if len(depleted) >= int(top_n):
+            break
+
+    return enriched + depleted, enriched, depleted
+
+
+def _save_enrichment_plot(
+    data: pd.DataFrame,
+    *,
+    analysis: str,
+    metric: str,
+    color_map: Dict[str, str],
+    out_dir: Path,
+    raw_dir: Path,
+    figsize: Tuple[float, float],
+    dpi: int,
+    extension: str,
+    value_label: str,
+    top_n: int,
+    restricted_targets: Optional[Sequence[str]] = None,
+) -> None:
+    if data.empty or top_n <= 0:
+        return
+
+    analysis_key = str(analysis).strip().lower()
+    metric_key = str(metric).strip().lower()
+    base_width = float(figsize[0])
+    base_height = float(figsize[1])
+    enriched_color = "#2ca02c"
+    depleted_color = "#d62728"
+
+    numeric = data.copy()
+    numeric["source_population"] = numeric["source_population"].astype(str)
+    numeric["target_population"] = numeric["target_population"].astype(str)
+    numeric["value"] = pd.to_numeric(numeric["value"], errors="coerce")
+    numeric = numeric.dropna(subset=["value", "source_population", "target_population"])
+    if analysis_key == "squidpy" and metric_key == "count":
+        n_neg = int((numeric["value"] < 0).sum())
+        if n_neg > 0:
+            logging.warning(
+                "Squidpy/count contains %d negative values; clipping to 0 before enrichment plotting.",
+                n_neg,
+            )
+            numeric.loc[numeric["value"] < 0, "value"] = 0.0
+    if numeric.empty:
+        return
+
+    for source in _dedupe_keep_order(numeric["source_population"].tolist()):
+        source_subset = numeric[numeric["source_population"] == str(source)].copy()
+        if source_subset.empty:
+            continue
+
+        target_order, enriched_targets, depleted_targets = _select_enrichment_targets(
+            source_subset,
+            analysis=analysis,
+            metric=metric,
+            top_n=int(top_n),
+            restricted_targets=restricted_targets,
+        )
+        if not target_order:
+            continue
+
+        plot_subset = source_subset[source_subset["target_population"].isin(target_order)].copy()
+        if plot_subset.empty:
+            continue
+        plot_subset["target_population"] = pd.Categorical(
+            plot_subset["target_population"].astype(str),
+            categories=target_order,
+            ordered=True,
+        )
+        direction_map = {
+            target: ("enriched" if target in enriched_targets else "depleted")
+            for target in target_order
+        }
+        plot_subset["enrichment_direction"] = plot_subset["target_population"].astype(str).map(direction_map)
+        plot_subset["target_rank"] = plot_subset["target_population"].astype(str).map(
+            {target: idx for idx, target in enumerate(target_order)}
+        )
+
+        source_stub = cleanstring(source)
+        raw_path = raw_dir / f"{analysis}_{metric}_{source_stub}_enrichment.csv"
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        plot_subset.to_csv(raw_path, index=False)
+
+        plot_height = max(base_height, 0.42 * max(2, len(target_order)))
+        fig, ax = plt.subplots(figsize=(base_width, plot_height))
+        palette = {
+            target: (enriched_color if target in enriched_targets else depleted_color)
+            for target in target_order
+        }
+        sns.boxplot(
+            data=plot_subset,
+            x="value",
+            y="target_population",
+            order=target_order,
+            orient="h",
+            showfliers=False,
+            palette=palette,
+            linewidth=0.9,
+            ax=ax,
+        )
+
+        if enriched_targets and depleted_targets:
+            ax.axhline(len(enriched_targets) - 0.5, color="black", linewidth=1.0, alpha=0.8)
+
+        ax.set_title(f"{source}: enriched / depleted interactions")
+        ax.set_xlabel(value_label)
+        ax.set_ylabel("")
+        ax.grid(False)
+
+        y_positions = ax.get_yticks()
+        y_labels = [tick.get_text() for tick in ax.get_yticklabels()]
+        square_colors = [color_map.get(str(label), "#808080") for label in y_labels]
+        label_transform = blended_transform_factory(ax.transAxes, ax.transData)
+        ax.scatter(
+            [1.01] * len(y_positions),
+            y_positions,
+            marker="s",
+            s=34,
+            c=square_colors,
+            edgecolors="black",
+            linewidths=0.3,
+            transform=label_transform,
+            clip_on=False,
+            zorder=4,
+        )
+
+        fig.tight_layout(rect=(0.0, 0.0, 0.96, 1.0))
+
+        plot_path = out_dir / f"{analysis}_{metric}_{source_stub}_enrichment{extension}"
+        plot_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(plot_path, dpi=int(dpi), bbox_inches="tight")
+        plt.close(fig)
+
+
 def _flatten_squidpy_results(
     results: Dict[str, Dict[str, pd.DataFrame]], subregion_key: str
 ) -> pd.DataFrame:
@@ -1511,14 +1712,22 @@ def run_pairwise_spatial_analyses(
     raw_dir = output_root / "raw_data"
     matrix_dir = output_root / "plots" / "pairwise_matrices"
     pair_bar_dir = output_root / "plots" / "selected_pairs"
+    enrichment_plot_dir = output_root / "plots" / "enrichment_plots"
     metadata_dir = output_root / "metadata"
-    for folder in [raw_dir, matrix_dir, pair_bar_dir, metadata_dir]:
+    for folder in [raw_dir, matrix_dir, pair_bar_dir, enrichment_plot_dir, metadata_dir]:
         folder.mkdir(parents=True, exist_ok=True)
 
     extension = _ensure_extension(pairwise_config.figure_extension)
     matrix_figsize = _figsize(pairwise_config.heatmap_figsize, fallback=(8.0, 6.0))
     bar_figsize = _figsize(pairwise_config.barplot_figsize, fallback=(3.0, 3.0))
+    enrichment_figsize = _figsize(pairwise_config.enrichment_plot_figsize, fallback=(5.5, 4.0))
     reload_saved_results = bool(pairwise_config.reload_saved_results)
+    make_enrichment_plots = bool(pairwise_config.make_enrichment_plots)
+    enrichment_top_n = int(pairwise_config.enrichment_plot_top_n)
+    enrichment_target_populations = coalesce_config_list(
+        pairwise_config.enrichment_plot_target_populations,
+        default=[],
+    ) or []
     cbar_corner = _normalise_cbar_corner(pairwise_config.pairwise_matrices_cbar_corner)
     barplot_intelligent_params = _resolve_intelligent_scale_params(
         pairwise_config.barplot_y_scale_intelligent_params
@@ -1526,6 +1735,17 @@ def run_pairwise_spatial_analyses(
     analysis_sources: Dict[str, str] = {"squidpy": "skipped", "distance": "skipped", "pcf": "skipped"}
     logging.info("Pairwise reload_saved_results=%s", reload_saved_results)
     logging.info("Pairwise matrix colorbar corner=%s", cbar_corner)
+    logging.info(
+        "Pairwise enrichment plots enabled=%s top_n=%d restricted_targets=%s",
+        make_enrichment_plots,
+        enrichment_top_n,
+        enrichment_target_populations,
+    )
+    if make_enrichment_plots and enrichment_top_n <= 0:
+        logging.warning(
+            "make_enrichment_plots=True but enrichment_plot_top_n=%d. Enrichment plots will be skipped.",
+            enrichment_top_n,
+        )
     logging.info(
         "Pairwise distance ignore_cells_without_label=%s",
         ignore_cells_without_label,
@@ -1699,6 +1919,22 @@ def run_pairwise_spatial_analyses(
                             fixed_limits=shared_limits,
                             cbar_corner=cbar_corner,
                         )
+
+                if make_enrichment_plots and enrichment_top_n > 0:
+                    _save_enrichment_plot(
+                        metric_df,
+                        analysis="squidpy",
+                        metric=metric,
+                        color_map=color_map,
+                        out_dir=enrichment_plot_dir,
+                        raw_dir=squidpy_raw_dir / "enrichment_plots",
+                        figsize=enrichment_figsize,
+                        dpi=pairwise_config.figure_dpi,
+                        extension=extension,
+                        value_label=f"Squidpy {metric}",
+                        top_n=enrichment_top_n,
+                        restricted_targets=enrichment_target_populations,
+                    )
 
                 if pairwise_config.make_pair_barplots and pair_map:
                     group_col = (
@@ -1915,6 +2151,22 @@ def run_pairwise_spatial_analyses(
                             fixed_limits=shared_limits,
                             cbar_corner=cbar_corner,
                         )
+
+                if make_enrichment_plots and enrichment_top_n > 0:
+                    _save_enrichment_plot(
+                        metric_df,
+                        analysis="distance",
+                        metric=metric,
+                        color_map=color_map,
+                        out_dir=enrichment_plot_dir,
+                        raw_dir=distance_raw_dir / "enrichment_plots",
+                        figsize=enrichment_figsize,
+                        dpi=pairwise_config.figure_dpi,
+                        extension=extension,
+                        value_label=f"Distance {metric}",
+                        top_n=enrichment_top_n,
+                        restricted_targets=enrichment_target_populations,
+                    )
 
                 if pairwise_config.make_pair_barplots and pair_map:
                     group_col = (
@@ -2286,6 +2538,24 @@ def run_pairwise_spatial_analyses(
                             cbar_corner=cbar_corner,
                         )
 
+        if make_enrichment_plots and enrichment_top_n > 0 and pcf_roi_long is not None and not pcf_roi_long.empty:
+            for metric in sorted(pcf_roi_long["metric"].dropna().unique().tolist()):
+                metric_df = pcf_roi_long[pcf_roi_long["metric"] == metric].copy()
+                _save_enrichment_plot(
+                    metric_df,
+                    analysis="pcf",
+                    metric=metric,
+                    color_map=color_map,
+                    out_dir=enrichment_plot_dir,
+                    raw_dir=pcf_raw_dir / "enrichment_plots",
+                    figsize=enrichment_figsize,
+                    dpi=pairwise_config.figure_dpi,
+                    extension=extension,
+                    value_label=f"PCF {metric}",
+                    top_n=enrichment_top_n,
+                    restricted_targets=enrichment_target_populations,
+                )
+
         if pairwise_config.make_pair_barplots and pair_map and pcf_roi_long is not None and not pcf_roi_long.empty:
             for metric in sorted(pcf_roi_long["metric"].dropna().unique().tolist()):
                 metric_df = pcf_roi_long[pcf_roi_long["metric"] == metric].copy()
@@ -2331,6 +2601,9 @@ def run_pairwise_spatial_analyses(
         "pairwise_matrices_share_vmax_vmin": bool(pairwise_config.pairwise_matrices_share_vmax_vmin),
         "make_source_target_barplots": bool(pairwise_config.make_source_target_barplots),
         "source_target_barplot_width_scale": float(pairwise_config.source_target_barplot_width_scale),
+        "make_enrichment_plots": make_enrichment_plots,
+        "enrichment_plot_top_n": enrichment_top_n,
+        "enrichment_plot_target_populations": enrichment_target_populations,
         "barplot_y_scale": pairwise_config.barplot_y_scale,
         "barplot_y_scale_intelligent_params": barplot_intelligent_params,
         "analysis_sources": analysis_sources,
