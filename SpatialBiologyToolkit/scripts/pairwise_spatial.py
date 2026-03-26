@@ -1514,6 +1514,7 @@ def _save_enrichment_plot(
     group_col: Optional[str] = None,
     color_mode: str = "direction",
     label_box_width: float = 0.03,
+    height_per_target: float = 0.25,
     x_scale_mode: str = "linear",
     x_scale_intelligent_params: Optional[Dict[str, Any]] = None,
     share_x_axis_across_groups: bool = False,
@@ -1532,6 +1533,12 @@ def _save_enrichment_plot(
         default=0.03,
         minimum=0.005,
         label="enrichment_plot_label_box_width",
+    )
+    height_per_target = _normalise_positive_float(
+        height_per_target,
+        default=0.25,
+        minimum=0.05,
+        label="enrichment_plot_height_per_target",
     )
     base_width = float(figsize[0])
     base_height = float(figsize[1])
@@ -1703,7 +1710,7 @@ def _save_enrichment_plot(
         depleted_targets = list(plot_spec["depleted_targets"])
         plot_subset = plot_spec["plot_subset"].copy()
 
-        plot_height = max(base_height, 0.42 * max(2, len(target_order)))
+        plot_height = max(base_height, height_per_target * max(2, len(target_order)))
         fig, ax = plt.subplots(figsize=(base_width, plot_height))
         if color_mode == "population":
             palette = {target: color_map.get(str(target), "#808080") for target in target_order}
@@ -2038,6 +2045,12 @@ def run_pairwise_spatial_analyses(
         minimum=0.005,
         label="enrichment_plot_label_box_width",
     )
+    enrichment_height_per_target = _normalise_positive_float(
+        getattr(pairwise_config, "enrichment_plot_height_per_target", 0.25),
+        default=0.25,
+        minimum=0.05,
+        label="enrichment_plot_height_per_target",
+    )
     enrichment_exclude_homotypic = bool(
         getattr(pairwise_config, "enrichment_plot_exclude_homotypic", True)
     )
@@ -2052,12 +2065,13 @@ def run_pairwise_spatial_analyses(
     logging.info("Pairwise reload_saved_results=%s", reload_saved_results)
     logging.info("Pairwise matrix colorbar corner=%s", cbar_corner)
     logging.info(
-        "Pairwise enrichment plots enabled=%s top_n=%d bottom_n=%d color_mode=%s label_box_width=%.4f exclude_homotypic=%s share_x_axis_across_groups=%s restricted_targets=%s",
+        "Pairwise enrichment plots enabled=%s top_n=%d bottom_n=%d color_mode=%s label_box_width=%.4f height_per_target=%.4f exclude_homotypic=%s share_x_axis_across_groups=%s restricted_targets=%s",
         make_enrichment_plots,
         enrichment_top_n,
         enrichment_bottom_n,
         enrichment_color_mode,
         enrichment_label_box_width,
+        enrichment_height_per_target,
         enrichment_exclude_homotypic,
         enrichment_share_x_axis_across_groups,
         enrichment_target_populations,
@@ -2278,6 +2292,7 @@ def run_pairwise_spatial_analyses(
                         ),
                         color_mode=enrichment_color_mode,
                         label_box_width=enrichment_label_box_width,
+                        height_per_target=enrichment_height_per_target,
                         x_scale_mode=x_scale_mode,
                         x_scale_intelligent_params=barplot_intelligent_params,
                         share_x_axis_across_groups=enrichment_share_x_axis_across_groups,
@@ -2536,6 +2551,7 @@ def run_pairwise_spatial_analyses(
                         ),
                         color_mode=enrichment_color_mode,
                         label_box_width=enrichment_label_box_width,
+                        height_per_target=enrichment_height_per_target,
                         x_scale_mode=x_scale_mode,
                         x_scale_intelligent_params=barplot_intelligent_params,
                         share_x_axis_across_groups=enrichment_share_x_axis_across_groups,
@@ -2957,6 +2973,7 @@ def run_pairwise_spatial_analyses(
                     group_col=("condition" if "condition" in metric_df.columns else None),
                     color_mode=enrichment_color_mode,
                     label_box_width=enrichment_label_box_width,
+                    height_per_target=enrichment_height_per_target,
                     x_scale_mode=x_scale_mode,
                     x_scale_intelligent_params=barplot_intelligent_params,
                     share_x_axis_across_groups=enrichment_share_x_axis_across_groups,
@@ -3016,6 +3033,7 @@ def run_pairwise_spatial_analyses(
         "enrichment_plot_share_x_axis_across_groups": enrichment_share_x_axis_across_groups,
         "enrichment_plot_color_mode": enrichment_color_mode,
         "enrichment_plot_label_box_width": enrichment_label_box_width,
+        "enrichment_plot_height_per_target": enrichment_height_per_target,
         "barplot_y_scale": pairwise_config.barplot_y_scale,
         "barplot_y_scale_intelligent_params": barplot_intelligent_params,
         "analysis_sources": analysis_sources,

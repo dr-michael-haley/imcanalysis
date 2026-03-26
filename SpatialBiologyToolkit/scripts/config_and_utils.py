@@ -697,6 +697,7 @@ class PairwiseSpatialConfig:
     enrichment_plot_share_x_axis_across_groups: bool = True  # If True, reuse one x-axis scale for all group-specific enrichment plots of the same source/metric combination
     enrichment_plot_color_mode: str = 'direction'  # One of: direction, population
     enrichment_plot_label_box_width: float = 0.03  # Width of the right-side population color boxes, in axes coordinates
+    enrichment_plot_height_per_target: float = 0.25  # Additional figure height per displayed target population for enrichment plots
     figure_extension: str = '.png'
     figure_dpi: int = 300
 
