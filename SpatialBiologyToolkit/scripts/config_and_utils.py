@@ -658,7 +658,7 @@ class PairwiseSpatialConfig:
     # Flexible structure examples:
     # barplot_y_scale: {'default': 'linear'}
     # barplot_y_scale: {'distance': {'observed': 'log', 'delta': 'linear'}, 'pcf': {'g': 'log'}}
-    # barplot_y_scale: {'squidpy.zscore': 'intelligent', 'default': 'linear'}
+    # barplot_y_scale: {'squidpy': {'count': 'log1p', 'zscore': 'intelligent'}, 'default': 'linear'}
     # Default is explicitly populated by analysis/metric so users can tweak directly.
     barplot_y_scale: Dict[str, Any] = field(default_factory=lambda: {
         'default': 'linear',

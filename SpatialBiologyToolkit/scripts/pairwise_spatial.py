@@ -402,11 +402,11 @@ def _normalise_population_pairs(
 
 def _normalise_barplot_scale_mode(value: Any, *, context: str = "") -> Optional[str]:
     text = str(value).strip().lower()
-    if text in {"linear", "log", "intelligent"}:
+    if text in {"linear", "log", "log1p", "intelligent"}:
         return text
     if context:
         logging.warning(
-            "Invalid barplot y-scale '%s' for %s. Valid options are: linear, log, intelligent.",
+            "Invalid barplot y-scale '%s' for %s. Valid options are: linear, log, log1p, intelligent.",
             value,
             context,
         )
@@ -502,21 +502,25 @@ def _choose_scale_1d(
     crush_frac_thresh: float = 0.7,
 ) -> str:
     """
-    Return "linear" or "log" for plotting 1D values.
+    Return "linear", "log", or "log1p" for plotting 1D values.
     Uses dynamic range + skewness reduction + linear-axis crush heuristic.
 
     For axis safety, log is only selected when all finite values are > 0.
+    log1p is only selected when all finite values are >= 0 and at least one value is 0.
     """
     arr = np.asarray(x, dtype=float)
     arr = arr[np.isfinite(arr)]
     if arr.size < 10:
         return "linear"
 
-    # A true log axis cannot display zero/negative values.
-    if np.any(arr <= 0):
+    if np.any(arr < 0):
         return "linear"
 
-    min_pos = float(np.min(arr))
+    positive = arr[arr > 0]
+    if positive.size == 0:
+        return "linear"
+
+    min_pos = float(np.min(positive))
     max_pos = float(np.max(arr))
     if not np.isfinite(min_pos) or not np.isfinite(max_pos) or max_pos <= 0:
         return "linear"
@@ -538,17 +542,22 @@ def _choose_scale_1d(
         return float(np.mean(z**3))
 
     skew_lin = abs(_skew(arr))
-    if allow_log1p:
+    has_zero = bool(np.any(arr == 0))
+    if has_zero:
+        if not allow_log1p:
+            return "linear"
         transformed = np.log1p(arr)
+        transformed_mode = "log1p"
     else:
         transformed = np.log(arr)
-    skew_log = abs(_skew(transformed))
+        transformed_mode = "log"
+    skew_transformed = abs(_skew(transformed))
 
-    log_helpful = (dyn >= float(dynamic_range_thresh)) and (
-        (skew_log <= skew_lin * float(skew_improve_ratio))
+    transformed_helpful = (dyn >= float(dynamic_range_thresh)) and (
+        (skew_transformed <= skew_lin * float(skew_improve_ratio))
         or (crush_frac >= float(crush_frac_thresh))
     )
-    return "log" if log_helpful else "linear"
+    return transformed_mode if transformed_helpful else "linear"
 
 
 def _apply_barplot_y_scale(
@@ -597,6 +606,20 @@ def _compute_axis_limits_1d(
         if not np.isfinite(upper) or upper <= lower:
             upper = lower * 1.1
         return float(lower), float(upper)
+    if mode_text == "log1p":
+        if np.any(arr < 0):
+            return None
+        lo = float(np.min(arr))
+        hi = float(np.max(arr))
+        if np.isclose(lo, hi):
+            upper = max(1.0, hi + max(0.1 * max(hi, 1.0), 1e-9))
+            return 0.0, float(upper)
+        pad = max(0.05 * (hi - lo), 1e-9)
+        lower = max(0.0, lo - pad)
+        upper = hi + pad
+        if not np.isfinite(upper) or upper <= lower:
+            upper = max(lower + 1.0, hi + 1.0)
+        return float(lower), float(upper)
 
     lo = float(np.min(arr))
     hi = float(np.max(arr))
@@ -639,6 +662,18 @@ def _resolve_axis_scale_and_limits(
             mode = "linear"
         else:
             return "log", _compute_axis_limits_1d(finite, mode="log")
+    elif mode == "log1p":
+        if finite.size == 0 or np.any(finite < 0):
+            logging.warning(
+                "Requested log1p %s-scale for %s/%s %s, but values include negative entries. Using linear scale.",
+                axis_label,
+                analysis,
+                metric,
+                plot_kind,
+            )
+            mode = "linear"
+        else:
+            return "log1p", _compute_axis_limits_1d(finite, mode="log1p")
 
     if include_linear_limits:
         return "linear", _compute_axis_limits_1d(finite, mode="linear")
@@ -653,11 +688,17 @@ def _apply_resolved_axis_scale(
     limits: Optional[Tuple[float, float]] = None,
 ) -> None:
     axis_name = "x" if str(axis).lower() == "x" else "y"
-    if str(mode).strip().lower() == "log":
+    mode_text = str(mode).strip().lower()
+    if mode_text == "log":
         if axis_name == "x":
             ax.set_xscale("log")
         else:
             ax.set_yscale("log")
+    elif mode_text == "log1p":
+        if axis_name == "x":
+            ax.set_xscale("function", functions=(np.log1p, np.expm1))
+        else:
+            ax.set_yscale("function", functions=(np.log1p, np.expm1))
 
     if limits is None:
         return
