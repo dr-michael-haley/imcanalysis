@@ -1472,7 +1472,7 @@ def _save_pair_barplots(
                     jitter=0.15,
                     ax=ax,
                 )
-            ax.tick_params(axis="x", labelrotation=90)
+            ax.tick_params(axis="x", labelrotation=90, fontsize=8)
             _dedupe_legend(ax, title=hue_col)
         else:
             x_col = "target_population"
@@ -1505,12 +1505,12 @@ def _save_pair_barplots(
                     jitter=0.15,
                     ax=ax,
                 )
-            ax.tick_params(axis="x", labelrotation=90)
+            ax.tick_params(axis="x", labelrotation=90, fontsize=8)
             leg = ax.get_legend()
             if leg is not None:
                 leg.remove()
 
-        ax.set_title(f"{source} -> all selected targets")
+        ax.set_title(f"{source} -> all selected targets", fontsize=10)
         ax.set_xlabel("target_population")
         ax.set_ylabel(value_label)
         _apply_barplot_y_scale(
@@ -1875,10 +1875,10 @@ def _save_enrichment_plot(
             _apply_resolved_axis_scale(ax, axis="x", mode=mode, limits=limits)
 
         _add_reference_line(ax)
-        ax.set_title(f"{source}: enriched / depleted interactions ({group_title})")
+        ax.set_title(f"{source}: enriched / depleted interactions ({group_title})", fontsize=10)
         ax.set_xlabel(value_label)
         ax.set_ylabel("")
-        ax.tick_params(axis="x", labelrotation=90)
+        ax.tick_params(axis="x", labelrotation=90, fontsize=8)
         ax.grid(False)
 
         y_positions = ax.get_yticks()
