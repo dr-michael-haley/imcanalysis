@@ -1878,6 +1878,7 @@ def _save_enrichment_plot(
         ax.set_title(f"{source}: enriched / depleted interactions ({group_title})")
         ax.set_xlabel(value_label)
         ax.set_ylabel("")
+        ax.tick_params(axis="x", labelrotation=90)
         ax.grid(False)
 
         y_positions = ax.get_yticks()
