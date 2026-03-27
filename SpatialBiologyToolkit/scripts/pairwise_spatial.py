@@ -25,6 +25,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -583,6 +584,88 @@ def _apply_barplot_y_scale(
     return mode
 
 
+def _format_axis_tick_label(value: float) -> str:
+    numeric = float(value)
+    if not np.isfinite(numeric):
+        return ""
+    rounded = round(numeric)
+    if np.isclose(numeric, rounded):
+        return str(int(rounded))
+    return f"{numeric:g}"
+
+
+def _log1p_tick_values(
+    lo: float,
+    hi: float,
+    *,
+    max_ticks: int = 9,
+) -> List[float]:
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
+        return []
+
+    lower = max(0.0, float(lo))
+    upper = float(hi)
+    if upper <= lower:
+        return [lower, upper] if upper > lower else [lower]
+
+    candidates: List[float] = []
+    for value in [0.0, 1.0, 2.0, 3.0, 5.0]:
+        if lower <= value <= upper:
+            candidates.append(float(value))
+
+    max_exp = int(np.ceil(np.log10(max(upper, 1.0))))
+    for exp in range(0, max_exp + 1):
+        scale = 10.0**exp
+        for mult in [1.0, 2.0, 5.0]:
+            value = mult * scale
+            if lower <= value <= upper:
+                candidates.append(float(value))
+
+    ordered = sorted(
+        {
+            float(value)
+            for value in candidates
+            if np.isfinite(value) and lower <= float(value) <= upper
+        }
+    )
+    if not ordered:
+        ordered = [lower, upper]
+    if lower <= 0.0 <= upper and 0.0 not in ordered:
+        ordered = [0.0] + ordered
+    if len(ordered) == 1 and not np.isclose(ordered[0], upper):
+        ordered.append(float(upper))
+        ordered = sorted(set(ordered))
+
+    if len(ordered) > max_ticks:
+        indices = np.linspace(0, len(ordered) - 1, num=max_ticks, dtype=int)
+        ordered = [ordered[idx] for idx in sorted(set(indices.tolist()))]
+
+    return ordered
+
+
+def _apply_log1p_axis_ticks(
+    ax: Any,
+    *,
+    axis_name: str,
+    limits: Optional[Tuple[float, float]] = None,
+) -> None:
+    if limits is None:
+        lo, hi = ax.get_xlim() if axis_name == "x" else ax.get_ylim()
+    else:
+        lo, hi = limits
+
+    ticks = _log1p_tick_values(float(lo), float(hi))
+    if not ticks:
+        return
+
+    axis_obj = ax.xaxis if axis_name == "x" else ax.yaxis
+    axis_obj.set_major_locator(mticker.FixedLocator(ticks))
+    axis_obj.set_major_formatter(
+        mticker.FuncFormatter(lambda value, pos: _format_axis_tick_label(value))
+    )
+    axis_obj.set_minor_locator(mticker.NullLocator())
+
+
 def _compute_axis_limits_1d(
     values: Any,
     *,
@@ -700,17 +783,16 @@ def _apply_resolved_axis_scale(
         else:
             ax.set_yscale("function", functions=(np.log1p, np.expm1))
 
-    if limits is None:
-        return
+    if limits is not None:
+        lo, hi = limits
+        if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
+            if axis_name == "x":
+                ax.set_xlim(left=float(lo), right=float(hi))
+            else:
+                ax.set_ylim(bottom=float(lo), top=float(hi))
 
-    lo, hi = limits
-    if not np.isfinite(lo) or not np.isfinite(hi) or hi <= lo:
-        return
-
-    if axis_name == "x":
-        ax.set_xlim(left=float(lo), right=float(hi))
-    else:
-        ax.set_ylim(bottom=float(lo), top=float(hi))
+    if mode_text == "log1p":
+        _apply_log1p_axis_ticks(ax, axis_name=axis_name, limits=limits)
 
 
 def _compute_limits(
