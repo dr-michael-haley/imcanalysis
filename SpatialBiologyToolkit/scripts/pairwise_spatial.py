@@ -1727,6 +1727,29 @@ def _save_enrichment_plot(
         x_min, x_max = ax.get_xlim()
         ax.set_xlim(min(float(x_min), ref_value), max(float(x_max), ref_value))
 
+    def _visible_boxplot_values(frame: pd.DataFrame) -> np.ndarray:
+        visible_arrays: List[np.ndarray] = []
+        for _, target_frame in frame.groupby("target_population", observed=True):
+            values = pd.to_numeric(target_frame["value"], errors="coerce").to_numpy(dtype=float)
+            values = values[np.isfinite(values)]
+            if values.size == 0:
+                continue
+            if values.size < 4:
+                visible_arrays.append(values)
+                continue
+
+            q1 = float(np.nanpercentile(values, 25.0))
+            q3 = float(np.nanpercentile(values, 75.0))
+            iqr = q3 - q1
+            lower = q1 - 1.5 * iqr
+            upper = q3 + 1.5 * iqr
+            in_whisker = values[(values >= lower) & (values <= upper)]
+            visible_arrays.append(in_whisker if in_whisker.size > 0 else values)
+
+        if not visible_arrays:
+            return np.array([], dtype=float)
+        return np.concatenate(visible_arrays)
+
     group_frames: List[Tuple[Optional[str], pd.DataFrame]] = [(None, numeric)]
     if group_col:
         group_values = numeric[group_col].astype("string")
@@ -1740,7 +1763,7 @@ def _save_enrichment_plot(
     strip_width = label_box_width
 
     plot_specs: List[Dict[str, Any]] = []
-    source_scale_values: Dict[str, List[np.ndarray]] = {}
+    grouped_source_scale_values: Dict[str, List[np.ndarray]] = {}
 
     for group_name, group_frame in group_frames:
         group_stub, group_title = _group_outputs(group_name)
@@ -1779,6 +1802,9 @@ def _save_enrichment_plot(
             plot_subset["target_rank"] = plot_subset["target_population"].astype(str).map(
                 {target: idx for idx, target in enumerate(target_order)}
             )
+            scale_values = _visible_boxplot_values(plot_subset)
+            if scale_values.size == 0:
+                scale_values = plot_subset["value"].to_numpy(dtype=float)
 
             source_stub = cleanstring(source)
             raw_path = raw_dir / f"{analysis}_{metric}_{source_stub}_{group_stub}_enrichment.csv"
@@ -1786,6 +1812,7 @@ def _save_enrichment_plot(
 
             plot_specs.append(
                 {
+                    "group_name": None if group_name is None else str(group_name),
                     "group_stub": group_stub,
                     "group_title": group_title,
                     "source": str(source),
@@ -1793,16 +1820,18 @@ def _save_enrichment_plot(
                     "target_order": list(target_order),
                     "enriched_targets": list(enriched_targets),
                     "depleted_targets": list(depleted_targets),
+                    "scale_values": np.asarray(scale_values, dtype=float),
                     "plot_subset": plot_subset,
                 }
             )
-            source_scale_values.setdefault(str(source), []).append(
-                plot_subset["value"].to_numpy(dtype=float)
-            )
+            if group_name is not None:
+                grouped_source_scale_values.setdefault(str(source), []).append(
+                    np.asarray(scale_values, dtype=float)
+                )
 
     shared_scale_by_source: Dict[str, Tuple[str, Optional[Tuple[float, float]]]] = {}
     if group_col and share_x_axis_across_groups:
-        for source, arrays in source_scale_values.items():
+        for source, arrays in grouped_source_scale_values.items():
             valid_arrays: List[np.ndarray] = []
             for arr in arrays:
                 numeric_arr = np.asarray(arr, dtype=float)
@@ -1824,6 +1853,7 @@ def _save_enrichment_plot(
             )
 
     for plot_spec in plot_specs:
+        group_name = plot_spec["group_name"]
         source = str(plot_spec["source"])
         source_stub = str(plot_spec["source_stub"])
         group_stub = str(plot_spec["group_stub"])
@@ -1831,6 +1861,7 @@ def _save_enrichment_plot(
         target_order = list(plot_spec["target_order"])
         enriched_targets = list(plot_spec["enriched_targets"])
         depleted_targets = list(plot_spec["depleted_targets"])
+        scale_values = np.asarray(plot_spec["scale_values"], dtype=float)
         plot_subset = plot_spec["plot_subset"].copy()
 
         plot_height = max(base_height, height_per_target * max(2, len(target_order)))
@@ -1858,12 +1889,12 @@ def _save_enrichment_plot(
         if enriched_targets and depleted_targets:
             ax.axhline(len(enriched_targets) - 0.5, color="black", linewidth=1.0, alpha=0.8)
 
-        if source in shared_scale_by_source:
+        if group_name is not None and source in shared_scale_by_source:
             shared_mode, shared_limits = shared_scale_by_source[source]
             _apply_resolved_axis_scale(ax, axis="x", mode=shared_mode, limits=shared_limits)
         else:
             mode, limits = _resolve_axis_scale_and_limits(
-                plot_subset["value"],
+                scale_values,
                 requested_mode=x_scale_mode,
                 analysis=analysis,
                 metric=metric,
