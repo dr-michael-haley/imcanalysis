@@ -688,8 +688,10 @@ class PairwiseSpatialConfig:
     })
     make_source_target_barplots: bool = True  # Also plot all selected targets for each source on one figure (hue=group)
     source_target_barplot_width_scale: float = 0.35  # Width scaling constant for source->all-target plots (auto width ~= scale * n_targets)
-    make_enrichment_plots: bool = True  # Create per-source enriched/depleted interaction boxplots
+    make_enrichment_plots: bool = True  # Create per-source enriched/depleted interaction plots
     enrichment_plot_figsize: List[float] = field(default_factory=lambda: [5.5, 4.0])  # Base [width, height] for source enrichment plots
+    enrichment_plot_use_barplot: bool = True  # If True, use horizontal barplots instead of boxplots for enrichment plots
+    enrichment_plot_errorbar: str = 'ci95'  # Barplot error bars: one of 'ci95' or 'se'
     enrichment_plot_top_n: int = 5  # Number of enriched target populations to show per source
     enrichment_plot_bottom_n: int = 5  # Number of depleted target populations to show per source
     enrichment_plot_target_populations: Optional[List[str]] = None  # Optional target population subset for enrichment plots; None = use all available

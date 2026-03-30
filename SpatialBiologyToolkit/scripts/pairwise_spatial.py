@@ -86,6 +86,20 @@ def _normalise_enrichment_color_mode(mode: Optional[str]) -> str:
     return "direction"
 
 
+def _normalise_enrichment_plot_errorbar(value: Optional[str]) -> str:
+    text = str(value or "").strip().lower()
+    compact = text.replace(" ", "").replace("-", "").replace("_", "")
+    if compact in {"ci", "ci95", "95ci", "confidenceinterval", "95confidenceinterval"}:
+        return "ci95"
+    if compact in {"se", "sem", "stderr", "standarderror"}:
+        return "se"
+    logging.warning(
+        "Invalid enrichment_plot_errorbar='%s'. Using default 'ci95'. Accepted values: ci95, se.",
+        value,
+    )
+    return "ci95"
+
+
 def _normalise_positive_float(
     value: Any,
     *,
@@ -1636,6 +1650,8 @@ def _save_enrichment_plot(
     restricted_targets: Optional[Sequence[str]] = None,
     group_col: Optional[str] = None,
     color_mode: str = "direction",
+    use_barplot: bool = True,
+    errorbar_mode: str = "ci95",
     label_box_width: float = 0.03,
     height_per_target: float = 0.25,
     x_scale_mode: str = "linear",
@@ -1651,6 +1667,7 @@ def _save_enrichment_plot(
     analysis_key = str(analysis).strip().lower()
     metric_key = str(metric).strip().lower()
     color_mode = _normalise_enrichment_color_mode(color_mode)
+    errorbar_mode = _normalise_enrichment_plot_errorbar(errorbar_mode)
     label_box_width = _normalise_positive_float(
         label_box_width,
         default=0.03,
@@ -1750,6 +1767,45 @@ def _save_enrichment_plot(
             return np.array([], dtype=float)
         return np.concatenate(visible_arrays)
 
+    def _visible_barplot_values(frame: pd.DataFrame) -> np.ndarray:
+        visible_values: List[float] = []
+        for _, target_frame in frame.groupby("target_population", observed=True):
+            values = pd.to_numeric(target_frame["value"], errors="coerce").to_numpy(dtype=float)
+            values = values[np.isfinite(values)]
+            if values.size == 0:
+                continue
+
+            mean_value = float(np.mean(values))
+            visible_values.append(mean_value)
+            if values.size <= 1:
+                continue
+
+            std_value = float(np.std(values, ddof=1))
+            if not np.isfinite(std_value):
+                continue
+            se_value = std_value / np.sqrt(float(values.size))
+            if not np.isfinite(se_value) or se_value <= 0:
+                continue
+
+            if errorbar_mode == "se":
+                interval = se_value
+            else:
+                interval = 1.96 * se_value
+            visible_values.extend([mean_value - interval, mean_value + interval])
+
+        return np.asarray(visible_values, dtype=float)
+
+    def _barplot_errorbar_argument(frame: pd.DataFrame) -> Optional[Any]:
+        counts = (
+            frame.groupby("target_population", observed=True)["value"]
+            .count()
+        )
+        if counts.empty or int(counts.max()) <= 1:
+            return None
+        if errorbar_mode == "se":
+            return "se"
+        return ("ci", 95)
+
     group_frames: List[Tuple[Optional[str], pd.DataFrame]] = [(None, numeric)]
     if group_col:
         group_values = numeric[group_col].astype("string")
@@ -1802,7 +1858,10 @@ def _save_enrichment_plot(
             plot_subset["target_rank"] = plot_subset["target_population"].astype(str).map(
                 {target: idx for idx, target in enumerate(target_order)}
             )
-            scale_values = _visible_boxplot_values(plot_subset)
+            if use_barplot:
+                scale_values = _visible_barplot_values(plot_subset)
+            else:
+                scale_values = _visible_boxplot_values(plot_subset)
             if scale_values.size == 0:
                 scale_values = plot_subset["value"].to_numpy(dtype=float)
 
@@ -1873,18 +1932,32 @@ def _save_enrichment_plot(
                 target: (enriched_color if target in enriched_targets else depleted_color)
                 for target in target_order
             }
-        sns.boxplot(
-            data=plot_subset,
-            x="value",
-            y="target_population",
-            order=target_order,
-            orient="h",
-            showfliers=False,
-            palette=palette,
-            linewidth=0.9,
-            width=box_height,
-            ax=ax,
-        )
+        if use_barplot:
+            sns.barplot(
+                data=plot_subset,
+                x="value",
+                y="target_population",
+                order=target_order,
+                orient="h",
+                errorbar=_barplot_errorbar_argument(plot_subset),
+                palette=palette,
+                linewidth=0.9,
+                width=box_height,
+                ax=ax,
+            )
+        else:
+            sns.boxplot(
+                data=plot_subset,
+                x="value",
+                y="target_population",
+                order=target_order,
+                orient="h",
+                showfliers=False,
+                palette=palette,
+                linewidth=0.9,
+                width=box_height,
+                ax=ax,
+            )
 
         if enriched_targets and depleted_targets:
             ax.axhline(len(enriched_targets) - 0.5, color="black", linewidth=1.0, alpha=0.8)
@@ -2191,6 +2264,12 @@ def run_pairwise_spatial_analyses(
         pairwise_config.enrichment_plot_target_populations,
         default=[],
     ) or []
+    enrichment_plot_use_barplot = bool(
+        getattr(pairwise_config, "enrichment_plot_use_barplot", True)
+    )
+    enrichment_plot_errorbar = _normalise_enrichment_plot_errorbar(
+        getattr(pairwise_config, "enrichment_plot_errorbar", "ci95")
+    )
     enrichment_color_mode = _normalise_enrichment_color_mode(
         getattr(pairwise_config, "enrichment_plot_color_mode", "direction")
     )
@@ -2220,8 +2299,10 @@ def run_pairwise_spatial_analyses(
     logging.info("Pairwise reload_saved_results=%s", reload_saved_results)
     logging.info("Pairwise matrix colorbar corner=%s", cbar_corner)
     logging.info(
-        "Pairwise enrichment plots enabled=%s top_n=%d bottom_n=%d color_mode=%s label_box_width=%.4f height_per_target=%.4f exclude_homotypic=%s share_x_axis_across_groups=%s restricted_targets=%s",
+        "Pairwise enrichment plots enabled=%s use_barplot=%s errorbar=%s top_n=%d bottom_n=%d color_mode=%s label_box_width=%.4f height_per_target=%.4f exclude_homotypic=%s share_x_axis_across_groups=%s restricted_targets=%s",
         make_enrichment_plots,
+        enrichment_plot_use_barplot,
+        enrichment_plot_errorbar,
         enrichment_top_n,
         enrichment_bottom_n,
         enrichment_color_mode,
@@ -2446,6 +2527,8 @@ def run_pairwise_spatial_analyses(
                             else None
                         ),
                         color_mode=enrichment_color_mode,
+                        use_barplot=enrichment_plot_use_barplot,
+                        errorbar_mode=enrichment_plot_errorbar,
                         label_box_width=enrichment_label_box_width,
                         height_per_target=enrichment_height_per_target,
                         x_scale_mode=x_scale_mode,
@@ -2705,6 +2788,8 @@ def run_pairwise_spatial_analyses(
                             else None
                         ),
                         color_mode=enrichment_color_mode,
+                        use_barplot=enrichment_plot_use_barplot,
+                        errorbar_mode=enrichment_plot_errorbar,
                         label_box_width=enrichment_label_box_width,
                         height_per_target=enrichment_height_per_target,
                         x_scale_mode=x_scale_mode,
@@ -3127,6 +3212,8 @@ def run_pairwise_spatial_analyses(
                     restricted_targets=enrichment_target_populations,
                     group_col=("condition" if "condition" in metric_df.columns else None),
                     color_mode=enrichment_color_mode,
+                    use_barplot=enrichment_plot_use_barplot,
+                    errorbar_mode=enrichment_plot_errorbar,
                     label_box_width=enrichment_label_box_width,
                     height_per_target=enrichment_height_per_target,
                     x_scale_mode=x_scale_mode,
@@ -3184,6 +3271,8 @@ def run_pairwise_spatial_analyses(
         "enrichment_plot_top_n": enrichment_top_n,
         "enrichment_plot_bottom_n": enrichment_bottom_n,
         "enrichment_plot_target_populations": enrichment_target_populations,
+        "enrichment_plot_use_barplot": enrichment_plot_use_barplot,
+        "enrichment_plot_errorbar": enrichment_plot_errorbar,
         "enrichment_plot_exclude_homotypic": enrichment_exclude_homotypic,
         "enrichment_plot_share_x_axis_across_groups": enrichment_share_x_axis_across_groups,
         "enrichment_plot_color_mode": enrichment_color_mode,
