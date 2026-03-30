@@ -1321,7 +1321,7 @@ def _save_pair_barplots(
                 metric,
             )
             return
-        ax.axhline(1.0, color="black", linestyle=":", linewidth=1.0, alpha=0.8, zorder=0)
+        ax.axhline(1.0, color="black", linestyle=":", linewidth=1.0, alpha=0.8, zorder=10)
         y_min, y_max = ax.get_ylim()
         ax.set_ylim(min(float(y_min), 1.0), max(float(y_max), 1.0))
 
@@ -1354,6 +1354,7 @@ def _save_pair_barplots(
                     order=order,
                     errorbar=errorbar,
                     palette="tab10",
+                    edgecolor="black",
                     ax=ax,
                 )
                 if add_points:
@@ -1376,6 +1377,7 @@ def _save_pair_barplots(
                     y="value",
                     color=color_map.get(str(target), "#4c72b0"),
                     errorbar="se" if len(subset) > 1 else None,
+                    edgecolor="black",
                     ax=ax,
                 )
                 if add_points and len(subset) > 1:
@@ -1469,6 +1471,7 @@ def _save_pair_barplots(
                 hue_order=hue_order,
                 errorbar="se" if len(source_subset) > 1 else None,
                 palette=palette,
+                edgecolor="black",
                 ax=ax,
             )
             if add_points:
@@ -1505,7 +1508,8 @@ def _save_pair_barplots(
                 dodge=False,
                 errorbar="se" if len(source_subset) > 1 else None,
                 palette=palette,
-                ax=ax,
+                edgecolor="black",
+                ax=ax
             )
             if add_points:
                 sns.stripplot(
@@ -1740,7 +1744,7 @@ def _save_enrichment_plot(
                 ref_value,
             )
             return
-        ax.axvline(ref_value, color="black", linestyle=":", linewidth=1.0, alpha=0.8, zorder=0)
+        ax.axvline(ref_value, color="black", linestyle=":", linewidth=1.0, alpha=0.8, zorder=10)
         x_min, x_max = ax.get_xlim()
         ax.set_xlim(min(float(x_min), ref_value), max(float(x_max), ref_value))
 
@@ -1942,6 +1946,7 @@ def _save_enrichment_plot(
                 errorbar=_barplot_errorbar_argument(plot_subset),
                 palette=palette,
                 linewidth=0.9,
+                edgecolor="black",
                 width=box_height,
                 ax=ax,
             )
@@ -1956,6 +1961,7 @@ def _save_enrichment_plot(
                 palette=palette,
                 linewidth=0.9,
                 width=box_height,
+                edgecolor="black",
                 ax=ax,
             )
 
