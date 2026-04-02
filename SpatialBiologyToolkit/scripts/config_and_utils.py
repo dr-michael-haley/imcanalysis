@@ -279,6 +279,10 @@ class BatchIntegrationConfig:
 
 @dataclass
 class BioBatchNetConfig:
+    # Input/output
+    input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
+    output_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
+
     batch_correction_obs: Optional[str] = None
     n_for_pca: Optional[int] = None
     leiden_resolutions_list: List[float] = field(default_factory=lambda: [0.3, 1.0])

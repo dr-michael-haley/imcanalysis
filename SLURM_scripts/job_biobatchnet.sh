@@ -8,13 +8,13 @@
 #SBATCH --mail-type=ALL
 
 #@DESC: Batch correction with BioBatchNet + UMAP/Leiden post-processing
-#@IN:   process.input_adata_path (default anndata.h5ad)
-#@IN:   process.batch_correction_obs must exist in AnnData.obs
-#@OUT:  process.output_adata_path (default anndata_processed.h5ad)
+#@IN:   biobatchnet.input_adata_path (fallback: general.anndata_path)
+#@IN:   biobatchnet.batch_correction_obs must exist in AnnData.obs
+#@OUT:  biobatchnet.output_adata_path (default general.anndata_path)
 #@OUT:  general.qc_folder/BioBatchNet/
 #@ENV:  imc_biobatchnet
 #@MODULE:  SpatialBiologyToolkit.scripts.basic_process_biobatchnet
-#@CONFIG: general, process, logging
+#@CONFIG: general, biobatchnet, logging
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 

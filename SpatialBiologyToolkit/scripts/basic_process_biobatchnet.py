@@ -438,10 +438,13 @@ def main() -> None:
         **filter_config_for_dataclass(config.get("visualization", {}), VisualizationConfig)
     )
 
+    input_path = biobatchnet_config.input_adata_path or general_config.anndata_path
+    output_path = Path(biobatchnet_config.output_adata_path or general_config.anndata_path)
     adata, input_path, skip_stage, _ = load_pipeline_anndata(
         general_config=general_config,
         stage_name=pipeline_stage,
         stage_config=biobatchnet_config,
+        override_path=input_path,
     )
     if skip_stage:
         logging.info("Skipping BioBatchNet stage based on AnnData stage policy.")
@@ -451,7 +454,6 @@ def main() -> None:
             f"AnnData could not be loaded for BioBatchNet stage: {input_path}"
         )
 
-    output_path = Path(general_config.anndata_path)
     logging.info("AnnData loaded with shape %s and %d markers.", adata.shape, adata.n_vars)
 
     batch_key = biobatchnet_config.batch_correction_obs
