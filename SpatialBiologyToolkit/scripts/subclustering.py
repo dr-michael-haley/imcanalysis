@@ -62,6 +62,32 @@ def _resolve_input_adata_path(
     return Path(general_config.anndata_path)
 
 
+def _resolve_use_rep(adata: ad.AnnData, requested_key: Optional[str]) -> Optional[str]:
+    """Resolve the configured reduced representation with fallback across pipeline variants."""
+    if requested_key is None:
+        return None
+    if requested_key in adata.obsm:
+        return requested_key
+
+    family = ("X_batch_integration", "X_biobatchnet", "X_pca_harmony", "X_pca")
+    if requested_key not in family:
+        raise KeyError(f"Configured subclustering.use_rep '{requested_key}' was not found in adata.obsm.")
+
+    for fallback in family:
+        if fallback in adata.obsm:
+            logging.warning(
+                "Configured subclustering.use_rep '%s' was missing; falling back to adata.obsm['%s'].",
+                requested_key,
+                fallback,
+            )
+            return fallback
+
+    raise KeyError(
+        f"Configured subclustering.use_rep '{requested_key}' was not found in adata.obsm, and no "
+        "integration fallback representation was available."
+    )
+
+
 def _ordered_categories(series: pd.Series) -> List[str]:
     if isinstance(series.dtype, pd.CategoricalDtype):
         return [str(x) for x in series.cat.categories if pd.notna(x)]
@@ -593,6 +619,7 @@ def run_subclustering_stage(
         settings_df = _load_settings_table(settings_path)
         marker_df = _load_marker_table(marker_list_path)
         logging.info("Loaded %d subclustering row(s) from settings.", settings_df.shape[0])
+        resolved_use_rep = _resolve_use_rep(adata, subclustering_config.use_rep)
 
         fig_ext = _resolve_figure_ext(subclustering_config.figure_extension)
         figures_dir = output_dir / "figures"
@@ -606,7 +633,7 @@ def run_subclustering_stage(
 
         _ensure_umap_for_plots(
             adata=adata,
-            use_rep=subclustering_config.use_rep,
+            use_rep=resolved_use_rep,
             enabled=bool(subclustering_config.compute_umap_if_missing),
         )
 
@@ -683,7 +710,7 @@ def run_subclustering_stage(
                     subset_key_name=subcluster_col,
                     base_label_key=base_label,
                     leiden_resolution=resolution,
-                    use_rep=subclustering_config.use_rep,
+                    use_rep=resolved_use_rep,
                     return_new_names=True,
                 )
                 new_pops = [str(x) for x in new_pops]

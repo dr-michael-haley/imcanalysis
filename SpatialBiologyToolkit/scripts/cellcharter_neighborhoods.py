@@ -78,6 +78,34 @@ def _to_dense_matrix(matrix: Any) -> np.ndarray:
     return np.asarray(matrix)
 
 
+def _resolve_integration_rep_key(
+    adata: ad.AnnData,
+    requested_key: Optional[str],
+) -> Optional[str]:
+    """Resolve a reduced representation key with fallback across pipeline variants."""
+    if requested_key is None:
+        return None
+    if requested_key in adata.obsm:
+        return requested_key
+
+    family = ("X_batch_integration", "X_biobatchnet", "X_pca_harmony", "X_pca")
+    if requested_key not in family:
+        raise KeyError(f"Configured use_rep '{requested_key}' was not found in adata.obsm.")
+
+    for fallback in family:
+        if fallback in adata.obsm:
+            logging.warning(
+                "Configured use_rep '%s' was missing; falling back to adata.obsm['%s'].",
+                requested_key,
+                fallback,
+            )
+            return fallback
+    raise KeyError(
+        f"Configured use_rep '{requested_key}' was not found in adata.obsm, and no integration fallback "
+        "representation was available."
+    )
+
+
 def _parse_n_layers(value: Union[int, str, Sequence[Any]]) -> Union[int, List[int]]:
     """Parse n_layers from config into int or list[int]."""
     if isinstance(value, (list, tuple)):
@@ -195,8 +223,7 @@ def _select_feature_matrix(
     if isinstance(rep_key, str) and rep_key.strip().lower() in {"", "none", "null"}:
         rep_key = None
     if rep_key is not None:
-        if rep_key not in adata.obsm:
-            raise KeyError(f"Configured use_rep '{rep_key}' was not found in adata.obsm.")
+        rep_key = _resolve_integration_rep_key(adata, rep_key)
         return _to_dense_matrix(adata.obsm[rep_key]), rep_key, f"obsm['{rep_key}']"
 
     layer_key = cellcharter_config.use_layer
@@ -208,7 +235,7 @@ def _select_feature_matrix(
         return _to_dense_matrix(adata.layers[layer_key]), None, f"layers['{layer_key}']"
 
     if allow_auto_reduced:
-        for auto_rep in ("X_biobatchnet", "X_pca"):
+        for auto_rep in ("X_batch_integration", "X_biobatchnet", "X_pca_harmony", "X_pca"):
             if auto_rep in adata.obsm:
                 logging.info(
                     "No explicit cellcharter.use_rep/use_layer set; using adata.obsm['%s'].",

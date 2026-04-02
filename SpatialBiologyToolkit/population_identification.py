@@ -76,6 +76,25 @@ def batch_neighbors(
     - The function performs PCA followed by the specified batch correction method.
     - The function logs progress and results using `adlog`.
     """
+
+    def _run_harmony_direct(input_key: str = 'X_pca', output_key: str = 'X_pca_harmony') -> None:
+        import harmonypy as hm
+
+        if batch_correction_obs not in adata.obs.columns:
+            raise KeyError(f"Batch correction observation '{batch_correction_obs}' not found in adata.obs")
+
+        adata.obs[batch_correction_obs] = adata.obs[batch_correction_obs].astype('category')
+        pcs = np.asarray(adata.obsm[input_key], dtype=np.float32)
+        harmony_out = hm.run_harmony(
+            pcs,
+            adata.obs,
+            batch_correction_obs,
+            max_iter_harmony=30,
+        )
+        corrected = np.asarray(harmony_out.Z_corr, dtype=np.float32)
+        adata.obsm[output_key] = corrected
+        # Preserve historical behavior for callers that expect corrected PCs in X_pca.
+        adata.obsm[input_key] = corrected.copy()
     
     if not n_for_pca:
         # Define the number of PCA dimensions to work with - one less than number of markers.
@@ -92,18 +111,16 @@ def batch_neighbors(
         adlog(adata, f'Finished BBKNN batch correction with obs: {batch_correction_obs}', sc)
     
     elif correction_method == 'harmony':
-        import scanpy.external as sce
         adlog(adata, 'Starting Harmony calculations', sc)        
-        sce.pp.harmony_integrate(adata, key=batch_correction_obs, basis='X_pca', adjusted_basis='X_pca')
+        _run_harmony_direct()
         adlog(adata, f'Finished Harmony batch correction with obs: {batch_correction_obs}', sc)
         adlog(adata, 'Starting calculating neighbors', sc)        
         sc.pp.neighbors(adata, use_rep='X_pca')
         adlog(adata, 'Finished calculating neighbors', sc)
         
     elif correction_method == 'both':
-        import scanpy.external as sce
         adlog(adata, 'Starting Harmony calculations', sc)        
-        sce.pp.harmony_integrate(adata, key=batch_correction_obs, basis='X_pca', adjusted_basis='X_pca')
+        _run_harmony_direct()
         adlog(adata, f'Finished Harmony batch correction with obs: {batch_correction_obs}', sc)    
         adlog(adata, 'Starting BBKNN calculations', sc)               
         sc.external.pp.bbknn(adata, batch_key=batch_correction_obs, n_pcs=n_for_pca)

@@ -282,6 +282,17 @@ def napari_imc_explorer(
         if annotation_path.exists():
             return sk.io.imread(annotation_path).astype('uint16', copy=False)
 
+        annotation_dir = _annotation_dir(annotation_name)
+        if annotation_dir.exists():
+            roi_name_text = str(roi_name)
+            matching_annotation_paths = sorted(
+                path
+                for path in annotation_dir.glob('*.tiff')
+                if roi_name_text in path.stem or roi_name_text in path.name
+            )
+            if matching_annotation_paths:
+                return sk.io.imread(matching_annotation_paths[0]).astype('uint16', copy=False)
+
         blank_annotation = _blank_annotation_array(roi_name)
         _save_annotation_array(annotation_name, roi_name, blank_annotation)
         return blank_annotation

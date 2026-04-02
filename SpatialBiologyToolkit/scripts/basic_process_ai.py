@@ -21,7 +21,7 @@ from pathlib import Path
 # Third-party library imports
 import scanpy as sc
 import anndata as ad
-import scanpy.external as sce  # Needed for Harmony and BBKNN
+import numpy as np
 import matplotlib
 matplotlib.use("Agg")  # must be before importing pyplot/scanpy that plots
 
@@ -85,16 +85,36 @@ def batch_neighbors(
         logging.info(f'Finished BBKNN batch correction with obs: {batch_correction_obs}.')
 
     elif correction_method == 'harmony':
+        import harmonypy as hm
         logging.info('Starting Harmony calculations.')
-        sce.pp.harmony_integrate(adata, key=batch_correction_obs, basis='X_pca', adjusted_basis='X_pca')
+        adata.obs[batch_correction_obs] = adata.obs[batch_correction_obs].astype('category')
+        harmony_out = hm.run_harmony(
+            np.asarray(adata.obsm['X_pca'], dtype=np.float32),
+            adata.obs,
+            batch_correction_obs,
+            max_iter_harmony=30,
+        )
+        corrected = np.asarray(harmony_out.Z_corr, dtype=np.float32)
+        adata.obsm['X_pca_harmony'] = corrected
+        adata.obsm['X_pca'] = corrected.copy()
         logging.info(f'Finished Harmony batch correction with obs: {batch_correction_obs}.')
         logging.info('Calculating neighbors using adjusted PCA.')
         sc.pp.neighbors(adata, use_rep='X_pca')
         logging.info('Finished calculating neighbors.')
 
     elif correction_method == 'both':
+        import harmonypy as hm
         logging.info('Starting Harmony calculations.')
-        sce.pp.harmony_integrate(adata, key=batch_correction_obs, basis='X_pca', adjusted_basis='X_pca')
+        adata.obs[batch_correction_obs] = adata.obs[batch_correction_obs].astype('category')
+        harmony_out = hm.run_harmony(
+            np.asarray(adata.obsm['X_pca'], dtype=np.float32),
+            adata.obs,
+            batch_correction_obs,
+            max_iter_harmony=30,
+        )
+        corrected = np.asarray(harmony_out.Z_corr, dtype=np.float32)
+        adata.obsm['X_pca_harmony'] = corrected
+        adata.obsm['X_pca'] = corrected.copy()
         logging.info(f'Finished Harmony batch correction with obs: {batch_correction_obs}.')
         logging.info('Starting BBKNN calculations.')
         sc.external.pp.bbknn(adata, batch_key=batch_correction_obs, n_pcs=n_for_pca)

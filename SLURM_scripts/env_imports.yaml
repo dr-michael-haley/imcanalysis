@@ -68,7 +68,9 @@ imc_segmentation:
 - SpatialBiologyToolkit
 - alpineer
 - anndata
+- bbknn
 - cv2
+- harmonypy
 - hashlib
 - json
 - logging
@@ -89,6 +91,7 @@ imc_segmentation:
 - sklearn
 - sys
 - tifffile
+- torch
 - tqdm
 - traceback
 - typing

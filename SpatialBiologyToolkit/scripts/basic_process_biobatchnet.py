@@ -169,6 +169,7 @@ def run_biobatchnet_correction(
         raise RuntimeError("BioBatchNet returned no biological embeddings.")
 
     adata.obsm["X_biobatchnet"] = bio_embeddings
+    adata.obsm["X_batch_integration"] = bio_embeddings
     batch_embeddings = _to_numpy(batch_embeddings)
     if batch_embeddings is not None:
         adata.obsm["X_biobatchnet_batch"] = batch_embeddings
@@ -180,6 +181,13 @@ def run_biobatchnet_correction(
         "latent_dim": latent_dim,
         "epochs": epochs,
         "device": device_to_use,
+        "representation_key": "X_batch_integration",
+    }
+    adata.uns["batch_integration"] = {
+        "method": "biobatchnet",
+        "batch_key": batch_key,
+        "representation_key": "X_batch_integration",
+        "source_representation_key": "X_biobatchnet",
     }
     logging.info("BioBatchNet embeddings stored in adata.obsm['X_biobatchnet'].")
 

@@ -232,6 +232,51 @@ class NimbusConfig:
     expansion_jobs: int = 1  # Number of parallel jobs for expansion extraction (1=sequential, -1=all CPUs)
 
 @dataclass
+class BatchIntegrationConfig:
+    # Input/output
+    input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
+    output_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
+
+    # Core integration settings
+    batch_correction_obs: Optional[str] = None
+    integration_method: str = 'harmony'  # Options: 'harmony', 'bbknn', 'both', 'none'
+    batch_correction_method: Optional[str] = None  # Deprecated alias for integration_method
+    n_for_pca: Optional[int] = None
+    leiden_resolutions_list: List[float] = field(default_factory=lambda: [0.3, 1.0])
+    umap_min_dist: float = 0.1
+    run_leiden: bool = True
+    n_neighbors: Optional[int] = None
+
+    # Embedding storage
+    pca_key: str = 'X_pca'
+    harmony_key: str = 'X_pca_harmony'
+    representation_key: str = 'X_batch_integration'
+    qc_output_subdir: str = 'BatchIntegration'
+
+    # Method-specific parameters
+    harmony_params: Dict[str, Any] = field(default_factory=lambda: {
+        'max_iter_harmony': 30,
+        'verbose': True,
+        'random_state': 0,
+        'device': None,
+    })
+    bbknn_params: Dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self):
+        if self.batch_correction_method is not None:
+            self.integration_method = str(self.batch_correction_method)
+            logging.warning(
+                "Deprecated batch integration key 'batch_correction_method' detected. "
+                "Please update config.yaml to use 'integration_method' under 'batch_integration'."
+            )
+
+        method = str(self.integration_method).strip().lower()
+        if method in {'', 'null', 'none'}:
+            method = 'none'
+        self.integration_method = method
+
+
+@dataclass
 class BioBatchNetConfig:
     batch_correction_obs: Optional[str] = None
     n_for_pca: Optional[int] = None
@@ -801,7 +846,7 @@ class SubclusteringConfig:
     input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
     output_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
     output_subdir: str = 'subclustering'
-    mode: Any = 'all'  # One of: 'all', 'generate', 'apply', or integer/string stage selector 1, 2, 3
+    mode: Any = 'generate'  # One of: 'all', 'generate', 'apply', or integer/string stage selector 1, 2, 3
 
     # Template/remap files
     settings_filename: str = 'sublustering_settings.csv'  # Intentionally matches existing notebook naming
@@ -846,6 +891,7 @@ DEFAULT_CONFIG_CLASSES = {
     'createmasks': CreateMasksConfig,
     'segmentation': SegmentationConfig,
     'nimbus': NimbusConfig,
+    'batch_integration': BatchIntegrationConfig,
     'biobatchnet': BioBatchNetConfig,
     'process': BasicProcessConfig,
     'visualization': VisualizationConfig,
