@@ -210,6 +210,7 @@ class NimbusConfig:
     allow_raw_fallback: bool = True
     simple_image_names: bool = False  # If True, match images by channel_label only (instead of channel_name_channel_label)
     mask_extensions: List[str] = field(default_factory=lambda: ['.tiff', '.tif'])
+    mask_boundary_offset_pixels: int = 0  # Positive expands masks; negative shrinks masks before Nimbus/cell-table extraction
     test_time_augmentation: bool = True
     batch_size: int = 10
     model_magnification: int = 10

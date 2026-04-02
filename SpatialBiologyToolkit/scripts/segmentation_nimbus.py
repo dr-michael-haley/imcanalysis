@@ -113,6 +113,66 @@ def _safe_quantile(values: np.ndarray | Sequence[float], quantile: float) -> Opt
     return float(np.quantile(finite, quantile))
 
 
+def _load_mask_2d(mask_path: Path | str) -> np.ndarray:
+    """Load a segmentation mask and coerce it to a 2D label image."""
+    mask = io.imread(mask_path)
+    mask = np.squeeze(mask)
+    if mask.ndim == 3:
+        mask = np.squeeze(mask[..., 0])
+    if mask.ndim != 2:
+        raise ValueError(f"Expected 2D mask at {mask_path}, got shape {mask.shape}")
+    return np.asarray(mask)
+
+
+def _adjust_label_mask(mask: np.ndarray, offset_pixels: int) -> np.ndarray:
+    """
+    Expand or shrink a labeled mask while preserving label IDs.
+
+    Positive offsets expand labels into background without overlap. Negative offsets
+    erode each cell independently; cells that disappear completely are dropped.
+    """
+    mask = np.asarray(mask)
+    if mask.ndim != 2:
+        raise ValueError(f"Label mask must be 2D, got shape {mask.shape}")
+
+    offset_pixels = int(offset_pixels)
+    labels = mask.astype(np.uint32, copy=False)
+    if offset_pixels == 0:
+        return labels
+
+    if offset_pixels > 0:
+        from skimage.segmentation import expand_labels
+
+        return np.asarray(expand_labels(labels, distance=offset_pixels), dtype=np.uint32)
+
+    from scipy.ndimage import binary_erosion
+
+    shrink_pixels = abs(offset_pixels)
+    adjusted = np.zeros_like(labels, dtype=np.uint32)
+    structure = np.ones((3, 3), dtype=bool)
+
+    for region in regionprops(labels):
+        rr_slice, cc_slice = region.slice
+        cell_mask = labels[rr_slice, cc_slice] == region.label
+        eroded = binary_erosion(
+            cell_mask,
+            structure=structure,
+            iterations=shrink_pixels,
+            border_value=0,
+        )
+        if np.any(eroded):
+            adjusted_view = adjusted[rr_slice, cc_slice]
+            adjusted_view[eroded] = np.uint32(region.label)
+
+    return adjusted
+
+
+def _load_adjusted_mask(mask_path: Path | str, mask_boundary_offset_pixels: int = 0) -> np.ndarray:
+    """Load a mask from disk and apply the configured boundary offset."""
+    mask = _load_mask_2d(mask_path)
+    return _adjust_label_mask(mask, mask_boundary_offset_pixels)
+
+
 class ToolkitNimbusDataset(MultiplexDataset):
     """Nimbus dataset wrapper aware of separate mask folder and mixed raw/denoised channels."""
 
@@ -130,6 +190,7 @@ class ToolkitNimbusDataset(MultiplexDataset):
         normalization_jobs: int = 1,
         clip_values: Sequence[float] = (0.0, 2.0),
         normalization_min_value: float = 2.0,
+        mask_boundary_offset_pixels: int = 0,
         suffix_match: Optional[str] = None,
     ) -> None:
         self._channels = sorted(channels)
@@ -139,7 +200,9 @@ class ToolkitNimbusDataset(MultiplexDataset):
         self.normalization_n_jobs = max(1, int(normalization_jobs))
         self.clip_values = tuple(clip_values)
         self.normalization_min_value = float(normalization_min_value)
+        self.mask_boundary_offset_pixels = int(mask_boundary_offset_pixels)
         self._suffix_match = suffix_match or suffix
+        self._segmentation_cache: Dict[str, np.ndarray] = {}
 
         def _seg_lookup(fov_path: str) -> Path:
             return str(self._mask_lookup[Path(fov_path).name])
@@ -190,10 +253,12 @@ class ToolkitNimbusDataset(MultiplexDataset):
 
     def get_segmentation(self, fov: str):  # type: ignore[override]
         roi = Path(fov).name
-        mask = io.imread(self._mask_lookup[roi])
-        mask = np.squeeze(mask)
-        if mask.ndim == 3:
-            mask = np.squeeze(mask[..., 0])
+        if roi not in self._segmentation_cache:
+            self._segmentation_cache[roi] = _load_adjusted_mask(
+                self._mask_lookup[roi],
+                self.mask_boundary_offset_pixels,
+            )
+        mask = self._segmentation_cache[roi]
 
         # Align mask to the reference channel image shape if needed
         ref_path = next(iter(self._channel_paths[roi].values()))
@@ -203,7 +268,7 @@ class ToolkitNimbusDataset(MultiplexDataset):
 
         if mask.shape != tuple(ref_shape):
             raise ValueError(f"Mask/Image shape mismatch for ROI {roi}: {mask.shape} vs {ref_shape}")
-        return mask.astype(np.uint32)
+        return mask.astype(np.uint32, copy=False)
 
     def prepare_normalization_dict(  # type: ignore[override]
         self,
@@ -587,11 +652,15 @@ def _resolve_channel_paths(
     return valid_rois, channel_paths, roi_image_roots, missing_summary, expected, common_channels
 
 
-def _build_mask_features(mask_lookup: Dict[str, Path], rois: List[str]) -> pd.DataFrame:
+def _build_mask_features(
+    mask_lookup: Dict[str, Path],
+    rois: List[str],
+    mask_boundary_offset_pixels: int = 0,
+) -> pd.DataFrame:
     circ = lambda r: (4 * np.pi * r.area) / (r.perimeter * r.perimeter) if r.perimeter > 0 else 0
     frames: List[pd.DataFrame] = []
     for roi in rois:
-        mask = io.imread(mask_lookup[roi])
+        mask = _load_adjusted_mask(mask_lookup[roi], mask_boundary_offset_pixels)
         props = regionprops(mask)
         df = pd.DataFrame({
             "ObjectNumber": [p.label for p in props],
@@ -614,6 +683,7 @@ def _extract_classic_intensities(
     rois: List[str],
     channel_paths: Dict[str, Dict[str, Path]],
     expected_channels: List[str],
+    mask_boundary_offset_pixels: int = 0,
 ) -> pd.DataFrame:
     """
     Extract classic mean intensities by measuring directly over masks (like original segmentation.py).
@@ -622,7 +692,7 @@ def _extract_classic_intensities(
     frames: List[pd.DataFrame] = []
     
     for roi in tqdm(rois, desc="Classic intensity extraction"):
-        mask = io.imread(mask_lookup[roi])
+        mask = _load_adjusted_mask(mask_lookup[roi], mask_boundary_offset_pixels)
         props = regionprops(mask)
         
         # Initialize DataFrame with object numbers
@@ -663,6 +733,7 @@ def _process_roi_expansion(
     roi_channel_paths: Dict[str, Path],
     expected_channels: List[str],
     expansion_pixels: int,
+    mask_boundary_offset_pixels: int,
 ) -> pd.DataFrame:
     """
     Process a single ROI for expansion intensity extraction.
@@ -670,7 +741,7 @@ def _process_roi_expansion(
     """
     from scipy.ndimage import binary_dilation
     
-    mask = io.imread(mask_path)
+    mask = _load_adjusted_mask(mask_path, mask_boundary_offset_pixels)
     
     # Get unique cell labels
     unique_labels = np.unique(mask)
@@ -720,6 +791,7 @@ def _extract_expansion_intensities(
     channel_paths: Dict[str, Dict[str, Path]],
     expected_channels: List[str],
     expansion_pixels: int,
+    mask_boundary_offset_pixels: int = 0,
     n_jobs: int = 1,
 ) -> pd.DataFrame:
     """
@@ -754,7 +826,14 @@ def _extract_expansion_intensities(
         
         # Prepare arguments for parallel processing
         args_list = [
-            (roi, mask_lookup[roi], channel_paths.get(roi, {}), expected_channels, expansion_pixels)
+            (
+                roi,
+                mask_lookup[roi],
+                channel_paths.get(roi, {}),
+                expected_channels,
+                expansion_pixels,
+                mask_boundary_offset_pixels,
+            )
             for roi in rois
         ]
         
@@ -775,6 +854,7 @@ def _extract_expansion_intensities(
                 roi_channel_paths=channel_paths.get(roi, {}),
                 expected_channels=expected_channels,
                 expansion_pixels=expansion_pixels,
+                mask_boundary_offset_pixels=mask_boundary_offset_pixels,
             )
             frames.append(roi_df)
     
@@ -1217,7 +1297,23 @@ def main() -> None:
         normalization_jobs=nimbus_config.normalization_jobs,
         clip_values=clip_values,
         normalization_min_value=nimbus_config.normalization_min_value,
+        mask_boundary_offset_pixels=nimbus_config.mask_boundary_offset_pixels,
     )
+
+    if nimbus_config.mask_boundary_offset_pixels != 0:
+        logging.info(
+            "Applying Nimbus mask boundary offset of %d pixel(s): positive expands cells, negative shrinks cells.",
+            int(nimbus_config.mask_boundary_offset_pixels),
+        )
+
+    reuse_existing_master_celltables = bool(nimbus_config.use_existing_master_celltables)
+    if reuse_existing_master_celltables and nimbus_config.mask_boundary_offset_pixels != 0:
+        logging.warning(
+            "Disabling use_existing_master_celltables because mask_boundary_offset_pixels=%d changes mask geometry "
+            "and existing master cell tables may be stale.",
+            int(nimbus_config.mask_boundary_offset_pixels),
+        )
+        reuse_existing_master_celltables = False
 
     dataset.prepare_normalization_dict(
         quantile=nimbus_config.normalization_quantile,
@@ -1242,7 +1338,7 @@ def main() -> None:
     merged_celltable: Optional[pd.DataFrame] = None
     predicted_channels: List[str] = []
 
-    if nimbus_config.use_existing_master_celltables:
+    if reuse_existing_master_celltables:
         merged_celltable = _load_existing_master_celltable(master_path, "Nimbus")
         if merged_celltable is None:
             logging.info("Nimbus master cell table not found or invalid; running Nimbus inference.")
@@ -1283,7 +1379,11 @@ def main() -> None:
         )
         
         # Build mask features
-        mask_features = _build_mask_features(mask_lookup, valid_rois)
+        mask_features = _build_mask_features(
+            mask_lookup,
+            valid_rois,
+            mask_boundary_offset_pixels=nimbus_config.mask_boundary_offset_pixels,
+        )
         
         # Merge Nimbus predictions with mask features
         merged_celltable, predicted_channels = _merge_with_masks(
@@ -1313,7 +1413,7 @@ def main() -> None:
             nimbus_config.master_classic_celltable,
             nimbus_config.output_dir,
         )
-        if nimbus_config.use_existing_master_celltables:
+        if reuse_existing_master_celltables:
             classic_intensities = _load_existing_master_celltable(classic_master_path, "classic intensity")
             if classic_intensities is None:
                 logging.info("Classic master cell table not found or invalid; running classic extraction.")
@@ -1324,6 +1424,7 @@ def main() -> None:
                 rois=valid_rois,
                 channel_paths=channel_paths,
                 expected_channels=expected_channels,
+                mask_boundary_offset_pixels=nimbus_config.mask_boundary_offset_pixels,
             )
             logging.info(f"Classic extraction complete for {len(classic_intensities)} cells")
             if seg_config.create_master_cell_table:
@@ -1344,7 +1445,7 @@ def main() -> None:
             nimbus_config.master_expansion_celltable,
             nimbus_config.output_dir,
         )
-        if nimbus_config.use_existing_master_celltables:
+        if reuse_existing_master_celltables:
             expansion_intensities = _load_existing_master_celltable(expansion_master_path, "expansion intensity")
             if expansion_intensities is None:
                 logging.info("Expansion master cell table not found or invalid; running expansion extraction.")
@@ -1356,6 +1457,7 @@ def main() -> None:
                 channel_paths=channel_paths,
                 expected_channels=expected_channels,
                 expansion_pixels=nimbus_config.expansion_pixels,
+                mask_boundary_offset_pixels=nimbus_config.mask_boundary_offset_pixels,
                 n_jobs=nimbus_config.expansion_jobs,
             )
             logging.info(f"Expansion extraction complete for {len(expansion_intensities)} cells")
