@@ -6,9 +6,10 @@ CONDA_BASE="$(conda info --base)"
 ENV_ROOT="$CONDA_BASE/envs"
 CONFIG_FILE="$HOME/.imc_config"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+IMC_DIR="$HOME/imcanalysis"
 
 # List of all environments
-ENVS=("imc_segmentation" "imc_denoise" "imc_cellposesam" "imc_biobatchnet")
+ENVS=("imc_segmentation" "imc_denoise" "imc_cellposesam" "imc_biobatchnet" "imc_cellcharter")
 
 ########################################
 # Write env names to ~/.imc_config
@@ -100,12 +101,18 @@ create_env() {
         echo "⏭️  Skipping pip extras for existing environment '$env'."
     fi
 
-    if conda run -n "$env" python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('SpatialBiologyToolkit') else 1)"; then
-        echo "⏭️  SpatialBiologyToolkit already installed in '$env' — skipping."
-    else
-        echo "📦 Installing SpatialBiologyToolkit into '$env' (editable, no deps)..."
-        conda run -n "$env" pip install --no-deps -e "$REPO_ROOT"
-    fi
+    # Always install SpatialBiologyToolkit
+	conda run -n "$env" pip install --no-deps -e "$IMC_DIR"
+	
+	
+	### Old logic, but lets just always install
+	
+	# if conda run -n "$env" python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('SpatialBiologyToolkit') else 1)"; then
+    #     echo "⏭️  SpatialBiologyToolkit already installed in '$env' — skipping."
+    # else
+    #     echo "📦 Installing SpatialBiologyToolkit into '$env' (editable, no deps)..."
+    #     conda run -n "$env" pip install --no-deps -e "$REPO_ROOT"
+    # fi
 
     echo "✔ Finished environment: $env"
     echo
@@ -134,5 +141,6 @@ update_config_var "IMC_ENV_DENOISE" "imc_denoise"
 update_config_var "IMC_ENV_CELLPOSESAM" "imc_cellposesam"
 update_config_var "IMC_ENV_BIOBATCHNET" "imc_biobatchnet"
 update_config_var "IMC_ENV_SCPORTRAIT" "scPortrait"
+update_config_var "IMC_ENV_CELLCHARTER" "imc_cellcharter"
 
 echo "🎉 All conda environments installed successfully!"

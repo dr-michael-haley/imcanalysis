@@ -236,6 +236,7 @@ def main() -> None:
 
     input_path = batch_config.input_adata_path or general_config.anndata_path
     output_path = batch_config.output_adata_path or general_config.anndata_path
+    
     adata, resolved_input_path, skip_stage, _ = load_pipeline_anndata(
         general_config=general_config,
         stage_name=pipeline_stage,
