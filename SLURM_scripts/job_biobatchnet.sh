@@ -1,7 +1,7 @@
 #! /bin/bash --login
 #SBATCH -p gpuA 
 #SBATCH -G 1
-#SBATCH -t 2-0
+#SBATCH -t 4-0
 #SBATCH -n 12
 
 #SBATCH --mail-user=${IMC_EMAIL}
