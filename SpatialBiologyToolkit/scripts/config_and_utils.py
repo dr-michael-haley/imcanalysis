@@ -278,6 +278,44 @@ class BatchIntegrationConfig:
 
 
 @dataclass
+class RapidsProcessConfig:
+    # Input/output
+    input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
+    output_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
+
+    # Core RAPIDS processing settings
+    batch_correction_obs: Optional[str] = None  # Required only when run_harmony=True
+    run_harmony: bool = False
+    n_for_pca: Optional[int] = None
+    n_pcs_neighbors: Optional[int] = None
+    leiden_resolutions_list: List[float] = field(default_factory=lambda: [0.3, 1.0])
+    umap_min_dist: float = 0.1
+    run_leiden: bool = True
+    n_neighbors: Optional[int] = None
+
+    # Embedding / graph storage
+    pca_key: str = 'X_pca'
+    harmony_key: str = 'X_pca_harmony'
+    representation_key: str = 'X_batch_integration'
+    neighbors_key: Optional[str] = None  # None uses standard adata.uns['neighbors'] / obsp keys
+    umap_key: Optional[str] = None  # None uses standard adata.obsm['X_umap']
+    qc_output_subdir: str = 'RapidsProcess'
+
+    # RAPIDS pass-through parameters. Keys controlled by the config above
+    # (e.g. n_comps, key_added, use_rep) are intentionally ignored by the script.
+    pca_params: Dict[str, Any] = field(default_factory=dict)
+    harmony_params: Dict[str, Any] = field(default_factory=lambda: {
+        'max_iter_harmony': 30,
+        'random_state': 0,
+        'verbose': True,
+        'dtype': 'float32',
+    })
+    neighbors_params: Dict[str, Any] = field(default_factory=dict)
+    umap_params: Dict[str, Any] = field(default_factory=dict)
+    leiden_params: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class BioBatchNetConfig:
     # Input/output
     input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
@@ -897,6 +935,7 @@ DEFAULT_CONFIG_CLASSES = {
     'segmentation': SegmentationConfig,
     'nimbus': NimbusConfig,
     'batch_integration': BatchIntegrationConfig,
+    'rapids': RapidsProcessConfig,
     'biobatchnet': BioBatchNetConfig,
     'process': BasicProcessConfig,
     'visualization': VisualizationConfig,

@@ -97,3 +97,13 @@ imc_segmentation:
 - typing
 - warnings
 - yaml
+rapids_singlecell:
+- SpatialBiologyToolkit
+- anndata
+- logging
+- matplotlib
+- numpy
+- pathlib
+- rapids_singlecell
+- scanpy
+- typing

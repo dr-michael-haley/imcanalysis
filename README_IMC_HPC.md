@@ -108,6 +108,7 @@ export IMC_ENV_SEGMENTATION="imc_segmentation"
 export IMC_ENV_DENOISE="imc_denoise"
 export IMC_ENV_CELLPOSESAM="imc_cellposesam"
 export IMC_ENV_BIOBATCHNET="imc_biobatchnet"
+export IMC_ENV_RAPIDS_SINGLECELL="rapids_singlecell"
 export IMC_ENV_SCPORTRAIT="scPortrait"
 ```
 
@@ -133,9 +134,12 @@ export IMC_EMAIL="your.email@domain.com"
 export OPENAI_API_KEY="sk-..."
 export IMC_ENV_SEGMENTATION="imc_segmentation"
 export IMC_ENV_DENOISE="imc_denoise"
+export IMC_ENV_RAPIDS_SINGLECELL="rapids_singlecell"
 ```
 
 Tip: you can edit the `IMC_ENV_*` values later if you want the SLURM jobs to use different environment names.
+
+The RAPIDS stage expects an existing RAPIDS-compatible conda environment named `rapids_singlecell` by default; set `IMC_ENV_RAPIDS_SINGLECELL` if your local environment name differs.
 
 ---
 
@@ -265,7 +269,7 @@ chmod +x ~/imcanalysis/SLURM_scripts/*.txt
 
 ```
 cds mydataset
-pl config preprocess denoise dnqc nimbus bbn aiinter vis reint
+pl config prep denoise dnqc nimbus rapids aiinter vis reint
 ```
 
 You can run a single stage locally (useful for debugging):

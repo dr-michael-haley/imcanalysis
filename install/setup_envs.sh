@@ -130,7 +130,7 @@ done
 ########################################
 SLURM_DIR="$BASE_DIR/../SLURM_scripts"
 if [[ -d "$SLURM_DIR" ]]; then
-    chmod +x "$SLURM_DIR"/*.txt "$SLURM_DIR"/job_env.sh 2>/dev/null || true
+    chmod +x "$SLURM_DIR"/*.sh 2>/dev/null || true
 fi
 
 ########################################
@@ -140,6 +140,7 @@ update_config_var "IMC_ENV_SEGMENTATION" "imc_segmentation"
 update_config_var "IMC_ENV_DENOISE" "imc_denoise"
 update_config_var "IMC_ENV_CELLPOSESAM" "imc_cellposesam"
 update_config_var "IMC_ENV_BIOBATCHNET" "imc_biobatchnet"
+update_config_var "IMC_ENV_RAPIDS_SINGLECELL" "rapids_singlecell"
 update_config_var "IMC_ENV_SCPORTRAIT" "scPortrait"
 update_config_var "IMC_ENV_CELLCHARTER" "imc_cellcharter"
 
