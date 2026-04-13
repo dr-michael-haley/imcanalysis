@@ -103,6 +103,7 @@ rapids_singlecell:
 - logging
 - matplotlib
 - numpy
+- pandas
 - pathlib
 - rapids_singlecell
 - scanpy

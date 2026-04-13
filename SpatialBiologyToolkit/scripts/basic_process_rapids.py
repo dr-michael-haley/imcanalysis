@@ -8,12 +8,17 @@ clustering on the post-segmentation AnnData object.
 from __future__ import annotations
 
 import logging
+import copy
+import csv
+import json
+from itertools import product
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 import anndata as ad
 import matplotlib
 import numpy as np
+import pandas as pd
 import scanpy as sc
 
 matplotlib.use("Agg")
@@ -172,6 +177,62 @@ def _normalise_optional_key(value: Optional[str]) -> Optional[str]:
     return cleaned
 
 
+_SCAN_PARAMETER_ALIASES = {
+    "n_neighbors": "n_neighbors",
+    "n_for_pca": "n_for_pca",
+    "umap_min_dist": "umap_min_dist",
+    "run_harmony": "run_harmony",
+    "harmony_flavor": "harmony_flavor",
+    "harmony_flavour": "harmony_flavor",
+}
+
+
+def _coerce_optional_float(value: Any, *, name: str) -> Optional[float]:
+    """Convert config scalar values to optional floats."""
+    if value is None:
+        return None
+    if isinstance(value, str) and value.strip().lower() in {"", "null", "none"}:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"rapids.{name} must be numeric or null; got {value!r}.") from exc
+
+
+def _coerce_optional_int(value: Any, *, name: str) -> Optional[int]:
+    """Convert config scalar values to optional ints."""
+    coerced = _coerce_optional_float(value, name=name)
+    if coerced is None:
+        return None
+    if not float(coerced).is_integer():
+        raise ValueError(f"rapids.{name} must be an integer or null; got {value!r}.")
+    return int(coerced)
+
+
+def _coerce_bool(value: Any, *, name: str) -> bool:
+    """Convert config scalar values to booleans."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, np.integer)):
+        if int(value) in {0, 1}:
+            return bool(value)
+    if isinstance(value, str):
+        cleaned = value.strip().lower()
+        if cleaned in {"true", "t", "yes", "y", "1"}:
+            return True
+        if cleaned in {"false", "f", "no", "n", "0"}:
+            return False
+    raise ValueError(f"rapids.{name} must be a boolean; got {value!r}.")
+
+
+def _normalise_harmony_flavor(value: Any) -> str:
+    """Normalize RAPIDS Harmony flavor config."""
+    flavor = str(value).strip().lower()
+    if flavor not in {"harmony1", "harmony2"}:
+        raise ValueError("rapids.harmony_flavor must be one of: 'harmony1', 'harmony2'.")
+    return flavor
+
+
 def _as_resolution_list(values: Any) -> List[float]:
     """Normalize scalar/list-like resolution settings."""
     if values is None:
@@ -179,6 +240,198 @@ def _as_resolution_list(values: Any) -> List[float]:
     if isinstance(values, list):
         return [float(x) for x in values]
     return [float(values)]
+
+
+def _filter_cells_by_obs(adata: ad.AnnData, rapids_config: RapidsProcessConfig) -> ad.AnnData:
+    """Filter cells by a numeric obs column using optional lower/upper bounds."""
+    min_value = _coerce_optional_float(
+        rapids_config.filter_min_value,
+        name="filter_min_value",
+    )
+    max_value = _coerce_optional_float(
+        rapids_config.filter_max_value,
+        name="filter_max_value",
+    )
+    if min_value is None and max_value is None:
+        logging.info(
+            "RAPIDS cell filter disabled: rapids.filter_min_value and "
+            "rapids.filter_max_value are both null."
+        )
+        return adata
+    if min_value is not None and max_value is not None and min_value > max_value:
+        raise ValueError(
+            "rapids.filter_min_value cannot be greater than rapids.filter_max_value "
+            f"({min_value} > {max_value})."
+        )
+
+    obs_key = _normalise_optional_key(rapids_config.filter_obs_key)
+    if not obs_key:
+        raise ValueError("rapids.filter_obs_key must be set when RAPIDS cell filtering is active.")
+    if obs_key not in adata.obs.columns:
+        raise KeyError(
+            f"Configured RAPIDS cell filter obs key '{obs_key}' was not found in adata.obs."
+        )
+
+    values = pd.to_numeric(adata.obs[obs_key], errors="coerce")
+    valid = values.notna()
+    keep = valid.copy()
+    below = pd.Series(False, index=values.index)
+    above = pd.Series(False, index=values.index)
+    if min_value is not None:
+        below = values < min_value
+        keep &= ~below
+    if max_value is not None:
+        above = values > max_value
+        keep &= ~above
+
+    kept_count = int(keep.sum())
+    total_count = int(adata.n_obs)
+    removed_count = total_count - kept_count
+    invalid_count = int((~valid).sum())
+    logging.info(
+        "RAPIDS cell filter on adata.obs['%s'] with min=%s max=%s: kept %d/%d cells "
+        "(%.2f%%), removed %d. Removed breakdown: below_min=%d, above_max=%d, "
+        "missing_or_non_numeric=%d.",
+        obs_key,
+        min_value,
+        max_value,
+        kept_count,
+        total_count,
+        (100.0 * kept_count / total_count) if total_count else 0.0,
+        removed_count,
+        int((below & valid).sum()),
+        int((above & valid).sum()),
+        invalid_count,
+    )
+    if kept_count == 0:
+        raise ValueError(
+            "RAPIDS cell filter removed all cells. Check rapids.filter_min_value and "
+            "rapids.filter_max_value."
+        )
+    if removed_count == 0:
+        return adata
+    return adata[keep.to_numpy(), :].copy()
+
+
+def _as_scan_values(value: Any) -> List[Any]:
+    """Normalize a parameter scan value to a non-empty list when configured."""
+    if value is None:
+        return []
+    if isinstance(value, str) and value.strip().lower() in {"", "null", "none"}:
+        return []
+    if isinstance(value, (list, tuple)):
+        return list(value)
+    return [value]
+
+
+def _coerce_scan_override(key: str, value: Any) -> Any:
+    """Coerce parameter scan overrides to the same types as RapidsProcessConfig."""
+    if key == "n_neighbors":
+        return _coerce_optional_int(value, name="parameter_scan_dict.n_neighbors")
+    if key == "n_for_pca":
+        return _coerce_optional_int(value, name="parameter_scan_dict.n_for_pca")
+    if key == "umap_min_dist":
+        coerced = _coerce_optional_float(value, name="parameter_scan_dict.umap_min_dist")
+        if coerced is None:
+            raise ValueError("rapids.parameter_scan_dict.umap_min_dist cannot contain null values.")
+        return coerced
+    if key == "run_harmony":
+        return _coerce_bool(value, name="parameter_scan_dict.run_harmony")
+    if key == "harmony_flavor":
+        return _normalise_harmony_flavor(value)
+    raise KeyError(key)
+
+
+def _build_parameter_scan_overrides(parameter_scan_dict: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Expand a parameter scan dictionary into Cartesian-product run overrides."""
+    if not parameter_scan_dict:
+        return []
+
+    scan_values: Dict[str, List[Any]] = {}
+    for raw_key, raw_values in parameter_scan_dict.items():
+        canonical_key = _SCAN_PARAMETER_ALIASES.get(str(raw_key).strip())
+        if canonical_key is None:
+            allowed = ", ".join(sorted(set(_SCAN_PARAMETER_ALIASES.values())))
+            raise ValueError(
+                f"Unsupported rapids.parameter_scan_dict key '{raw_key}'. "
+                f"Supported keys are: {allowed}."
+            )
+        values = [
+            _coerce_scan_override(canonical_key, value)
+            for value in _as_scan_values(raw_values)
+        ]
+        if values:
+            scan_values[canonical_key] = values
+
+    if not scan_values:
+        return []
+
+    scan_keys = list(scan_values.keys())
+    return [
+        dict(zip(scan_keys, combination))
+        for combination in product(*(scan_values[key] for key in scan_keys))
+    ]
+
+
+def _apply_parameter_scan_overrides(
+    rapids_config: RapidsProcessConfig,
+    overrides: Dict[str, Any],
+) -> RapidsProcessConfig:
+    """Return a copied RapidsProcessConfig with scan overrides applied."""
+    run_config = copy.deepcopy(rapids_config)
+    for key, value in overrides.items():
+        setattr(run_config, key, value)
+    return run_config
+
+
+def _parameter_scan_label(index: int, overrides: Dict[str, Any]) -> str:
+    """Create a stable filesystem-safe label for a parameter scan run."""
+    parts = [f"scan_{index:03d}"]
+    for key, value in overrides.items():
+        value_label = "none" if value is None else str(value)
+        parts.append(f"{key}_{value_label}")
+    return cleanstring("_".join(parts)) or f"scan_{index:03d}"
+
+
+def _prepare_scan_output_path(base_path: Path, label: str) -> Path:
+    """Attach a parameter scan label to an output AnnData filename."""
+    return base_path.with_name(f"{base_path.stem}_{label}{base_path.suffix}")
+
+
+def _write_parameter_scan_summary(rows: List[Dict[str, Any]], qc_dir: Path) -> Optional[Path]:
+    """Write a summary CSV for RAPIDS parameter scans."""
+    if not rows:
+        return None
+
+    summary_path = qc_dir / "rapids_parameter_scan_summary.csv"
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = [
+        "label",
+        "overrides",
+        "qc_dir",
+        "saved_anndata_path",
+        "method",
+        "n_cells",
+        "n_markers",
+        "n_pcs",
+        "n_pcs_neighbors",
+        "n_neighbors",
+        "umap_min_dist",
+        "run_harmony",
+        "harmony_flavor",
+        "matrixplot_count",
+        "leiden_keys",
+    ]
+    with summary_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            serialized = row.copy()
+            serialized["overrides"] = json.dumps(serialized.get("overrides", {}), sort_keys=True)
+            serialized["leiden_keys"] = json.dumps(serialized.get("leiden_keys", []))
+            writer.writerow({key: serialized.get(key, "") for key in fieldnames})
+    logging.info("Wrote RAPIDS parameter scan summary to %s", summary_path)
+    return summary_path
 
 
 def _copy_array(value: Any) -> Any:
@@ -430,6 +683,7 @@ def _run_rapids_harmony(
     batch_key: str,
     pca_key: str,
     harmony_key: str,
+    harmony_flavor: str,
     harmony_params: Dict[str, Any],
 ) -> None:
     """Run RAPIDS Harmony integration against the configured PCA embedding."""
@@ -438,14 +692,16 @@ def _run_rapids_harmony(
 
     params = _drop_managed_params(
         _normalise_dtype_param(harmony_params),
-        managed={"key", "basis", "adjusted_basis"},
+        managed={"key", "basis", "adjusted_basis", "flavor"},
         section_name="harmony",
     )
+    params["flavor"] = _normalise_harmony_flavor(harmony_flavor)
     adata.obs[batch_key] = adata.obs[batch_key].astype("category")
     logging.info(
-        "Running RAPIDS Harmony on adata.obsm['%s'] using obs key '%s'.",
+        "Running RAPIDS Harmony on adata.obsm['%s'] using obs key '%s' (flavor=%s).",
         pca_key,
         batch_key,
+        params["flavor"],
     )
     rsc.pp.harmony_integrate(
         adata,
@@ -544,40 +800,14 @@ def _run_rapids_leiden(
     return leiden_keys
 
 
-def main() -> None:
-    pipeline_stage = "RapidsProcess"
-    config = process_config_with_overrides()
-    setup_logging(config.get("logging", {}), pipeline_stage)
-
-    general_config = GeneralConfig(
-        **filter_config_for_dataclass(config.get("general", {}), GeneralConfig)
-    )
-    rapids_config = RapidsProcessConfig(
-        **filter_config_for_dataclass(config.get("rapids", {}), RapidsProcessConfig)
-    )
-    # Reuse visualization settings for QC MatrixPlot formatting.
-    viz_config = VisualizationConfig(
-        **filter_config_for_dataclass(config.get("visualization", {}), VisualizationConfig)
-    )
-
-    input_path = rapids_config.input_adata_path or general_config.anndata_path
-    output_path = rapids_config.output_adata_path or general_config.anndata_path
-    adata, resolved_input_path, skip_stage, _ = load_pipeline_anndata(
-        general_config=general_config,
-        stage_name=pipeline_stage,
-        stage_config=rapids_config,
-        override_path=input_path,
-    )
-    if skip_stage:
-        logging.info("Skipping RAPIDS processing stage based on AnnData stage policy.")
-        return
-    if adata is None:
-        raise FileNotFoundError(
-            f"AnnData could not be loaded for RAPIDS processing stage: {resolved_input_path}"
-        )
-
-    logging.info("AnnData loaded with shape %s and %d markers.", adata.shape, adata.n_vars)
-
+def _run_rapids_processing(
+    adata: ad.AnnData,
+    *,
+    rapids_config: RapidsProcessConfig,
+    viz_config: VisualizationConfig,
+    qc_dir: Path,
+) -> Dict[str, Any]:
+    """Run one RAPIDS processing configuration and write its QC outputs."""
     run_harmony = bool(rapids_config.run_harmony)
     batch_key = _normalise_optional_key(rapids_config.batch_correction_obs)
     if run_harmony and not batch_key:
@@ -585,6 +815,7 @@ def main() -> None:
     if batch_key and batch_key not in adata.obs.columns:
         raise KeyError(f"Configured batch key '{batch_key}' was not found in adata.obs")
 
+    harmony_flavor = _normalise_harmony_flavor(rapids_config.harmony_flavor)
     pca_params = _clean_params(rapids_config.pca_params)
     harmony_params = _clean_params(rapids_config.harmony_params)
     neighbors_params = _clean_params(rapids_config.neighbors_params)
@@ -596,7 +827,6 @@ def main() -> None:
     representation_key = rapids_config.representation_key
     neighbors_key = _normalise_optional_key(rapids_config.neighbors_key)
     umap_key = _normalise_optional_key(rapids_config.umap_key)
-    qc_dir = Path(general_config.qc_folder) / rapids_config.qc_output_subdir
     qc_dir.mkdir(parents=True, exist_ok=True)
 
     n_pcs = _resolve_n_pcs(adata, rapids_config.n_for_pca)
@@ -617,6 +847,7 @@ def main() -> None:
                 batch_key=str(batch_key),
                 pca_key=pca_key,
                 harmony_key=harmony_key,
+                harmony_flavor=harmony_flavor,
                 harmony_params=harmony_params,
             )
             active_representation = harmony_key
@@ -675,11 +906,15 @@ def main() -> None:
         viz_config=viz_config,
     )
 
-    adata.uns["rapids_process"] = {
+    run_details: Dict[str, Any] = {
         "method": method,
         "batch_key": batch_key,
         "n_pcs": int(n_pcs),
         "n_pcs_neighbors": int(n_pcs_neighbors),
+        "n_neighbors": rapids_config.n_neighbors,
+        "umap_min_dist": float(rapids_config.umap_min_dist),
+        "run_harmony": bool(run_harmony),
+        "harmony_flavor": harmony_flavor if run_harmony else None,
         "representation_key": representation_key,
         "source_representation_key": active_representation,
         "pca_key": pca_key,
@@ -695,7 +930,11 @@ def main() -> None:
         "leiden_params": leiden_params,
         "qc_dir": str(qc_dir),
         "matrixplot_paths": matrixplot_paths,
+        "matrixplot_count": len(matrixplot_paths),
+        "n_cells": int(adata.n_obs),
+        "n_markers": int(adata.n_vars),
     }
+    adata.uns["rapids_process"] = run_details
     adata.uns["batch_integration"] = {
         "method": method,
         "batch_key": batch_key,
@@ -704,24 +943,164 @@ def main() -> None:
         "pca_key": pca_key,
         "harmony_key": harmony_key if run_harmony else None,
     }
+    return run_details
+
+
+def main() -> None:
+    pipeline_stage = "RapidsProcess"
+    config = process_config_with_overrides()
+    setup_logging(config.get("logging", {}), pipeline_stage)
+
+    general_config = GeneralConfig(
+        **filter_config_for_dataclass(config.get("general", {}), GeneralConfig)
+    )
+    rapids_config = RapidsProcessConfig(
+        **filter_config_for_dataclass(config.get("rapids", {}), RapidsProcessConfig)
+    )
+    # Reuse visualization settings for QC MatrixPlot formatting.
+    viz_config = VisualizationConfig(
+        **filter_config_for_dataclass(config.get("visualization", {}), VisualizationConfig)
+    )
+
+    input_path = rapids_config.input_adata_path or general_config.anndata_path
+    output_path = rapids_config.output_adata_path or general_config.anndata_path
+    adata, resolved_input_path, skip_stage, _ = load_pipeline_anndata(
+        general_config=general_config,
+        stage_name=pipeline_stage,
+        stage_config=rapids_config,
+        override_path=input_path,
+    )
+    if skip_stage:
+        logging.info("Skipping RAPIDS processing stage based on AnnData stage policy.")
+        return
+    if adata is None:
+        raise FileNotFoundError(
+            f"AnnData could not be loaded for RAPIDS processing stage: {resolved_input_path}"
+        )
+
+    logging.info("AnnData loaded with shape %s and %d markers.", adata.shape, adata.n_vars)
+    adata = _filter_cells_by_obs(adata, rapids_config)
+    logging.info("AnnData shape after RAPIDS cell filter: %s.", adata.shape)
+
+    qc_dir = Path(general_config.qc_folder) / rapids_config.qc_output_subdir
+    scan_overrides = _build_parameter_scan_overrides(rapids_config.parameter_scan_dict)
+    output_path = Path(output_path)
+
+    if scan_overrides:
+        scan_qc_subdir = _normalise_optional_key(rapids_config.parameter_scan_qc_subdir)
+        scan_qc_dir = qc_dir / (scan_qc_subdir or "ParameterScan")
+        scan_qc_dir.mkdir(parents=True, exist_ok=True)
+        logging.info(
+            "RAPIDS parameter scan enabled with %d run(s). AnnData saving is %s "
+            "(rapids.parameter_scan_save_anndata=%s). QC outputs will be written under %s.",
+            len(scan_overrides),
+            "enabled" if rapids_config.parameter_scan_save_anndata else "disabled",
+            rapids_config.parameter_scan_save_anndata,
+            scan_qc_dir,
+        )
+
+        scan_rows: List[Dict[str, Any]] = []
+        for scan_index, overrides in enumerate(scan_overrides, start=1):
+            scan_label = _parameter_scan_label(scan_index, overrides)
+            scan_config = _apply_parameter_scan_overrides(rapids_config, overrides)
+            run_qc_dir = scan_qc_dir / scan_label
+            logging.info(
+                "Running RAPIDS parameter scan %d/%d (%s): %s",
+                scan_index,
+                len(scan_overrides),
+                scan_label,
+                overrides,
+            )
+            run_adata = adata.copy()
+            run_details = _run_rapids_processing(
+                run_adata,
+                rapids_config=scan_config,
+                viz_config=viz_config,
+                qc_dir=run_qc_dir,
+            )
+
+            saved_anndata_path = ""
+            if rapids_config.parameter_scan_save_anndata:
+                scan_output_path = _prepare_scan_output_path(output_path, scan_label)
+                saved_path = save_pipeline_anndata(
+                    adata=run_adata,
+                    general_config=general_config,
+                    stage_name=pipeline_stage,
+                    stage_config=scan_config,
+                    override_path=str(scan_output_path),
+                    extra_details={
+                        "input_adata_path": str(resolved_input_path),
+                        "output_adata_path": str(scan_output_path),
+                        "parameter_scan_label": scan_label,
+                        "parameter_scan_overrides": overrides,
+                        **{
+                            key: run_details.get(key)
+                            for key in (
+                                "method",
+                                "representation_key",
+                                "neighbors_key",
+                                "umap_key",
+                                "qc_dir",
+                                "matrixplot_count",
+                                "n_cells",
+                                "n_markers",
+                            )
+                        },
+                    },
+                )
+                saved_anndata_path = str(saved_path)
+                logging.info(
+                    "Saved RAPIDS parameter scan AnnData for '%s' to %s",
+                    scan_label,
+                    saved_path,
+                )
+
+            scan_rows.append(
+                {
+                    "label": scan_label,
+                    "overrides": overrides,
+                    "saved_anndata_path": saved_anndata_path,
+                    **run_details,
+                }
+            )
+
+        summary_path = _write_parameter_scan_summary(scan_rows, scan_qc_dir)
+        logging.info(
+            "Completed RAPIDS parameter scan with %d run(s). Summary: %s",
+            len(scan_rows),
+            summary_path,
+        )
+        return
+
+    run_details = _run_rapids_processing(
+        adata,
+        rapids_config=rapids_config,
+        viz_config=viz_config,
+        qc_dir=qc_dir,
+    )
 
     saved_path = save_pipeline_anndata(
         adata=adata,
         general_config=general_config,
         stage_name=pipeline_stage,
         stage_config=rapids_config,
-        override_path=output_path,
+        override_path=str(output_path),
         extra_details={
             "input_adata_path": str(resolved_input_path),
             "output_adata_path": str(output_path),
-            "method": method,
-            "representation_key": representation_key,
-            "neighbors_key": graph_key,
-            "umap_key": embedding_key,
-            "qc_dir": str(qc_dir),
-            "matrixplot_count": len(matrixplot_paths),
-            "n_cells": int(adata.n_obs),
-            "n_markers": int(adata.n_vars),
+            **{
+                key: run_details.get(key)
+                for key in (
+                    "method",
+                    "representation_key",
+                    "neighbors_key",
+                    "umap_key",
+                    "qc_dir",
+                    "matrixplot_count",
+                    "n_cells",
+                    "n_markers",
+                )
+            },
         },
     )
     logging.info("Saved RAPIDS-processed AnnData to %s", saved_path)

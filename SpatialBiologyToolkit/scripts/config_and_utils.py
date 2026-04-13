@@ -286,12 +286,24 @@ class RapidsProcessConfig:
     # Core RAPIDS processing settings
     batch_correction_obs: Optional[str] = None  # Required only when run_harmony=True
     run_harmony: bool = False
+    harmony_flavor: str = 'harmony2'  # Options: 'harmony2' (default), 'harmony1'
     n_for_pca: Optional[int] = None
     n_pcs_neighbors: Optional[int] = None
     leiden_resolutions_list: List[float] = field(default_factory=lambda: [0.3, 1.0])
     umap_min_dist: float = 0.1
     run_leiden: bool = True
     n_neighbors: Optional[int] = None
+
+    # Optional obs-based cell filter applied immediately after loading AnnData
+    filter_obs_key: str = 'mask_area'
+    filter_min_value: Optional[float] = None
+    filter_max_value: Optional[float] = None
+
+    # Optional parameter scan. Values should be lists keyed by supported scan
+    # parameters: n_neighbors, n_for_pca, umap_min_dist, run_harmony, harmony_flavor.
+    parameter_scan_dict: Dict[str, Any] = field(default_factory=dict)
+    parameter_scan_save_anndata: bool = False
+    parameter_scan_qc_subdir: str = 'ParameterScan'
 
     # Embedding / graph storage
     pca_key: str = 'X_pca'
