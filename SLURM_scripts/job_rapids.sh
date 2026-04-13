@@ -12,6 +12,7 @@
 #@IN:   rapids.batch_correction_obs must exist in AnnData.obs when rapids.run_harmony=true
 #@OUT:  rapids.output_adata_path (default general.anndata_path)
 #@OUT:  general.qc_folder/rapids.qc_output_subdir (default QC/RapidsProcess)
+#@OUT:  general.qc_folder/rapids.qc_output_subdir/Matrixplots/ Leiden MatrixPlots
 #@ENV:  rapids_singlecell
 #@MODULE:  SpatialBiologyToolkit.scripts.basic_process_rapids
 #@CONFIG: general, rapids, logging

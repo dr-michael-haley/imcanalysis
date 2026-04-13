@@ -27,6 +27,14 @@ except ImportError as exc:  # pragma: no cover - dependency guard
         "'rapids_singlecell' environment before running basic_process_rapids."
     ) from exc
 
+try:
+    from SpatialBiologyToolkit import plotting as sbt_plotting
+except Exception:  # pragma: no cover - optional plotting helper
+    try:
+        from .. import plotting as sbt_plotting  # type: ignore
+    except Exception:
+        sbt_plotting = None  # type: ignore
+
 from .config_and_utils import (
     GeneralConfig,
     RapidsProcessConfig,
@@ -230,6 +238,28 @@ def _plot_embedding(adata: ad.AnnData, *, embedding_key: str, color: Any) -> Non
     sc.pl.embedding(adata, basis=embedding_key, color=color, show=False)
 
 
+def _reorder_vars_by_expression(adata: ad.AnnData, var_names: List[str]) -> List[str]:
+    """Order markers by hierarchical clustering of expression profiles."""
+    if len(var_names) < 2:
+        return list(var_names)
+
+    from scipy import sparse
+    import scipy.cluster.hierarchy as sch
+    import scipy.spatial.distance as ssd
+
+    subset = adata[:, var_names]
+    expression_matrix = subset.X
+    if sparse.issparse(expression_matrix):
+        expression_matrix = expression_matrix.toarray()
+
+    distances = ssd.pdist(np.asarray(expression_matrix).T, metric="euclidean")
+    if distances.size == 0:
+        return list(var_names)
+    linkage_matrix = sch.linkage(distances, method="ward")
+    ordered_indices = sch.dendrogram(linkage_matrix, no_plot=True)["leaves"]
+    return [var_names[idx] for idx in ordered_indices]
+
+
 def _save_qc_umaps(
     adata: ad.AnnData,
     *,
@@ -273,6 +303,103 @@ def _save_qc_umaps(
             bbox_inches="tight",
         )
         plt.close(fig)
+
+
+def _save_leiden_matrixplots(
+    adata: ad.AnnData,
+    *,
+    leiden_keys: List[str],
+    qc_dir: Path,
+    viz_config: VisualizationConfig,
+) -> List[str]:
+    """Save non-scaled vmax-capped MatrixPlots for RAPIDS Leiden outputs."""
+    if not leiden_keys:
+        logging.info("No Leiden keys found; skipping RAPIDS MatrixPlots.")
+        return []
+    if adata.n_vars == 0:
+        logging.warning("AnnData has no markers; skipping RAPIDS MatrixPlots.")
+        return []
+
+    matrix_dir = qc_dir / "Matrixplots"
+    matrix_dir.mkdir(parents=True, exist_ok=True)
+    save_dpi = 300 if getattr(viz_config, "save_high_res", True) else 150
+    figure_format = getattr(viz_config, "figure_format", "png")
+    matrixplot_vmax = getattr(viz_config, "matrixplot_vmax", 0.5)
+    markers_to_plot = adata.var_names.tolist()
+
+    try:
+        ordered_markers = _reorder_vars_by_expression(adata, markers_to_plot)
+    except Exception as exc:  # pragma: no cover - defensive QC fallback
+        logging.warning(
+            "Could not reorder markers by expression for RAPIDS MatrixPlots (%s). "
+            "Using AnnData.var_names order.",
+            exc,
+        )
+        ordered_markers = markers_to_plot
+
+    use_row_color_matrixplot = getattr(viz_config, "matrixplot_use_row_colors", True)
+    if use_row_color_matrixplot:
+        if sbt_plotting is None or not hasattr(sbt_plotting, "matrixplot_with_row_colors"):
+            logging.warning(
+                "matrixplot_use_row_colors=True but plotting.matrixplot_with_row_colors "
+                "is unavailable. Falling back to scanpy.pl.matrixplot."
+            )
+            use_row_color_matrixplot = False
+
+    saved_paths: List[str] = []
+    for leiden_key in leiden_keys:
+        if leiden_key not in adata.obs.columns:
+            logging.warning(
+                "Leiden key '%s' not found in adata.obs; skipping RAPIDS MatrixPlot.",
+                leiden_key,
+            )
+            continue
+
+        safe_key = cleanstring(leiden_key) or "leiden"
+        out_path = matrix_dir / f"Matrixplot_{safe_key}_vmax.{figure_format}"
+        logging.info(
+            "Creating vmax-capped RAPIDS MatrixPlot for %s (vmax=%s).",
+            leiden_key,
+            matrixplot_vmax,
+        )
+        try:
+            sc.tl.dendrogram(adata, groupby=leiden_key)
+            if use_row_color_matrixplot:
+                _, fig = sbt_plotting.matrixplot_with_row_colors(
+                    adata,
+                    marker_groups=ordered_markers,
+                    groupby_key=leiden_key,
+                    out_path=str(out_path),
+                    reorder_var_by_expression=False,
+                    standard_scale=None,
+                    vmax=matrixplot_vmax,
+                    dendrogram=True,
+                    save_dpi=save_dpi,
+                )
+                plt.close(fig)
+            else:
+                matrixplot_obj = sc.pl.matrixplot(
+                    adata,
+                    var_names=ordered_markers,
+                    groupby=leiden_key,
+                    standard_scale=None,
+                    dendrogram=True,
+                    vmax=matrixplot_vmax,
+                    show=False,
+                    return_fig=True,
+                )
+                matrixplot_obj.savefig(out_path, bbox_inches="tight", dpi=save_dpi)
+                plt.close()
+            saved_paths.append(str(out_path))
+            logging.info("RAPIDS MatrixPlot saved to %s", out_path)
+        except Exception as exc:  # pragma: no cover - QC should not block saving AnnData
+            logging.exception(
+                "Failed to create RAPIDS MatrixPlot for Leiden key '%s': %s",
+                leiden_key,
+                exc,
+            )
+
+    return saved_paths
 
 
 def _run_rapids_pca(
@@ -428,8 +555,8 @@ def main() -> None:
     rapids_config = RapidsProcessConfig(
         **filter_config_for_dataclass(config.get("rapids", {}), RapidsProcessConfig)
     )
-    # Parsed for consistency with other stage entrypoints.
-    _ = VisualizationConfig(
+    # Reuse visualization settings for QC MatrixPlot formatting.
+    viz_config = VisualizationConfig(
         **filter_config_for_dataclass(config.get("visualization", {}), VisualizationConfig)
     )
 
@@ -541,6 +668,12 @@ def main() -> None:
         embedding_key=embedding_key,
         method_slug=method,
     )
+    matrixplot_paths = _save_leiden_matrixplots(
+        adata,
+        leiden_keys=leiden_keys,
+        qc_dir=qc_dir,
+        viz_config=viz_config,
+    )
 
     adata.uns["rapids_process"] = {
         "method": method,
@@ -561,6 +694,7 @@ def main() -> None:
         "umap_params": umap_params,
         "leiden_params": leiden_params,
         "qc_dir": str(qc_dir),
+        "matrixplot_paths": matrixplot_paths,
     }
     adata.uns["batch_integration"] = {
         "method": method,
@@ -585,6 +719,7 @@ def main() -> None:
             "neighbors_key": graph_key,
             "umap_key": embedding_key,
             "qc_dir": str(qc_dir),
+            "matrixplot_count": len(matrixplot_paths),
             "n_cells": int(adata.n_obs),
             "n_markers": int(adata.n_vars),
         },
