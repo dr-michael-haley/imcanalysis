@@ -167,10 +167,59 @@ def _adjust_label_mask(mask: np.ndarray, offset_pixels: int) -> np.ndarray:
     return adjusted
 
 
-def _load_adjusted_mask(mask_path: Path | str, mask_boundary_offset_pixels: int = 0) -> np.ndarray:
-    """Load a mask from disk and apply the configured boundary offset."""
+def _coerce_optional_area_bound(bound_name: str, value: Optional[int | float]) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        bound = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{bound_name} must be a non-negative finite value or None, got {value!r}") from exc
+    if not np.isfinite(bound) or bound < 0:
+        raise ValueError(f"{bound_name} must be a non-negative finite value or None, got {value!r}")
+    return bound
+
+
+def _filter_label_mask_by_area(
+    mask: np.ndarray,
+    min_cell_area: Optional[int | float] = None,
+    max_cell_area: Optional[int | float] = None,
+) -> np.ndarray:
+    """Remove labels outside configured post-adjustment area bounds while preserving label IDs."""
+    labels = np.asarray(mask)
+    if labels.ndim != 2:
+        raise ValueError(f"Label mask must be 2D, got shape {labels.shape}")
+
+    min_area = _coerce_optional_area_bound("min_cell_area", min_cell_area)
+    max_area = _coerce_optional_area_bound("max_cell_area", max_cell_area)
+    if min_area is not None and max_area is not None and min_area > max_area:
+        raise ValueError(f"min_cell_area ({min_area:g}) cannot be greater than max_cell_area ({max_area:g})")
+    labels = labels.astype(np.uint32, copy=False)
+    if min_area is None and max_area is None:
+        return labels
+
+    filtered = labels.copy()
+    for region in regionprops(labels):
+        area = float(region.area)
+        below_min = min_area is not None and area < min_area
+        above_max = max_area is not None and area > max_area
+        if below_min or above_max:
+            filtered_view = filtered[region.slice]
+            source_view = labels[region.slice]
+            filtered_view[source_view == region.label] = 0
+
+    return filtered
+
+
+def _load_adjusted_mask(
+    mask_path: Path | str,
+    mask_boundary_offset_pixels: int = 0,
+    min_cell_area: Optional[int | float] = None,
+    max_cell_area: Optional[int | float] = None,
+) -> np.ndarray:
+    """Load a mask from disk, apply the boundary offset, then filter by post-offset cell area."""
     mask = _load_mask_2d(mask_path)
-    return _adjust_label_mask(mask, mask_boundary_offset_pixels)
+    adjusted = _adjust_label_mask(mask, mask_boundary_offset_pixels)
+    return _filter_label_mask_by_area(adjusted, min_cell_area, max_cell_area)
 
 
 class ToolkitNimbusDataset(MultiplexDataset):
@@ -191,6 +240,8 @@ class ToolkitNimbusDataset(MultiplexDataset):
         clip_values: Sequence[float] = (0.0, 2.0),
         normalization_min_value: float = 2.0,
         mask_boundary_offset_pixels: int = 0,
+        min_cell_area: Optional[int | float] = None,
+        max_cell_area: Optional[int | float] = None,
         suffix_match: Optional[str] = None,
     ) -> None:
         self._channels = sorted(channels)
@@ -201,6 +252,8 @@ class ToolkitNimbusDataset(MultiplexDataset):
         self.clip_values = tuple(clip_values)
         self.normalization_min_value = float(normalization_min_value)
         self.mask_boundary_offset_pixels = int(mask_boundary_offset_pixels)
+        self.min_cell_area = min_cell_area
+        self.max_cell_area = max_cell_area
         self._suffix_match = suffix_match or suffix
         self._segmentation_cache: Dict[str, np.ndarray] = {}
 
@@ -257,6 +310,8 @@ class ToolkitNimbusDataset(MultiplexDataset):
             self._segmentation_cache[roi] = _load_adjusted_mask(
                 self._mask_lookup[roi],
                 self.mask_boundary_offset_pixels,
+                min_cell_area=self.min_cell_area,
+                max_cell_area=self.max_cell_area,
             )
         mask = self._segmentation_cache[roi]
 
@@ -656,11 +711,18 @@ def _build_mask_features(
     mask_lookup: Dict[str, Path],
     rois: List[str],
     mask_boundary_offset_pixels: int = 0,
+    min_cell_area: Optional[int | float] = None,
+    max_cell_area: Optional[int | float] = None,
 ) -> pd.DataFrame:
     circ = lambda r: (4 * np.pi * r.area) / (r.perimeter * r.perimeter) if r.perimeter > 0 else 0
     frames: List[pd.DataFrame] = []
     for roi in rois:
-        mask = _load_adjusted_mask(mask_lookup[roi], mask_boundary_offset_pixels)
+        mask = _load_adjusted_mask(
+            mask_lookup[roi],
+            mask_boundary_offset_pixels,
+            min_cell_area=min_cell_area,
+            max_cell_area=max_cell_area,
+        )
         props = regionprops(mask)
         df = pd.DataFrame({
             "ObjectNumber": [p.label for p in props],
@@ -684,6 +746,8 @@ def _extract_classic_intensities(
     channel_paths: Dict[str, Dict[str, Path]],
     expected_channels: List[str],
     mask_boundary_offset_pixels: int = 0,
+    min_cell_area: Optional[int | float] = None,
+    max_cell_area: Optional[int | float] = None,
 ) -> pd.DataFrame:
     """
     Extract classic mean intensities by measuring directly over masks (like original segmentation.py).
@@ -692,7 +756,12 @@ def _extract_classic_intensities(
     frames: List[pd.DataFrame] = []
     
     for roi in tqdm(rois, desc="Classic intensity extraction"):
-        mask = _load_adjusted_mask(mask_lookup[roi], mask_boundary_offset_pixels)
+        mask = _load_adjusted_mask(
+            mask_lookup[roi],
+            mask_boundary_offset_pixels,
+            min_cell_area=min_cell_area,
+            max_cell_area=max_cell_area,
+        )
         props = regionprops(mask)
         
         # Initialize DataFrame with object numbers
@@ -734,6 +803,8 @@ def _process_roi_expansion(
     expected_channels: List[str],
     expansion_pixels: int,
     mask_boundary_offset_pixels: int,
+    min_cell_area: Optional[int | float],
+    max_cell_area: Optional[int | float],
 ) -> pd.DataFrame:
     """
     Process a single ROI for expansion intensity extraction.
@@ -741,7 +812,12 @@ def _process_roi_expansion(
     """
     from scipy.ndimage import binary_dilation
     
-    mask = _load_adjusted_mask(mask_path, mask_boundary_offset_pixels)
+    mask = _load_adjusted_mask(
+        mask_path,
+        mask_boundary_offset_pixels,
+        min_cell_area=min_cell_area,
+        max_cell_area=max_cell_area,
+    )
     
     # Get unique cell labels
     unique_labels = np.unique(mask)
@@ -780,7 +856,7 @@ def _process_roi_expansion(
         cell_data.append(cell_intensities)
     
     # Create DataFrame for this ROI
-    roi_df = pd.DataFrame(cell_data)
+    roi_df = pd.DataFrame(cell_data, columns=["ObjectNumber"] + list(expected_channels))
     roi_df["ROI"] = roi
     return roi_df
 
@@ -792,6 +868,8 @@ def _extract_expansion_intensities(
     expected_channels: List[str],
     expansion_pixels: int,
     mask_boundary_offset_pixels: int = 0,
+    min_cell_area: Optional[int | float] = None,
+    max_cell_area: Optional[int | float] = None,
     n_jobs: int = 1,
 ) -> pd.DataFrame:
     """
@@ -833,6 +911,8 @@ def _extract_expansion_intensities(
                 expected_channels,
                 expansion_pixels,
                 mask_boundary_offset_pixels,
+                min_cell_area,
+                max_cell_area,
             )
             for roi in rois
         ]
@@ -855,6 +935,8 @@ def _extract_expansion_intensities(
                 expected_channels=expected_channels,
                 expansion_pixels=expansion_pixels,
                 mask_boundary_offset_pixels=mask_boundary_offset_pixels,
+                min_cell_area=min_cell_area,
+                max_cell_area=max_cell_area,
             )
             frames.append(roi_df)
     
@@ -1281,6 +1363,14 @@ def main() -> None:
             "Dropping %d channel(s) absent in at least one ROI: %s", len(excluded_channels), excluded_channels
         )
 
+    min_cell_area = _coerce_optional_area_bound("nimbus.min_cell_area", nimbus_config.min_cell_area)
+    max_cell_area = _coerce_optional_area_bound("nimbus.max_cell_area", nimbus_config.max_cell_area)
+    if min_cell_area is not None and max_cell_area is not None and min_cell_area > max_cell_area:
+        raise ValueError(
+            f"nimbus.min_cell_area ({min_cell_area:g}) cannot be greater than "
+            f"nimbus.max_cell_area ({max_cell_area:g})"
+        )
+
     mask_lookup = {roi: mask_lookup[roi] for roi in valid_rois}
     fov_paths = [roi_image_roots[roi] for roi in valid_rois]
 
@@ -1298,6 +1388,8 @@ def main() -> None:
         clip_values=clip_values,
         normalization_min_value=nimbus_config.normalization_min_value,
         mask_boundary_offset_pixels=nimbus_config.mask_boundary_offset_pixels,
+        min_cell_area=min_cell_area,
+        max_cell_area=max_cell_area,
     )
 
     if nimbus_config.mask_boundary_offset_pixels != 0:
@@ -1306,12 +1398,27 @@ def main() -> None:
             int(nimbus_config.mask_boundary_offset_pixels),
         )
 
+    if min_cell_area is not None or max_cell_area is not None:
+        logging.info(
+            "Filtering Nimbus masks by post-offset cell area: min_cell_area=%s, max_cell_area=%s.",
+            "None" if min_cell_area is None else f"{min_cell_area:g}",
+            "None" if max_cell_area is None else f"{max_cell_area:g}",
+        )
+
     reuse_existing_master_celltables = bool(nimbus_config.use_existing_master_celltables)
-    if reuse_existing_master_celltables and nimbus_config.mask_boundary_offset_pixels != 0:
+    mask_geometry_changed = (
+        nimbus_config.mask_boundary_offset_pixels != 0
+        or min_cell_area is not None
+        or max_cell_area is not None
+    )
+    if reuse_existing_master_celltables and mask_geometry_changed:
         logging.warning(
-            "Disabling use_existing_master_celltables because mask_boundary_offset_pixels=%d changes mask geometry "
+            "Disabling use_existing_master_celltables because mask_boundary_offset_pixels=%d, "
+            "min_cell_area=%s, and max_cell_area=%s can change mask geometry or cell inclusion "
             "and existing master cell tables may be stale.",
             int(nimbus_config.mask_boundary_offset_pixels),
+            "None" if min_cell_area is None else f"{min_cell_area:g}",
+            "None" if max_cell_area is None else f"{max_cell_area:g}",
         )
         reuse_existing_master_celltables = False
 
@@ -1383,6 +1490,8 @@ def main() -> None:
             mask_lookup,
             valid_rois,
             mask_boundary_offset_pixels=nimbus_config.mask_boundary_offset_pixels,
+            min_cell_area=min_cell_area,
+            max_cell_area=max_cell_area,
         )
         
         # Merge Nimbus predictions with mask features
@@ -1425,6 +1534,8 @@ def main() -> None:
                 channel_paths=channel_paths,
                 expected_channels=expected_channels,
                 mask_boundary_offset_pixels=nimbus_config.mask_boundary_offset_pixels,
+                min_cell_area=min_cell_area,
+                max_cell_area=max_cell_area,
             )
             logging.info(f"Classic extraction complete for {len(classic_intensities)} cells")
             if seg_config.create_master_cell_table:
@@ -1458,6 +1569,8 @@ def main() -> None:
                 expected_channels=expected_channels,
                 expansion_pixels=nimbus_config.expansion_pixels,
                 mask_boundary_offset_pixels=nimbus_config.mask_boundary_offset_pixels,
+                min_cell_area=min_cell_area,
+                max_cell_area=max_cell_area,
                 n_jobs=nimbus_config.expansion_jobs,
             )
             logging.info(f"Expansion extraction complete for {len(expansion_intensities)} cells")
