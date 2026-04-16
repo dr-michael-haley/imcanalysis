@@ -141,6 +141,7 @@ update_config_var "IMC_ENV_DENOISE" "imc_denoise"
 update_config_var "IMC_ENV_CELLPOSESAM" "imc_cellposesam"
 update_config_var "IMC_ENV_BIOBATCHNET" "imc_biobatchnet"
 update_config_var "IMC_ENV_RAPIDS_SINGLECELL" "rapids_singlecell"
+update_config_var "IMC_ENV_STARLING" "imc_starling"
 update_config_var "IMC_ENV_SCPORTRAIT" "scPortrait"
 update_config_var "IMC_ENV_CELLCHARTER" "imc_cellcharter"
 

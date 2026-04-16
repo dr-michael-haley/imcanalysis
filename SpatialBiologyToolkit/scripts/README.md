@@ -13,5 +13,5 @@ Stage-based entry points that can run locally or via the SLURM templates. They s
 - Denoising and QC: `denoising.py`, `denoising_qc.py`.
 - Core analysis: `basic_process_batch_integration.py` (Harmony / BBKNN), `basic_process_rapids.py` (optional cell filtering, rapids-singlecell GPU PCA / optional Harmony / neighbors / UMAP / Leiden, QC MatrixPlots, parameter scans), `basic_process_biobatchnet.py`, `ai_interpretation.py`.
 - Legacy entrypoints retained for older workflows: `basic_process.py`, `basic_process_ai.py`.
-- Visualization and downstream: `basic_visualizations.py`, `cellcharter_neighborhoods.py`, `pairwise_spatial.py`, `networkx_spatial.py`, `remap_obs.py`, `reintegrate_markers.py`.
+- Visualization and downstream: `basic_visualizations.py`, `cellcharter_neighborhoods.py`, `starling_analysis.py`, `pairwise_spatial.py`, `networkx_spatial.py`, `remap_obs.py`, `reintegrate_markers.py`.
 

@@ -680,6 +680,64 @@ class CellCharterConfig:
     save_high_res: bool = True
 
 @dataclass
+class StarlingConfig:
+    # Input/output
+    input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
+    output_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
+    qc_output_subdir: str = 'Starling_QC'
+
+    # Optional local checkout fallback. Leave null when biostarling/starling is installed in the env.
+    starling_repo_path: Optional[str] = None
+
+    # Feature matrix. STARLING expects non-negative segmented cell-by-marker expression in adata.X.
+    use_layer: Optional[str] = None  # Optional adata.layers key to use instead of adata.X
+    marker_include: Optional[List[str]] = None  # Optional ordered marker subset (None = all vars)
+    marker_exclude: List[str] = field(default_factory=list)
+    clip_small_negative_values: bool = True
+    negative_value_tolerance: float = 1e-8
+
+    # Initial clustering.
+    initial_clustering_method: str = 'User'  # One of User, KM, GMM, FS, PG
+    initial_label_obs: Optional[str] = None  # For User mode; fallback is general.population_obs_primary
+    n_clusters: Optional[int] = None  # Required by KM/GMM/FS; optional/ignored for PG/User
+
+    # STARLING model settings.
+    seed: int = 10
+    dist_option: str = 'T'  # T = Student-T, N = Normal
+    singlet_prop: float = 0.6
+    model_cell_size: bool = True
+    cell_size_col_name: str = 'mask_area'
+    cell_size_fallback_cols: List[str] = field(default_factory=lambda: ['area'])
+    model_zplane_overlap: bool = True
+    model_regularizer: float = 1.0
+    learning_rate: float = 1e-3
+    doublet_threshold: float = 0.5
+
+    # Lightning trainer settings.
+    max_epochs: Optional[int] = 100
+    early_stopping: bool = True
+    early_stopping_monitor: str = 'train_loss'
+    trainer_accelerator: str = 'auto'
+    trainer_devices: Optional[int] = None
+    trainer_precision: Optional[str] = None
+    enable_checkpointing: bool = False
+    enable_progress_bar: bool = True
+    log_every_n_steps: Optional[int] = None
+    limit_train_batches: Optional[Any] = None
+    tensorboard_logging: bool = True
+
+    # Output controls.
+    output_prefix: str = 'starling'
+    write_canonical_starling_keys: bool = False
+    store_assignment_prob_matrix: bool = True
+    store_gamma_assignment_prob_matrix: bool = False
+    save_model: bool = False
+    model_output_name: str = 'starling_model.pt'
+    save_qc_tables: bool = True
+    save_qc_plots: bool = True
+    figure_format: str = 'png'
+
+@dataclass
 class PairwiseSpatialConfig:
     # Input/output
     input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
@@ -952,6 +1010,7 @@ DEFAULT_CONFIG_CLASSES = {
     'process': BasicProcessConfig,
     'visualization': VisualizationConfig,
     'cellcharter': CellCharterConfig,
+    'starling': StarlingConfig,
     'pairwise_spatial': PairwiseSpatialConfig,
     'networkx_spatial': NetworkxSpatialConfig,
     'remap_obs': RemapObsConfig,

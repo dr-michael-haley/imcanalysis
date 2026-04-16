@@ -16,6 +16,7 @@ SLURM wrappers for the IMC pipeline (tested on CSF3). Each stage runs from a dat
 | `bbn` | `job_biobatchnet.sh` |
 | `subcl` | `job_subclustering.sh` |
 | `cchar` | `job_cellcharter.sh` |
+| `starling` | `job_starling.sh` |
 | `pairsp` | `job_pairwise_spatial.sh` |
 | `nxsp` | `job_networkx_spatial.sh` |
 | `remap` | `job_remap_obs.sh` |
@@ -67,7 +68,7 @@ Pipeline category key:
 
 | Alias | Status | Category | What it does | Conda env(s) used by SLURM job | Primary inputs | Primary outputs | Config blocks in `config.yaml` | Typical position |
 |---|---|---|---|---|---|---|---|---|
-| `config` | `🟢` | `Core` | Runs `SpatialBiologyToolkit.scripts.update_config` to sync `config.yaml` with current dataclass defaults. Adds missing keys and removes obsolete sections/keys. | `${IMC_ENV_SEGMENTATION:-imc_segmentation}` | `config.yaml` (or creates one if missing). | Updated `config.yaml` (no backup unless script is run with `--backup`, which this job does not pass). | `general`, `preprocess`, `denoising`, `createmasks`, `segmentation`, `nimbus`, `batch_integration`, `rapids`, `biobatchnet`, `process`, `visualization`, `cellcharter`, `pairwise_spatial`, `networkx_spatial`, `remap_obs`, `subclustering`, `logging` (sync/refresh) | Optional preflight before any compute-heavy stage. |
+| `config` | `🟢` | `Core` | Runs `SpatialBiologyToolkit.scripts.update_config` to sync `config.yaml` with current dataclass defaults. Adds missing keys and removes obsolete sections/keys. | `${IMC_ENV_SEGMENTATION:-imc_segmentation}` | `config.yaml` (or creates one if missing). | Updated `config.yaml` (no backup unless script is run with `--backup`, which this job does not pass). | `general`, `preprocess`, `denoising`, `createmasks`, `segmentation`, `nimbus`, `batch_integration`, `rapids`, `biobatchnet`, `process`, `visualization`, `cellcharter`, `starling`, `pairwise_spatial`, `networkx_spatial`, `remap_obs`, `subclustering`, `logging` (sync/refresh) | Optional preflight before any compute-heavy stage. |
 | `prep` | `🟢` | `Core` | Runs `SpatialBiologyToolkit.scripts.preprocess` to import IMC files (`.mcd`/`.txt`), export stacks, unstack channels, and build metadata/panel tables. | `${IMC_ENV_SEGMENTATION:-imc_segmentation}` | IMC source files in `general.imc_files_folder` (default `IMC_files/`; legacy fallback `MCD_files/`). | `tiff_stacks/`, `tiffs/` ROI folders, `metadata/metadata.csv`, `metadata/dictionary.csv`, `metadata/panel.csv` (or `panel_*.csv` + `panel_mapping.csv` if multiple unique panels). | `general`, `preprocess`, `logging` | First core stage. |
 | `denoise` | `🟢` | `Core` | Runs `SpatialBiologyToolkit.scripts.denoising` (DeepSNF/DIMR flow) on channel TIFFs. Also supports outlier clipping and optional parameter scans via config. | `${IMC_ENV_DENOISE:-imc_denoise}` | `tiffs/` raw channels, `metadata/panel.csv`, denoising config block. | `processed/` denoised ROI/channel TIFFs, `QC/denoised_pixel_qc.csv` (or scan-suffixed variants), optional `QC/denoising/*.png`. | `general`, `denoising`, `logging` | After `prep`. |
 | `dnqc` | `🟢` | `Core` | Runs two checks: (1) `SpatialBiologyToolkit.scripts.denoising_qc` side-by-side raw vs denoised QC images, then (2) `SpatialBiologyToolkit.scripts.check_panel_consistency` for panel/image consistency + pixel QC stats. | `${IMC_ENV_DENOISE:-imc_denoise}` then `${IMC_ENV_SEGMENTATION:-imc_segmentation}` | `tiffs/`, `processed/`, `metadata/panel.csv`, `config.yaml`. | `QC/denoising/` images; panel consistency CSV reports (timestamped `panel_consistency_report_*.csv`, plus optional `_pixel_qc.csv`). | `general`, `denoising`, `logging` (plus `check_panel_consistency` defaults) | Recommended QC checkpoint immediately after `denoise`. |
@@ -79,6 +80,7 @@ Pipeline category key:
 | `remap` | `🟢` | `Core (Optional)` | Runs `SpatialBiologyToolkit.scripts.remap_obs`: either applies a simple CSV remap onto `adata.obs` or scaffolds a blank remap table from an existing `adata.obs` column. Intended for tasks such as naming Leiden populations. Columns whose names contain `notes` are ignored during application by default. | `${IMC_ENV_SEGMENTATION:-imc_segmentation}` | AnnData from `remap_obs.input_adata_path` or fallback (`general.anndata_path`), plus `remap_obs.remap_csv_path` (default `metadata/remap.csv`) for apply mode; `remap_obs.source_obs` for template generation. | Updated AnnData in place (apply mode) and/or a remap CSV written to `remap_obs.remap_csv_path` (generate mode). | `general`, `remap_obs`, `logging` | Optional curation stage after any step that created the source obs column, commonly after `bint`, `rapids`, or `bbn` and before downstream plots/analyses. |
 | `subcl` | `🟢` | `Core (Optional)` | Runs `SpatialBiologyToolkit.scripts.subclustering` with explicit checkpoints: (1) create/edit `sublustering_settings.csv` + `marker_list.csv`, (2) run row-wise subclustering + QC plots, (3) apply edited remap and export final-label mappings. See in-depth guide: [`README_subclustering.md`](README_subclustering.md). | `${IMC_ENV_SUBCLUSTERING:-imc_segmentation}` | AnnData from `subclustering.input_adata_path` or fallback (`process.output_adata_path` then `process.input_adata_path`), plus `subclustering/sublustering_settings.csv` and `subclustering/marker_list.csv` (auto-created on first run). | `subclustering/` checkpoint files + figures, `subcluster_to_final_population.csv`, optional `master_index_to_final_population.csv`, and `subclustering.output_adata_path` (default `anndata_subclustered.h5ad`). | `general`, `process`, `subclustering`, `logging` | Optional refinement stage after `bint`, `rapids`, or `bbn`; before downstream analyses that should use curated populations (`pairsp`, `vis`, optional `cchar`). |
 | `cchar` | `🟢` | `Analysis` | Runs `SpatialBiologyToolkit.scripts.cellcharter_neighborhoods`: computes TRVAE latent embeddings by default (`cc.tl.TRVAE`), builds spatial neighbor graphs per ROI, aggregates neighborhood features, clusters cells into spatial neighborhoods, and optionally computes enrichment against a label column. | `${IMC_ENV_CELLCHARTER:-imc_cellcharter}` | AnnData from `cellcharter.input_adata_path` or fallback (`process.output_adata_path` then `process.input_adata_path`), ROI/sample key, and XY coordinates (`obsm['spatial']` or `X_loc`/`Y_loc`). | `cellcharter.output_adata_path` (default `anndata_cellcharter.h5ad`) plus `QC/CellCharter_QC/` tables and spatial plots. | `general`, `process`, `cellcharter`, `logging` | Optional analysis stage after `bint`, `rapids`, or `bbn` (independent of `pairsp`; order does not matter between them). |
+| `starling` | `🟢` | `Analysis` | Runs `SpatialBiologyToolkit.scripts.starling_analysis`: STARLING segmentation-aware probabilistic phenotyping initialized from an existing `adata.obs` label column by default. | `${IMC_ENV_STARLING:-imc_starling}` | AnnData from `starling.input_adata_path` or fallback (`general.anndata_path`); `starling.initial_label_obs` or `general.population_obs_primary` for User initialization; non-negative marker expression from `adata.X` or `starling.use_layer`. | `starling.output_adata_path` (default `general.anndata_path`) plus `QC/Starling_QC/` mapping, centroid, cell-result, summary, and plot outputs. | `general`, `starling`, `logging` | Optional analysis stage after `bint`, `rapids`, or `bbn`, commonly after label curation/remapping if you want curated initial labels. |
 | `pairsp` | `🟢` | `Analysis` | Runs `SpatialBiologyToolkit.scripts.pairwise_spatial`: executes three pairwise spatial analyses from one AnnData (`squidpy_subregion_interactions`, `bootstrap_nearest_population_distances_all_rois`, and `run_paircorrelation_at_distance`), then exports raw/tidy tables and matrix + pair-selected bar plots with metadata. | `${IMC_ENV_CELLCHARTER:-imc_cellcharter}` | AnnData from `pairwise_spatial.input_adata_path` or fallback (`process.output_adata_path` then `process.input_adata_path`); required obs keys for population, ROI, and XY coordinates; optional grouping obs. | `QC/Pairwise_Spatial/` (or `pairwise_spatial.output_subdir`) containing `raw_data/`, `plots/`, `metadata/`, and run metadata JSON. | `general`, `process`, `pairwise_spatial`, `logging` | Optional analysis stage after `bint`, `rapids`, or `bbn` (independent of `cchar`; order does not matter between them). |
 | `nxsp` | `🟢` | `Analysis` | Runs `SpatialBiologyToolkit.scripts.networkx_spatial`: builds one Squidpy spatial-neighbor graph per ROI, computes NetworkX assortativity and per-population average clustering, bootstraps label-shuffled nulls with optional frozen populations, and aggregates ROI summaries to the case level. | `${IMC_ENV_CELLCHARTER:-imc_cellcharter}` | AnnData from `networkx_spatial.input_adata_path` or fallback (`general.anndata_path`); required obs keys for population, ROI, and XY coordinates; optional case/group obs. | `QC/NetworkX_Spatial/` (or `networkx_spatial.output_subdir`) containing ROI/case summary CSVs, optional bootstrap CSVs, metadata snapshots, and run metadata JSON. | `general`, `process`, `networkx_spatial`, `logging` | Optional analysis stage after `bint`, `rapids`, or `bbn` (independent of `cchar` and `pairsp`). |
 | `aiinter` | `🟢` | `Core (Optional)` | Runs `SpatialBiologyToolkit.scripts.ai_interpretation`: summarizes Leiden clusters and asks OpenAI model for cell-type labels, then writes `*_AIlabel` columns back into AnnData. | `${IMC_ENV_SEGMENTATION:-imc_segmentation}` | `anndata_processed.h5ad` with Leiden columns, `OPENAI_API_KEY`, visualization AI settings in config. | Updated `anndata_processed.h5ad`, `QC/AI_Interpretation/` prompt/raw JSON/TSV outputs. | `general`, `visualization`, `process`, `logging` | Optional, typically after `bint`, `rapids`, or `bbn` and before final visualization. |
@@ -90,6 +92,7 @@ Pipeline category key:
 
 ## Additional analysis stage
 
+- `starling`: runs `SpatialBiologyToolkit.scripts.starling_analysis` in `${IMC_ENV_STARLING:-imc_starling}`. It runs STARLING on `adata.X` or `starling.use_layer`, initializes from `starling.initial_label_obs` or `general.population_obs_primary` by default, and exports labels/doublet probabilities plus mapping, centroid, cell-result, and summary QC tables under `QC/Starling_QC/`.
 - `nxsp`: runs `SpatialBiologyToolkit.scripts.networkx_spatial` in `${IMC_ENV_CELLCHARTER:-imc_cellcharter}`. It builds one Squidpy spatial-neighbor graph per ROI, computes NetworkX assortativity and per-population average clustering, bootstraps label-shuffled nulls with optional frozen populations, and exports ROI-level plus case-level summaries under `QC/NetworkX_Spatial/` (or `networkx_spatial.output_subdir`).
 
 ## Suggested run order
@@ -105,18 +108,19 @@ Pipeline category key:
 7. `bint`, `rapids`, or `bbn`
 8. `remap` (optional label-curation / template-generation stage; often used to name Leiden populations after `bint`, `rapids`, or `bbn`)
 9. `subcl` (optional subclustering/refinement stage)
-10. `cchar` (optional spatial neighborhood stage; independent of `pairsp` and `nxsp`)
-11. `pairsp` (optional pairwise spatial statistics stage; independent of `cchar` and `nxsp`)
-12. `nxsp` (optional NetworkX graph-metric stage; independent of `cchar` and `pairsp`)
-13. `aiinter` (optional; requires `OPENAI_API_KEY`)
-14. `vis`
-15. `reint` (optional; only if removed-marker AnnData exists)
-16. `zipqc` (optional packaging)
+10. `cchar` (optional spatial neighborhood stage; independent of `starling`, `pairsp`, and `nxsp`)
+11. `starling` (optional STARLING phenotyping stage; commonly after remap/subclustering if using curated initial labels)
+12. `pairsp` (optional pairwise spatial statistics stage; independent of `cchar`, `starling`, and `nxsp`)
+13. `nxsp` (optional NetworkX graph-metric stage; independent of `cchar`, `starling`, and `pairsp`)
+14. `aiinter` (optional; requires `OPENAI_API_KEY`)
+15. `vis`
+16. `reint` (optional; only if removed-marker AnnData exists)
+17. `zipqc` (optional packaging)
 
 Example:
 
 ```bash
-pl config prep denoise dnqc cellpose nimbus rapids remap subcl cchar pairsp nxsp aiinter vis reint zipqc
+pl config prep denoise dnqc cellpose nimbus rapids remap subcl cchar starling pairsp nxsp aiinter vis reint zipqc
 ```
 
 ### Optional side branch
@@ -124,7 +128,7 @@ pl config prep denoise dnqc cellpose nimbus rapids remap subcl cchar pairsp nxsp
 - `bint`, `rapids`, and `bbn` are alternatives; run one batch-correction stage after `nimbus`, not multiple in the same linear pipeline unless you are explicitly comparing methods.
 - `scport` can be run after `cellpose` + `denoise` to produce single-cell portraits; it does not depend on `bint`/`rapids`/`bbn`/`aiinter`.
 - `remap`, `subcl`, `aiinter`, and `reint` are `Core (Optional)` stages and can be skipped when not needed.
-- `cchar`, `pairsp`, and `nxsp` are independent `Analysis` stages that branch from `bint`, `rapids`, or `bbn` (no dependency between them).
+- `cchar`, `starling`, `pairsp`, and `nxsp` are independent `Analysis` stages that branch from `bint`, `rapids`, or `bbn` (no dependency between them). Run `starling` after `remap` or `subcl` when you want curated labels as the initial STARLING clustering.
 - `scport` is an `Analysis` side branch after `denoise` + `cellpose`.
 
 Minimal RAPIDS Harmony config:
@@ -154,6 +158,21 @@ rapids:
 ```
 
 The RAPIDS parameter scan uses the Cartesian product of all non-empty lists in `rapids.parameter_scan_dict`.
+
+STARLING example using an existing curated label column in `adata.obs`:
+
+```yaml
+general:
+  population_obs_primary: final_population
+starling:
+  initial_clustering_method: User
+  initial_label_obs: final_population
+  use_layer: null
+  cell_size_col_name: mask_area
+  output_prefix: starling
+  store_assignment_prob_matrix: true
+  store_gamma_assignment_prob_matrix: false
+```
 
 ### Diagnostics
 

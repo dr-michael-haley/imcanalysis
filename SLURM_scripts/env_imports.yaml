@@ -64,6 +64,20 @@ imc_denoise:
 - tifffile
 - tqdm
 - typing
+imc_starling:
+- SpatialBiologyToolkit
+- anndata
+- lightning_lite
+- logging
+- matplotlib
+- numpy
+- pandas
+- pathlib
+- pytorch_lightning
+- scipy
+- starling
+- torch
+- typing
 imc_segmentation:
 - SpatialBiologyToolkit
 - alpineer
