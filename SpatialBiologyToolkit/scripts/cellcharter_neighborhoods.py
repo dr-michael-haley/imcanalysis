@@ -2032,8 +2032,8 @@ def _save_roi_cluster_masks(
     fmt = "png"  # _normalise_figure_format(figure_format)
 
     for roi in rois:
-        save_path_standard = roi_dir / f"{cleanstring(roi)}.{fmt}"
-        save_path_voronoi = voronoi_dir / f"{cleanstring(roi)}.{fmt}"
+        save_path_standard = roi_dir / f"{roi}.{fmt}"
+        save_path_voronoi = voronoi_dir / f"{roi}.{fmt}"
         try:
             sbt_plotting.obs_to_mask(
                 adata=adata,

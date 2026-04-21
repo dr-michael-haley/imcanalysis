@@ -40,6 +40,7 @@ from napari.utils import DirectLabelColormap
 def napari_imc_explorer(
     masks_folder: str = 'Masks',
     image_folders: list = ['Images'],
+    extra_images: list = None,
     annotations_folder: str = 'Annotations',
     roi_obs: str = 'ROI',
     cell_id_in_mask_obs: str = 'ObjectNumber',
@@ -59,6 +60,8 @@ def napari_imc_explorer(
         Directory containing a mask for each ROI, each file named after the ROI. Masks should be uint16 image files.
     image_folders : list
         Directories containing subdirectories, each named after ROIs in the AnnData. Images are named after channels (`adata.var_names`), uint16 image files.
+    extra_images : list, optional
+        Directories containing one image per ROI, where files are named after the ROI and may use any common image extension (for example PNG, JPG, TIF, or TIFF).
     annotations_folder : str
         Directory containing manual annotation subfolders. Each annotation subfolder contains a label mapping CSV and one TIFF label image per ROI.
     roi_obs : str
@@ -86,6 +89,12 @@ def napari_imc_explorer(
     # Ensure image_folders is a list
     if not isinstance(image_folders, list):
         image_folders = [image_folders]
+
+    if extra_images is None:
+        extra_images = []
+    elif not isinstance(extra_images, list):
+        extra_images = [extra_images]
+    extra_images = [Path(folder) for folder in extra_images if folder]
 
     if initial_roi_count is not None:
         initial_roi_count = int(initial_roi_count)
@@ -161,6 +170,107 @@ def napari_imc_explorer(
         List all folders in a specified directory.
         """
         return [name for name in os.listdir(directory) if os.path.isdir(os.path.join(directory, name))]
+
+    supported_extra_image_extensions = {
+        '.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.gif', '.webp'
+    }
+
+    def _normalise_extra_image_source_name(folder_path):
+        folder_path = Path(folder_path)
+        source_name = folder_path.name.strip() or str(folder_path)
+        return source_name
+
+    extra_image_sources = []
+    extra_image_source_names = []
+    seen_extra_image_source_names = set()
+    extra_image_roi_map_cache = {}
+
+    for folder in extra_images:
+        source_name = _normalise_extra_image_source_name(folder)
+        if source_name in seen_extra_image_source_names:
+            suffix = 2
+            unique_source_name = f'{source_name}_{suffix}'
+            while unique_source_name in seen_extra_image_source_names:
+                suffix += 1
+                unique_source_name = f'{source_name}_{suffix}'
+            source_name = unique_source_name
+        seen_extra_image_source_names.add(source_name)
+        extra_image_sources.append({'name': source_name, 'path': folder})
+        extra_image_source_names.append(source_name)
+
+    def _build_extra_image_roi_map(source_name):
+        source_name = str(source_name)
+        if source_name in extra_image_roi_map_cache:
+            return extra_image_roi_map_cache[source_name]
+
+        source_info = next((source for source in extra_image_sources if source['name'] == source_name), None)
+        if source_info is None:
+            return {}
+
+        folder_path = source_info['path']
+        roi_map = {}
+        if folder_path.exists() and folder_path.is_dir():
+            for image_path in sorted(folder_path.iterdir()):
+                if not image_path.is_file():
+                    continue
+                if image_path.suffix.lower() not in supported_extra_image_extensions:
+                    continue
+                roi_map.setdefault(image_path.stem, image_path)
+
+        extra_image_roi_map_cache[source_name] = roi_map
+        return roi_map
+
+    def _available_extra_image_sources_for_roi(roi_name):
+        roi_name = str(roi_name)
+        return [
+            source_info['name']
+            for source_info in extra_image_sources
+            if roi_name in _build_extra_image_roi_map(source_info['name'])
+        ]
+
+    def _load_extra_image(source_name, roi_name):
+        roi_name = str(roi_name)
+        source_name = str(source_name)
+        roi_map = _build_extra_image_roi_map(source_name)
+        image_path = roi_map.get(roi_name)
+        if image_path is None:
+            print(f'Could not find ROI "{roi_name}" in extra image folder "{source_name}".')
+            return False
+
+        try:
+            image = sk.io.imread(image_path)
+        except Exception as exc:
+            print(f'Could not load extra image "{image_path}": {exc}')
+            return False
+
+        layer_name = f'{source_name}::{roi_name}'
+        is_rgb = image.ndim >= 3 and image.shape[-1] in (3, 4)
+        viewer.add_image(image, name=layer_name, rgb=is_rgb)
+        return True
+
+    def _load_extra_images_for_selected_roi(selected_sources):
+        if selected_sources is None:
+            print('No extra images selected.')
+            return
+
+        if isinstance(selected_sources, str):
+            selected_sources = [selected_sources]
+        else:
+            selected_sources = [str(source_name) for source_name in selected_sources]
+
+        selected_sources = [source_name for source_name in selected_sources if source_name]
+        if not selected_sources:
+            print('No extra images selected.')
+            return
+
+        selected_roi = str(roi_selector.value)
+        loaded_images = 0
+        for source_name in selected_sources:
+            if _load_extra_image(source_name, selected_roi):
+                loaded_images += 1
+
+        if loaded_images == 0:
+            print(f'No extra images were loaded for ROI "{selected_roi}".')
 
     def _select_population_qc_roi_choices(ordered_rois):
         """
@@ -1079,6 +1189,16 @@ def napari_imc_explorer(
         return ordered_adata_names + remaining_names
 
     im_list = _discover_available_logical_images()
+
+    @magicgui(x=dict(widget_type='Select', choices=extra_image_source_names, label='Select extra images'), call_button='Add extra images')
+    def _extra_image_selector(x: list):
+        """
+        GUI widget to select and add one-image-per-ROI sources.
+        """
+        _load_extra_images_for_selected_roi(x)
+
+    extra_image_select_widget = _extra_image_selector
+    get_selected_extra_images = lambda: _extra_image_selector.x.value
     
     @magicgui(x=dict(widget_type='Select', choices=im_list, label='Select images'), call_button='Add images')
     def _image_selector(x: list):
@@ -2278,6 +2398,9 @@ def napari_imc_explorer(
             minimum_pixel_counts_select_label,
             minimum_pixel_counts_select,
         ]),
+        'Add extra images': build_dock_panel([
+            _extra_image_selector,
+        ]),
         'Categories as masks': build_dock_panel([
             _obs_selector,
             individual_pops_toggle,
@@ -2292,6 +2415,7 @@ def napari_imc_explorer(
         'Controls',
         'Population QC',
         'Add raw images',
+        'Add extra images',
         'Categories as masks',
         'Numeric as masks',
         'Manual annotations',
@@ -2610,6 +2734,7 @@ def napari_imc_explorer(
         mask_layer_selector=mask_layer_widget,
         mask_layer_choice=mask_layer_widget.layer_to_mask,
         image_select_widget=image_select_widget,
+        extra_image_select_widget=extra_image_select_widget,
         obs_select_widget=obs_select_widget,
         quant_select_widget=quant_select_widget,
         all_roi_list=list(all_roi_list),
@@ -2617,6 +2742,7 @@ def napari_imc_explorer(
         get_selected_roi=lambda: roi_selector.value,
         get_selected_layer_name=lambda: (list(viewer.layers.selection)[0].name if viewer.layers.selection else None),
         get_selected_images=get_selected_images,
+        get_selected_extra_images=get_selected_extra_images,
         get_selected_obs_categories=get_selected_obs_categories,
         get_selected_numeric=get_selected_numeric,
         annotations_folder=annotations_folder,
