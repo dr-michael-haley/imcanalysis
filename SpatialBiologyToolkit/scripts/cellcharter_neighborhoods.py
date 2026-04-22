@@ -2193,23 +2193,12 @@ def run_cellcharter_neighborhoods(
     skip_existing_cluster_analysis = (
         (not repeat_cluster_analysis) and existing_cluster_non_null > 0
     )
-    legacy_skip_all_downstream = bool(
-        skip_existing_cluster_analysis and legacy_repeat_analysis is False
-    )
-    use_legacy_enrichment_skip = (
-        legacy_skip_all_downstream and cellcharter_config.repeat_enrichment_analysis is None
-    )
-    use_legacy_nhood_skip = (
-        legacy_skip_all_downstream and cellcharter_config.repeat_nhood_enrichment_analysis is None
-    )
-    use_legacy_diff_nhood_skip = (
-        legacy_skip_all_downstream
-        and cellcharter_config.repeat_diff_nhood_enrichment_analysis is None
-    )
-    use_legacy_shape_skip = (
-        legacy_skip_all_downstream
-        and cellcharter_config.repeat_shape_characterisation_analysis is None
-    )
+    if skip_existing_cluster_analysis and legacy_repeat_analysis is False:
+        logging.info(
+            "Deprecated cellcharter.repeat_analysis=False detected with existing cluster labels. "
+            "Clustering will be reused, and downstream analyses will reuse existing results where available "
+            "while regenerating QC tables and plots."
+        )
 
     trvae_details: Dict[str, Any] = {"enabled": False}
     aggregation_rep: Optional[str] = None
@@ -2395,12 +2384,6 @@ def run_cellcharter_neighborhoods(
                 "Skipping enrichment because general.population_obs_primary '%s' is missing in adata.obs.",
                 population_obs_primary,
             )
-        elif use_legacy_enrichment_skip:
-            enrichment_details["skipped_existing_cluster"] = True
-            logging.info(
-                "Skipping enrichment because deprecated cellcharter.repeat_analysis=False "
-                "reused existing cluster labels. Set repeat_enrichment_analysis to control this stage directly."
-            )
         else:
             enrichment_uns_key = _resolve_enrichment_uns_key(
                 adata,
@@ -2460,56 +2443,35 @@ def run_cellcharter_neighborhoods(
             )
 
     if cellcharter_config.run_nhood_enrichment:
-        if use_legacy_nhood_skip:
-            nhood_details["skipped_existing_cluster"] = True
-            logging.info(
-                "Skipping neighborhood enrichment because deprecated cellcharter.repeat_analysis=False "
-                "reused existing cluster labels. Set repeat_nhood_enrichment_analysis to control this stage directly."
-            )
-        else:
-            nhood_details = _run_nhood_enrichment(
-                adata=adata,
-                cellcharter_config=cellcharter_config,
-                qc_dir=qc_dir,
-                figure_format=figure_format,
-                repeat_analysis=repeat_nhood_enrichment_analysis,
-            )
+        nhood_details = _run_nhood_enrichment(
+            adata=adata,
+            cellcharter_config=cellcharter_config,
+            qc_dir=qc_dir,
+            figure_format=figure_format,
+            repeat_analysis=repeat_nhood_enrichment_analysis,
+        )
 
     if cellcharter_config.run_diff_nhood_enrichment:
-        if use_legacy_diff_nhood_skip:
-            diff_nhood_details["skipped_existing_cluster"] = True
-            logging.info(
-                "Skipping differential neighborhood enrichment because deprecated cellcharter.repeat_analysis=False "
-                "reused existing cluster labels. Set repeat_diff_nhood_enrichment_analysis to control this stage directly."
-            )
-        else:
-            diff_nhood_details = _run_diff_nhood_enrichment(
-                adata=adata,
-                general_config=general_config,
-                cellcharter_config=cellcharter_config,
-                sample_key=sample_key,
-                qc_dir=qc_dir,
-                figure_format=figure_format,
-                repeat_analysis=repeat_diff_nhood_enrichment_analysis,
-            )
+        diff_nhood_details = _run_diff_nhood_enrichment(
+            adata=adata,
+            general_config=general_config,
+            cellcharter_config=cellcharter_config,
+            sample_key=sample_key,
+            qc_dir=qc_dir,
+            figure_format=figure_format,
+            repeat_analysis=repeat_diff_nhood_enrichment_analysis,
+        )
 
     if cellcharter_config.run_shape_characterisation:
-        if use_legacy_shape_skip:
-            shape_details["skipped_existing_cluster"] = True
-            logging.info(
-                "Skipping shape characterisation because deprecated cellcharter.repeat_analysis=False "
-                "reused existing cluster labels. Set repeat_shape_characterisation_analysis to control this stage directly."
-            )
-        else:
-            shape_details = _run_shape_characterisation(
-                adata=adata,
-                general_config=general_config,
-                cellcharter_config=cellcharter_config,
-                sample_key=sample_key,
-                qc_dir=qc_dir,
-                figure_format=figure_format,
-                repeat_analysis=repeat_shape_characterisation_analysis,
-            )
+        shape_details = _run_shape_characterisation(
+            adata=adata,
+            general_config=general_config,
+            cellcharter_config=cellcharter_config,
+            sample_key=sample_key,
+            qc_dir=qc_dir,
+            figure_format=figure_format,
+            repeat_analysis=repeat_shape_characterisation_analysis,
+        )
 
     _save_cluster_tables(
         adata,
