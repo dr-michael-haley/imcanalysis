@@ -1137,6 +1137,11 @@ def _save_enrichment_outputs(
     figure_format: str,
 ) -> None:
     """Save CellCharter enrichment tables and optional heatmap figure."""
+    _ensure_enrichment_result_axis_names(
+        adata,
+        cluster_key=cluster_key,
+        label_key=label_key,
+    )
     key = _resolve_enrichment_uns_key(adata, cluster_key, label_key)
     if key is None:
         logging.warning(
@@ -1196,6 +1201,11 @@ def _save_cellcharter_enrichment_plot(
     figure_format: str,
 ) -> None:
     """Save CellCharter's native enrichment plot via cc.pl.enrichment."""
+    _ensure_enrichment_result_axis_names(
+        adata,
+        cluster_key=cluster_key,
+        label_key=label_key,
+    )
     fmt = _normalise_figure_format(figure_format)
     out_path = qc_dir / f"enrichment_cellcharter_plot.{fmt}"
     figsize = _resolve_figsize(
@@ -1453,6 +1463,33 @@ def _resolve_enrichment_uns_key(
         ):
             return key
     return None
+
+
+def _ensure_enrichment_result_axis_names(
+    adata: ad.AnnData,
+    *,
+    cluster_key: str,
+    label_key: str,
+) -> Optional[str]:
+    """Restore expected index/column axis names on stored CellCharter enrichment tables."""
+    enrichment_key = _resolve_enrichment_uns_key(adata, cluster_key, label_key)
+    if enrichment_key is None:
+        return None
+
+    result = adata.uns.get(enrichment_key)
+    if not isinstance(result, dict):
+        return enrichment_key
+
+    for metric_key in ("enrichment", "pvalue"):
+        matrix = result.get(metric_key)
+        if matrix is None or not isinstance(matrix, pd.DataFrame):
+            continue
+        if matrix.index.name is None:
+            matrix.index.name = cluster_key
+        if matrix.columns.name is None:
+            matrix.columns.name = label_key
+
+    return enrichment_key
 
 
 def _run_nhood_enrichment(
