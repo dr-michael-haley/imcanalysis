@@ -1268,6 +1268,7 @@ def _save_pair_barplots(
     value_label: str,
     make_source_target_barplots: bool = True,
     source_target_width_scale: float = 0.35,
+    source_target_order_group: Optional[str] = None,
     group_color_map: Optional[Dict[str, str]] = None,
     y_scale_mode: str = "linear",
     y_scale_intelligent_params: Optional[Dict[str, Any]] = None,
@@ -1282,6 +1283,37 @@ def _save_pair_barplots(
         if isinstance(series.dtype, pd.CategoricalDtype):
             return [str(x) for x in series.cat.categories.tolist() if pd.notna(x)]
         return sorted(series.dropna().astype(str).unique().tolist())
+
+    def _order_targets_for_group(
+        frame: pd.DataFrame,
+        *,
+        initial_order: Sequence[str],
+        hue_col: str,
+        order_group: Optional[str],
+    ) -> List[str]:
+        target_order = [str(target) for target in initial_order]
+        if not order_group:
+            return target_order
+
+        subset = frame[frame[hue_col].astype(str) == str(order_group)].copy()
+        if subset.empty:
+            logging.warning(
+                "Configured source_target_order_group '%s' is not present for %s/%s grouped source-target barplots. Using default target order.",
+                order_group,
+                analysis,
+                metric,
+            )
+            return target_order
+
+        grouped = (
+            subset.groupby("target_population", observed=True)["value"]
+            .mean()
+            .sort_values(ascending=False)
+        )
+        ranked_targets = [str(target) for target in grouped.index.tolist()]
+        ordered_targets = [target for target in ranked_targets if target in target_order]
+        ordered_targets.extend(target for target in target_order if target not in ordered_targets)
+        return ordered_targets
 
     def _dedupe_legend(ax: Any, *, title: str) -> None:
         handles, labels = ax.get_legend_handles_labels()
@@ -1446,10 +1478,15 @@ def _save_pair_barplots(
             hue_col = str(group_col)
             source_subset[hue_col] = source_subset[hue_col].astype(str)
             x_col = "target_population"
-            x_order = target_order
+            x_order = _order_targets_for_group(
+                source_subset,
+                initial_order=target_order,
+                hue_col=hue_col,
+                order_group=source_target_order_group,
+            )
             hue_order = _ordered_levels(source_subset[hue_col])
             n_groups = max(1, len(hue_order))
-            n_targets = max(1, len(target_order))
+            n_targets = max(1, len(x_order))
             # Scale primarily with x categories (targets); groups are dodge bars.
             plot_width = max(base_width, width_scale * n_targets)
             palette_vals = sns.color_palette("tab10", n_colors=n_groups).as_hex()
@@ -2599,6 +2636,7 @@ def run_pairwise_spatial_analyses(
                         value_label=f"Squidpy {metric}",
                         make_source_target_barplots=pairwise_config.make_source_target_barplots,
                         source_target_width_scale=pairwise_config.source_target_barplot_width_scale,
+                        source_target_order_group=pairwise_config.source_target_barplot_order_group,
                         group_color_map=group_color_map,
                         y_scale_mode=y_scale_mode,
                         y_scale_intelligent_params=barplot_intelligent_params,
@@ -2831,6 +2869,7 @@ def run_pairwise_spatial_analyses(
                         value_label=f"Distance {metric}",
                         make_source_target_barplots=pairwise_config.make_source_target_barplots,
                         source_target_width_scale=pairwise_config.source_target_barplot_width_scale,
+                        source_target_order_group=pairwise_config.source_target_barplot_order_group,
                         group_color_map=group_color_map,
                         y_scale_mode=y_scale_mode,
                         y_scale_intelligent_params=barplot_intelligent_params,
@@ -3252,6 +3291,7 @@ def run_pairwise_spatial_analyses(
                     value_label=f"PCF {metric}",
                     make_source_target_barplots=pairwise_config.make_source_target_barplots,
                     source_target_width_scale=pairwise_config.source_target_barplot_width_scale,
+                    source_target_order_group=pairwise_config.source_target_barplot_order_group,
                     group_color_map=group_color_map,
                     y_scale_mode=y_scale_mode,
                     y_scale_intelligent_params=barplot_intelligent_params,
@@ -3273,6 +3313,7 @@ def run_pairwise_spatial_analyses(
         "pairwise_matrices_share_vmax_vmin": bool(pairwise_config.pairwise_matrices_share_vmax_vmin),
         "make_source_target_barplots": bool(pairwise_config.make_source_target_barplots),
         "source_target_barplot_width_scale": float(pairwise_config.source_target_barplot_width_scale),
+        "source_target_barplot_order_group": pairwise_config.source_target_barplot_order_group,
         "make_enrichment_plots": make_enrichment_plots,
         "enrichment_plot_top_n": enrichment_top_n,
         "enrichment_plot_bottom_n": enrichment_bottom_n,
