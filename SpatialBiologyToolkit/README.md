@@ -6,6 +6,7 @@ Core Python package for IMC / spatial-omics analysis. The notebooks and SLURM jo
 - `population_identification.py`, `backgating.py`: clustering, annotation, and gating helpers for cell phenotyping.
 - `spatial.py` plus `spatialstats/`: spatial statistics, pair-correlation and neighbourhood tools (SpOOx utilities are vendored in `spatialstats/`).
 - `plotting.py`: figure utilities shared by notebooks and scripts.
+- `napari_imc_explorer.py`: interactive Napari viewer for ROI images, masks, overlays, annotations, and population QC.
 - `image_analysis.py`, `denoising.py`, `imc_import_*.py`, `visium.py`: image IO, denoising, and Visium/spatial transcriptomics bridges.
 - `scripts/`: CLI-style pipeline stages (see `scripts/README.md`).
 - `utils.py`: shared helpers.
@@ -17,6 +18,7 @@ Core Python package for IMC / spatial-omics analysis. The notebooks and SLURM jo
 
 ## Where to go next
 - Notebooks for exploratory analysis: `Tutorials/`.
+- Napari explorer guide: `../docs/napari_imc_explorer_guide.md`.
 - SLURM job wrappers for running stages on HPC: `SLURM_scripts/`.
 - Convenience commands for submitting or checking pipelines: `Bash_scripts/`.
 

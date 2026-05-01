@@ -383,6 +383,7 @@ def _plot_all_populations_by_group(
     dpi: int,
     add_points: bool,
     plot_kind: str,
+    errorbar = None
 ) -> None:
     plot_data = data[["population", group_col, value_col]].dropna().copy()
     if plot_data.empty:
@@ -501,6 +502,10 @@ def _plot_all_populations_no_group(
             ax=ax,
         )
     else:
+        
+        if errorbar is None:
+            errorbar = "se" if len(plot_data) > 1 else None
+        
         sns.barplot(
             data=plot_data,
             x="population",
@@ -509,7 +514,7 @@ def _plot_all_populations_no_group(
             hue="population",
             hue_order=pop_order,
             dodge=False,
-            errorbar="se" if len(plot_data) > 1 else None,
+            errorbar=errorbar,
             palette=palette,
             edgecolor="black",
             linewidth=0.6,

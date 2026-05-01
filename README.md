@@ -24,16 +24,16 @@ Toolkit for analysing Imaging Mass Cytometry (IMC) and other spatial-omics data.
 
 **Legacy material:** older or experimental code exists in [External_and_old_code/README.md](External_and_old_code/README.md). These are not tightly maintained and are best suited for advanced users who are comfortable troubleshooting.
 
-## Quick setup (advanced: local workstation, using SpatialBiologyToolkit in your own analysis)
+## Quick setup for using SpatialBiologyToolkit locally (e.g. for using Napari IMC Explorer)
 
-This is a quick-start for advanced users who simply want to import and use the `SpatialBiologyToolkit` Python code in their own local scripts/notebooks (i.e. not running the full HPC pipeline).
+This is a quick-start for advanced users who simply want to import and use the `SpatialBiologyToolkit` Python code in their own local scripts/notebooks (i.e. not running the full HPC pipeline), or would like to explore their data interactively using __Napari IMC Explorer__.
 
 For full details, follow [README_LOCAL.md](README_LOCAL.md). The shortest version is:
 
 1. Create the conda env: `conda env create -f Local_envs/sbt_env.yml`.
 2. Activate: `conda activate sbt`.
 3. Install the package editable (from the repo root): `pip install -e .`.
-4. Copy `Tutorials/` to an analysis folder outside the repo, then run `jupyter lab` from that analysis folder.
+4. Copy `Tutorials/` to an analysis folder outside the repo (this is where the [Napari IMC Explorer tutorial](Tutorials/Old_Notebooks/6.%20Napari%20explorer.ipynb)) is found, then run `jupyter lab` from that analysis folder.
 
 ## Components of repository
 - [SpatialBiologyToolkit/](SpatialBiologyToolkit/README.md): the core Python package where the analysis logic lives (preprocessing, denoising, clustering, spatial stats, plotting). If you import anything in Python, it usually comes from here.
