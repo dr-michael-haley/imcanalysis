@@ -551,6 +551,7 @@ def backgating(
     cell_plot_spacing=(0.1, 0.1),
     overview_images=True,
     show_gallery_titles=True,
+    max_gallery_cells: Optional[int] = None,
     # intensity scaling
     minimum=0.2,
     max_quantile='q0.97',
@@ -606,6 +607,11 @@ def backgating(
         cell_plot_spacing (tuple):
             (vertical_space, horizontal_space) for subplots_adjust.
 
+        max_gallery_cells (int or None):
+            Optional maximum number of cells to include in the thumbnail gallery.
+            When set, cells are sampled only for step 6. Overview images, mask
+            overlays, and the saved cell list still use all provided cells.
+
         overview_images (bool):
             If True, saves an “overview” with bounding boxes for each cell.
 
@@ -630,12 +636,18 @@ def backgating(
     # ----------------------------------------------------------------
     # 1) Normalize cell_index to a list
     # ----------------------------------------------------------------
-    if not isinstance(cell_index, list):
+    if isinstance(cell_index, (pd.Series, np.ndarray, tuple, set)):
+        cell_index = list(cell_index)
+    elif not isinstance(cell_index, list):
         cell_index = [cell_index]
 
-    # Subset to just the cells of interest
+    cell_index = list(dict.fromkeys(cell_index))
     adata_obs_cells = adata.obs.loc[adata.obs[cell_index_obs].isin(cell_index)].copy()
-    
+
+    if adata_obs_cells.empty:
+        logging.warning("No cells matched the supplied cell_index values. Exiting backgating.")
+        return
+        
     # List of specific ROIs to process that contain these cells, potentially filtered by user
     if roi_list is None:
         roi_list = adata_obs_cells[roi_obs].unique().tolist()
@@ -808,85 +820,107 @@ def backgating(
     # ----------------------------------------------------------------
     # 6) Plot cell thumbnails in a big figure
     # ----------------------------------------------------------------
-    total_cells = len(adata_obs_cells_filtered)
-    rows = ceil(total_cells / cells_per_row)
-    fig, axs = plt.subplots(rows, cells_per_row, figsize=(10, rows * 2), dpi=100)
-    axs = axs.flatten() if (rows > 1 or cells_per_row > 1) else [axs]
-
-    ax_idx = 0
-    cell_dfs = []
-
-    logging.info(f"Plotting thumbnails ({cells_per_row} per row) for {total_cells} cells...")
-
-    # Sort by ROI to group
-    rois_in_data = adata_obs_cells_filtered[roi_obs].unique().tolist()
-
-    for roi_name in rois_in_data:
-        sub_cells = adata_obs_cells_filtered[adata_obs_cells_filtered[roi_obs] == roi_name]
-        if sub_cells.empty:
-            continue
-
-        comp_img = df_images.loc[roi_name, 'image']
-        mask_img = df_images.loc[roi_name, 'mask']
-
-        for i, row in sub_cells.iterrows():
-            if ax_idx >= len(axs):
-                break
-            ax = axs[ax_idx]
-            ax_idx += 1
-
-            x_cell = int(round(row[x_loc_obs]))
-            y_cell = int(round(row[y_loc_obs]))
-
-            thumb = comp_img[(y_cell - radius):(y_cell + radius),
-                             (x_cell - radius):(x_cell + radius), :]
-
-            ax.imshow(thumb)
-            if show_gallery_titles:
-                ax.set_title(f'{roi_name} - {i}', fontsize=8)
-            ax.set_xticks([])
-            ax.set_yticks([])
-
-            # If mask exists, overlay boundary of the center cell
-            if mask_img is not None:
-                # same bounding region
-                thumb_mask = mask_img[(y_cell - radius):(y_cell + radius),
-                                      (x_cell - radius):(x_cell + radius)]
-                # Ensure shape matches
-                if thumb_mask.shape[:2] == thumb.shape[:2]:
-                    centre_label = thumb_mask[radius, radius]
-                    mask_filtered = np.where(thumb_mask == centre_label, thumb_mask, 0)
-                    boundaries = segmentation.find_boundaries(mask_filtered, mode='inner')
-                    boundaries = np.ma.masked_where(boundaries == 0, boundaries)
-                    ax.imshow(boundaries, cmap='gray', alpha=1, vmin=0, vmax=1)
-
-            # Optional training logic:
-            # if training:
-            #     answer = input("Enter label for cell, or skip: ")
-            #     sub_cells.loc[i, 'training_label'] = answer
-
-        cell_dfs.append(sub_cells)
-
-    vspace, hspace = cell_plot_spacing
-    fig.subplots_adjust(hspace=vspace, wspace=hspace)
-
-    if show_gallery_titles:
-        fig.suptitle(f"Backgating: {total_cells} cells, radius={radius}")
-
     out_subdir.mkdir(parents=True, exist_ok=True)
 
-    # Save figure
-    cell_fig_path = out_subdir / "Cells.png"
-    fig.savefig(cell_fig_path, bbox_inches='tight', dpi=200)
-    plt.close(fig)
-    logging.info(f"Saved thumbnails to: {cell_fig_path}")
+    gallery_cells = adata_obs_cells_filtered.copy()
+    if max_gallery_cells is not None:
+        max_gallery_cells = int(max_gallery_cells)
+        if max_gallery_cells < 0:
+            raise ValueError("max_gallery_cells must be >= 0 or None.")
+        if len(gallery_cells) > max_gallery_cells:
+            gallery_cells = gallery_cells.sample(n=max_gallery_cells, random_state=0)
+            logging.info(
+                "Sampling %d of %d valid cells for the thumbnail gallery.",
+                len(gallery_cells),
+                len(adata_obs_cells_filtered),
+            )
+
+    gallery_cells = gallery_cells.sort_values([roi_obs, cell_index_obs])
+    total_gallery_cells = len(gallery_cells)
+
+    if total_gallery_cells == 0:
+        logging.warning("No cells selected for the thumbnail gallery; skipping Cells.png.")
+    else:
+        rows = ceil(total_gallery_cells / cells_per_row)
+        fig, axs = plt.subplots(rows, cells_per_row, figsize=(10, rows * 2), dpi=100)
+        axs = axs.flatten() if (rows > 1 or cells_per_row > 1) else [axs]
+
+        ax_idx = 0
+
+        logging.info(
+            "Plotting thumbnail gallery (%d per row) for %d cells.",
+            cells_per_row,
+            total_gallery_cells,
+        )
+
+        gallery_rois = gallery_cells[roi_obs].unique().tolist()
+
+        for roi_name in gallery_rois:
+            sub_cells = gallery_cells[gallery_cells[roi_obs] == roi_name]
+            if sub_cells.empty:
+                continue
+
+            comp_img = df_images.loc[roi_name, 'image']
+            mask_img = df_images.loc[roi_name, 'mask']
+
+            for i, row in sub_cells.iterrows():
+                if ax_idx >= len(axs):
+                    break
+                ax = axs[ax_idx]
+                ax_idx += 1
+
+                x_cell = int(round(row[x_loc_obs]))
+                y_cell = int(round(row[y_loc_obs]))
+
+                thumb = comp_img[(y_cell - radius):(y_cell + radius),
+                                 (x_cell - radius):(x_cell + radius), :]
+
+                ax.imshow(thumb)
+                if show_gallery_titles:
+                    ax.set_title(f'{roi_name} - {i}', fontsize=8)
+                ax.set_xticks([])
+                ax.set_yticks([])
+
+                # If mask exists, overlay boundary of the center cell
+                if mask_img is not None:
+                    # same bounding region
+                    thumb_mask = mask_img[(y_cell - radius):(y_cell + radius),
+                                          (x_cell - radius):(x_cell + radius)]
+                    # Ensure shape matches
+                    if thumb_mask.shape[:2] == thumb.shape[:2]:
+                        centre_label = thumb_mask[radius, radius]
+                        mask_filtered = np.where(thumb_mask == centre_label, thumb_mask, 0)
+                        boundaries = segmentation.find_boundaries(mask_filtered, mode='inner')
+                        boundaries = np.ma.masked_where(boundaries == 0, boundaries)
+                        ax.imshow(boundaries, cmap='gray', alpha=1, vmin=0, vmax=1)
+
+                # Optional training logic:
+                # if training:
+                #     answer = input("Enter label for cell, or skip: ")
+                #     sub_cells.loc[i, 'training_label'] = answer
+
+        for ax in axs[ax_idx:]:
+            ax.axis('off')
+
+        vspace, hspace = cell_plot_spacing
+        fig.subplots_adjust(hspace=vspace, wspace=hspace)
+
+        if show_gallery_titles:
+            fig.suptitle(f"Backgating: {total_gallery_cells} cells, radius={radius}")
+
+        # Save figure
+        cell_fig_path = out_subdir / "Cells.png"
+        fig.savefig(cell_fig_path, bbox_inches='tight', dpi=200)
+        plt.close(fig)
+        logging.info(f"Saved thumbnails to: {cell_fig_path}")
 
     # ----------------------------------------------------------------
     # 7) Overview images with bounding boxes
     # ----------------------------------------------------------------
     if overview_images:
         logging.info("Creating overview images with bounding boxes...")
-        for roi_name in rois_in_data:
+        overview_rois = adata_obs_cells_filtered[roi_obs].unique().tolist()
+        for roi_name in overview_rois:
             sub_cells = adata_obs_cells_filtered[adata_obs_cells_filtered[roi_obs] == roi_name]
             if sub_cells.empty:
                 continue
@@ -908,9 +942,8 @@ def backgating(
     # ----------------------------------------------------------------
     # 8) Save final CSV of included cells
     # ----------------------------------------------------------------
-    cell_dfs = pd.concat(cell_dfs) if cell_dfs else pd.DataFrame()
     csv_path = out_subdir / "cells_list.csv"
-    cell_dfs.to_csv(csv_path)
+    adata_obs_cells_filtered.to_csv(csv_path)
     logging.info(f"Saved list of plotted cells -> {csv_path}")
     logging.info("Backgating completed successfully.")
 
@@ -1269,7 +1302,9 @@ def backgating_assessment(
         backgating_settings_file: CSV with marker-to-channel assignments + min/max ranges
 
         pops_list:        Subset of population names to process; if None, uses all found in adata / files.
-        cells_per_group:  Number of random cells from each pop to display.
+        cells_per_group:  Maximum number of random cells from each pop to show
+                  in the thumbnail gallery. Other backgating outputs use
+                  all supplied population cells in the selected ROIs.
 
         radius:           Pixel radius for each cell’s bounding box.
         roi_obs,x_loc_obs,y_loc_obs,cell_index_obs:
@@ -1566,9 +1601,6 @@ def backgating_assessment(
             logging.debug(f"Available population values: {adata.obs[pop_obs].astype(str).unique()[:10]}")
             continue
 
-        # Subsample
-        cell_sample = pop_cells.sample(min(len(pop_cells), cells_per_group))
-
         # Grab final channels + ranges from settings_df
         red_marker   = settings_df.loc[pop, 'Red']
         green_marker = settings_df.loc[pop, 'Green']
@@ -1579,6 +1611,8 @@ def backgating_assessment(
         blue_range  = (settings_df.loc[pop, 'Blue_min'],  settings_df.loc[pop, 'Blue_max'])  if specify_ranges else None
 
         logging.info(f"Backgating population: {pop}")
+        logging.info(f"  -> Cells in selected ROIs: {len(pop_cells)}")
+        logging.info(f"  -> Thumbnail gallery cap: {cells_per_group}")
         logging.info(f"  -> Red={red_marker}, range={red_range}")
         logging.info(f"  -> Green={green_marker}, range={green_range}")
         logging.info(f"  -> Blue={blue_marker}, range={blue_range}")
@@ -1587,7 +1621,7 @@ def backgating_assessment(
         # Make sure it supports the new parameters: mask_folder, exclude_rois_without_mask, cell_plot_spacing
         backgating(
             adata=adata,
-            cell_index=list(cell_sample),
+            cell_index=list(pop_cells),
             radius=radius,
             image_folder=image_folder,
             # Channels & ranges:
@@ -1611,6 +1645,7 @@ def backgating_assessment(
             cell_plot_spacing=cell_plot_spacing,
             overview_images=overview_images,
             show_gallery_titles=show_gallery_titles,
+            max_gallery_cells=cells_per_group,
             roi_list=rois_to_save,
             # Output
             output_folder=output_folder,
@@ -1619,7 +1654,7 @@ def backgating_assessment(
             minimum=minimum,
             max_quantile=max_quantile,
             # Image generation scope
-            image_samples_list=all_rois_for_images,
+            image_samples_list=all_rois_for_images
         )
 
         # Create population overlay visualizations for all cells of this type in each ROI

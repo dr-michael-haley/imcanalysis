@@ -19,6 +19,7 @@ QC/Segmentation_overlay/
 QC/AI_Interpretation/
 QC/Pairwise_Spatial/
 QC/CellCharter_QC/
+QC/CellposeSAM_QC/
 "
 
 # Example: only some subfolders (edit as you like)
