@@ -363,12 +363,15 @@ def _run_single_parameter_set(
         use_raw=run_params.get("use_raw", True),
     )
 
-    _postprocess_biobatchnet_results(
-        adata_copy,
-        biobatchnet_config=biobatchnet_config,
-        batch_key=batch_key,
-        qc_dir=qc_dir,
-    )
+    if biobatchnet_config.biobatchnet_run_postprocess:
+        _postprocess_biobatchnet_results(
+            adata_copy,
+            biobatchnet_config=biobatchnet_config,
+            batch_key=batch_key,
+            qc_dir=qc_dir,
+        )
+    else:
+        logging.info("BioBatchNet postprocessing skipped (biobatchnet_run_postprocess=False).")
 
     output_path = save_pipeline_anndata(
         adata=adata_copy,

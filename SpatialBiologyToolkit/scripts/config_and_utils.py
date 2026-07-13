@@ -308,6 +308,7 @@ class RapidsProcessConfig:
     parameter_scan_qc_subdir: str = 'ParameterScan'
 
     # Embedding / graph storage
+    input_representation_key: Optional[str] = None  # Existing adata.obsm key to use instead of PCA/Harmony
     pca_key: str = 'X_pca'
     harmony_key: str = 'X_pca_harmony'
     representation_key: str = 'X_batch_integration'
@@ -362,6 +363,7 @@ class BioBatchNetConfig:
     # BioBatchNet parameter scanning
     biobatchnet_scan_parameter_sets: Optional[List[Dict[str, Any]]] = None
     biobatchnet_scan_include_base: bool = True
+    biobatchnet_run_postprocess: bool = True
     biobatchnet_run_leiden: bool = True
 
     # Scanpy neighbors computation

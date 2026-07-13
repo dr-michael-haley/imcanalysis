@@ -719,7 +719,7 @@ def _run_rapids_neighbors(
     *,
     representation_key: str,
     n_neighbors: Optional[int],
-    n_pcs: int,
+    n_pcs: Optional[int],
     neighbors_key: Optional[str],
     neighbors_params: Dict[str, Any],
 ) -> str:
@@ -731,7 +731,8 @@ def _run_rapids_neighbors(
     )
     if n_neighbors is not None:
         params["n_neighbors"] = int(n_neighbors)
-    params["n_pcs"] = int(n_pcs)
+    if n_pcs is not None:
+        params["n_pcs"] = int(n_pcs)
     params["use_rep"] = representation_key
     if neighbors_key:
         params["key_added"] = neighbors_key
@@ -816,6 +817,14 @@ def _run_rapids_processing(
         raise KeyError(f"Configured batch key '{batch_key}' was not found in adata.obs")
 
     harmony_flavor = _normalise_harmony_flavor(rapids_config.harmony_flavor)
+    input_representation_key = _normalise_optional_key(
+        rapids_config.input_representation_key
+    )
+    if input_representation_key and run_harmony:
+        raise ValueError(
+            "rapids.input_representation_key cannot be combined with "
+            "rapids.run_harmony=True."
+        )
     pca_params = _clean_params(rapids_config.pca_params)
     harmony_params = _clean_params(rapids_config.harmony_params)
     neighbors_params = _clean_params(rapids_config.neighbors_params)
@@ -829,28 +838,42 @@ def _run_rapids_processing(
     umap_key = _normalise_optional_key(rapids_config.umap_key)
     qc_dir.mkdir(parents=True, exist_ok=True)
 
-    n_pcs = _resolve_n_pcs(adata, rapids_config.n_for_pca)
-    gpu_layer = _move_input_matrix_to_gpu(adata, pca_params)
+    n_pcs: Optional[int] = None
+    gpu_layer: Optional[str] = None
 
     try:
-        _run_rapids_pca(
-            adata,
-            n_pcs=n_pcs,
-            pca_key=pca_key,
-            pca_params=pca_params,
-        )
-
-        active_representation = pca_key
-        if run_harmony:
-            _run_rapids_harmony(
-                adata,
-                batch_key=str(batch_key),
-                pca_key=pca_key,
-                harmony_key=harmony_key,
-                harmony_flavor=harmony_flavor,
-                harmony_params=harmony_params,
+        if input_representation_key:
+            if input_representation_key not in adata.obsm:
+                raise KeyError(
+                    f"Configured RAPIDS input representation "
+                    f"'{input_representation_key}' was not found in adata.obsm"
+                )
+            active_representation = input_representation_key
+            logging.info(
+                "Using existing RAPIDS input representation adata.obsm['%s']; "
+                "skipping PCA and Harmony.",
+                input_representation_key,
             )
-            active_representation = harmony_key
+        else:
+            n_pcs = _resolve_n_pcs(adata, rapids_config.n_for_pca)
+            gpu_layer = _move_input_matrix_to_gpu(adata, pca_params)
+            _run_rapids_pca(
+                adata,
+                n_pcs=n_pcs,
+                pca_key=pca_key,
+                pca_params=pca_params,
+            )
+            active_representation = pca_key
+            if run_harmony:
+                _run_rapids_harmony(
+                    adata,
+                    batch_key=str(batch_key),
+                    pca_key=pca_key,
+                    harmony_key=harmony_key,
+                    harmony_flavor=harmony_flavor,
+                    harmony_params=harmony_params,
+                )
+                active_representation = harmony_key
 
         adata.obsm[representation_key] = _copy_array(adata.obsm[active_representation])
         logging.info(
@@ -863,8 +886,10 @@ def _run_rapids_processing(
             adata,
             representation_key=representation_key,
             requested=rapids_config.n_pcs_neighbors,
-            default=n_pcs,
+            default=n_pcs or adata.obsm[representation_key].shape[1],
         )
+        if input_representation_key and rapids_config.n_pcs_neighbors is None:
+            n_pcs_neighbors = None
         graph_key = _run_rapids_neighbors(
             adata,
             representation_key=representation_key,
@@ -888,9 +913,16 @@ def _run_rapids_processing(
             leiden_params=leiden_params,
         )
     finally:
-        _move_input_matrix_to_cpu(adata, gpu_layer)
+        if not input_representation_key:
+            _move_input_matrix_to_cpu(adata, gpu_layer)
 
-    method = "rapids_harmony" if run_harmony else "rapids"
+    method = (
+        "rapids_existing_representation"
+        if input_representation_key
+        else "rapids_harmony"
+        if run_harmony
+        else "rapids"
+    )
     _save_qc_umaps(
         adata,
         batch_key=batch_key,
@@ -909,14 +941,17 @@ def _run_rapids_processing(
     run_details: Dict[str, Any] = {
         "method": method,
         "batch_key": batch_key,
-        "n_pcs": int(n_pcs),
-        "n_pcs_neighbors": int(n_pcs_neighbors),
+        "n_pcs": int(n_pcs) if n_pcs is not None else None,
+        "n_pcs_neighbors": (
+            int(n_pcs_neighbors) if n_pcs_neighbors is not None else None
+        ),
         "n_neighbors": rapids_config.n_neighbors,
         "umap_min_dist": float(rapids_config.umap_min_dist),
         "run_harmony": bool(run_harmony),
         "harmony_flavor": harmony_flavor if run_harmony else None,
         "representation_key": representation_key,
         "source_representation_key": active_representation,
+        "input_representation_key": input_representation_key,
         "pca_key": pca_key,
         "harmony_key": harmony_key if run_harmony else None,
         "neighbors_key": graph_key,
