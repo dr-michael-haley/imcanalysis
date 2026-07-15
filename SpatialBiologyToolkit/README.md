@@ -4,6 +4,7 @@ Core Python package for IMC / spatial-omics analysis. The notebooks and SLURM jo
 
 ## Layout
 - `population_identification.py`, `backgating.py`: clustering, annotation, and gating helpers for cell phenotyping.
+- `cox_survival.py`: AnnData-driven Cox PH, Ridge Cox, and Coxnet survival analysis with case-level aggregation, validation metrics, and survival plots.
 - `spatial.py` plus `spatialstats/`: spatial statistics, pair-correlation and neighbourhood tools (SpOOx utilities are vendored in `spatialstats/`).
 - `plotting.py`: figure utilities shared by notebooks and scripts.
 - `napari_imc_explorer.py`: interactive Napari viewer for ROI images, masks, overlays, annotations, and population QC.

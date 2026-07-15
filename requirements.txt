@@ -10,6 +10,7 @@ umap-learn
 scikit-learn
 statsmodels
 lifelines
+scikit-survival
 colorcet
 sc3s
 readimc

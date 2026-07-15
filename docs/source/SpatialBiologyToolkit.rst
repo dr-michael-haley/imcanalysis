@@ -12,6 +12,14 @@ SpatialBiologyToolkit.correlate\_outcomes module
    :undoc-members:
    :show-inheritance:
 
+SpatialBiologyToolkit.cox\_survival module
+------------------------------------------
+
+.. automodule:: SpatialBiologyToolkit.cox_survival
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 SpatialBiologyToolkit.image\_analysis module
 --------------------------------------------
 
