@@ -1,4 +1,4 @@
-# SpatialBiologyToolkit reference
+# Reference
 
 Use the configuration reference when editing `config.yaml`, and the Python API
 when importing package functions in notebooks or new pipeline stages.

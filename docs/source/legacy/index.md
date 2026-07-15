@@ -1,4 +1,4 @@
-# SpatialBiologyToolkit: legacy and external material
+# Legacy and external material
 
 These pages describe older workflows and bundled third-party code. They are
 retained for reproducibility and historical context, but are not the supported

@@ -1,4 +1,4 @@
-# Using SpatialBiologyToolkit configuration
+# Using the configuration
 
 The complete pipeline configuration is represented by
 `SpatialBiologyToolkit.config.PipelineConfig`. A user `config.yaml` may contain

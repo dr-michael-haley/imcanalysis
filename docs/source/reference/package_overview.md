@@ -1,4 +1,4 @@
-﻿# SpatialBiologyToolkit
+﻿# Package overview
 
 Core Python package for IMC / spatial-omics analysis. The notebooks and SLURM jobs wrap functions from this package.
 

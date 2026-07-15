@@ -1,5 +1,5 @@
-SpatialBiologyToolkit Python API
-================================
+Python API
+==========
 
 This reference is split by module so the site navigation stays compact.
 

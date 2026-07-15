@@ -1,4 +1,4 @@
-# SpatialBiologyToolkit guides
+# Guides
 
 These guides cover interactive tools that sit alongside the config-driven
 pipeline.

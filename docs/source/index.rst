@@ -1,5 +1,5 @@
-SpatialBiologyToolkit
-=====================
+IMC Analysis documentation
+==========================
 
 SpatialBiologyToolkit is a config-driven toolkit for imaging mass cytometry
 and spatial-biology analysis. It supports a reproducible SLURM pipeline for
@@ -11,7 +11,7 @@ straight to :doc:`reference/index`.
 
 .. toctree::
    :maxdepth: 1
-   :caption: SpatialBiologyToolkit
+   :caption: Contents
 
    getting_started/index
    pipeline/index

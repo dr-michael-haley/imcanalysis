@@ -1,4 +1,4 @@
-# SpatialBiologyToolkit tutorials
+# Tutorials
 
 The current starting point for interactive population analysis is
 [`NEW - Population identification.ipynb`](https://github.com/dr-michael-haley/imcanalysis/blob/main/Tutorials/NEW%20-%20Population%20identification.ipynb).

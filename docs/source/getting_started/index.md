@@ -1,4 +1,4 @@
-# SpatialBiologyToolkit: getting started
+# Getting started
 
 Choose the route that matches where you will run the analysis:
 

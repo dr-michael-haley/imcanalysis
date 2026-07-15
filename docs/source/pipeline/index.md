@@ -1,4 +1,4 @@
-# SpatialBiologyToolkit pipeline
+# Pipeline
 
 The pipeline runs from a dataset directory containing `config.yaml`. The `pl`
 command resolves short aliases, submits their SLURM wrappers in order, and

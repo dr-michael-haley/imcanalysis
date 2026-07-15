@@ -1,0 +1,63 @@
+:root {
+  --imc-purple: #6b3fa0;
+  --imc-purple-dark: #3b235a;
+  --imc-purple-deep: #24172f;
+  --imc-purple-pale: #f3eff8;
+  --imc-purple-hover: #5a347f;
+}
+
+.wy-side-nav-search,
+.wy-nav-top {
+  background: var(--imc-purple-dark);
+}
+
+.wy-side-nav-search > a,
+.wy-side-nav-search > a:hover {
+  color: #ffffff;
+}
+
+.wy-side-nav-search input[type="text"]:focus {
+  border-color: var(--imc-purple);
+}
+
+.wy-nav-side {
+  background: var(--imc-purple-deep);
+}
+
+.wy-menu-vertical a {
+  color: #f5effb;
+}
+
+.wy-menu-vertical a:hover,
+.wy-menu-vertical li.current > a:hover {
+  background: var(--imc-purple-hover);
+  color: #ffffff;
+}
+
+.wy-menu-vertical li.current > a {
+  background: var(--imc-purple-pale);
+  color: var(--imc-purple-dark);
+}
+
+.rst-content a,
+.wy-breadcrumbs a {
+  color: var(--imc-purple);
+}
+
+.rst-content a:hover,
+.wy-breadcrumbs a:hover {
+  color: var(--imc-purple-hover);
+}
+
+.rst-content h1,
+.rst-content h2,
+.rst-content h3,
+.rst-content h4,
+.rst-content h5,
+.rst-content h6 {
+  color: var(--imc-purple-dark);
+}
+
+.rst-content code.literal {
+  color: var(--imc-purple-dark);
+}
