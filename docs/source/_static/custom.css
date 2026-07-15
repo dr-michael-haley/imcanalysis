@@ -61,3 +61,25 @@
 .rst-content code.literal {
   color: var(--imc-purple-dark);
 }
+
+/* Keep generated reference tables readable on narrow screens. */
+.rst-content table.docutils,
+.wy-table-responsive table {
+  width: 100%;
+  table-layout: auto;
+}
+
+.rst-content table.docutils th,
+.rst-content table.docutils td,
+.wy-table-responsive table th,
+.wy-table-responsive table td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.rst-content table.docutils code,
+.wy-table-responsive table code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
