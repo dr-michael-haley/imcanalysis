@@ -1,7 +1,7 @@
 #! /bin/bash --login
 #SBATCH -p serial 
-#SBATCH -t 2-0
-#SBATCH -n 2
+#SBATCH -t 1-0
+#SBATCH -n 1
 
 #SBATCH --mail-user=${IMC_EMAIL}
 #SBATCH --mail-type=ALL
