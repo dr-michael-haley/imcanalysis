@@ -13,6 +13,8 @@
 #@OUT:  createmasks.dna_preprocessing_output_folder_name/ (default preprocessed_dna/)
 #@OUT:  general.masks_folder/ (default masks/)
 #@OUT:  general.qc_folder/DNA_preprocessing_QC/ and general.qc_folder/CellposeSAM_QC/
+#@ENV:  imc_segmentation
+#@MODULE:  SpatialBiologyToolkit.scripts.preprocess_dna
 #@ENV:  imc_cellposesam
 #@MODULE:  SpatialBiologyToolkit.scripts.cellpose_sam
 #@CONFIG: general, createmasks, logging

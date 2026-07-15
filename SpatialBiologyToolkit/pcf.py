@@ -13,7 +13,7 @@ import numpy as np
 import pandas as pd
 from scipy.spatial.distance import cdist
 import seaborn as sns
-from matplotlib.cm import get_cmap
+from matplotlib import colormaps
 from matplotlib.colors import Colormap, TwoSlopeNorm
 
 AnnDataLike = Union[ad.AnnData, str, Path]
@@ -841,7 +841,7 @@ def plot_paircorrelation_clustermap(
             vmax = float(np.percentile(off_diag, percentile))
 
     if isinstance(cmap, str):
-        cmap = get_cmap(cmap)
+        cmap = colormaps.get_cmap(cmap)
 
     norm = TwoSlopeNorm(vmin=vmin, vcenter=1, vmax=vmax)
     default_cbar = {"fraction": 0.046, "pad": 0.04}
@@ -998,7 +998,7 @@ def plot_paircorrelation_population_by_condition(
             vmax = float(np.percentile(off_diag, percentile))
 
     if isinstance(cmap, str):
-        cmap = get_cmap(cmap)
+        cmap = colormaps.get_cmap(cmap)
 
     norm = TwoSlopeNorm(vmin=vmin, vcenter=1, vmax=vmax)
     default_cbar = {"fraction": 0.046, "pad": 0.04}

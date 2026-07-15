@@ -11,7 +11,7 @@
 #@IN:   batch_integration.batch_correction_obs must exist in AnnData.obs for Harmony/BBKNN modes
 #@OUT:  batch_integration.output_adata_path (default general.anndata_path)
 #@OUT:  general.qc_folder/batch_integration.qc_output_subdir (default QC/BatchIntegration)
-#@ENV:  imc_segmentation
+#@ENV:  imc_cellcharter
 #@MODULE:  SpatialBiologyToolkit.scripts.basic_process_batch_integration
 #@CONFIG: general, batch_integration, logging
 

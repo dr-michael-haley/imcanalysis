@@ -1,58 +1,58 @@
-﻿> [!IMPORTANT]
-> **DISCLAIMER** I plan to add releases and tests in the future, but for now everything is provided “as is” with no guarantees.
-> I’ll do my best to respond to issues (see Reporting issues), but I’m a single developer and actively use this code in my own projects, so response times can vary.
-> Feedback and suggestions to improve any aspect of the repo are welcome and encouraged! If anything isn't clear then feel free to let me know.
+> [!IMPORTANT]
+> This project is actively developed and provided as-is. Bug reports,
+> questions, and suggestions are welcome through GitHub Issues.
 
- 
- # imcanalysis
+# SpatialBiologyToolkit / imcanalysis
 
-Toolkit for analysing Imaging Mass Cytometry (IMC) and other spatial-omics data. It combines a Python package (`SpatialBiologyToolkit`), CLI pipeline stages, SLURM job templates, tutorials, and HPC helper scripts.
+SpatialBiologyToolkit analyses imaging mass cytometry and other spatial-omics
+data. The repository combines a Python package, config-driven command-line
+stages, SLURM wrappers, tutorials, and HPC installation helpers.
 
-![Overview](images/overview.PNG)
+**The complete documentation is published at
+[imcanalysis.readthedocs.io](https://imcanalysis.readthedocs.io/en/latest/).**
+
+![SpatialBiologyToolkit overview](images/overview.PNG)
 
 ## Start here
 
-**Completely new to the command line / Python tooling?** Start with [README_NEW_USERS.md](README_NEW_USERS.md), which goes through the absolute basics.
+- If the command line, conda, or Jupyter are new to you, read the [new-user guide](https://imcanalysis.readthedocs.io/en/latest/getting_started/beginners.html).
+- For the recommended HPC-first workflow, use the [HPC setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/hpc.html) and [pipeline workflow](https://imcanalysis.readthedocs.io/en/latest/pipeline/workflow.html).
+- For notebooks and interactive exploration, use the [local setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/local.html) and [tutorial index](https://imcanalysis.readthedocs.io/en/latest/tutorials/index.html).
+- For exact stage and config fields, use the generated [SLURM stage reference](https://imcanalysis.readthedocs.io/en/latest/pipeline/stages/index.html) and [configuration reference](https://imcanalysis.readthedocs.io/en/latest/reference/configuration/index.html).
 
-**Recommended workflow:** this project is **HPC-first**. The majority of analyses are easiest to run on an HPC cluster via the scripted pipeline (headless SLURM jobs), taking you from raw data (i.e. a folder with MCD files) through standard preprocessing and analysis steps with minimal manual intervention. Afterwards, a smaller minority of work is typically done locally in notebooks for bespoke exploration and figures. Start with [README_IMC_HPC.md](README_IMC_HPC.md) plus [SLURM_scripts/README.md](SLURM_scripts/README.md). 
+The usual pattern is to run compute-heavy, repeatable processing on HPC and
+then copy the AnnData and selected images into a separate local analysis folder
+for interactive work.
 
-![Overview2](images/overview2.PNG)
+## Quick local setup
 
-![Command](images/command.PNG)
+For experienced conda users:
 
-**Local notebooks (usually after HPC):** use [README_LOCAL.md](README_LOCAL.md) and [Tutorials/README.md](Tutorials/README.md).
+```bash
+conda env create -f Local_envs/sbt_env.yml
+conda activate sbt
+pip install -e .
+```
 
-**Legacy material:** older or experimental code exists in [External_and_old_code/README.md](External_and_old_code/README.md). These are not tightly maintained and are best suited for advanced users who are comfortable troubleshooting.
+Copy any notebooks you plan to edit out of `Tutorials/` and into your own
+analysis directory before starting Jupyter.
 
-## Quick setup for using SpatialBiologyToolkit locally (e.g. for using Napari IMC Explorer)
+## Repository map
 
-This is a quick-start for advanced users who simply want to import and use the `SpatialBiologyToolkit` Python code in their own local scripts/notebooks (i.e. not running the full HPC pipeline), or would like to explore their data interactively using __Napari IMC Explorer__.
+- `SpatialBiologyToolkit/`: reusable Python analysis package.
+- `SpatialBiologyToolkit/scripts/`: config-driven pipeline entry points.
+- `SLURM_scripts/`: registered job wrappers; `pipeline.conf` maps aliases such as `prep` to wrappers.
+- `Bash_scripts/`: `pl`, `pll`, `pls`, `zipqc`, `cds`, and other HPC helpers.
+- `Tutorials/`: current and archived Jupyter notebooks.
+- `Local_envs/` and `HPC_env_files/`: local and pipeline environment definitions.
+- `docs/`: canonical Sphinx sources and generated reference tooling.
+- `External_and_old_code/`: unsupported historical/experimental material.
 
-For full details, follow [README_LOCAL.md](README_LOCAL.md). The shortest version is:
-
-1. Create the conda env: `conda env create -f Local_envs/sbt_env.yml`.
-2. Activate: `conda activate sbt`.
-3. Install the package editable (from the repo root): `pip install -e .`.
-4. Copy `Tutorials/` to an analysis folder outside the repo (this is where the [Napari IMC Explorer tutorial](Tutorials/Old_Notebooks/6.%20Napari%20explorer.ipynb)) is found, then run `jupyter lab` from that analysis folder.
-
-## Components of repository
-- [SpatialBiologyToolkit/](SpatialBiologyToolkit/README.md): the core Python package where the analysis logic lives (preprocessing, denoising, clustering, spatial stats, plotting). If you import anything in Python, it usually comes from here.
-- [SpatialBiologyToolkit/scripts/](SpatialBiologyToolkit/scripts/README.md): command-line “pipeline stages” that run the core steps in order. These read `config.yaml` from your dataset folder and are what the SLURM jobs call.
-- [SLURM_scripts/](SLURM_scripts/README.md): job templates for running stages on HPC. The `pipeline.conf` file maps short names (like `preprocess`) to these scripts.
-- [SLURM stage reference (detailed)](SLURM_scripts/README.md): in-depth table of each stage’s purpose, environment, inputs/outputs, config blocks, run order, and traffic-light status.
-- [Bash_scripts/](Bash_scripts/README.md): small helper commands (`pl`, `pll`, `pls`, `zipqc`, `cds`) that make it easy to submit or inspect the pipeline on HPC.
-- [Tutorials/](Tutorials/README.md): Jupyter notebooks for interactive, exploratory analysis when you want to go beyond the scripted pipeline.
-- [install/](install/README.md): install/uninstall helpers used by `make install` (sets PATH, config file, and permissions on HPC).
-- [Local_envs/](Local_envs/): minimal environment for _local_ analysis using SpatialBiologyToolkit.
-- [HPC_env_files/](HPC_env_files/): environment specifications used to create the conda environments for the pipeline. Automatically installed using `make envs`
-- [docs/](docs/README.md): documentation sources (Sphinx); the built HTML is in `Documentation/`.
-- [External_and_old_code/](External_and_old_code/README.md): legacy or experimental code and notebooks. Useful for advanced users, but not tightly maintained.
+The README files that used to duplicate these topics now point into the
+canonical Sphinx documentation, so changes should be made under `docs/source/`.
 
 ## Reporting issues
-Please use GitHub Issues for bugs and questions. Include:
-- the pipeline stage or notebook name
-- the environment file used (e.g. `Local_envs/sbt_env.yml` or `HPC_env_files/...`)
-- any overrides in `config.yaml`
-- a short log/traceback snippet if available
 
-If you’re unsure whether something is a bug or a usage question, open an issue anyway and tag it as a question.
+Please include the pipeline stage or notebook, environment definition, relevant
+`config.yaml` overrides, and a short traceback or log excerpt. If you are unsure
+whether something is a bug or a usage question, open an issue anyway.

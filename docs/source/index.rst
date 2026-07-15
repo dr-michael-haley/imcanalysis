@@ -1,21 +1,27 @@
-.. SpatialBiologyToolkit documentation master file, created by
-   sphinx-quickstart on Thu Jun  6 11:48:02 2024.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
+SpatialBiologyToolkit
+=====================
 
-Welcome to SpatialBiologyToolkit's documentation!
-=================================================
+SpatialBiologyToolkit is a config-driven toolkit for imaging mass cytometry
+and spatial-biology analysis. It supports a reproducible SLURM pipeline for
+routine processing and Python tools for interactive and bespoke analysis.
+
+Start with :doc:`getting_started/index` if this is your first visit. Pipeline
+operators will usually want :doc:`pipeline/index`, while Python users can go
+straight to :doc:`reference/index`.
 
 .. toctree::
-   :maxdepth: 2
-   :caption: Contents:
-	
-   introduction
-   configuration
-   SpatialBiologyToolkit
+   :maxdepth: 1
+   :caption: SpatialBiologyToolkit
 
-Indices and tables
-==================
+   getting_started/index
+   pipeline/index
+   guides/index
+   tutorials/index
+   reference/index
+   legacy/index
+
+Search and indices
+------------------
 
 * :ref:`genindex`
 * :ref:`modindex`

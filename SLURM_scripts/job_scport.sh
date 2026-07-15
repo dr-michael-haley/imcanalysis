@@ -11,6 +11,7 @@
 #@DESC: Generate single-cell portrait outputs via external scPortrait converter
 #@IN:   processed/ and masks/ (hard-coded CLI args in this job)
 #@OUT:  scPortrait/ project outputs (--projects-root scPortrait)
+#@ENV:  scPortrait
 #@CONFIG: none (does not read config.yaml)
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"

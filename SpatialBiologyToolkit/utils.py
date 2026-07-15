@@ -539,6 +539,7 @@ def extract_single_cell(
     Inputs
     ------
     You can provide either:
+
     - ``df``: a DataFrame with at least ``ROI`` and ``Mask_path`` columns, OR
     - ``rois`` + ``masks_folder``: ROI names and a folder containing ROI masks named
       ``<ROI>.tif`` or ``<ROI>.tiff`` (auto-detected).
@@ -1176,11 +1177,10 @@ def run_population_subclustering(
         Representation to use for neighborhood graph (e.g., 'X_pca', 'X_biobatchnet').
         Default is 'X_biobatchnet'.
     genes : list of str or dict, optional
-        Gene subset(s) to use for subclustering. You can pass:
-        - a list of genes applied to all populations, or
-        - a dict mapping population names (values of ``base_label_key``) to gene lists.
-          Include a "default" key for a fallback list; otherwise all genes are used
-          when a population key is missing. If None, uses all genes.
+        Gene subsets to use for subclustering. Pass a list applied to every
+        population, or a dictionary mapping values of ``base_label_key`` to
+        gene lists. A ``default`` dictionary key supplies a fallback; without
+        one, all genes are used for a missing population. If None, uses all genes.
     show_figures : bool, optional
         Whether to display figures interactively. Default is True.
     save_figures : bool, optional
@@ -1205,22 +1205,17 @@ def run_population_subclustering(
         '{base_label_key}_res{resolution}_subset_{population}' and contains labels like
         '{population}_0', '{population}_1', etc.
     remap_df : pd.DataFrame
-        DataFrame mapping subclusters to final populations with columns:
-        - subcluster_column: Name of the obs column containing subclusters
-        - parent_population: Original population that was subclustered
-        - resolution: Leiden resolution used
-        - subcluster: Subcluster label (e.g., 'Tumor_0')
-        - final_population: Final population name (initially same as subcluster)
+        Mapping from subclusters to final populations. Columns are
+        ``subcluster_column``, ``parent_population``, ``resolution``,
+        ``subcluster``, and ``final_population``.
     new_pops_dict : dict
         Dictionary mapping subcluster column names to lists of new population labels.
         Keys are column names, values are sorted lists of population labels.
     
     Notes
     -----
-    The function generates three types of visualizations:
-    1. Combined UMAP showing all subclusters colored by cluster assignment
-    2. Matrixplot showing marker expression across subclusters with dendrogram
-    3. Individual UMAP plots (if save_individual_umaps=True) highlighting each subcluster
+    The function generates a combined UMAP, a marker-expression matrix plot,
+    and, when ``save_individual_umaps=True``, one highlighted UMAP per subcluster.
     
     The remapping CSV can be manually edited to assign meaningful final population names,
     then applied using apply_subcluster_remap().
@@ -1439,11 +1434,9 @@ def apply_subcluster_remap(
     adata : AnnData
         Annotated data matrix containing subcluster columns in obs.
     remap_csv_path : str, optional
-        Path to the remapping CSV file. Should contain columns:
-        - subcluster_column: Name of the obs column with subclusters
-        - subcluster: Original subcluster label
-        - final_population: Desired final population name
-        Default is 'subcluster_to_final_population.csv'.
+        Path to the remapping CSV file. It must contain ``subcluster_column``,
+        ``subcluster``, and ``final_population`` columns. Default is
+        ``subcluster_to_final_population.csv``.
     base_label_key : str, optional
         Column in adata.obs containing base population labels. Used as fallback
         for cells not assigned in any subcluster column. Default is 'population'.
@@ -1459,12 +1452,9 @@ def apply_subcluster_remap(
     
     Notes
     -----
-    The function prioritizes assignments in the order they appear in the CSV.
-    For each cell:
-    1. Checks all subcluster columns in order
-    2. If the cell has a non-null value in a subcluster column, looks up the
-       corresponding final population from the remapping CSV
-    3. If no mapping found or cell not in any subcluster, uses base_label_key value
+    The function prioritizes assignments in CSV order. For each cell it checks
+    the subcluster columns, uses the first matching final-population mapping,
+    and falls back to the value in ``base_label_key`` when no mapping applies.
     
     This allows you to manually curate subcluster names in the CSV before applying
     them to the dataset.

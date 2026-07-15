@@ -1,8 +1,6 @@
+:orphan:
+
 Introduction
 ============
-Welceom to the documentation for ''SpatialBiologyToolkit''
 
-
-Installation
-************
-Here how to install
+The documentation has moved to :doc:`getting_started/index`.

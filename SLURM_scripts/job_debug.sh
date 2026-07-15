@@ -153,16 +153,24 @@ PY
 # Loop through job scripts
 ############################################
 for JOB in "$JOB_DIR"/*.sh; do
-    ENV=$(grep '^#@ENV:' "$JOB" | cut -d':' -f2 | xargs || true)
-    MODULE=$(grep '^#@MODULE:' "$JOB" | cut -d':' -f2 | xargs || true)
+    mapfile -t ENVS < <(sed -n 's/^#@ENV:[[:space:]]*//p' "$JOB")
+    mapfile -t MODULES < <(sed -n 's/^#@MODULE:[[:space:]]*//p' "$JOB")
 
-    if [[ -z "$ENV" || -z "$MODULE" ]]; then
+    if (( ${#ENVS[@]} == 0 || ${#MODULES[@]} == 0 )); then
         echo "[WARN] Skipping $(basename "$JOB") (missing #@ENV or #@MODULE)"
         echo
         continue
     fi
 
-    test_job "$JOB" "$ENV" "$MODULE"
+    if (( ${#ENVS[@]} != ${#MODULES[@]} )); then
+        echo "[WARN] Skipping $(basename "$JOB") (#@ENV/#@MODULE counts differ)"
+        echo
+        continue
+    fi
+
+    for INDEX in "${!ENVS[@]}"; do
+        test_job "$JOB" "${ENVS[$INDEX]}" "${MODULES[$INDEX]}"
+    done
 done
 
 echo "=============================================="

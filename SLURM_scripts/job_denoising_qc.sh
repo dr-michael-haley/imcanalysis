@@ -14,6 +14,8 @@
 #@OUT:  panel_consistency_report_*.csv (+ *_pixel_qc.csv)
 #@ENV:  imc_denoise
 #@MODULE:  SpatialBiologyToolkit.scripts.denoising_qc
+#@ENV:  imc_segmentation
+#@MODULE:  SpatialBiologyToolkit.scripts.check_panel_consistency
 #@CONFIG: general, denoising, logging (plus check_panel_consistency defaults)
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"

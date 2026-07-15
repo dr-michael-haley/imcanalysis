@@ -63,9 +63,12 @@ Job script metadata (optional):
     #@DESC:   short description of what this job does
     #@IN:     description of inputs
     #@OUT:    description of outputs
+    #@ENV:    conda environment used by the following module
+    #@MODULE: Python module imported/run in that environment
     #@CONFIG: extra config info
 
-  You can have multiple #@IN, #@OUT and #@CONFIG lines.
+  You can have multiple #@IN, #@OUT and #@CONFIG lines. Composite jobs may
+  have multiple paired #@ENV/#@MODULE records in execution order.
 EOF
     exit 1
 }
@@ -126,10 +129,12 @@ get_all_stages_from_config() {
 
 describe_stage() {
     local stage="$1"
-    local script desc_line in_line out_line config_line
+    local script desc_line in_line out_line env_line module_line config_line
     local desc=""
     local inputs=()
     local outputs=()
+    local environments=()
+    local modules=()
     local configs=()
 
     script=$(get_script_for_stage "$stage")
@@ -155,6 +160,12 @@ describe_stage() {
             '#@OUT:'*)
                 outputs+=("${line#\#@OUT: }")
                 ;;
+            '#@ENV:'*)
+                environments+=("${line#\#@ENV: }")
+                ;;
+            '#@MODULE:'*)
+                modules+=("${line#\#@MODULE: }")
+                ;;
             '#@CONFIG:'*)
                 configs+=("${line#\#@CONFIG: }")
                 ;;
@@ -177,6 +188,20 @@ describe_stage() {
         echo "  ${BOLD}Outputs:${RESET}"
         for out_line in "${outputs[@]}"; do
             echo "    - $out_line"
+        done
+    fi
+
+    if (( ${#environments[@]} > 0 )); then
+        echo "  ${BOLD}Environments:${RESET}"
+        for env_line in "${environments[@]}"; do
+            echo "    - $env_line"
+        done
+    fi
+
+    if (( ${#modules[@]} > 0 )); then
+        echo "  ${BOLD}Modules:${RESET}"
+        for module_line in "${modules[@]}"; do
+            echo "    - $module_line"
         done
     fi
 

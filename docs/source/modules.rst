@@ -1,7 +1,6 @@
-SpatialBiologyToolkit
-=====================
+:orphan:
 
-.. toctree::
-   :maxdepth: 4
+Python modules
+==============
 
-   SpatialBiologyToolkit
+See the :doc:`reference/api/index`.

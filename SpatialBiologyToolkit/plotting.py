@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import warnings
 from pathlib import Path
@@ -650,19 +652,17 @@ def plot_colorbar(
     save: str = None
 ) -> plt.Figure:
     """
-    A unified colorbar plotting function that can:
-      - Create a colorbar from a provided array (old style), or
-      - Create a "legend-only" style colorbar from vmin/vmax (no array),
-    while allowing custom ticks, orientation, label, etc.
+    Create a colorbar from either a provided array or directly from vmin/vmax.
+
+    The latter creates a legend-only colorbar without an image. Both modes
+    support custom ticks, orientation, and labels.
 
     Parameters
     ----------
     array : np.ndarray, optional
-        If provided, we'll plot an image of this array and attach a colorbar
-        (like your original function 'plot_colorbar').
-        - If 1D, it is repeated to form a 2D array of shape (N,100).
-        - If None, we skip the image approach and directly create a colorbar
-          from vmin..vmax using a ScalarMappable (like a legend).
+        If provided, plot an image of this array and attach a colorbar. A 1D
+        array is repeated to form a 2D array of shape ``(N, 100)``. If None,
+        create a colorbar directly from vmin/vmax using a ScalarMappable.
     vmin : float, optional
         Minimum data value for the color scale. If array is provided and vmin is None,
         we default to array's min. If array is None and vmin is None, default is 0.

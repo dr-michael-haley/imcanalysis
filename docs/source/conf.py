@@ -1,41 +1,79 @@
-import os
+"""Sphinx configuration for SpatialBiologyToolkit."""
+
+from __future__ import annotations
+
 import sys
-sys.path.insert(0, os.path.abspath('../../'))
+from pathlib import Path
 
-# Configuration file for the Sphinx documentation builder.
-#
-# For the full list of built-in configuration values, see the documentation:
-# https://www.sphinx-doc.org/en/master/usage/configuration.html
 
-# -- Project information -----------------------------------------------------
-# https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT))
 
-project = 'SpatialBiologyToolkit'
-copyright = '2024, Michael Haley'
-author = 'Michael Haley'
-release = '0.1'
-
-# -- General configuration ---------------------------------------------------
-# https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
+project = "SpatialBiologyToolkit"
+copyright = "2024, Michael Haley"
+author = "Michael Haley"
+release = "0.1"
 
 extensions = [
-    'sphinx.ext.autodoc',
-    'sphinx.ext.napoleon',
-    'sphinx.ext.viewcode',
+    "myst_parser",
+    "sphinx.ext.autodoc",
+    "sphinx.ext.napoleon",
+    "sphinx.ext.viewcode",
 ]
 
-templates_path = ['_templates']
-exclude_patterns = []
+source_suffix = {
+    ".rst": "restructuredtext",
+    ".md": "markdown",
+}
+master_doc = "index"
+templates_path = ["_templates"]
+exclude_patterns: list[str] = []
 
+myst_heading_anchors = 3
+autodoc_member_order = "bysource"
+# Read the Docs installs only the lightweight documentation requirements. Mock
+# scientific/GUI runtimes while autodoc imports modules; source, signatures,
+# and docstrings remain available without installing several large envs.
+autodoc_mock_imports = [
+    "IMC_Denoise",
+    "IPython",
+    "colorcet",
+    "joblib",
+    "lifelines",
+    "magicgui",
+    "napari",
+    "networkx",
+    "qtpy",
+    "readimc",
+    "sc3s",
+    "scanpy",
+    "seaborn",
+    "shapely",
+    "skimage",
+    "sklearn",
+    "squidpy",
+    "statsmodels",
+    "tensorflow",
+    "tifffile",
+    "tkinter",
+    "tqdm",
+    "umap",
+    "vispy",
+]
 
-# The suffix of source filenames.
-source_suffix = '.rst'
-
-# The master toctree document.
-master_doc = 'index'
-
-# -- Options for HTML output -------------------------------------------------
-# https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
-
-html_theme = 'sphinx_rtd_theme'
-html_static_path = ['_static']
+html_theme = "sphinx_rtd_theme"
+html_title = "SpatialBiologyToolkit"
+html_short_title = "SpatialBiologyToolkit"
+html_static_path = ["_static"]
+html_theme_options = {
+    "collapse_navigation": True,
+    "navigation_depth": 3,
+    "titles_only": True,
+}
+html_context = {
+    "display_github": True,
+    "github_user": "dr-michael-haley",
+    "github_repo": "imcanalysis",
+    "github_version": "main",
+    "conf_py_path": "/docs/source/",
+}

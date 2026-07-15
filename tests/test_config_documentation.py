@@ -84,6 +84,7 @@ class ConfigDocumentationTests(unittest.TestCase):
 
         self.assertEqual(records["anndata_uns_log_key"].level, "expert")
         self.assertEqual(records["masks_folder"].ui_group, "General")
+        self.assertEqual(records["case_obs"].annotation, "Optional[str]")
 
     def test_markdown_generation_contains_documented_metadata(self):
         markdown = generate_markdown_for_model(GeneralConfig)
@@ -97,6 +98,20 @@ class ConfigDocumentationTests(unittest.TestCase):
         self.assertIn("Folder containing raw IMC input files", markdown)
         self.assertIn("Advice:", markdown)
         self.assertIn("Use this as the primary folder", markdown)
+
+    def test_table_markdown_generation_is_compact_and_escaped(self):
+        markdown = generate_markdown_for_model(GeneralConfig, layout="table")
+
+        self.assertIn(
+            "| Field | Type | Default | Level | Description | Advice |",
+            markdown,
+        )
+        self.assertIn("| `imc_files_folder` | `str` | `IMC_files` |", markdown)
+        self.assertNotIn("### `imc_files_folder`", markdown)
+
+    def test_markdown_generation_rejects_unknown_layout(self):
+        with self.assertRaisesRegex(ValueError, "layout"):
+            generate_markdown_for_model(GeneralConfig, layout="unknown")
 
     def test_write_config_docs_writes_selected_sections(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -112,6 +127,18 @@ class ConfigDocumentationTests(unittest.TestCase):
                 "### `population_obs_primary`",
                 output.read_text(encoding="utf-8"),
             )
+
+    def test_write_config_docs_supports_table_layout(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            written = write_config_docs(
+                temp_dir,
+                models={"general": GeneralConfig},
+                layout="table",
+            )
+
+            markdown = written[0].read_text(encoding="utf-8")
+            self.assertIn("| Field | Type | Default |", markdown)
+            self.assertNotIn("### `population_obs_primary`", markdown)
 
 
 if __name__ == "__main__":

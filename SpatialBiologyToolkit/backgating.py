@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import re
 import logging
@@ -2032,8 +2034,8 @@ def update_settings_from_marker_dict(
     Args:
         settings_path: Path to backgating_settings.csv.
         marker_settings: Mapping of marker name to setting.
-            - If value is a (min, max) tuple, both *_min and *_max are updated.
-            - Otherwise, only the *_max value is updated.
+            If a value is a ``(min, max)`` tuple, both the ``*_min`` and
+            ``*_max`` columns are updated. Otherwise only ``*_max`` is updated.
         generate_dict: If True, return an example dictionary built from the
             settings file and do not modify the file.
 
