@@ -1,7 +1,7 @@
 #! /bin/bash --login
-#SBATCH -p serial 
+#SBATCH -p multicore 
 #SBATCH -t 1-0
-#SBATCH -n 1
+#SBATCH -n 8
 
 #SBATCH --mail-user=${IMC_EMAIL}
 #SBATCH --mail-type=ALL
