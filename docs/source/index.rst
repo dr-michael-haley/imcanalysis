@@ -11,6 +11,7 @@ Welcome to SpatialBiologyToolkit's documentation!
    :caption: Contents:
 	
    introduction
+   configuration
    SpatialBiologyToolkit
 
 Indices and tables

@@ -15,6 +15,7 @@ colorcet
 sc3s
 readimc
 pyyaml
+pydantic>=2.4,<3
 
 # Plotting and spatial tools
 matplotlib

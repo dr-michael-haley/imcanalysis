@@ -10,4 +10,5 @@ dependencies:
   - seaborn
   - tqdm
   - pyyaml
+  - pydantic>=2.4,<3
   - pip

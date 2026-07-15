@@ -9,6 +9,7 @@ dependencies:
   - cudatoolkit=11.2
   - cudnn=8.1
   - pyyaml
+  - pydantic>=2.4,<3
   - psutil
   - pip
   - pip:

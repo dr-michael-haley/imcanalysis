@@ -1,5 +1,5 @@
 """
-Create and validate config_reference.md against config dataclass defaults.
+Create and validate config_reference.md against Pydantic config model defaults.
 
 Behavior:
 1) If config_reference.md does not exist, create it with all config entries and
@@ -73,7 +73,7 @@ def _build_reference_markdown(defaults: Dict[str, Any]) -> str:
     lines: List[str] = [
         "# Config Reference",
         "",
-        "Auto-generated from config dataclass defaults in `config_and_utils.py`.",
+        "Auto-generated from Pydantic config model defaults.",
         "Keep section headings and table `Field`/`Default` columns intact for validation.",
         "Fill in `Description`, `Choices`, `Units`, and `Advice`.",
         "",

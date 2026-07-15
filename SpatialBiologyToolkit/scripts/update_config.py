@@ -5,7 +5,7 @@ Script to update an existing config.yaml file with new default values.
 
 This script will:
 1. Load the existing config file
-2. Merge in any missing parameters from the default dataclass definitions
+2. Merge in any missing parameters from the Pydantic model defaults
 3. Save the updated config file while preserving all existing user settings
 4. Report config settings that differ from current defaults
 

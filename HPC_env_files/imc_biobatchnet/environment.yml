@@ -19,6 +19,7 @@ dependencies:
   - scipy
   - tqdm
   - pyyaml
+  - pydantic>=2.4,<3
   - anndata
   - scanpy
   - matplotlib

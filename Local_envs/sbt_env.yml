@@ -8,6 +8,7 @@ dependencies:
   - mofapy2
   - readimc
   - python=3.12
+  - pydantic>=2.4,<3
   - pip
   - geopandas
   - geojson

@@ -11,6 +11,7 @@ setup(
         "pandas",
         "scipy",
         "pyyaml",
+        "pydantic>=2.4,<3",
         "tqdm",
 
         "anndata",

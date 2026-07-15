@@ -1,5 +1,6 @@
 imc_biobatchnet:
 - SpatialBiologyToolkit
+- pydantic
 - anndata
 - copy
 - csv
@@ -13,6 +14,7 @@ imc_biobatchnet:
 - typing
 imc_cellposesam:
 - SpatialBiologyToolkit
+- pydantic
 - cellpose
 - dataclasses
 - logging
@@ -30,6 +32,7 @@ imc_cellposesam:
 - warnings
 imc_cellcharter:
 - SpatialBiologyToolkit
+- pydantic
 - anndata
 - cellcharter
 - logging
@@ -46,6 +49,7 @@ imc_cellcharter:
 - typing
 imc_denoise:
 - SpatialBiologyToolkit
+- pydantic
 - IMC_Denoise
 - argparse
 - datetime
@@ -66,6 +70,7 @@ imc_denoise:
 - typing
 imc_starling:
 - SpatialBiologyToolkit
+- pydantic
 - anndata
 - lightning_lite
 - logging
@@ -80,6 +85,7 @@ imc_starling:
 - typing
 imc_segmentation:
 - SpatialBiologyToolkit
+- pydantic
 - alpineer
 - anndata
 - bbknn
@@ -113,6 +119,7 @@ imc_segmentation:
 - yaml
 rapids_singlecell:
 - SpatialBiologyToolkit
+- pydantic
 - anndata
 - logging
 - matplotlib

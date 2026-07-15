@@ -5,8 +5,7 @@ from .config_and_utils import generate_default_config_dict
 
 def generate_config_template(output_file: str = 'config.yaml'):
     """
-    Generate a configuration template by extracting configuration parameters
-    from the dataclasses defined in config_and_utils.py.
+    Generate a configuration template from the authoritative Pydantic models.
     """
     config = generate_default_config_dict()
 

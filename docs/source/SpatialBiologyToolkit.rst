@@ -4,6 +4,22 @@ SpatialBiologyToolkit package
 Submodules
 ----------
 
+SpatialBiologyToolkit.config package
+------------------------------------
+
+.. automodule:: SpatialBiologyToolkit.config
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: SpatialBiologyToolkit.config.export
+   :members:
+   :undoc-members:
+
+.. automodule:: SpatialBiologyToolkit.config.schema
+   :members:
+   :undoc-members:
+
 SpatialBiologyToolkit.correlate\_outcomes module
 ------------------------------------------------
 
