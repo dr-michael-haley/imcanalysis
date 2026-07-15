@@ -27,14 +27,20 @@ class ConfigSchemaTests(unittest.TestCase):
 
         generic = schema["$defs"]["GeneralConfig"]["properties"]["anndata_path"]
         self.assertEqual(generic["stage"], "general")
-        self.assertEqual(generic["level"], "advanced")
+        self.assertEqual(generic["level"], "basic")
 
         metadata_keys = {"description", "level", "stage", "ui_group", "advice"}
+        allowed_schema_extra = {"level", "stage", "ui_group", "advice"}
         for model in DEFAULT_CONFIG_CLASSES.values():
             properties = schema["$defs"][model.__name__]["properties"]
             for field_name, field_schema in properties.items():
                 with self.subTest(model=model.__name__, field=field_name):
                     self.assertTrue(metadata_keys.issubset(field_schema))
+                    model_field = model.model_fields[field_name]
+                    self.assertEqual(
+                        set(model_field.json_schema_extra or {}),
+                        allowed_schema_extra,
+                    )
 
     def test_schema_can_be_written_as_json(self):
         with tempfile.TemporaryDirectory() as temp_dir:

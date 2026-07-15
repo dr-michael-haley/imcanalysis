@@ -1,6 +1,12 @@
 """Typed configuration API for imcanalysis."""
 
 from .load import config_to_dict, load_config, load_config_data
+from .documentation import (
+    ConfigFieldDoc,
+    generate_markdown_for_model,
+    iter_config_docs,
+    write_config_docs,
+)
 from .models import (
     BasicProcessConfig,
     BatchIntegrationConfig,
@@ -24,6 +30,8 @@ from .models import (
     StarlingConfig,
     SubclusteringConfig,
     VisualizationConfig,
+    config_field,
+    config_section,
 )
 
 __all__ = [
@@ -31,6 +39,7 @@ __all__ = [
     "BatchIntegrationConfig",
     "BioBatchNetConfig",
     "CellCharterConfig",
+    "ConfigFieldDoc",
     "ConfigModel",
     "CreateMasksConfig",
     "DEFAULT_CONFIG_CLASSES",
@@ -49,7 +58,12 @@ __all__ = [
     "StarlingConfig",
     "SubclusteringConfig",
     "VisualizationConfig",
+    "config_field",
+    "config_section",
     "config_to_dict",
+    "generate_markdown_for_model",
+    "iter_config_docs",
     "load_config",
     "load_config_data",
+    "write_config_docs",
 ]

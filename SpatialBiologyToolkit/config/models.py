@@ -23,6 +23,30 @@ class ConfigModel(BaseModel):
     )
 
 
+def config_field(
+    default: Any = ...,
+    *,
+    description: str,
+    level: str = "advanced",
+    stage: str,
+    ui_group: str,
+    advice: str = "",
+    **field_kwargs: Any,
+) -> Any:
+    """Create a documented Pydantic field using the supported metadata keys."""
+    return Field(
+        default=default,
+        description=description,
+        json_schema_extra={
+            "level": level,
+            "stage": stage,
+            "ui_group": ui_group,
+            "advice": advice,
+        },
+        **field_kwargs,
+    )
+
+
 def config_section(section: str):
     """Attach baseline documentation/UI metadata to every field in a section."""
 
@@ -47,9 +71,23 @@ def config_section(section: str):
 
 @config_section("general")
 class GeneralConfig(ConfigModel):
-    imc_files_folder: str = 'IMC_files'  # Supports both .mcd and .txt files
+    imc_files_folder: str = config_field(
+        "IMC_files",
+        description="Folder containing raw IMC input files in MCD or TXT format.",
+        level="basic",
+        stage="general",
+        ui_group="Input folders",
+        advice="Use this as the primary folder for raw IMC files.",
+    )
     mcd_files_folder: str = 'MCD_files'  # Kept for backward compatibility
-    metadata_folder: str = 'metadata'
+    metadata_folder: str = config_field(
+        "metadata",
+        description="Folder containing pipeline metadata and panel tables.",
+        level="basic",
+        stage="general",
+        ui_group="Input folders",
+        advice="Keep metadata.csv and panel.csv in this folder unless a stage overrides it.",
+    )
     qc_folder: str = 'QC'
     masks_folder: str = 'masks'
     celltable_folder: str = 'cell_tables'
@@ -57,23 +95,131 @@ class GeneralConfig(ConfigModel):
     raw_images_folder: str = 'tiffs'
     denoised_images_folder: str = 'processed'
     slurm_logs_folder: str = 'SLURM_logs'
-    case_obs: Optional[str] = None  # Optional case/sample column in adata.obs (used for case-level summaries/stats)
-    roi_obs: str = 'ROI'  # ROI identifier column in adata.obs
-    metadata_obs: Optional[List[str]] = None  # Optional metadata obs columns for QC and grouped summaries
-    groupby_obs: Optional[str] = None  # Primary grouping axis for cross-condition analyses
-    groupby_obs_groups: Optional[List[str]] = None  # Optional ordered subset for groupby_obs
-    groupby_obs_primary_pairwise: Optional[List[str]] = None  # Optional preferred 2-group subset for pairwise analyses
-    population_obs_all: Optional[List[str]] = None  # Optional full list of population/cluster obs columns
-    population_obs_primary: Optional[str] = None  # Optional primary population obs used by downstream analyses
-    compartment_obs: Optional[str] = None  # Optional tissue-compartment obs column used for compartment-specific abundance outputs
-    compartment_obs_list: Optional[List[str]] = None  # Optional ordered subset of compartment_obs values to analyze separately
-    spatial_key: str = 'spatial'  # Canonical adata.obsm key for XY coordinates
-    x_coord_obs: str = 'X_loc'  # Fallback X coordinate obs column when spatial_key is missing
-    y_coord_obs: str = 'Y_loc'  # Fallback Y coordinate obs column when spatial_key is missing
-    master_index_obs: str = 'Master_Index'  # Canonical stable per-cell index column in adata.obs
-    anndata_path: str = 'anndata.h5ad'  # Canonical AnnData file path used across pipeline stages
-    anndata_stage_run_mode: str = 'repeat'  # One of: repeat, skip, intelligent
-    anndata_uns_log_key: str = 'pipeline_stage_log'  # AnnData.uns key storing stage order/config snapshots
+    case_obs: Optional[str] = config_field(
+        None,
+        description="Optional case or sample identifier column in adata.obs.",
+        level="basic",
+        stage="general",
+        ui_group="Observation columns",
+        advice="Set this for case-level summaries and statistical comparisons.",
+    )
+    roi_obs: str = config_field(
+        "ROI",
+        description="ROI identifier column in adata.obs.",
+        level="basic",
+        stage="general",
+        ui_group="Observation columns",
+        advice="Values should identify the imaging region associated with each cell.",
+    )
+    metadata_obs: Optional[List[str]] = config_field(
+        None,
+        description="Optional metadata columns used in QC and grouped summaries.",
+        stage="general",
+        ui_group="Observation columns",
+        advice="List stable adata.obs columns that should appear in downstream summaries.",
+    )
+    groupby_obs: Optional[str] = config_field(
+        None,
+        description="Primary adata.obs column used for cross-condition analyses.",
+        level="basic",
+        stage="general",
+        ui_group="Analysis groups",
+        advice="Choose the main experimental grouping variable, such as treatment or outcome.",
+    )
+    groupby_obs_groups: Optional[List[str]] = config_field(
+        None,
+        description="Optional ordered subset of values from groupby_obs to analyse.",
+        stage="general",
+        ui_group="Analysis groups",
+        advice="Leave unset to use all observed groups, or list groups in the desired display order.",
+    )
+    groupby_obs_primary_pairwise: Optional[List[str]] = config_field(
+        None,
+        description="Preferred two-group subset for pairwise comparisons.",
+        stage="general",
+        ui_group="Analysis groups",
+        advice="Provide two values from groupby_obs_groups when one comparison should be prioritised.",
+    )
+    population_obs_all: Optional[List[str]] = config_field(
+        None,
+        description="Population or cluster annotation columns available to downstream stages.",
+        stage="general",
+        ui_group="Population annotations",
+        advice="List adata.obs columns containing cell population or clustering labels.",
+    )
+    population_obs_primary: Optional[str] = config_field(
+        None,
+        description="Primary population annotation column used by downstream analyses.",
+        level="basic",
+        stage="general",
+        ui_group="Population annotations",
+        advice="Set this to the preferred final cell population label column.",
+    )
+    compartment_obs: Optional[str] = config_field(
+        None,
+        description="Optional tissue-compartment annotation column in adata.obs.",
+        stage="general",
+        ui_group="Population annotations",
+        advice="Set this when abundance or spatial outputs should be stratified by tissue compartment.",
+    )
+    compartment_obs_list: Optional[List[str]] = config_field(
+        None,
+        description="Optional ordered subset of tissue compartments to analyse separately.",
+        stage="general",
+        ui_group="Population annotations",
+        advice="Leave unset to use all compartments or provide the desired subset and order.",
+    )
+    spatial_key: str = config_field(
+        "spatial",
+        description="Canonical adata.obsm key containing XY spatial coordinates.",
+        stage="general",
+        ui_group="Spatial coordinates",
+        advice="Change only when coordinates are stored under a different obsm key.",
+    )
+    x_coord_obs: str = config_field(
+        "X_loc",
+        description="Fallback adata.obs column containing X coordinates.",
+        stage="general",
+        ui_group="Spatial coordinates",
+        advice="Used when the configured spatial_key is unavailable.",
+    )
+    y_coord_obs: str = config_field(
+        "Y_loc",
+        description="Fallback adata.obs column containing Y coordinates.",
+        stage="general",
+        ui_group="Spatial coordinates",
+        advice="Used when the configured spatial_key is unavailable.",
+    )
+    master_index_obs: str = config_field(
+        "Master_Index",
+        description="Stable per-cell identifier column in adata.obs.",
+        stage="general",
+        ui_group="Observation columns",
+        advice="Keep this stable across stages so cells can be matched after filtering or remapping.",
+    )
+    anndata_path: str = config_field(
+        "anndata.h5ad",
+        description="Canonical AnnData file path used across pipeline stages.",
+        level="basic",
+        stage="general",
+        ui_group="AnnData and execution",
+        advice="Use a path relative to the dataset working directory unless an absolute path is required.",
+    )
+    anndata_stage_run_mode: str = config_field(
+        "repeat",
+        description="Default policy for rerunning stages recorded in AnnData.",
+        stage="general",
+        ui_group="AnnData and execution",
+        advice="Use repeat, skip, or intelligent according to the desired stage rerun behaviour.",
+    )
+    anndata_uns_log_key: str = config_field(
+        "pipeline_stage_log",
+        description="AnnData.uns key used to store pipeline stage history and config snapshots.",
+        level="expert",
+        stage="general",
+        ui_group="AnnData and execution",
+        advice="Keep the default unless integrating with an existing AnnData logging convention.",
+    )
 
 @config_section("preprocess")
 class PreprocessConfig(ConfigModel):
@@ -1138,5 +1284,6 @@ __all__ = [
     "StarlingConfig",
     "SubclusteringConfig",
     "VisualizationConfig",
+    "config_field",
+    "config_section",
 ]
-

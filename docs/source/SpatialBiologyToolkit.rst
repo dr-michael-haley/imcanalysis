@@ -16,6 +16,10 @@ SpatialBiologyToolkit.config package
    :members:
    :undoc-members:
 
+.. automodule:: SpatialBiologyToolkit.config.documentation
+   :members:
+   :undoc-members:
+
 .. automodule:: SpatialBiologyToolkit.config.schema
    :members:
    :undoc-members:

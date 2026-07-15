@@ -45,3 +45,27 @@ Export JSON Schema
 
 The schema includes field descriptions and baseline ``level``, ``stage``,
 ``ui_group``, and ``advice`` metadata for future documentation and UI tooling.
+
+Generate Markdown documentation
+-------------------------------
+
+Config fields can provide curated metadata with ``config_field``. Fields that
+have not yet been curated receive fallback metadata from their section model.
+Both forms can be inspected or rendered as Markdown:
+
+.. code-block:: python
+
+   from SpatialBiologyToolkit.config import (
+       GeneralConfig,
+       generate_markdown_for_model,
+       iter_config_docs,
+       write_config_docs,
+   )
+
+   records = list(iter_config_docs(GeneralConfig))
+   general_markdown = generate_markdown_for_model(GeneralConfig)
+   written_paths = write_config_docs("generated_config_docs")
+
+The generated files group fields by ``ui_group`` and include their type,
+default, description, level, and advice. Generation is explicit; importing the
+config package does not write documentation files.

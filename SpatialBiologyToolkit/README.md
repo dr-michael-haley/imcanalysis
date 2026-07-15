@@ -25,13 +25,14 @@ pipeline scripts retain their dictionary-loading compatibility layer, while new
 Python code can validate a sparse user YAML and export its fully resolved form:
 
 ```python
-from SpatialBiologyToolkit.config import load_config
+from SpatialBiologyToolkit.config import load_config, write_config_docs
 from SpatialBiologyToolkit.config.export import write_resolved_config
 from SpatialBiologyToolkit.config.schema import write_json_schema
 
 config = load_config("config.yaml")
 write_resolved_config(config, "run_config.resolved.yaml")
 write_json_schema("config.schema.json")
+write_config_docs("generated_config_docs")
 ```
 
 Loading through this API does not modify the user YAML. See the configuration
