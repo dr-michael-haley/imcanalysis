@@ -116,11 +116,25 @@ def parse_stage_metadata(alias: str, script_name: str, script_path: Path) -> Sta
 
 
 def load_stage_docs(repo_root: Path = REPO_ROOT) -> list[StageDoc]:
-    """Load and validate all configured SLURM stages in declaration order."""
+    """Load stages from the Python registry and validate the legacy Bash mirror."""
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from SpatialBiologyToolkit.pipeline.registry import STAGES
+
     slurm_dir = repo_root / "SLURM_scripts"
+    registry_mappings = [
+        (stage.name, Path(stage.slurm_script).name)
+        for stage in STAGES
+    ]
+    legacy_mappings = parse_pipeline_config(slurm_dir / "pipeline.conf")
+    if registry_mappings != legacy_mappings:
+        raise ValueError(
+            "SLURM_scripts/pipeline.conf has drifted from the authoritative "
+            "SpatialBiologyToolkit.pipeline.registry stage mappings."
+        )
     return [
         parse_stage_metadata(alias, script, slurm_dir / script)
-        for alias, script in parse_pipeline_config(slurm_dir / "pipeline.conf")
+        for alias, script in registry_mappings
     ]
 
 
@@ -178,8 +192,9 @@ def render_stage_index(stages: list[StageDoc]) -> str:
         "",
         "# SLURM stage reference",
         "",
-        "This reference is generated from `SLURM_scripts/pipeline.conf` and the",
-        "`#@` metadata in each job wrapper. See the [pipeline workflow](../workflow.md)",
+        "This reference is generated from the typed Python stage registry and the",
+        "`#@` metadata in each job wrapper. The legacy `pipeline.conf` mirror is",
+        "validated for compatibility. See the [pipeline workflow](../workflow.md)",
         "for ordering and usage guidance.",
         "",
         "| Alias | Purpose | Environment | Config sections |",

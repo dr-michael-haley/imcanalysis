@@ -2,8 +2,9 @@
 
 # SLURM stage reference
 
-This reference is generated from `SLURM_scripts/pipeline.conf` and the
-`#@` metadata in each job wrapper. See the [pipeline workflow](../workflow.md)
+This reference is generated from the typed Python stage registry and the
+`#@` metadata in each job wrapper. The legacy `pipeline.conf` mirror is
+validated for compatibility. See the [pipeline workflow](../workflow.md)
 for ordering and usage guidance.
 
 | Alias | Purpose | Environment | Config sections |

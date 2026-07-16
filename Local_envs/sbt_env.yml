@@ -9,6 +9,7 @@ dependencies:
   - readimc
   - python=3.12
   - pydantic>=2.4,<3
+  - typer>=0.12,<1
   - pip
   - geopandas
   - geojson

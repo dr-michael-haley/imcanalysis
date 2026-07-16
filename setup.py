@@ -12,6 +12,7 @@ setup(
         "scipy",
         "pyyaml",
         "pydantic>=2.4,<3",
+        "typer>=0.12,<1",
         "tqdm",
 
         "anndata",
@@ -61,6 +62,17 @@ setup(
         "headless": [],
         "nodl": [],
         "nodev": [],
+        "cli": [
+            "pyyaml",
+            "pydantic>=2.4,<3",
+            "typer>=0.12,<1",
+        ],
+    },
+
+    entry_points={
+        "console_scripts": [
+            "sbt=SpatialBiologyToolkit.cli.main:app",
+        ],
     },
 
     description="A tool kit for analysing high dimensional spatial data",

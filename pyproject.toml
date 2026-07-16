@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "SpatialBiologyToolkit"
+version = "0.1"
+description = "A toolkit for analysing high-dimensional spatial data"
+requires-python = ">=3.10"
+dynamic = ["dependencies", "optional-dependencies"]
+authors = [
+  {name = "Michael Haley", email = "mrmichaelhaley@gmail.com"},
+]
+
+[project.urls]
+Repository = "https://github.com/dr-michael-haley/imcanalysis"
+
+[project.scripts]
+sbt = "SpatialBiologyToolkit.cli.main:app"
+
+[tool.setuptools.packages.find]
+include = ["SpatialBiologyToolkit*"]

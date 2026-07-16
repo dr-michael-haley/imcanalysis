@@ -16,6 +16,7 @@ sc3s
 readimc
 pyyaml
 pydantic>=2.4,<3
+typer>=0.12,<1
 
 # Plotting and spatial tools
 matplotlib

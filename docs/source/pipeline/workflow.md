@@ -1,39 +1,42 @@
 # SLURM pipeline workflow
 
 SpatialBiologyToolkit provides SLURM wrappers for the IMC pipeline, tested on
-the University of Manchester Computational Shared Facility. Run each stage
-from the dataset directory containing `config.yaml`.
+the University of Manchester Computational Shared Facility. The preferred
+interface is the [project-aware `sbt` CLI](cli.md), which continues to execute
+these wrappers in their stage-specific Conda environments.
 
-The [generated stage reference](stages/index.md) is the source of truth for
-aliases, wrappers, environments, inputs, outputs, and config sections. It is
-generated from `SLURM_scripts/pipeline.conf` and the metadata in each wrapper,
-so it cannot silently omit a newly registered stage.
+The [generated stage reference](stages/index.md) is generated from the typed
+Python stage registry and the metadata in each wrapper. Documentation checks
+also verify that the legacy `SLURM_scripts/pipeline.conf` mapping remains an
+exact compatibility mirror.
 
 ## Suggested run order
 
 The normal Nimbus workflow is:
 
-1. `config` - refresh missing/default config keys after repository updates.
-2. `prep` - import IMC files and create image and metadata inputs.
-3. `denoise` - denoise channel TIFFs.
-4. `dnqc` - inspect denoising and panel consistency.
-5. `cellpose` - preprocess DNA and generate CellPose-SAM masks.
-6. `nimbus` - quantify cells and create AnnData.
-7. Choose one of `bint`, `rapids`, or `bbn` for batch-aware processing.
-8. Optionally run `remap` and `subcl` to curate/refine labels.
-9. Optionally branch to `cchar`, `starling`, `pairsp`, or `nxsp` analyses.
-10. Optionally run `aiinter` for AI-assisted cluster labels.
-11. Run `vis` for the standard figures and QC outputs.
-12. Optionally run `reint`, `slogs`, and `zipqc` for marker reintegration, log organisation, and packaging.
+1. `prep` - import IMC files and create image and metadata inputs.
+2. `denoise` - denoise channel TIFFs.
+3. `dnqc` - inspect denoising and panel consistency.
+4. `cellpose` - preprocess DNA and generate CellPose-SAM masks.
+5. `nimbus` - quantify cells and create AnnData.
+6. Choose one of `bint`, `rapids`, or `bbn` for batch-aware processing.
+7. Optionally run `remap` and `subcl` to curate/refine labels.
+8. Optionally branch to `cchar`, `starling`, `pairsp`, or `nxsp` analyses.
+9. Optionally run `aiinter` for AI-assisted cluster labels.
+10. Run `vis` for the standard figures and QC outputs.
+11. Optionally run `reint` and package selected QC outputs.
 
 For example:
 
 ```bash
-pl config prep denoise dnqc cellpose nimbus rapids remap subcl pairsp vis slogs zipqc
+sbt run prep denoise dnqc cellpose nimbus rapids remap subcl pairsp vis
 ```
 
 Use `rebuildmeta` only to reconstruct metadata tables from an existing AnnData
 file; it is a recovery/maintenance stage rather than part of a fresh run.
+The legacy `config`, `slogs`, and `zipqc` stages remain registered, although
+typed config export and run-local status/log records supersede much of their
+former control-plane role.
 
 ## Alternative and optional stages
 
@@ -50,13 +53,27 @@ The [subclustering guide](subclustering.md) explains the deliberate edit-and-rer
 List every registered stage and its wrapper metadata:
 
 ```bash
-pl --list
+sbt stages list
 ```
 
 Preview a dependency chain without submitting jobs:
 
 ```bash
-pl --dry-run prep denoise dnqc cellpose nimbus
+sbt run segmentation --dry-run
+```
+
+Plan with machine-readable output:
+
+```bash
+sbt plan segmentation --format yaml
+```
+
+Submit and inspect the latest run:
+
+```bash
+sbt run segmentation
+sbt status latest
+sbt logs latest --stage cellpose
 ```
 
 Run a single wrapper locally for debugging:
@@ -68,8 +85,10 @@ pll prep
 Run the environment/module diagnostics on SLURM:
 
 ```bash
-pl debug
+sbt run debug
 ```
+
+`pl`, `pll`, and `pls` remain available as legacy compatibility interfaces.
 
 ## Example RAPIDS configuration
 

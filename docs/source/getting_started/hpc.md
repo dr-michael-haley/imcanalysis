@@ -86,6 +86,28 @@ This will:
 
 ---
 
+## 2.1 Install the lightweight `sbt` launcher
+
+Create the login-node command environment separately from the scientific stage
+environments:
+
+```bash
+cd ~/imcanalysis
+conda env create -f Local_envs/sbt_cli_env.yml
+conda activate sbt-cli
+pip install --no-deps -e .
+sbt --help
+```
+
+This environment contains only Python, Pydantic, PyYAML, Typer, and the editable
+toolkit package. The heavy analysis dependencies remain in the stage-specific
+environments used by the SLURM wrappers.
+
+See the [`sbt` CLI and project guide](../pipeline/cli.md) for project adoption,
+planning, submission, status, and logs.
+
+---
+
 ## 3. Create the pipeline conda environments
 
 Set up the pipeline environments from pinned lockfiles:

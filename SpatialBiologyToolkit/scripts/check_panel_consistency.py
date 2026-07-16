@@ -656,8 +656,12 @@ Examples:
                        help='Path to folder containing denoised images organized by ROI (default: from config or "processed")')
     parser.add_argument('--panel_file', type=str,
                        help='Path to panel CSV file (default: from config or "metadata/panel.csv")')
-    parser.add_argument('--config', type=str, default='config.yaml',
-                       help='Path to config file (default: config.yaml)')
+    parser.add_argument(
+        '--config',
+        type=str,
+        default=os.environ.get('SBT_CONFIG', 'config.yaml'),
+        help='Path to config file (default: SBT_CONFIG or config.yaml)',
+    )
     parser.add_argument('--show_all', action='store_true',
                        help='Show results for all ROIs, not just those with issues')
     parser.add_argument('--save_csv', type=str,

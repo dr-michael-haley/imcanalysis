@@ -16,7 +16,7 @@ stages, SLURM wrappers, tutorials, and HPC installation helpers.
 ## Start here
 
 - If the command line, conda, or Jupyter are new to you, read the [new-user guide](https://imcanalysis.readthedocs.io/en/latest/getting_started/beginners.html).
-- For the recommended HPC-first workflow, use the [HPC setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/hpc.html) and [pipeline workflow](https://imcanalysis.readthedocs.io/en/latest/pipeline/workflow.html).
+- For the recommended HPC-first workflow, use the [HPC setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/hpc.html), [`sbt` CLI guide](https://imcanalysis.readthedocs.io/en/latest/pipeline/cli.html), and [pipeline workflow](https://imcanalysis.readthedocs.io/en/latest/pipeline/workflow.html).
 - For notebooks and interactive exploration, use the [local setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/local.html) and [tutorial index](https://imcanalysis.readthedocs.io/en/latest/tutorials/index.html).
 - For exact stage and config fields, use the generated [SLURM stage reference](https://imcanalysis.readthedocs.io/en/latest/pipeline/stages/index.html) and [configuration reference](https://imcanalysis.readthedocs.io/en/latest/reference/configuration/index.html).
 
@@ -40,9 +40,10 @@ analysis directory before starting Jupyter.
 ## Repository map
 
 - `SpatialBiologyToolkit/`: reusable Python analysis package.
+- `SpatialBiologyToolkit/cli/` and `SpatialBiologyToolkit/pipeline/`: lightweight project, planning, SLURM submission, status, and log control layers.
 - `SpatialBiologyToolkit/scripts/`: config-driven pipeline entry points.
-- `SLURM_scripts/`: registered job wrappers; `pipeline.conf` maps aliases such as `prep` to wrappers.
-- `Bash_scripts/`: `pl`, `pll`, `pls`, `zipqc`, `cds`, and other HPC helpers.
+- `SLURM_scripts/`: registered job wrappers; `pipeline.conf` remains a legacy mirror of the Python stage registry.
+- `Bash_scripts/`: legacy `pl`, `pll`, `pls`, plus `zipqc`, `cds`, and other HPC helpers.
 - `Tutorials/`: current and archived Jupyter notebooks.
 - `Local_envs/` and `HPC_env_files/`: local and pipeline environment definitions.
 - `docs/`: canonical Sphinx sources and generated reference tooling.

@@ -211,7 +211,7 @@ def main():
     if len(sys.argv) > 1:
         config_file = sys.argv[1]
     else:
-        config_file = 'config.yaml'
+        config_file = os.environ.get('SBT_CONFIG', 'config.yaml')
     
     # Check if --backup flag is provided
     backup = '--backup' in sys.argv

@@ -882,7 +882,16 @@ def apply_override(config: Dict, key_path: str, value: str) -> None:
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Run the pipeline with overrides.")
-    parser.add_argument('--config', type=str, default='config.yaml', help='Path to the config (default: config.yaml)')
+    default_config = os.environ.get('SBT_CONFIG', 'config.yaml')
+    parser.add_argument(
+        '--config',
+        type=str,
+        default=default_config,
+        help=(
+            'Path to the config (default: SBT_CONFIG when set, otherwise '
+            'config.yaml)'
+        ),
+    )
     parser.add_argument('--override', action='append', help='Overrides in key=value format. Use dot-notation for keys.')
     return parser.parse_args()
 
