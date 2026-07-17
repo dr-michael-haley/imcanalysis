@@ -14,13 +14,19 @@
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
 | `mcd_files_folder` | `str` | `MCD_files` | `advanced` | Configuration value for mcd files folder. | - |
-| `qc_folder` | `str` | `QC` | `advanced` | Configuration value for qc folder. | - |
 | `masks_folder` | `str` | `masks` | `advanced` | Configuration value for masks folder. | - |
 | `celltable_folder` | `str` | `cell_tables` | `advanced` | Configuration value for celltable folder. | - |
 | `tiff_stacks_folder` | `str` | `tiff_stacks` | `advanced` | Configuration value for tiff stacks folder. | - |
 | `raw_images_folder` | `str` | `tiffs` | `advanced` | Configuration value for raw images folder. | - |
 | `denoised_images_folder` | `str` | `processed` | `advanced` | Configuration value for denoised images folder. | - |
 | `slurm_logs_folder` | `str` | `SLURM_logs` | `advanced` | Configuration value for slurm logs folder. | - |
+
+## Outputs and provenance
+
+| Field | Type | Default | Level | Description | Advice |
+|---|---|---|---|---|---|
+| `outputs_folder` | `str` | `outputs` | `basic` | Root folder for numbered, human-facing stage reports, figures, and tables. | Keep reusable assets in their dedicated root folders; use this folder for material intended for human inspection. |
+| `qc_folder` | `str` | `QC` | `expert` | Deprecated legacy catch-all QC folder retained for existing projects and direct compatibility runs. | New managed runs use general.outputs_folder and numbered stage folders. Do not repurpose this field for new output layouts. |
 
 ## Observation columns
 

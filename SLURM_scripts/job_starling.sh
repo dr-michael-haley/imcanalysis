@@ -13,7 +13,7 @@
 #@IN:   starling.initial_label_obs or general.population_obs_primary when starling.initial_clustering_method=User
 #@IN:   adata.X by default, or starling.use_layer if set; optional starling.marker_include/marker_exclude
 #@OUT:  starling.output_adata_path (default general.anndata_path)
-#@OUT:  general.qc_folder/starling.qc_output_subdir (default QC/Starling_QC)
+#@OUT:  outputs/011_STARLING_Phenotyping/<run_id>/
 #@ENV:  imc_starling
 #@MODULE:  SpatialBiologyToolkit.scripts.starling_analysis
 #@CONFIG: general, starling, logging

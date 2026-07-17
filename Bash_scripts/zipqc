@@ -4,33 +4,42 @@
 #  Folder/file sets (you can edit/add more below)
 # --------------------------------------------------
 declare -A FOLDER_SETS
+OUTPUTS_ROOT="${SBT_OUTPUTS_ROOT:-outputs}"
 
-# Default set (your original)
+# Default numbered stage outputs. Legacy QC paths remain at the bottom of the
+# set so existing projects continue to archive without moving any data.
 FOLDER_SETS[default]="
-QC/BasicProcess_QC/Matrixplots/
-QC/BasicProcess_QC/UMAPs/
-QC/BasicProcess_QC/Population_Analysis_Figures/
-QC/BasicProcess_QC/Population_images/
-QC/BasicProcess_QC/Color_legends/
-QC/denoising/
-QC/nimbus_normalization_qc/channel_galleries/
-QC/BioBatchNet/
-QC/Segmentation_overlay/
-QC/AI_Interpretation/
-QC/Pairwise_Spatial/
-QC/CellCharter_QC/
-QC/CellposeSAM_QC/
+${OUTPUTS_ROOT}/002_Denoising/
+${OUTPUTS_ROOT}/003_Denoising_QC/
+${OUTPUTS_ROOT}/004_Segmentation/
+${OUTPUTS_ROOT}/005_Quantification/
+${OUTPUTS_ROOT}/006_Batch_Integration/
+${OUTPUTS_ROOT}/007_RAPIDS_Processing/
+${OUTPUTS_ROOT}/008_BioBatchNet_Integration/
+${OUTPUTS_ROOT}/009_Subclustering/
+${OUTPUTS_ROOT}/010_CellCharter_Neighbourhoods/
+${OUTPUTS_ROOT}/011_STARLING_Phenotyping/
+${OUTPUTS_ROOT}/012_AI_Interpretation/
+${OUTPUTS_ROOT}/013_Visualisation/
+${OUTPUTS_ROOT}/014_Pairwise_Spatial_Analysis/
+${OUTPUTS_ROOT}/015_NetworkX_Spatial_Analysis/
+QC/
 "
 
 # Example: only some subfolders (edit as you like)
 FOLDER_SETS[basic]="
-QC/BasicProcess_QC/Matrixplots/
-QC/BasicProcess_QC/UMAPs/
+${OUTPUTS_ROOT}/013_Visualisation/
 "
 
 # Example: denoising only
 FOLDER_SETS[denoise_only]="
-QC/denoising/
+${OUTPUTS_ROOT}/002_Denoising/
+${OUTPUTS_ROOT}/003_Denoising_QC/
+"
+
+# Explicit legacy-only selection for projects created before numbered reports.
+FOLDER_SETS[legacy]="
+QC/
 "
 
 # --------------------------------------------------
@@ -40,7 +49,7 @@ print_help() {
     cat <<EOF
 Usage: $(basename "$0") [SET_NAME]
 
-Create a zip archive of QC outputs (folders, files, and glob patterns).
+Create a zip archive of numbered human-facing outputs.
 
 SET_NAME selects which path set to use. If omitted, 'default' is used.
 
@@ -54,8 +63,10 @@ Examples:
 
 You can edit FOLDER_SETS in this script to add/remove sets or paths.
 Each set can contain directories, files, or glob patterns like:
-  QC/*.png
-  QC/*/Matrixplots/
+  outputs/013_Visualisation/
+  outputs/*/
+
+Existing QC/ data is retained and can be selected with the 'legacy' set.
 EOF
 }
 
@@ -89,7 +100,14 @@ readarray -t PATH_SPECS <<< "${FOLDER_SETS[$SET_NAME]}"
 # --------------------------------------------------
 CURRENT_DIR_NAME=$(basename "$PWD")
 DATE=$(date +%Y-%m-%d)
-ZIPFILE="${CURRENT_DIR_NAME}_${SET_NAME}_${DATE}.zip"
+ZIP_BASENAME="${CURRENT_DIR_NAME}_${SET_NAME}_${DATE}.zip"
+if [[ -n "${SBT_STAGE_OUTPUT_DIR:-}" ]]; then
+    ZIP_DIR="${SBT_STAGE_OUTPUT_DIR}/files"
+    mkdir -p "$ZIP_DIR"
+    ZIPFILE="${ZIP_DIR}/${ZIP_BASENAME}"
+else
+    ZIPFILE="$ZIP_BASENAME"
+fi
 
 echo "Creating zip file: $ZIPFILE"
 echo

@@ -622,7 +622,11 @@ def run_subclustering_stage(
         resolved_use_rep = _resolve_use_rep(adata, subclustering_config.use_rep)
 
         fig_ext = _resolve_figure_ext(subclustering_config.figure_extension)
-        figures_dir = output_dir / "figures"
+        from SpatialBiologyToolkit.reporting import optional_category_output_path
+
+        figures_dir = optional_category_output_path(
+            "figures", output_dir / "figures"
+        )
         combined_umap_dir = figures_dir / "combined_umap"
         matrixplot_dir = figures_dir / "matrixplot"
         individual_umap_dir = figures_dir / "individual_umap"

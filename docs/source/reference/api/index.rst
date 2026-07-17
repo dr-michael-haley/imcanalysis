@@ -32,3 +32,9 @@ This reference is split by module so the site navigation stays compact.
    config_load
    config_models
    config_schema
+   reporting_inventory
+   reporting_models
+   reporting_paths
+   reporting_render
+   reporting_reporter
+   reporting_validation

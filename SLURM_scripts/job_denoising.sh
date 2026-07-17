@@ -11,7 +11,7 @@
 #@IN:   general.raw_images_folder (default tiffs/)
 #@IN:   general.metadata_folder/panel.csv
 #@OUT:  general.denoised_images_folder (default processed/)
-#@OUT:  general.qc_folder/denoised_pixel_qc*.csv and optional general.qc_folder/denoising/
+#@OUT:  outputs/002_Denoising/<run_id>/ plus reusable denoised channel images
 #@ENV:  imc_denoise
 #@MODULE:  SpatialBiologyToolkit.scripts.denoising
 #@CONFIG: general, denoising, logging

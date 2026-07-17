@@ -31,6 +31,7 @@ COMMAND_FILE = "command.txt"
 STATUS_FILE = "status.yaml"
 ASSETS_BEFORE = "project_assets.before.yaml"
 LOGS_DIRECTORY = "logs"
+STAGE_EVENTS_DIRECTORY = "stage_events"
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,8 @@ def create_run_record(
     *,
     command: str,
     run_id: str | None = None,
+    reason: str | None = None,
+    notes: Iterable[str] = (),
 ) -> RunRecord:
     if not plan.ready:
         raise ValueError("Cannot create a submitted run record for an invalid plan.")
@@ -91,6 +94,7 @@ def create_run_record(
         raise FileExistsError(f"Run directory already exists: {run_dir}")
     run_dir.mkdir(parents=True)
     (run_dir / LOGS_DIRECTORY).mkdir()
+    (run_dir / STAGE_EVENTS_DIRECTORY).mkdir()
 
     user_config_path = run_dir / USER_CONFIG
     resolved_config_path = run_dir / RESOLVED_CONFIG
@@ -109,6 +113,8 @@ def create_run_record(
         execution_backend=plan.execution_backend,
         working_directory=Path.cwd().resolve(strict=False),
         command=command,
+        reason=reason,
+        notes=list(notes),
         pipeline_version=_pipeline_version(),
         git_commit=_git_commit(),
         hostname=socket.gethostname(),
@@ -155,6 +161,8 @@ def prospective_run_record(
     *,
     run_id: str | None = None,
     command: str = "",
+    reason: str | None = None,
+    notes: Iterable[str] = (),
 ) -> RunRecord:
     """Build run paths for a dry run without creating files or directories."""
     identifier = run_id or new_run_id()
@@ -172,6 +180,8 @@ def prospective_run_record(
         execution_backend=plan.execution_backend,
         working_directory=Path.cwd().resolve(strict=False),
         command=command,
+        reason=reason,
+        notes=list(notes),
         pipeline_version=_pipeline_version(),
         hostname=socket.gethostname(),
         username=getpass.getuser(),
@@ -236,6 +246,7 @@ __all__ = [
     "RUN_PLAN",
     "RunRecord",
     "STATUS_FILE",
+    "STAGE_EVENTS_DIRECTORY",
     "SUBMITTED_JOBS",
     "USER_CONFIG",
     "command_text",

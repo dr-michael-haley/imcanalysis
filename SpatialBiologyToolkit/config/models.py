@@ -88,7 +88,33 @@ class GeneralConfig(ConfigModel):
         ui_group="Input folders",
         advice="Keep metadata.csv and panel.csv in this folder unless a stage overrides it.",
     )
-    qc_folder: str = 'QC'
+    outputs_folder: str = config_field(
+        "outputs",
+        description=(
+            "Root folder for numbered, human-facing stage reports, figures, and tables."
+        ),
+        level="basic",
+        stage="general",
+        ui_group="Outputs and provenance",
+        advice=(
+            "Keep reusable assets in their dedicated root folders; use this folder "
+            "for material intended for human inspection."
+        ),
+    )
+    qc_folder: str = config_field(
+        "QC",
+        description=(
+            "Deprecated legacy catch-all QC folder retained for existing projects "
+            "and direct compatibility runs."
+        ),
+        level="expert",
+        stage="general",
+        ui_group="Outputs and provenance",
+        advice=(
+            "New managed runs use general.outputs_folder and numbered stage folders. "
+            "Do not repurpose this field for new output layouts."
+        ),
+    )
     masks_folder: str = 'masks'
     celltable_folder: str = 'cell_tables'
     tiff_stacks_folder: str  = 'tiff_stacks'
@@ -777,7 +803,7 @@ class CellCharterConfig(ConfigModel):
     trvae_use_sample_key_fallback: bool = True
     trvae_constant_condition_label: str = 'all'
     trvae_load_path: Optional[str] = None  # Optional pretrained model directory
-    trvae_save_path: str = 'trvae_model'   # Relative paths are saved under QC/cellcharter.qc_output_subdir
+    trvae_save_path: str = 'trvae_model'   # Reusable project-root model directory when relative
     trvae_map_location: str = 'gpu'
     trvae_train: bool = True
     trvae_train_early_stopping: bool = False
@@ -949,7 +975,7 @@ class StarlingConfig(ConfigModel):
     store_assignment_prob_matrix: bool = True
     store_gamma_assignment_prob_matrix: bool = False
     save_model: bool = False
-    model_output_name: str = 'starling_model.pt'
+    model_output_name: str = 'starling_model.pt'  # Reusable project-root checkpoint path when relative
     save_qc_tables: bool = True
     save_qc_plots: bool = True
     figure_format: str = 'png'

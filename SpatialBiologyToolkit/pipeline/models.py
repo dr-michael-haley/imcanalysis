@@ -20,6 +20,9 @@ class ProjectMetadata(PipelineModel):
     project_id: str
     created_at: datetime
     config_file: str
+    title: str | None = None
+    description: str | None = None
+    notes_file: str = ".sbt/project_notes.md"
     toolkit: str = "Spatial Biology Toolkit"
 
 
@@ -31,6 +34,8 @@ class ProjectAsset(PipelineModel):
         "required_input",
         "optional_input",
         "generated_output",
+        "human_output",
+        "legacy_output",
         "operational_state",
     ]
     exists: bool
@@ -63,14 +68,21 @@ class ProjectValidationReport(PipelineModel):
     required_inputs: list[ValidationItem] = Field(default_factory=list)
     optional_inputs: list[ValidationItem] = Field(default_factory=list)
     generated_assets: list[ValidationItem] = Field(default_factory=list)
+    reporting_outputs: list[ValidationItem] = Field(default_factory=list)
     stage_readiness: dict[str, bool] = Field(default_factory=dict)
     readiness_messages: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class StageSpec(PipelineModel):
     name: str
+    display_name: str
+    display_order: int
+    output_folder: str
+    documentation_path: str
     description: str
     slurm_script: str
+    config_sections: list[str] = Field(default_factory=list)
+    python_modules: list[str] = Field(default_factory=list)
     depends_on: list[str] = Field(default_factory=list)
     groups: list[str] = Field(default_factory=list)
     requires_assets: list[str] = Field(default_factory=list)
@@ -127,6 +139,8 @@ class RunManifest(PipelineModel):
     execution_backend: str
     working_directory: Path
     command: str
+    reason: str | None = None
+    notes: list[str] = Field(default_factory=list)
     pipeline_version: str | None = None
     git_commit: str | None = None
     hostname: str | None = None

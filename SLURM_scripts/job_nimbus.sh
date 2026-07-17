@@ -12,7 +12,7 @@
 #@IN:   general.denoised_images_folder (or raw fallback per nimbus settings)
 #@OUT:  nimbus.output_dir/ (default nimbus_output/) and general.celltable_folder/nimbus_cell_tables/
 #@OUT:  segmentation.anndata_save_path or nimbus.anndata_output (default anndata.h5ad)
-#@OUT:  optional segmentation.removed_markers_anndata_path + general.qc_folder/nimbus_normalization_qc/
+#@OUT:  optional segmentation.removed_markers_anndata_path + outputs/005_Quantification/<run_id>/
 #@ENV:  imc_segmentation
 #@MODULE:  SpatialBiologyToolkit.scripts.segmentation_nimbus
 #@CONFIG: general, segmentation, nimbus, logging

@@ -15,6 +15,7 @@ Reintegrate markers previously removed from the processed AnnData
 ## Outputs
 
 - process.output_adata_path (updated in place)
+- outputs/016_Marker_Reintegration/<run_id>/ stage report
 
 ## Configuration
 

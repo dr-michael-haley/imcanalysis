@@ -24,7 +24,7 @@ for ordering and usage guidance.
 | [`config`](config.md) | Update config.yaml by syncing all default config sections/keys | `imc_segmentation` | all blocks (sync defaults): general, preprocess, denoising, createmasks, segmentation, nimbus, process, visualization, cellcharter, pairwise_spatial, networkx_spatial, remap_obs, subclustering, logging |
 | [`cellpose`](cellpose.md) | DNA preprocessing + CellPose-SAM mask generation | `imc_segmentation, imc_cellposesam` | general, createmasks, logging |
 | [`reint`](reint.md) | Reintegrate markers previously removed from the processed AnnData | `imc_segmentation` | general, segmentation, process, logging |
-| [`zipqc`](zipqc.md) | Zip selected QC output directories for download | `-` | none |
+| [`zipqc`](zipqc.md) | Zip selected numbered human-facing output directories for download | `-` | none |
 | [`scport`](scport.md) | Generate single-cell portrait outputs via external scPortrait converter | `scPortrait` | none (does not read config.yaml) |
 | [`debug`](debug.md) | Run environment + module import diagnostics for SLURM job scripts | `-` | none |
 | [`pairsp`](pairsp.md) | Run pairwise spatial analyses (Squidpy interactions, distance bootstrap, and PCF) with plots/raw exports | `imc_cellcharter` | general, process, pairwise_spatial, logging |

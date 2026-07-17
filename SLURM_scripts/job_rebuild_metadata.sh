@@ -9,6 +9,7 @@
 #@DESC: Rebuild metadata folder tables from an existing AnnData file
 #@IN:   general.anndata_path (or rebuild_metadata.input_adata_path override)
 #@OUT:  general.metadata_folder/{metadata.csv,dictionary.csv,panel.csv}
+#@OUT:  outputs/018_Metadata_Rebuild/<run_id>/ stage report
 #@ENV:  imc_segmentation
 #@MODULE:  SpatialBiologyToolkit.scripts.rebuild_metadata
 #@CONFIG: general, rebuild_metadata, logging

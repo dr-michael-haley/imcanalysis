@@ -10,6 +10,11 @@ order](workflow.md), then use the generated [SLURM stage
 reference](stages/index.md) for exact inputs, outputs, environments, and config
 sections.
 
+The [outputs and reporting guide](reporting.md) explains numbered human-facing
+reports, reusable root assets, technical run records, and migration from `QC/`.
+Stable scientific context for every stage is in the
+[shared stage explainers](../stages/index.md).
+
 ![Core and analysis pipeline flow](../_static/pipeline_stage_flow.svg)
 
 ```{toctree}
@@ -17,7 +22,9 @@ sections.
 
 cli
 workflow
+reporting
 stages/index
+../stages/index
 subclustering
 python_stages
 bash_helpers

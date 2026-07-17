@@ -677,6 +677,9 @@ Examples:
 
 def main():
     """Main function."""
+    from SpatialBiologyToolkit.reporting import bootstrap_stage_reporting
+
+    bootstrap_stage_reporting("dnqc")
     parser = setup_argument_parser()
     args = parser.parse_args()
     
@@ -737,7 +740,15 @@ def main():
         default_csv_file = f"panel_consistency_report_{timestamp}.csv"
         
         # Use custom filename if provided, otherwise use timestamped default
-        csv_file = args.save_csv if args.save_csv else default_csv_file
+        if args.save_csv:
+            csv_file = args.save_csv
+        else:
+            from SpatialBiologyToolkit.reporting import optional_category_output_path
+
+            csv_file = str(
+                optional_category_output_path("tables", Path(".")) / default_csv_file
+            )
+        Path(csv_file).parent.mkdir(parents=True, exist_ok=True)
         checker.save_results_to_csv(csv_file)
         
         # Exit with appropriate code

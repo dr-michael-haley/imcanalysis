@@ -139,17 +139,21 @@ Unless overridden in `config.yaml`, `GeneralConfig` uses:
 | `general.denoised_images_folder` | `processed` |
 | `general.masks_folder` | `masks` |
 | `general.celltable_folder` | `cell_tables` |
-| `general.qc_folder` | `QC` |
+| `general.anndata_path` | `anndata.h5ad` |
+| `general.outputs_folder` | `outputs` |
+| `general.qc_folder` | `QC` (deprecated legacy compatibility) |
 
 See the generated [general config table](../reference/configuration/sections/general.md)
 for the complete set of defaults.
 
 ## Adding or changing a pipeline stage
 
-1. Add or update a `SLURM_scripts/job_*.sh` wrapper.
-2. Include `#@DESC`, `#@IN`, `#@OUT`, `#@ENV`, `#@MODULE`, and `#@CONFIG` records where applicable.
-3. Register its alias in `SLURM_scripts/pipeline.conf`.
-4. Run `make docs-generate`, then `make docs-check`.
+1. Add or update the typed stage registry entry, including display/reporting metadata.
+2. Add or update the shared explainer under `docs/source/stages/`.
+3. Add or update a `SLURM_scripts/job_*.sh` wrapper and its `#@` metadata.
+4. Keep the legacy `SLURM_scripts/pipeline.conf` mirror aligned.
+5. Integrate the shared reporter and route human-facing output to the stage run folder.
+6. Run `make docs-generate`, then `make docs-check`.
 
 The generator creates a compact table and one focused page per alias. Put
 cross-stage concepts and ordering advice in this workflow page; put exact

@@ -29,6 +29,8 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import to_hex
 
+from SpatialBiologyToolkit.reporting import get_active_reporter, project_asset_path
+
 try:
     import squidpy as sq
 except ImportError as exc:  # pragma: no cover - dependency guard
@@ -480,10 +482,15 @@ def _compute_trvae_representation(
 
     saved_to: Optional[Path] = None
     if cellcharter_config.trvae_save_path:
-        trvae_save_dir = Path(cellcharter_config.trvae_save_path)
-        if not trvae_save_dir.is_absolute():
-            trvae_save_dir = qc_dir / trvae_save_dir
+        trvae_save_dir = project_asset_path(cellcharter_config.trvae_save_path)
         saved_to = _save_trvae_model(model, trvae_save_dir)
+        reporter = get_active_reporter()
+        if reporter is not None:
+            reporter.add_asset(
+                "cellcharter_trvae_model",
+                saved_to,
+                "Reusable CellCharter TRVAE model directory.",
+            )
 
     details: Dict[str, Any] = {
         "enabled": True,

@@ -17,7 +17,7 @@ Run STARLING segmentation-aware probabilistic phenotyping from IMC AnnData marke
 ## Outputs
 
 - starling.output_adata_path (default general.anndata_path)
-- general.qc_folder/starling.qc_output_subdir (default QC/Starling_QC)
+- outputs/011_STARLING_Phenotyping/<run_id>/
 
 ## Configuration
 

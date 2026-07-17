@@ -115,6 +115,19 @@ def load_config(config_file: str = 'config.yaml') -> Dict[str, Any]:
 
     Returns the fully populated config dictionary.
     """
+    # Registered stage modules bootstrap the shared report lifecycle here. This
+    # occurs before stage-specific paths are resolved, but does not affect config
+    # loading when this helper is used outside a pipeline stage.
+    try:
+        from SpatialBiologyToolkit.reporting import ensure_stage_reporter
+
+        ensure_stage_reporter()
+    except Exception:
+        logging.exception(
+            "Could not initialize stage reporting; continuing with scientific "
+            "configuration loading."
+        )
+
     defaults = generate_default_config_dict()
 
     if not os.path.isfile(config_file):
@@ -790,6 +803,19 @@ def record_stage_run_in_uns(
     container["stages"][stage_name] = entry
     adata.uns[uns_key] = container
 
+    # Transitional AnnData provenance remains for compatibility. Mirror scalar
+    # objective details into the canonical external stage report when one is active.
+    try:
+        from SpatialBiologyToolkit.reporting import get_active_reporter
+
+        reporter = get_active_reporter()
+        if reporter is not None:
+            for key, value in detail_snapshot.items():
+                if isinstance(value, (str, int, float, bool)):
+                    reporter.add_metric(f"anndata.{key}", value)
+    except Exception:
+        logging.exception("Could not mirror AnnData stage details into the report.")
+
 
 def save_pipeline_anndata(
     *,
@@ -836,6 +862,22 @@ def save_pipeline_anndata(
             )
         adata.write_h5ad(target_path)
     logging.info("Saved AnnData to %s", target_path)
+    try:
+        from SpatialBiologyToolkit.reporting import get_active_reporter
+
+        reporter = get_active_reporter()
+        if reporter is not None:
+            reporter.add_asset(
+                "anndata",
+                target_path,
+                "AnnData written by this stage.",
+            )
+            if hasattr(adata, "n_obs"):
+                reporter.add_metric("cells", int(adata.n_obs))
+            if hasattr(adata, "n_vars"):
+                reporter.add_metric("markers", int(adata.n_vars))
+    except Exception:
+        logging.exception("Could not register the saved AnnData in the stage report.")
     return target_path
 
 
@@ -919,6 +961,36 @@ def process_config_with_overrides():
             yaml.safe_dump(config, f, default_flow_style=False)
         logging.info(f'Configuration file "{args.config}" updated with overrides.')
 
+    return apply_reporting_output_routing(config)
+
+
+def apply_reporting_output_routing(config: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Route legacy human-facing ``qc_folder`` writes into the active stage report.
+
+    Existing configs and direct non-reported invocations retain their configured
+    ``general.qc_folder`` value. During a managed or bootstrapped stage execution,
+    ``SBT_STAGE_OUTPUT_DIR`` is an explicit runtime-only compatibility route; the
+    source and resolved YAML files are not rewritten with this path.
+    """
+    stage_output = os.environ.get("SBT_STAGE_OUTPUT_DIR")
+    if not stage_output:
+        return config
+    general = config.setdefault("general", {})
+    if not isinstance(general, dict):
+        logging.warning(
+            "Cannot route stage outputs because the general config section is not a mapping."
+        )
+        return config
+    legacy_qc = general.get("qc_folder", "QC")
+    general["qc_folder"] = str(Path(stage_output).expanduser().resolve(strict=False))
+    logging.info(
+        "Reporting output routing active for stage '%s': legacy qc_folder=%s -> %s. "
+        "The config file is unchanged.",
+        os.environ.get("SBT_STAGE", "unknown"),
+        legacy_qc,
+        general["qc_folder"],
+    )
     return config
 
 def create_config(config_class, **overrides):

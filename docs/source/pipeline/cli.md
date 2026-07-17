@@ -26,9 +26,11 @@ dependency stack into the launcher environment.
 An SBT project combines:
 
 - a Pydantic-validated pipeline config, normally `config.yaml`;
-- canonical project inputs and outputs at the paths configured under `general`;
+- canonical reusable project inputs and assets at paths configured under `general`;
+- numbered human-facing stage reports under `outputs/`;
 - `.sbt/project.yaml`, which gives the project a stable UUID;
-- `.sbt/runs/`, which contains operational run records.
+- `.sbt/project_notes.md`, for durable human or agent-authored context;
+- `.sbt/runs/`, which contains operational run records, stage events, and logs.
 
 Configured paths remain the source of truth. The project marker does not copy
 scientific defaults or redefine folder names. Project assets may remain mutable;
@@ -46,8 +48,9 @@ sbt project init
 ```
 
 This creates `config.yaml`, the configured raw IMC and metadata folders,
-`.sbt/project.yaml`, and `.sbt/runs/`. Use `--config-level complete` for every
-current default. Existing files are not overwritten unless `--force` is used.
+`.sbt/project.yaml`, `.sbt/project_notes.md`, `.sbt/runs/`, and a complete
+numbered `outputs/` navigation tree. Use `--config-level complete` for every
+current default. Existing scientific files are not overwritten.
 
 Adopt an existing project without moving or rewriting data:
 
@@ -79,9 +82,17 @@ sbt project assets --format json
 ```
 
 Validation distinguishes required initial inputs, optional inputs, generated
-assets, and readiness for a requested stage or mode. Inspection uses only
+assets, human-facing reports, legacy output folders, and readiness for a
+requested stage or mode. Inspection uses only
 existence, file size, modification time, and bounded top-level counts. It does
 not load AnnData or images, recurse through large trees, or calculate checksums.
+
+Project notes can be displayed or appended explicitly:
+
+```bash
+sbt project notes
+sbt project notes --add "Check panel mapping before publication."
+```
 
 ## Stages and modes
 
@@ -93,8 +104,10 @@ sbt modes explain segmentation
 ```
 
 The typed Python registry contains every alias mirrored in
-`SLURM_scripts/pipeline.conf`, with wrapper paths, dependencies, workflow
-groups, asset roles, expected outputs, and log patterns.
+`SLURM_scripts/pipeline.conf`, with fixed display order, numbered output folder,
+shared scientific explainer, wrapper paths, dependencies, workflow groups,
+asset roles, expected outputs, and log patterns. `sbt stages explain` renders
+the same explainer snapshot used in generated reports.
 
 Initial modes are:
 
@@ -137,6 +150,8 @@ Submit:
 ```bash
 sbt run segmentation
 sbt run prep denoise cellpose nimbus
+sbt run cellpose --reason "Repeat with a larger diameter after fragmentation."
+sbt run cellpose --note "Review ROI_17 carefully." --note "Compare with run 2026..."
 ```
 
 Each submitted run creates:
@@ -152,16 +167,34 @@ Each submitted run creates:
   status.yaml
   project_assets.before.yaml
   logs/
+  stage_events/
 ```
 
 Jobs use `sbatch --parsable`, explicit stdout/stderr paths, and `afterok`
 dependencies. Each receives `SBT_PROJECT_ROOT`, `SBT_PROJECT_ID`, `SBT_CONFIG`,
-`SBT_RUN_ID`, `SBT_RUN_DIR`, and `SBT_STAGE`.
+`SBT_RUN_ID`, `SBT_RUN_DIR`, `SBT_STAGE`, `SBT_OUTPUTS_ROOT`, and
+`SBT_STAGE_OUTPUT_DIR`, plus optional reason and notes.
 
 The shared scientific-stage config parser honors `SBT_CONFIG`, so jobs read the
 run's resolved config while executing from the project root. The user's source
 config is not modified by normal `sbt run` operation. Submission stops on the
 first `sbatch` failure and records the partial submission.
+
+Each stage also writes:
+
+```text
+outputs/<numbered_stage_folder>/<run_id>/
+  README.md
+  stage_manifest.yaml
+  figures/
+  tables/
+  summaries/
+  files/
+```
+
+The stage report links back to the technical run and its logs. Start a project
+handover or review at `outputs/README.md`. See the
+[outputs and reporting guide](reporting.md) for the complete convention.
 
 ## Status and logs
 
@@ -191,12 +224,12 @@ large directory trees are not scanned.
 are assessed. Use `sbt` for ordinary project-aware planning, submission, status,
 and logs.
 
-This version records project identity, configs, plans, commands, available
-software/Git identifiers, job submissions, status, logs, and lightweight
-pre-run asset facts. It does not yet provide full scientific provenance,
-post-run inventories, checksums, immutable output versioning, stage event
-streams, QC summaries, or narrative reports. Existing AnnData logging remains
-unchanged.
+The canonical external reporting layer now records project/run identity,
+important config fields, files, assets, objective metrics, warnings, errors,
+software/Git identifiers, stage events, and narrative Markdown indexes.
+Existing AnnData `pipeline_stage_log` records remain as transitional
+compatibility provenance and are not removed. Expensive checksums and immutable
+output versioning remain outside the current scope.
 
 ## Initial SLURM-site assumptions
 

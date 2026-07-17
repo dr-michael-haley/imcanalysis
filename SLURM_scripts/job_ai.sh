@@ -10,7 +10,7 @@
 #@IN:   process.output_adata_path (default anndata_processed.h5ad) with Leiden columns
 #@IN:   OPENAI_API_KEY environment variable (if visualization.enable_ai=true)
 #@OUT:  process.output_adata_path (updated in place)
-#@OUT:  general.qc_folder/AI_Interpretation/
+#@OUT:  outputs/012_AI_Interpretation/<run_id>/ (legacy direct fallback: general.qc_folder)
 #@ENV:  imc_segmentation
 #@MODULE:  SpatialBiologyToolkit.scripts.ai_interpretation
 #@CONFIG: general, visualization, process, logging

@@ -1550,9 +1550,13 @@ def process_all_rois(general_config: GeneralConfig, mask_config: CreateMasksConf
 
         if cell_metrics_frames:
             cell_metrics_df = pd.concat(cell_metrics_frames, ignore_index=True)
-            cell_metrics_path = output_folder / 'CellposeSAM_cell_metrics.csv'
+            from SpatialBiologyToolkit.reporting import optional_category_output_path
+
+            report_tables = optional_category_output_path("tables", output_folder)
+            report_tables.mkdir(parents=True, exist_ok=True)
+            cell_metrics_path = report_tables / 'CellposeSAM_cell_metrics.csv'
             cell_metrics_df.to_csv(cell_metrics_path, index=False)
-            feature_dictionary_path = output_folder / 'CellposeSAM_cell_metrics_feature_dictionary.csv'
+            feature_dictionary_path = report_tables / 'CellposeSAM_cell_metrics_feature_dictionary.csv'
             feature_dictionary_df = build_cellpose_feature_dictionary(cell_metrics_df)
             feature_dictionary_df.to_csv(feature_dictionary_path, index_label='feature')
             logging.info(

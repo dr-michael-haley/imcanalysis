@@ -3058,15 +3058,25 @@
           "type": "string",
           "ui_group": "Input folders"
         },
+        "outputs_folder": {
+          "advice": "Keep reusable assets in their dedicated root folders; use this folder for material intended for human inspection.",
+          "default": "outputs",
+          "description": "Root folder for numbered, human-facing stage reports, figures, and tables.",
+          "level": "basic",
+          "stage": "general",
+          "title": "Outputs Folder",
+          "type": "string",
+          "ui_group": "Outputs and provenance"
+        },
         "qc_folder": {
-          "advice": "",
+          "advice": "New managed runs use general.outputs_folder and numbered stage folders. Do not repurpose this field for new output layouts.",
           "default": "QC",
-          "description": "Configuration value for qc folder.",
-          "level": "advanced",
+          "description": "Deprecated legacy catch-all QC folder retained for existing projects and direct compatibility runs.",
+          "level": "expert",
           "stage": "general",
           "title": "Qc Folder",
           "type": "string",
-          "ui_group": "General"
+          "ui_group": "Outputs and provenance"
         },
         "masks_folder": {
           "advice": "",

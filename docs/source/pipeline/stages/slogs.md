@@ -17,6 +17,7 @@ Organize SLURM output files using AnnData pipeline run metadata and verify again
 
 - general.slurm_logs_folder with renamed logs and *_Unverified flags for unmatched files
 - general.slurm_logs_folder/slurmlogs_manifest.csv
+- outputs/022_Legacy_SLURM_Log_Migration/<run_id>/ stage report under sbt
 
 ## Configuration
 

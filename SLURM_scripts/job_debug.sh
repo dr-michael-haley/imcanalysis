@@ -7,9 +7,12 @@
 #@DESC: Run environment + module import diagnostics for SLURM job scripts
 #@IN:   SLURM_scripts/job_*.sh metadata and SLURM_scripts/env_imports.yaml
 #@OUT:  imc_env_test_%j.out
+#@OUT:  outputs/023_Environment_Diagnostics/<run_id>/ stage report under sbt
 #@CONFIG: none
 
 set -euo pipefail
+
+source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 BASE_DIR="$HOME/imcanalysis"
 JOB_DIR="$BASE_DIR/SLURM_scripts"

@@ -15,6 +15,7 @@ Apply a simple CSV-based remap onto adata.obs, or generate a blank remap templat
 ## Outputs
 
 - Updated AnnData at general.anndata_path (apply mode) and/or remap CSV at remap_obs.remap_csv_path (generate_blank mode)
+- outputs/017_Observation_Remapping/<run_id>/ stage report
 
 ## Configuration
 

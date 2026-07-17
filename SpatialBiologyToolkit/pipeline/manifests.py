@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, TypeVar
@@ -50,7 +51,14 @@ def _atomic_write(path: Path, text: str) -> None:
         ) as handle:
             temporary_name = handle.name
             handle.write(text)
-        os.replace(temporary_name, path)
+        for attempt in range(5):
+            try:
+                os.replace(temporary_name, path)
+                break
+            except PermissionError:
+                if os.name != "nt" or attempt == 4:
+                    raise
+                time.sleep(0.02 * (attempt + 1))
     finally:
         if temporary_name and Path(temporary_name).exists():
             Path(temporary_name).unlink()
@@ -78,6 +86,12 @@ def write_yaml(path: str | Path, value: Any) -> Path:
 def write_json(path: str | Path, value: Any) -> Path:
     destination = Path(path)
     _atomic_write(destination, dump_json(value))
+    return destination
+
+
+def write_text(path: str | Path, text: str) -> Path:
+    destination = Path(path)
+    _atomic_write(destination, text)
     return destination
 
 
@@ -113,5 +127,6 @@ __all__ = [
     "read_yaml",
     "utc_now",
     "write_json",
+    "write_text",
     "write_yaml",
 ]

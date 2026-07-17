@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from pathlib import Path
 from typing import Callable
 
@@ -17,6 +18,7 @@ from .models import (
     SubmittedJobs,
 )
 from .project import ProjectContext
+from .registry import get_stage
 from .runs import STATUS_FILE, SUBMITTED_JOBS, RunRecord
 
 
@@ -35,14 +37,31 @@ def sbt_environment(
     run: RunRecord,
     stage_name: str,
 ) -> dict[str, str]:
-    return {
+    stage = get_stage(stage_name)
+    outputs_root = Path(context.config.general.outputs_folder).expanduser()
+    if not outputs_root.is_absolute():
+        outputs_root = context.root / outputs_root
+    outputs_root = outputs_root.resolve(strict=False)
+    environment = {
         "SBT_PROJECT_ROOT": str(context.root),
         "SBT_PROJECT_ID": context.project_metadata.project_id,
         "SBT_CONFIG": str(run.resolved_config_path),
         "SBT_RUN_ID": run.run_id,
         "SBT_RUN_DIR": str(run.run_dir),
         "SBT_STAGE": stage_name,
+        "SBT_OUTPUTS_ROOT": str(outputs_root),
+        "SBT_STAGE_OUTPUT_DIR": str(
+            (outputs_root / stage.output_folder / run.run_id).resolve(strict=False)
+        ),
+        "SBT_STAGE_DISPLAY_NAME": stage.display_name,
+        "SBT_STAGE_DOCUMENTATION": stage.documentation_path,
+        "SBT_REPORTING_PYTHON": sys.executable,
     }
+    if run.manifest.reason:
+        environment["SBT_RUN_REASON"] = run.manifest.reason
+    if run.manifest.notes:
+        environment["SBT_RUN_NOTES"] = "\n".join(run.manifest.notes)
+    return environment
 
 
 def expected_log_paths(
@@ -50,8 +69,8 @@ def expected_log_paths(
 ) -> tuple[Path, Path]:
     logs_dir = run_dir / "logs"
     return (
-        (logs_dir / f"{stage_name}-{job_id}.out").resolve(strict=False),
-        (logs_dir / f"{stage_name}-{job_id}.err").resolve(strict=False),
+        (logs_dir / f"{stage_name}_{job_id}.out").resolve(strict=False),
+        (logs_dir / f"{stage_name}_{job_id}.err").resolve(strict=False),
     )
 
 
@@ -63,8 +82,8 @@ def build_sbatch_command(
     script: Path,
     dependency_job_id: str | None = None,
 ) -> list[str]:
-    output_pattern = run.run_dir / "logs" / f"{stage_name}-%j.out"
-    error_pattern = run.run_dir / "logs" / f"{stage_name}-%j.err"
+    output_pattern = run.run_dir / "logs" / f"{stage_name}_%j.out"
+    error_pattern = run.run_dir / "logs" / f"{stage_name}_%j.err"
     command = [
         "sbatch",
         "--parsable",
@@ -181,8 +200,8 @@ def submit_run(
                 )
             job_id = parse_job_id(completed.stdout)
         except (FileNotFoundError, OSError, ValueError, RuntimeError) as exc:
-            output_pattern = run.run_dir / "logs" / f"{stage.name}-%j.out"
-            error_pattern = run.run_dir / "logs" / f"{stage.name}-%j.err"
+            output_pattern = run.run_dir / "logs" / f"{stage.name}_%j.out"
+            error_pattern = run.run_dir / "logs" / f"{stage.name}_%j.err"
             submitted.jobs.append(
                 SubmissionRecord(
                     stage=stage.name,

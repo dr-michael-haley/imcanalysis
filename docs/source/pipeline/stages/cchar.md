@@ -16,7 +16,7 @@ Identify spatial neighborhoods with CellCharter (TRVAE reduction by default) and
 ## Outputs
 
 - cellcharter.output_adata_path (default anndata_cellcharter.h5ad)
-- general.qc_folder/cellcharter.qc_output_subdir (default QC/CellCharter_QC)
+- outputs/010_CellCharter_Neighbourhoods/<run_id>/ (legacy direct fallback: general.qc_folder)
 
 ## Configuration
 

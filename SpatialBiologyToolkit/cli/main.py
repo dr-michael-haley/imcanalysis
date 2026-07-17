@@ -22,6 +22,8 @@ from SpatialBiologyToolkit.pipeline.logs import resolve_run_logs, tail_text
 from SpatialBiologyToolkit.pipeline.manifests import (
     format_machine_output,
     read_yaml,
+    utc_now,
+    write_text,
 )
 from SpatialBiologyToolkit.pipeline.models import model_data
 from SpatialBiologyToolkit.pipeline.planner import build_run_plan
@@ -167,6 +169,7 @@ def _print_validation(report) -> None:
         ("Required inputs", report.required_inputs),
         ("Optional inputs", report.optional_inputs),
         ("Generated assets", report.generated_assets),
+        ("Reporting outputs", report.reporting_outputs),
     ):
         typer.echo(title)
         for item in items:
@@ -367,7 +370,7 @@ def project_assets(
         _emit_machine(assets, output_format)
         return
     for asset in assets:
-        typer.echo(f"{asset.role:<18} {asset.path}")
+        typer.echo(f"{asset.role:<20} {asset.lifecycle:<16} {asset.path}")
 
 
 @project_app.command("describe")
@@ -430,6 +433,32 @@ def project_describe(
         )
 
 
+@project_app.command("notes")
+def project_notes(
+    project: Path | None = typer.Option(None, "--project"),
+    add: str | None = typer.Option(
+        None,
+        "--add",
+        help="Append a durable project note; omit to display the notes file.",
+    ),
+) -> None:
+    try:
+        context = _project(project)
+        notes_path = context.root / context.project_metadata.notes_file
+        if add:
+            existing = (
+                notes_path.read_text(encoding="utf-8")
+                if notes_path.is_file()
+                else "# Project notes\n"
+            )
+            entry = f"- {utc_now().isoformat()}: {add.strip()}\n"
+            write_text(notes_path, existing.rstrip() + "\n\n" + entry)
+        content = notes_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        _fail(exc)
+    typer.echo(content, nl=content.endswith("\n"))
+
+
 @stages_app.command("list")
 def stages_list(
     output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
@@ -438,13 +467,12 @@ def stages_list(
         _emit_machine(list(STAGES), output_format)
         return
     typer.echo(
-        f"{'STAGE':<12} {'DEPENDENCIES':<16} {'REQUIRES':<30} {'PRODUCES':<24} SCRIPT"
+        f"{'STAGE':<12} {'ORDER':<7} {'OUTPUT FOLDER':<34} DISPLAY NAME"
     )
-    for stage in STAGES:
+    for stage in sorted(STAGES, key=lambda item: (item.display_order, item.name)):
         typer.echo(
-            f"{stage.name:<12} {(','.join(stage.depends_on) or '-'):<16} "
-            f"{(','.join(stage.requires_assets) or '-'):<30} "
-            f"{(','.join(stage.produces_assets) or '-'):<24} {stage.slurm_script}"
+            f"{stage.name:<12} {stage.display_order:<7} "
+            f"{stage.output_folder:<34} {stage.display_name}"
         )
         typer.echo(f"  {stage.description}")
 
@@ -461,21 +489,20 @@ def stages_explain(
     if output_format != OutputFormat.text:
         _emit_machine(spec, output_format)
         return
-    typer.echo(f"Stage: {spec.name}")
-    typer.echo(f"Purpose: {spec.description}")
+    from SpatialBiologyToolkit.pipeline.registry import toolkit_root
+
+    documentation = toolkit_root() / spec.documentation_path
+    typer.echo(f"Stage: {spec.name} — {spec.display_name}")
+    typer.echo(f"Output folder: {spec.output_folder}")
     typer.echo(f"SLURM script: {stage_script_path(spec)}")
-    typer.echo(f"Dependencies: {', '.join(spec.depends_on) or '-'}")
-    typer.echo(f"Modes/groups: {', '.join(spec.groups) or '-'}")
-    typer.echo(f"Required assets: {', '.join(spec.requires_assets) or '-'}")
-    typer.echo(f"Produced assets: {', '.join(spec.produces_assets) or '-'}")
-    typer.echo("Expected outputs:")
-    for output in spec.expected_outputs or ["-"]:
-        typer.echo(f"  - {output}")
-    typer.echo("Log patterns:")
-    for pattern in spec.log_patterns:
-        typer.echo(f"  - {pattern}")
-    for note in spec.notes:
-        typer.echo(f"Note: {note}")
+    typer.echo(f"Documentation: {documentation}")
+    typer.echo("")
+    if documentation.is_file():
+        typer.echo(documentation.read_text(encoding="utf-8"))
+    else:
+        typer.echo(spec.description)
+        typer.echo("")
+        typer.echo("Shared stage explainer is missing.")
 
 
 @modes_app.command("list")
@@ -533,6 +560,16 @@ def run_command(
     project: Path | None = typer.Option(None, "--project"),
     config: Path | None = typer.Option(None, "--config"),
     dry_run: bool = typer.Option(False, "--dry-run"),
+    reason: str | None = typer.Option(
+        None,
+        "--reason",
+        help="Optional human-readable purpose recorded in run and stage reports.",
+    ),
+    note: list[str] = typer.Option(
+        [],
+        "--note",
+        help="Optional repeatable run note recorded in run and stage reports.",
+    ),
 ) -> None:
     try:
         context = _project(project, config)
@@ -545,7 +582,13 @@ def run_command(
 
     command = command_text(sys.argv)
     if dry_run:
-        run = prospective_run_record(context, plan, command=command)
+        run = prospective_run_record(
+            context,
+            plan,
+            command=command,
+            reason=reason,
+            notes=note,
+        )
         _print_plan(plan)
         typer.echo("")
         typer.echo(f"Prospective run ID: {run.run_id}")
@@ -566,7 +609,13 @@ def run_command(
         return
 
     try:
-        run = create_run_record(context, plan, command=command)
+        run = create_run_record(
+            context,
+            plan,
+            command=command,
+            reason=reason,
+            notes=note,
+        )
         submitted = submit_run(context, plan, run)
     except SubmissionError as exc:
         typer.echo(f"Run record: {run.run_dir}", err=True)

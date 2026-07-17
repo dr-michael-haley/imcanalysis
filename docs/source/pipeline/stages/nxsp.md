@@ -15,7 +15,7 @@ Run per-ROI Squidpy/NetworkX spatial graph metrics (assortativity, per-populatio
 
 ## Outputs
 
-- general.qc_folder/networkx_spatial.output_subdir (default QC/NetworkX_Spatial)
+- outputs/015_NetworkX_Spatial_Analysis/<run_id>/
 
 ## Configuration
 

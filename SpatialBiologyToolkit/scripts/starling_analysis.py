@@ -28,6 +28,8 @@ except Exception:  # pragma: no cover
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from SpatialBiologyToolkit.reporting import get_active_reporter, project_asset_path
+
 from .config_and_utils import (
     GeneralConfig,
     StarlingConfig,
@@ -647,9 +649,18 @@ def run_starling_analysis(*, general_config: GeneralConfig, starling_config: Sta
     if bool(starling_config.save_model):
         import torch
 
-        model_path = str(qc_dir / str(starling_config.model_output_name))
+        resolved_model_path = project_asset_path(starling_config.model_output_name)
+        resolved_model_path.parent.mkdir(parents=True, exist_ok=True)
+        model_path = str(resolved_model_path)
         torch.save(st, model_path)
         logging.info("Saved STARLING model to %s", model_path)
+        reporter = get_active_reporter()
+        if reporter is not None:
+            reporter.add_asset(
+                "starling_model",
+                resolved_model_path,
+                "Reusable STARLING model checkpoint.",
+            )
 
     run_details = {
         "input_adata_path": str(resolved_input_path),

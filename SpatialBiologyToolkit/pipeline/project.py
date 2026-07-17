@@ -31,6 +31,7 @@ from .models import (
 PROJECT_MARKER = Path(".sbt/project.yaml")
 RUNS_DIRECTORY = Path(".sbt/runs")
 INITIAL_ASSET_INVENTORY = Path(".sbt/project_assets.initial.yaml")
+PROJECT_NOTES = Path(".sbt/project_notes.md")
 
 
 class ProjectError(RuntimeError):
@@ -173,12 +174,24 @@ def write_config_template(
     return destination
 
 
-def _new_metadata(config_file: str) -> ProjectMetadata:
+def _new_metadata(config_file: str, *, title: str | None = None) -> ProjectMetadata:
     return ProjectMetadata(
         project_id=str(uuid.uuid4()),
         created_at=utc_now(),
         config_file=config_file,
+        title=title,
     )
+
+
+def _ensure_project_notes(project_root: Path) -> Path:
+    path = project_root / PROJECT_NOTES
+    if not path.exists():
+        path.write_text(
+            "# Project notes\n\n"
+            "Add durable human or agent-authored project context here.\n",
+            encoding="utf-8",
+        )
+    return path
 
 
 def _relative_config_name(root: Path, config_path: Path) -> str:
@@ -214,9 +227,24 @@ def initialize_project(
         parents=True, exist_ok=True
     )
     (project_root / RUNS_DIRECTORY).mkdir(parents=True, exist_ok=True)
-    metadata = _new_metadata(_relative_config_name(project_root, config_path))
+    metadata = _new_metadata(
+        _relative_config_name(project_root, config_path),
+        title=project_root.name,
+    )
     write_yaml(marker_path, metadata)
-    return load_project(project_root)
+    _ensure_project_notes(project_root)
+    context = load_project(project_root)
+    from SpatialBiologyToolkit.reporting.render import initialize_output_layout
+
+    initialize_output_layout(
+        project_root=context.root,
+        project_id=context.project_metadata.project_id,
+        config_path=context.config_path,
+        outputs_root=resolve_project_path(
+            context.root, context.config.general.outputs_folder
+        ),
+    )
+    return context
 
 
 def adopt_project(
@@ -249,11 +277,25 @@ def adopt_project(
             update={"config_file": _relative_config_name(project_root, source_config)}
         )
     else:
-        metadata = _new_metadata(_relative_config_name(project_root, source_config))
+        metadata = _new_metadata(
+            _relative_config_name(project_root, source_config),
+            title=project_root.name,
+        )
 
     (project_root / RUNS_DIRECTORY).mkdir(parents=True, exist_ok=True)
     write_yaml(marker_path, metadata)
+    _ensure_project_notes(project_root)
     context = load_project(project_root)
+    from SpatialBiologyToolkit.reporting.render import initialize_output_layout
+
+    initialize_output_layout(
+        project_root=context.root,
+        project_id=context.project_metadata.project_id,
+        config_path=context.config_path,
+        outputs_root=resolve_project_path(
+            context.root, context.config.general.outputs_folder
+        ),
+    )
     assets = resolve_assets(config, project_root)
     initial_inventory = project_root / INITIAL_ASSET_INVENTORY
     if force or not initial_inventory.exists():
@@ -423,6 +465,35 @@ def validate_project(
         stage_results[stage.name] = ready
         readiness_messages[stage.name] = messages
 
+    from SpatialBiologyToolkit.reporting.validation import validate_reporting_layout
+
+    reporting_outputs = validate_reporting_layout(
+        project_root=context.root,
+        outputs_root=resolve_project_path(
+            context.root, context.config.general.outputs_folder
+        ),
+        legacy_qc=resolve_project_path(context.root, context.config.general.qc_folder),
+    )
+    outputs_root = resolve_project_path(
+        context.root, context.config.general.outputs_folder
+    )
+    for asset in assets:
+        if (
+            asset.lifecycle in {"required_input", "optional_input", "generated_output"}
+            and outputs_root in asset.path.parents
+        ):
+            reporting_outputs.append(
+                ValidationItem(
+                    name=f"{asset.role} asset location",
+                    path=asset.path,
+                    status="warning",
+                    message=(
+                        "A reusable project asset is configured inside the human-facing "
+                        "outputs folder. Prefer a canonical project-root asset path."
+                    ),
+                )
+            )
+
     return ProjectValidationReport(
         project_id=context.project_metadata.project_id,
         project_root=context.root,
@@ -430,6 +501,7 @@ def validate_project(
         required_inputs=required,
         optional_inputs=optional,
         generated_assets=generated,
+        reporting_outputs=reporting_outputs,
         stage_readiness=stage_results,
         readiness_messages=readiness_messages,
     )
@@ -439,6 +511,7 @@ __all__ = [
     "AdoptionResult",
     "INITIAL_ASSET_INVENTORY",
     "PROJECT_MARKER",
+    "PROJECT_NOTES",
     "ProjectContext",
     "ProjectError",
     "ProjectNotFoundError",

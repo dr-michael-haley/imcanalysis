@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Literal
 
 from SpatialBiologyToolkit.config.models import PipelineConfig
 
@@ -13,7 +13,18 @@ from .manifests import utc_now
 from .models import AssetInventory, ProjectAsset
 
 
-ASSET_FIELDS: tuple[tuple[str, str, str, str], ...] = (
+AssetKind = Literal["file", "directory"]
+AssetLifecycle = Literal[
+    "required_input",
+    "optional_input",
+    "generated_output",
+    "human_output",
+    "legacy_output",
+    "operational_state",
+]
+
+
+ASSET_FIELDS: tuple[tuple[str, str, AssetKind, AssetLifecycle], ...] = (
     ("raw_imc_files", "imc_files_folder", "directory", "required_input"),
     ("metadata", "metadata_folder", "directory", "optional_input"),
     ("tiff_stacks", "tiff_stacks_folder", "directory", "generated_output"),
@@ -26,9 +37,10 @@ ASSET_FIELDS: tuple[tuple[str, str, str, str], ...] = (
     ),
     ("masks", "masks_folder", "directory", "generated_output"),
     ("cell_tables", "celltable_folder", "directory", "generated_output"),
-    ("qc", "qc_folder", "directory", "generated_output"),
-    ("slurm_logs", "slurm_logs_folder", "directory", "generated_output"),
     ("anndata", "anndata_path", "file", "generated_output"),
+    ("human_outputs", "outputs_folder", "directory", "human_output"),
+    ("legacy_qc", "qc_folder", "directory", "legacy_output"),
+    ("legacy_slurm_logs", "slurm_logs_folder", "directory", "legacy_output"),
 )
 
 RAW_IMC_SUFFIXES = {".mcd", ".txt"}
@@ -68,8 +80,8 @@ def inspect_asset(
     *,
     role: str,
     path: Path,
-    kind: str,
-    lifecycle: str,
+    kind: AssetKind,
+    lifecycle: AssetLifecycle,
     count_limit: int = DEFAULT_COUNT_LIMIT,
 ) -> ProjectAsset:
     exists = path.is_file() if kind == "file" else path.is_dir()

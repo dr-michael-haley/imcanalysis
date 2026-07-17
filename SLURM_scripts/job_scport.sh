@@ -11,6 +11,7 @@
 #@DESC: Generate single-cell portrait outputs via external scPortrait converter
 #@IN:   processed/ and masks/ (hard-coded CLI args in this job)
 #@OUT:  scPortrait/ project outputs (--projects-root scPortrait)
+#@OUT:  outputs/019_scPortrait_Export/<run_id>/ stage report under sbt
 #@ENV:  scPortrait
 #@CONFIG: none (does not read config.yaml)
 

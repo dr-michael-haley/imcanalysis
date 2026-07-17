@@ -15,8 +15,7 @@ Generate denoising side-by-side QC and panel consistency checks
 
 ## Outputs
 
-- general.qc_folder/denoising/
-- panel_consistency_report_*.csv (+ *_pixel_qc.csv)
+- outputs/003_Denoising_QC/<run_id>/ figures and panel/pixel QC tables
 
 ## Configuration
 

@@ -9,6 +9,7 @@
 #@DESC: Update config.yaml by syncing all default config sections/keys
 #@IN:   config.yaml (created if missing)
 #@OUT:  config.yaml (updated in place)
+#@OUT:  outputs/020_Configuration_Maintenance/<run_id>/ stage report under sbt
 #@ENV:  imc_segmentation
 #@MODULE:  SpatialBiologyToolkit.scripts.update_config
 #@CONFIG: all blocks (sync defaults): general, preprocess, denoising, createmasks, segmentation, nimbus, process, visualization, cellcharter, pairwise_spatial, networkx_spatial, remap_obs, subclustering, logging

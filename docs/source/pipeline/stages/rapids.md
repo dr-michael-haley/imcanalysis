@@ -17,9 +17,7 @@ GPU processing with rapids-singlecell: optional cell filtering, PCA, optional Ha
 ## Outputs
 
 - rapids.output_adata_path (default general.anndata_path)
-- general.qc_folder/rapids.qc_output_subdir (default QC/RapidsProcess)
-- general.qc_folder/rapids.qc_output_subdir/Matrixplots/ Leiden MatrixPlots
-- general.qc_folder/rapids.qc_output_subdir/ParameterScan/ when rapids.parameter_scan_dict is set
+- outputs/007_RAPIDS_Processing/<run_id>/ figures, tables, and parameter scans
 
 ## Configuration
 

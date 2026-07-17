@@ -11,6 +11,7 @@
 #@IN:   subclustering/sublustering_settings.csv and subclustering/marker_list.csv (created automatically on first run)
 #@OUT:  subclustering.output_adata_path (default anndata_subclustered.h5ad)
 #@OUT:  subclustering.output_subdir (default subclustering/) with settings, marker list, figures, remap CSVs
+#@OUT:  outputs/009_Subclustering/<run_id>/figures/ for human-facing plots under sbt
 #@ENV:  imc_segmentation
 #@MODULE:  SpatialBiologyToolkit.scripts.subclustering
 #@CONFIG: general, process, subclustering, logging

@@ -16,7 +16,7 @@ Denoise channel TIFFs and compute denoising QC metrics
 ## Outputs
 
 - general.denoised_images_folder (default processed/)
-- general.qc_folder/denoised_pixel_qc*.csv and optional general.qc_folder/denoising/
+- outputs/002_Denoising/<run_id>/ plus reusable denoised channel images
 
 ## Configuration
 

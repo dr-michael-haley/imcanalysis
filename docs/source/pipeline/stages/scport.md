@@ -14,6 +14,7 @@ Generate single-cell portrait outputs via external scPortrait converter
 ## Outputs
 
 - scPortrait/ project outputs (--projects-root scPortrait)
+- outputs/019_scPortrait_Export/<run_id>/ stage report under sbt
 
 ## Configuration
 

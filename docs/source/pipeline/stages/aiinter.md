@@ -16,7 +16,7 @@ AI labeling of Leiden populations and writing *_AIlabel columns
 ## Outputs
 
 - process.output_adata_path (updated in place)
-- general.qc_folder/AI_Interpretation/
+- outputs/012_AI_Interpretation/<run_id>/ (legacy direct fallback: general.qc_folder)
 
 ## Configuration
 

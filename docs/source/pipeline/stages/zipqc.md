@@ -2,17 +2,17 @@
 
 # `zipqc`
 
-Zip selected QC output directories for download
+Zip selected numbered human-facing output directories for download
 
 - Wrapper: [`job_zipqc.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_zipqc.sh)
 
 ## Inputs
 
-- QC paths defined in Bash_scripts/zipqc (default set)
+- outputs/ stage paths defined in Bash_scripts/zipqc (legacy QC fallback retained)
 
 ## Outputs
 
-- <dataset_dir>_<set>_<YYYY-MM-DD>.zip
+- outputs/021_Output_Archive/<run_id>/files/<dataset>_<set>_<date>.zip under sbt
 
 ## Configuration
 

@@ -15,7 +15,7 @@ Generate UMAP/matrix/overlay/population visualization outputs
 
 ## Outputs
 
-- general.qc_folder/BasicProcess_QC/
+- outputs/013_Visualisation/<run_id>/
 
 ## Configuration
 
