@@ -91,7 +91,6 @@ class EnvironmentManager:
         registry_path: str | Path | None = None,
         runner: Runner = subprocess.run,
         conda_executable: str | None = None,
-        conda_lock_executable: str | None = None,
         state_root: str | Path | None = None,
     ) -> None:
         self.repository_root = toolkit_root(repository_root)
@@ -105,7 +104,11 @@ class EnvironmentManager:
         )
         self.runner = runner
         self.conda = conda_executable or find_conda_executable()
-        self.conda_lock = conda_lock_executable or find_executable("conda-lock")
+        self.conda_lock_command = (
+            [self.conda, "run", "-n", "base", "conda-lock"]
+            if self.conda
+            else None
+        )
         self.state_root = (
             Path(state_root).expanduser().resolve(strict=False)
             if state_root
@@ -279,12 +282,16 @@ class EnvironmentManager:
             checks.append(
                 DoctorCheck(name="conda", status="error", detail="Conda was not found on PATH.")
             )
-        if self.conda_lock:
+        if self.conda_lock_command:
             try:
-                version = run_checked([self.conda_lock, "--version"], runner=self.runner)
+                version = run_checked(
+                    [*self.conda_lock_command, "--version"], runner=self.runner
+                )
                 checks.append(
                     DoctorCheck(
-                        name="conda_lock", status="ok", detail=version.stdout.strip()
+                        name="conda_lock",
+                        status="ok",
+                        detail=f"Conda base: {version.stdout.strip()}",
                     )
                 )
             except RuntimeError as exc:
@@ -296,7 +303,7 @@ class EnvironmentManager:
                 DoctorCheck(
                     name="conda_lock",
                     status="error",
-                    detail="conda-lock was not found on PATH.",
+                    detail="Conda is unavailable, so conda-lock cannot be run from base.",
                 )
             )
 
@@ -717,12 +724,12 @@ class EnvironmentManager:
         *,
         verbose: bool = False,
     ) -> list[str]:
-        if not self.conda_lock:
-            raise RuntimeError("conda-lock was not found on PATH.")
+        if not self.conda_lock_command:
+            raise RuntimeError("Conda is unavailable; cannot run conda-lock from base.")
         file_option = self._conda_lock_option("lock", "--file", "-f")
         platform_option = self._conda_lock_option("lock", "--platform", "-p")
         command = [
-            self.conda_lock,
+            *self.conda_lock_command,
             "lock",
             file_option,
             str(environment_yml),
@@ -740,11 +747,11 @@ class EnvironmentManager:
 
     def _conda_lock_option(self, subcommand: str, long: str, short: str) -> str:
         """Inspect installed help while retaining a documented modern default."""
-        if not self.conda_lock:
+        if not self.conda_lock_command:
             return long
         try:
             completed = self.runner(
-                [self.conda_lock, subcommand, "--help"],
+                [*self.conda_lock_command, subcommand, "--help"],
                 capture_output=True,
                 text=True,
                 check=False,
@@ -868,8 +875,8 @@ class EnvironmentManager:
         key, definition = self.resolve(selector)
         if not self.conda:
             raise RuntimeError("Conda executable was not found on PATH.")
-        if not self.conda_lock:
-            raise RuntimeError("conda-lock was not found on PATH.")
+        if not self.conda_lock_command:
+            raise RuntimeError("Conda is unavailable; cannot run conda-lock from base.")
         if plan.recreation_required and not recreate:
             raise RuntimeError("Drift detected; pass --recreate to request destructive recreation.")
         if plan.recreation_required and not confirmed:
@@ -902,7 +909,7 @@ class EnvironmentManager:
                 )
         name_option = self._conda_lock_option("install", "--name", "-n")
         install_command = [
-            self.conda_lock,
+            *self.conda_lock_command,
             "install",
             name_option,
             definition.conda_name,

@@ -55,6 +55,11 @@ After installing Miniconda, install `conda-lock` in the base environment (requir
 conda install --channel=conda-forge --name=base conda-lock
 ```
 
+The `sbt env` commands always invoke this installation through
+`conda run -n base conda-lock`. Therefore, `conda-lock` does not need to be on
+the active scientific environment's `PATH`, and it should not be installed
+separately in every pipeline environment.
+
 - A clone of this repository inside your home directory:
 
 ```

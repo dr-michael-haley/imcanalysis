@@ -21,8 +21,9 @@ sbt env sync --all
 longer contains an independent environment array or installation algorithm.
 
 The launcher environment needs only Python, Pydantic, PyYAML, Typer, pip, and
-the editable toolkit installed with `--no-deps`. Scientific dependencies remain
-inside their fixed stage environments.
+the editable toolkit installed with `--no-deps`. `conda-lock` remains installed
+once in Conda base and is invoked by `sbt` through `conda run -n base`.
+Scientific dependencies remain inside their fixed stage environments.
 
 ## SLURM compatibility
 

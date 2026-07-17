@@ -7,6 +7,9 @@ testing, and permanent environment evidence in stage reports.
 
 It does not import the scientific stack and does not require shell activation.
 All target-environment Python and pip operations use `conda run -n`.
+All lock generation and installation operations use the copy of `conda-lock`
+installed in Conda base through `conda run -n base conda-lock`; the active
+scientific environment and its `PATH` do not control lock availability.
 
 ## Environment registry
 
@@ -81,7 +84,7 @@ sbt env sync --all --dry-run
 
 For an absent environment, synchronisation performs:
 
-1. `conda-lock install --name <fixed-name> <lockfile>`;
+1. `conda run -n base conda-lock install --name <fixed-name> <lockfile>`;
 2. `conda run -n <fixed-name> python -m pip install -r pip-extras.txt`;
 3. `conda run -n <fixed-name> python -m pip install -e <repo> --no-deps`;
 4. registered login-node-safe smoke tests;
@@ -136,8 +139,9 @@ sbt env lock --all
 sbt env lock imc_cellcharter --check
 ```
 
-Lock generation uses a temporary destination. The committed lock is replaced
-atomically only after conda-lock succeeds and creates a non-empty file.
+Lock generation uses the `conda-lock` installation in Conda base and a
+temporary destination. The committed lock is replaced atomically only after
+conda-lock succeeds and creates a non-empty file.
 `--check` compares a temporary generated lock and never replaces the repository
 file. Failure preserves the previous lock.
 
@@ -184,7 +188,8 @@ sbt env doctor
 Smoke tests execute the registry's short import probes through `conda run` and
 record command, return code, output tails, and duration. They do not run GPU
 workloads, datasets, or complete pipeline stages. `doctor` checks Conda,
-conda-lock, registry/spec paths, stage mappings, user-state write access, and
+the base-environment conda-lock installation, registry/spec paths, stage
+mappings, user-state write access, and
 stale installer mappings without changing anything.
 
 ## Environment evidence in every stage report

@@ -38,6 +38,11 @@ class FakeRunner:
     def __call__(self, command, **kwargs):
         command = [str(item) for item in command]
         self.calls.append(command)
+        conda_lock_command = (
+            command[5:]
+            if command[:5] == ["conda", "run", "-n", "base", "conda-lock"]
+            else None
+        )
         stdout = ""
         stderr = ""
         return_code = 0
@@ -103,13 +108,15 @@ class FakeRunner:
                 stdout = ""
         elif command[:3] == ["conda", "env", "remove"]:
             self.exists = False
-        elif command[:2] == ["conda-lock", "install"]:
-            self.exists = True
-        elif command[:3] == ["conda-lock", "lock", "--help"]:
+        elif conda_lock_command == ["lock", "--help"]:
             stdout = "--file -f --platform -p --lockfile\n"
-        elif command[:3] == ["conda-lock", "install", "--help"]:
+        elif conda_lock_command == ["install", "--help"]:
             stdout = "--name -n\n"
-        elif command[:2] == ["conda-lock", "lock"]:
+        elif conda_lock_command == ["--version"]:
+            stdout = "conda-lock, version 3.0.4\n"
+        elif conda_lock_command and conda_lock_command[0] == "install":
+            self.exists = True
+        elif conda_lock_command and conda_lock_command[0] == "lock":
             destination = Path(command[command.index("--lockfile") + 1])
             destination.write_text("version: 1\nmetadata:\n  platforms: [linux-64]\npackage: []\n")
         elif command[:4] == ["conda", "env", "export", "--name"]:
@@ -181,7 +188,6 @@ class EnvironmentFixture(unittest.TestCase):
             registry_path=self.registry_path,
             runner=runner,
             conda_executable="conda",
-            conda_lock_executable="conda-lock",
             state_root=self.root / "state",
         )
         return manager, runner
@@ -255,6 +261,10 @@ class ComparisonAndSyncTests(EnvironmentFixture):
         report = manager.doctor()
         self.assertFalse(report.healthy)  # the minimal fixture intentionally omits most stages
         self.assertIn("pip_through_conda_run", {check.name for check in report.checks})
+        self.assertIn(
+            ["conda", "run", "-n", "base", "conda-lock", "--version"],
+            runner.calls,
+        )
         self.assertFalse(any("scanpy" in " ".join(call) for call in runner.calls))
 
     def test_exact_comparison_returns_zero(self):
@@ -281,13 +291,18 @@ class ComparisonAndSyncTests(EnvironmentFixture):
         plan = manager.sync("test", dry_run=True)
         self.assertFalse(plan.exists)
         self.assertIn("Create fixed environment", plan.actions[0])
-        self.assertFalse(any(call[:2] == ["conda-lock", "install"] for call in runner.calls))
+        self.assertFalse(any("conda-lock install" in " ".join(call) for call in runner.calls))
 
     def test_sync_installs_lock_extras_overlay_and_tests(self):
         manager, runner = self.manager(exists=False)
         manager.sync("test")
         flattened = [" ".join(call) for call in runner.calls]
-        self.assertTrue(any("conda-lock install --name test_env" in call for call in flattened))
+        self.assertTrue(
+            any(
+                "conda run -n base conda-lock install --name test_env" in call
+                for call in flattened
+            )
+        )
         self.assertTrue(any("pip install -r" in call for call in flattened))
         overlay = next(call for call in runner.calls if "-e" in call and "--no-deps" in call)
         self.assertEqual(overlay[-1], "--no-deps")
