@@ -6,35 +6,22 @@
 declare -A FOLDER_SETS
 OUTPUTS_ROOT="${SBT_OUTPUTS_ROOT:-outputs}"
 
-# Default numbered stage outputs. Legacy QC paths remain at the bottom of the
-# set so existing projects continue to archive without moving any data.
+# Active execution folders are numbered by project execution order. The
+# currently running archive execution is excluded below to avoid recursion.
 FOLDER_SETS[default]="
-${OUTPUTS_ROOT}/002_Denoising/
-${OUTPUTS_ROOT}/003_Denoising_QC/
-${OUTPUTS_ROOT}/004_Segmentation/
-${OUTPUTS_ROOT}/005_Quantification/
-${OUTPUTS_ROOT}/006_Batch_Integration/
-${OUTPUTS_ROOT}/007_RAPIDS_Processing/
-${OUTPUTS_ROOT}/008_BioBatchNet_Integration/
-${OUTPUTS_ROOT}/009_Subclustering/
-${OUTPUTS_ROOT}/010_CellCharter_Neighbourhoods/
-${OUTPUTS_ROOT}/011_STARLING_Phenotyping/
-${OUTPUTS_ROOT}/012_AI_Interpretation/
-${OUTPUTS_ROOT}/013_Visualisation/
-${OUTPUTS_ROOT}/014_Pairwise_Spatial_Analysis/
-${OUTPUTS_ROOT}/015_NetworkX_Spatial_Analysis/
+${OUTPUTS_ROOT}/[0-9][0-9][0-9]_*/
 QC/
 "
 
 # Example: only some subfolders (edit as you like)
 FOLDER_SETS[basic]="
-${OUTPUTS_ROOT}/013_Visualisation/
+${OUTPUTS_ROOT}/[0-9][0-9][0-9]_Visualisation/
 "
 
 # Example: denoising only
 FOLDER_SETS[denoise_only]="
-${OUTPUTS_ROOT}/002_Denoising/
-${OUTPUTS_ROOT}/003_Denoising_QC/
+${OUTPUTS_ROOT}/[0-9][0-9][0-9]_Denoising/
+${OUTPUTS_ROOT}/[0-9][0-9][0-9]_Denoising_QC/
 "
 
 # Explicit legacy-only selection for projects created before numbered reports.
@@ -49,7 +36,7 @@ print_help() {
     cat <<EOF
 Usage: $(basename "$0") [SET_NAME]
 
-Create a zip archive of numbered human-facing outputs.
+Create a zip archive of sequential human-facing execution outputs.
 
 SET_NAME selects which path set to use. If omitted, 'default' is used.
 
@@ -63,8 +50,8 @@ Examples:
 
 You can edit FOLDER_SETS in this script to add/remove sets or paths.
 Each set can contain directories, files, or glob patterns like:
-  outputs/013_Visualisation/
-  outputs/*/
+  outputs/[0-9][0-9][0-9]_Visualisation/
+  outputs/[0-9][0-9][0-9]_*/
 
 Existing QC/ data is retained and can be selected with the 'legacy' set.
 EOF
@@ -133,6 +120,11 @@ for spec in "${PATH_SPECS[@]}"; do
     for m in "${matches[@]}"; do
         # Check that path really exists
         if [[ -e "$m" ]]; then
+            if [[ -n "${SBT_STAGE_OUTPUT_DIR:-}" ]] && \
+               [[ "$(realpath -m "$m")" == "$(realpath -m "$SBT_STAGE_OUTPUT_DIR")" ]]; then
+                echo "Current archive execution (skipped): $m"
+                continue
+            fi
             # Deduplicate
             if [[ -z "${SEEN[$m]+_}" ]]; then
                 SEEN["$m"]=1

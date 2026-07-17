@@ -10,92 +10,92 @@ from .models import ModeSpec, StageSpec
 
 
 STAGE_PRESENTATION: dict[str, tuple[str, int, str, str]] = {
-    "prep": ("Preprocessing", 1, "001_Preprocessing", "preprocessing.md"),
-    "denoise": ("Denoising", 2, "002_Denoising", "denoising.md"),
-    "dnqc": ("Denoising QC", 3, "003_Denoising_QC", "denoising_qc.md"),
-    "cellpose": ("Segmentation", 4, "004_Segmentation", "segmentation.md"),
-    "nimbus": ("Quantification", 5, "005_Quantification", "quantification.md"),
+    "prep": ("Preprocessing", 1, "Preprocessing", "preprocessing.md"),
+    "denoise": ("Denoising", 2, "Denoising", "denoising.md"),
+    "dnqc": ("Denoising QC", 3, "Denoising_QC", "denoising_qc.md"),
+    "cellpose": ("Segmentation", 4, "Segmentation", "segmentation.md"),
+    "nimbus": ("Quantification", 5, "Quantification", "quantification.md"),
     "bint": (
         "Batch Integration",
         6,
-        "006_Batch_Integration",
+        "Batch_Integration",
         "batch_integration.md",
     ),
-    "rapids": ("RAPIDS Processing", 7, "007_RAPIDS_Processing", "rapids.md"),
+    "rapids": ("RAPIDS Processing", 7, "RAPIDS_Processing", "rapids.md"),
     "bbn": (
         "BioBatchNet Integration",
         8,
-        "008_BioBatchNet_Integration",
+        "BioBatchNet_Integration",
         "biobatchnet.md",
     ),
-    "subcl": ("Subclustering", 9, "009_Subclustering", "subclustering.md"),
+    "subcl": ("Subclustering", 9, "Subclustering", "subclustering.md"),
     "cchar": (
         "CellCharter Neighbourhoods",
         10,
-        "010_CellCharter_Neighbourhoods",
+        "CellCharter_Neighbourhoods",
         "cellcharter.md",
     ),
     "starling": (
         "STARLING Phenotyping",
         11,
-        "011_STARLING_Phenotyping",
+        "STARLING_Phenotyping",
         "starling.md",
     ),
     "aiinter": (
         "AI Interpretation",
         12,
-        "012_AI_Interpretation",
+        "AI_Interpretation",
         "ai_interpretation.md",
     ),
-    "vis": ("Visualisation", 13, "013_Visualisation", "visualisation.md"),
+    "vis": ("Visualisation", 13, "Visualisation", "visualisation.md"),
     "pairsp": (
         "Pairwise Spatial Analysis",
         14,
-        "014_Pairwise_Spatial_Analysis",
+        "Pairwise_Spatial_Analysis",
         "pairwise_spatial.md",
     ),
     "nxsp": (
         "NetworkX Spatial Analysis",
         15,
-        "015_NetworkX_Spatial_Analysis",
+        "NetworkX_Spatial_Analysis",
         "networkx_spatial.md",
     ),
     "reint": (
         "Marker Reintegration",
         16,
-        "016_Marker_Reintegration",
+        "Marker_Reintegration",
         "marker_reintegration.md",
     ),
     "remap": (
         "Observation Remapping",
         17,
-        "017_Observation_Remapping",
+        "Observation_Remapping",
         "observation_remapping.md",
     ),
     "rebuildmeta": (
         "Metadata Rebuild",
         18,
-        "018_Metadata_Rebuild",
+        "Metadata_Rebuild",
         "metadata_rebuild.md",
     ),
-    "scport": ("scPortrait Export", 19, "019_scPortrait_Export", "scportrait.md"),
+    "scport": ("scPortrait Export", 19, "scPortrait_Export", "scportrait.md"),
     "config": (
         "Configuration Maintenance",
         20,
-        "020_Configuration_Maintenance",
+        "Configuration_Maintenance",
         "configuration_maintenance.md",
     ),
-    "zipqc": ("Output Archive", 21, "021_Output_Archive", "output_archive.md"),
+    "zipqc": ("Output Archive", 21, "Output_Archive", "output_archive.md"),
     "slogs": (
         "Legacy SLURM Log Migration",
         22,
-        "022_Legacy_SLURM_Log_Migration",
+        "Legacy_SLURM_Log_Migration",
         "slurm_log_migration.md",
     ),
     "debug": (
         "Environment Diagnostics",
         23,
-        "023_Environment_Diagnostics",
+        "Environment_Diagnostics",
         "environment_diagnostics.md",
     ),
 }
@@ -169,12 +169,12 @@ def _stage(
     outputs: tuple[str, ...] = (),
     notes: tuple[str, ...] = (),
 ) -> StageSpec:
-    display_name, display_order, output_folder, doc_name = STAGE_PRESENTATION[name]
+    display_name, catalogue_order, output_slug, doc_name = STAGE_PRESENTATION[name]
     return StageSpec(
         name=name,
         display_name=display_name,
-        display_order=display_order,
-        output_folder=output_folder,
+        catalogue_order=catalogue_order,
+        output_slug=output_slug,
         documentation_path=f"docs/source/stages/{doc_name}",
         description=description,
         slurm_script=f"SLURM_scripts/{script}",
@@ -500,6 +500,25 @@ def get_mode(name: str) -> ModeSpec:
         raise KeyError(f"Unknown mode '{name}'.{suggestion}") from exc
 
 
+def resolve_stage_selector(value: str) -> StageSpec:
+    """Resolve an alias, output slug, or display name to one stage type."""
+    normalized = "".join(character for character in value.lower() if character.isalnum())
+    matches = [
+        stage
+        for stage in STAGES
+        if normalized
+        in {
+            "".join(character for character in candidate.lower() if character.isalnum())
+            for candidate in (stage.name, stage.output_slug, stage.display_name)
+        }
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        return get_stage(value)
+    raise KeyError(f"Ambiguous stage selector '{value}'.")
+
+
 def registry_aliases() -> list[str]:
     return [stage.name for stage in STAGES]
 
@@ -512,6 +531,7 @@ __all__ = [
     "get_mode",
     "get_stage",
     "registry_aliases",
+    "resolve_stage_selector",
     "stage_script_path",
     "toolkit_root",
 ]

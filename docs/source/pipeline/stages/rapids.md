@@ -17,7 +17,7 @@ GPU processing with rapids-singlecell: optional cell filtering, PCA, optional Ha
 ## Outputs
 
 - rapids.output_adata_path (default general.anndata_path)
-- outputs/007_RAPIDS_Processing/<run_id>/ figures, tables, and parameter scans
+- outputs/<execution_id>_RAPIDS_Processing/ figures, tables, and parameter scans
 
 ## Configuration
 

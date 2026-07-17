@@ -9,7 +9,7 @@
 #@DESC: Apply a simple CSV-based remap onto adata.obs, or generate a blank remap template from an existing obs column
 #@IN:   remap_obs.input_adata_path (fallback: general.anndata_path), remap_obs.remap_csv_path (default metadata/remap.csv)
 #@OUT:  Updated AnnData at general.anndata_path (apply mode) and/or remap CSV at remap_obs.remap_csv_path (generate_blank mode)
-#@OUT:  outputs/017_Observation_Remapping/<run_id>/ stage report
+#@OUT:  outputs/<execution_id>_Observation_Remapping/ stage report
 #@ENV:  imc_segmentation
 #@MODULE:  SpatialBiologyToolkit.scripts.remap_obs
 #@CONFIG: general, remap_obs, logging

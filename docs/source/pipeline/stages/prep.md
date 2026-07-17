@@ -17,7 +17,7 @@ Import IMC files, export TIFF stacks, unstack channels, and build metadata/panel
 - general.tiff_stacks_folder (default tiff_stacks/)
 - general.raw_images_folder (default tiffs/)
 - general.metadata_folder/{metadata.csv,dictionary.csv,panel.csv[,panel_mapping.csv]}
-- outputs/001_Preprocessing/<run_id>/ stage report
+- outputs/<execution_id>_Preprocessing/ stage report
 
 ## Configuration
 

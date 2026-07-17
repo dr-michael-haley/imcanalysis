@@ -9,7 +9,7 @@
 #@DESC: Run pairwise spatial analyses (Squidpy interactions, distance bootstrap, and PCF) with plots/raw exports
 #@IN:   pairwise_spatial.input_adata_path (fallback: process.output_adata_path, then process.input_adata_path)
 #@IN:   adata.obs keys configured in pairwise_spatial (population_obs, roi_obs, X/Y coords, optional groupby_obs)
-#@OUT:  outputs/014_Pairwise_Spatial_Analysis/<run_id>/
+#@OUT:  outputs/<execution_id>_Pairwise_Spatial_Analysis/
 #@ENV:  imc_cellcharter
 #@MODULE:  SpatialBiologyToolkit.scripts.pairwise_spatial
 #@CONFIG: general, process, pairwise_spatial, logging

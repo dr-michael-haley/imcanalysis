@@ -15,7 +15,7 @@ Update config.yaml by syncing all default config sections/keys
 ## Outputs
 
 - config.yaml (updated in place)
-- outputs/020_Configuration_Maintenance/<run_id>/ stage report under sbt
+- outputs/<execution_id>_Configuration_Maintenance/ stage report under sbt
 
 ## Configuration
 

@@ -76,8 +76,8 @@ class ProjectValidationReport(PipelineModel):
 class StageSpec(PipelineModel):
     name: str
     display_name: str
-    display_order: int
-    output_folder: str
+    catalogue_order: int
+    output_slug: str
     documentation_path: str
     description: str
     slurm_script: str
@@ -126,9 +126,125 @@ class RunPlan(PipelineModel):
     warnings: list[str] = Field(default_factory=list)
 
 
-class RunManifest(PipelineModel):
+ExecutionStatus = Literal[
+    "allocated",
+    "pending",
+    "running",
+    "completed",
+    "failed",
+    "cancelled",
+    "blocked",
+    "unknown",
+]
+AssetEffect = Literal["none", "created", "modified", "unknown"]
+
+
+class ExecutionRecord(PipelineModel):
+    execution_id: int = Field(ge=1)
+    execution_label: str
+    original_execution_id: int = Field(ge=1)
+    technical_run_id: str
+    workflow_run_id: str
+    stage: str
+    stage_display_name: str
+    output_slug: str
+    output_folder: Path
+    status: ExecutionStatus = "allocated"
+    asset_effect: AssetEffect = "unknown"
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    slurm_job_id: str | None = None
+
+
+class ExecutionIndex(PipelineModel):
     schema_version: Literal[1] = 1
+    project_id: str
+    updated_at: datetime
+    executions: list[ExecutionRecord] = Field(default_factory=list)
+
+
+class ExecutionReference(PipelineModel):
+    execution_id: int = Field(ge=1)
+    execution_label: str
+    original_execution_id: int = Field(ge=1)
+    technical_run_id: str
+    stage: str
+    output_folder: Path
+
+
+class RenumberRecord(PipelineModel):
+    technical_run_id: str
+    stage: str
+    previous_execution_id: int
+    new_execution_id: int
+    previous_output_folder: Path
+    new_output_folder: Path
+
+
+class RemovalAudit(PipelineModel):
+    schema_version: Literal[1] = 1
+    audit_id: str
+    removed_at: datetime
+    removed_by: str
+    action: Literal["user_removal", "submission_exclusion"] = "user_removal"
+    previous_execution: ExecutionRecord
+    previous_execution_id: int
+    technical_run_id: str
+    stage: str
+    previous_output_folder: Path
+    asset_effect: AssetEffect
+    confirmation_mode: Literal["interactive", "non_interactive", "system"]
+    reason: str | None = None
+    renumbered: list[RenumberRecord] = Field(default_factory=list)
+
+
+class MigrationRecord(PipelineModel):
+    source_folder: Path
+    target_folder: Path
+    execution: ExecutionRecord
+    manifest_path: Path
+
+
+class ExecutionMigrationPlan(PipelineModel):
+    schema_version: Literal[1] = 1
+    project_id: str
+    created_at: datetime
+    legacy_layout_detected: bool
+    safe_to_apply: bool
+    records: list[MigrationRecord] = Field(default_factory=list)
+    ambiguities: list[str] = Field(default_factory=list)
+
+
+class MigrationAudit(PipelineModel):
+    schema_version: Literal[1] = 1
+    migrated_at: datetime
+    records: list[MigrationRecord] = Field(default_factory=list)
+
+
+class ExecutionSummary(PipelineModel):
+    schema_version: Literal[1] = 1
+    execution_id: int
+    execution_label: str
+    stage: str
+    stage_display_name: str
+    status: str
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    duration_seconds: float | None = None
+    asset_effect: AssetEffect
+    output_folder: Path
+    technical_run_id: str
+    workflow_run_id: str
+    slurm_job_id: str | None = None
+    removed: bool = False
+    removed_at: datetime | None = None
+
+
+class RunManifest(PipelineModel):
+    schema_version: Literal[1, 2] = 2
     run_id: str
+    workflow_run_id: str | None = None
     project_id: str
     project_root: Path
     created_at: datetime
@@ -145,10 +261,13 @@ class RunManifest(PipelineModel):
     git_commit: str | None = None
     hostname: str | None = None
     username: str | None = None
+    executions: list[ExecutionReference] = Field(default_factory=list)
 
 
 class SubmissionRecord(PipelineModel):
     stage: str
+    execution_id: int | None = None
+    technical_run_id: str | None = None
     state: Literal["submitted", "submission_failed"]
     job_id: str | None = None
     dependency_job_id: str | None = None
@@ -161,8 +280,9 @@ class SubmissionRecord(PipelineModel):
 
 
 class SubmittedJobs(PipelineModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 2
     run_id: str
+    workflow_run_id: str | None = None
     execution_backend: str = "slurm_scripts"
     jobs: list[SubmissionRecord] = Field(default_factory=list)
     submission_complete: bool = False
@@ -170,6 +290,8 @@ class SubmittedJobs(PipelineModel):
 
 class StageStatus(PipelineModel):
     stage: str
+    execution_id: int | None = None
+    technical_run_id: str | None = None
     job_id: str | None
     status: Literal[
         "not_submitted",
@@ -185,8 +307,9 @@ class StageStatus(PipelineModel):
 
 
 class RunStatus(PipelineModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 2
     run_id: str
+    workflow_run_id: str | None = None
     project_id: str
     checked_at: datetime
     overall_status: str
@@ -210,14 +333,25 @@ def model_data(value: BaseModel | dict[str, Any]) -> dict[str, Any]:
 
 
 __all__ = [
+    "AssetEffect",
     "AssetInventory",
+    "ExecutionIndex",
+    "ExecutionMigrationPlan",
+    "ExecutionRecord",
+    "ExecutionReference",
+    "ExecutionStatus",
+    "ExecutionSummary",
     "LogRecord",
+    "MigrationAudit",
+    "MigrationRecord",
     "ModeSpec",
     "PipelineModel",
     "PlannedStage",
     "ProjectAsset",
     "ProjectMetadata",
     "ProjectValidationReport",
+    "RemovalAudit",
+    "RenumberRecord",
     "RunManifest",
     "RunPlan",
     "RunStatus",

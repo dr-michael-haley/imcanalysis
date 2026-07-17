@@ -91,7 +91,7 @@ class GeneralConfig(ConfigModel):
     outputs_folder: str = config_field(
         "outputs",
         description=(
-            "Root folder for numbered, human-facing stage reports, figures, and tables."
+            "Root folder for sequential, human-facing execution reports, figures, and tables."
         ),
         level="basic",
         stage="general",
@@ -111,7 +111,7 @@ class GeneralConfig(ConfigModel):
         stage="general",
         ui_group="Outputs and provenance",
         advice=(
-            "New managed runs use general.outputs_folder and numbered stage folders. "
+            "New managed runs use general.outputs_folder and sequential execution folders. "
             "Do not repurpose this field for new output layouts."
         ),
     )

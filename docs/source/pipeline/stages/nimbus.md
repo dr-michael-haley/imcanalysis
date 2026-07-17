@@ -17,7 +17,7 @@ Segment/quantify cells with Nimbus and build AnnData outputs
 
 - nimbus.output_dir/ (default nimbus_output/) and general.celltable_folder/nimbus_cell_tables/
 - segmentation.anndata_save_path or nimbus.anndata_output (default anndata.h5ad)
-- optional segmentation.removed_markers_anndata_path + outputs/005_Quantification/<run_id>/
+- optional segmentation.removed_markers_anndata_path + outputs/<execution_id>_Quantification/
 
 ## Configuration
 

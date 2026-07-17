@@ -6,10 +6,10 @@ import json
 import sys
 from enum import Enum
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 import typer
-import yaml
+import yaml  # type: ignore[import-untyped]
 from pydantic import BaseModel
 
 from SpatialBiologyToolkit.config import load_config
@@ -25,7 +25,19 @@ from SpatialBiologyToolkit.pipeline.manifests import (
     utc_now,
     write_text,
 )
+from SpatialBiologyToolkit.pipeline.executions import (
+    execution_output_path,
+    execution_summaries,
+    load_execution_index,
+    remove_execution,
+    resolve_execution,
+    resolve_technical_execution,
+)
 from SpatialBiologyToolkit.pipeline.models import model_data
+from SpatialBiologyToolkit.pipeline.migration import (
+    apply_execution_layout_migration,
+    plan_execution_layout_migration,
+)
 from SpatialBiologyToolkit.pipeline.planner import build_run_plan
 from SpatialBiologyToolkit.pipeline.project import (
     adopt_project,
@@ -39,6 +51,7 @@ from SpatialBiologyToolkit.pipeline.registry import (
     STAGES,
     get_mode,
     get_stage,
+    resolve_stage_selector,
     stage_script_path,
 )
 from SpatialBiologyToolkit.pipeline.runs import (
@@ -63,6 +76,12 @@ class OutputFormat(str, Enum):
     json = "json"
 
 
+class SummaryFormat(str, Enum):
+    table = "table"
+    yaml = "yaml"
+    json = "json"
+
+
 app = typer.Typer(
     name="sbt",
     help="Spatial Biology Toolkit project and SLURM control interface.",
@@ -79,7 +98,7 @@ app.add_typer(stages_app, name="stages")
 app.add_typer(modes_app, name="modes")
 
 
-def _fail(exc: Exception | str, *, code: int = 2) -> None:
+def _fail(exc: Exception | str, *, code: int = 2) -> NoReturn:
     typer.echo(f"Error: {exc}", err=True)
     raise typer.Exit(code)
 
@@ -383,6 +402,7 @@ def project_describe(
         context = _project(project, config)
         assets = resolve_assets(context.config, context.root)
         runs = list_run_directories(context)
+        executions = load_execution_index(context).executions
         latest = runs[-1] if runs else None
         latest_status = None
         if latest and (latest / STATUS_FILE).is_file():
@@ -398,6 +418,7 @@ def project_describe(
         "config_path": str(context.config_path),
         "raw_imc_file_count": raw_count,
         "recorded_runs": len(runs),
+        "active_executions": len(executions),
         "latest_run": latest.name if latest else None,
         "latest_status": latest_status,
         "assets": [asset.model_dump(mode="json") for asset in assets],
@@ -411,6 +432,7 @@ def project_describe(
     typer.echo(f"Config:     {context.config_path}")
     typer.echo(f"Raw files:  {raw_count}")
     typer.echo(f"Runs:       {len(runs)}")
+    typer.echo(f"Executions: {len(executions)}")
     typer.echo(f"Latest:     {latest.name if latest else '-'}")
     typer.echo(f"Status:     {latest_status or '-'}")
     typer.echo("")
@@ -459,6 +481,71 @@ def project_notes(
     typer.echo(content, nl=content.endswith("\n"))
 
 
+@project_app.command("migrate-execution-layout")
+def project_migrate_execution_layout(
+    project: Path | None = typer.Option(None, "--project"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+) -> None:
+    """Explicitly migrate fixed stage folders to sequential executions."""
+    try:
+        context = _project(project)
+        plan = plan_execution_layout_migration(context)
+    except Exception as exc:
+        _fail(exc)
+
+    if output_format == OutputFormat.text:
+        typer.echo(
+            f"Legacy layout detected: {'yes' if plan.legacy_layout_detected else 'no'}"
+        )
+        typer.echo(f"Safe to apply: {'yes' if plan.safe_to_apply else 'no'}")
+        typer.echo("")
+        for record in plan.records:
+            typer.echo(
+                f"  {record.source_folder} -> "
+                f"{record.execution.execution_label} {record.target_folder}"
+            )
+            typer.echo(
+                f"    stage={record.execution.stage} "
+                f"workflow={record.execution.workflow_run_id} "
+                f"technical={record.execution.technical_run_id}"
+            )
+        for ambiguity in plan.ambiguities:
+            typer.echo(f"  ! {ambiguity}")
+    if dry_run:
+        if output_format != OutputFormat.text:
+            _emit_machine(plan, output_format)
+        else:
+            typer.echo("Dry run complete: no project files were changed.")
+        if not plan.safe_to_apply:
+            raise typer.Exit(1)
+        return
+    if not plan.legacy_layout_detected:
+        if output_format != OutputFormat.text:
+            _emit_machine(plan, output_format)
+        else:
+            typer.echo("No legacy execution layout was found; nothing was changed.")
+        return
+    if not plan.safe_to_apply:
+        _fail("Migration is ambiguous; no files were changed.")
+    try:
+        audit = apply_execution_layout_migration(context, plan)
+    except Exception as exc:
+        _fail(exc)
+    if output_format != OutputFormat.text:
+        _emit_machine(
+            {
+                "schema_version": 1,
+                "plan": plan.model_dump(mode="json"),
+                "audit": audit.model_dump(mode="json"),
+            },
+            output_format,
+        )
+        return
+    typer.echo(f"Migrated {len(audit.records)} execution(s).")
+    typer.echo("Technical identities and timestamps were preserved under .sbt/.")
+
+
 @stages_app.command("list")
 def stages_list(
     output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
@@ -466,13 +553,11 @@ def stages_list(
     if output_format != OutputFormat.text:
         _emit_machine(list(STAGES), output_format)
         return
-    typer.echo(
-        f"{'STAGE':<12} {'ORDER':<7} {'OUTPUT FOLDER':<34} DISPLAY NAME"
-    )
-    for stage in sorted(STAGES, key=lambda item: (item.display_order, item.name)):
+    typer.echo(f"{'STAGE':<12} {'DOC ORDER':<10} {'OUTPUT SLUG':<32} DISPLAY NAME")
+    for stage in sorted(STAGES, key=lambda item: (item.catalogue_order, item.name)):
         typer.echo(
-            f"{stage.name:<12} {stage.display_order:<7} "
-            f"{stage.output_folder:<34} {stage.display_name}"
+            f"{stage.name:<12} {stage.catalogue_order:<10} "
+            f"{stage.output_slug:<32} {stage.display_name}"
         )
         typer.echo(f"  {stage.description}")
 
@@ -493,7 +578,8 @@ def stages_explain(
 
     documentation = toolkit_root() / spec.documentation_path
     typer.echo(f"Stage: {spec.name} — {spec.display_name}")
-    typer.echo(f"Output folder: {spec.output_folder}")
+    typer.echo(f"Output slug: {spec.output_slug}")
+    typer.echo("Execution folder: assigned per project as NNN_<output slug>")
     typer.echo(f"SLURM script: {stage_script_path(spec)}")
     typer.echo(f"Documentation: {documentation}")
     typer.echo("")
@@ -591,8 +677,14 @@ def run_command(
         )
         _print_plan(plan)
         typer.echo("")
-        typer.echo(f"Prospective run ID: {run.run_id}")
-        typer.echo(f"Prospective run directory: {run.run_dir}")
+        typer.echo(f"Prospective workflow run ID: {run.workflow_run_id}")
+        typer.echo(f"Prospective technical directory: {run.run_dir}")
+        typer.echo("Prospective execution IDs")
+        for execution in run.executions:
+            typer.echo(
+                f"  {execution.execution_label} — {execution.stage_display_name} "
+                f"({execution.output_folder})"
+            )
         typer.echo(f"Resolved config path: {run.resolved_config_path}")
         typer.echo("")
         typer.echo("Exact submission preview")
@@ -623,54 +715,92 @@ def run_command(
     except Exception as exc:
         _fail(exc, code=1)
 
-    typer.echo(f"Submitted run: {run.run_id}")
-    typer.echo(f"Run record: {run.run_dir}")
+    typer.echo(f"Submitted workflow: {run.workflow_run_id}")
+    typer.echo(f"Technical record: {run.run_dir}")
     for job in submitted.jobs:
+        execution = run.execution_for_stage(job.stage)
         dependency = (
             f" afterok:{job.dependency_job_id}" if job.dependency_job_id else ""
         )
-        typer.echo(f"  {job.stage:<12} job {job.job_id}{dependency}")
+        typer.echo(
+            f"  {execution.execution_label} — {execution.stage_display_name:<28} "
+            f"job {job.job_id}{dependency}"
+        )
     typer.echo("")
     typer.echo("Next:")
-    typer.echo(f"  sbt status {run.run_id} --project {context.root}")
-    typer.echo(f"  sbt logs {run.run_id} --project {context.root}")
+    first = run.executions[0].execution_label
+    typer.echo(f"  sbt status {first} --project {context.root}")
+    typer.echo(f"  sbt logs {first} --project {context.root}")
+    typer.echo(f"  sbt summary --project {context.root}")
 
 
 @app.command("status")
 def status_command(
-    run_id: str = typer.Argument(..., help="Run ID or 'latest'."),
+    execution: str = typer.Argument("latest", help="Execution ID or 'latest'."),
     project: Path | None = typer.Option(None, "--project"),
+    technical_run_id: str | None = typer.Option(
+        None,
+        "--technical-run-id",
+        help="Resolve an immutable technical execution ID explicitly.",
+    ),
+    details: bool = typer.Option(False, "--details"),
     output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
 ) -> None:
     try:
         context = _project(project)
-        run_dir = resolve_run_directory(context, run_id)
+        selected = (
+            resolve_technical_execution(context, technical_run_id)
+            if technical_run_id
+            else resolve_execution(context, execution)
+        )
+        run_dir = resolve_run_directory(context, selected.workflow_run_id)
         report = inspect_run_status(context, run_dir)
+        selected = resolve_technical_execution(context, selected.technical_run_id)
+        stage_status = next(
+            (
+                item
+                for item in report.stages
+                if item.technical_run_id == selected.technical_run_id
+            ),
+            None,
+        )
     except Exception as exc:
         _fail(exc)
     if output_format != OutputFormat.text:
-        _emit_machine(report, output_format)
-        return
-    typer.echo(f"Run: {report.run_id}")
-    typer.echo(f"Overall: {report.overall_status}")
-    typer.echo("")
-    typer.echo(f"{'STAGE':<14} {'JOB ID':<14} {'STATUS':<14} SOURCE")
-    for stage in report.stages:
-        typer.echo(
-            f"{stage.stage:<14} {(stage.job_id or '-'):<14} "
-            f"{stage.status:<14} {stage.source}"
+        _emit_machine(
+            {
+                "schema_version": 1,
+                "execution": selected.model_dump(mode="json"),
+                "status": stage_status.model_dump(mode="json") if stage_status else None,
+            },
+            output_format,
         )
-        if stage.detail:
-            typer.echo(f"  {stage.detail}")
+        return
+    typer.echo(
+        f"Execution {selected.execution_label} — {selected.stage_display_name}"
+    )
+    typer.echo(f"Status: {selected.status}")
+    typer.echo(f"SLURM job: {selected.slurm_job_id or '-'}")
+    if stage_status and stage_status.detail:
+        typer.echo(f"Detail: {stage_status.detail}")
+    if details:
+        typer.echo(f"Technical execution ID: {selected.technical_run_id}")
+        typer.echo(f"Workflow run ID: {selected.workflow_run_id}")
+        typer.echo(f"Technical record: {run_dir}")
     for warning in report.warnings:
         typer.echo(f"Warning: {warning}")
 
 
 @app.command("logs")
 def logs_command(
-    run_id: str = typer.Argument(..., help="Run ID or 'latest'."),
+    execution: str = typer.Argument("latest", help="Execution ID or 'latest'."),
     project: Path | None = typer.Option(None, "--project"),
-    stage: str | None = typer.Option(None, "--stage"),
+    technical_run_id: str | None = typer.Option(None, "--technical-run-id"),
+    stage: str | None = typer.Option(
+        None,
+        "--stage",
+        help="Compatibility filter; it must match the selected execution.",
+    ),
     stdout: bool = typer.Option(False, "--stdout"),
     stderr: bool = typer.Option(False, "--stderr"),
     tail: int = typer.Option(40, "--tail", min=0),
@@ -680,10 +810,20 @@ def logs_command(
     include_stderr = stderr or not stdout
     try:
         context = _project(project)
-        run_dir = resolve_run_directory(context, run_id)
+        selected = (
+            resolve_technical_execution(context, technical_run_id)
+            if technical_run_id
+            else resolve_execution(context, execution)
+        )
+        if stage and resolve_stage_selector(stage).name != selected.stage:
+            raise ValueError(
+                f"Execution {selected.execution_label} is stage "
+                f"'{selected.stage}', not '{stage}'."
+            )
+        run_dir = resolve_run_directory(context, selected.workflow_run_id)
         logs = resolve_run_logs(
             run_dir,
-            stage=stage,
+            stage=selected.stage,
             include_stdout=include_stdout,
             include_stderr=include_stderr,
         )
@@ -706,6 +846,165 @@ def logs_command(
             if content:
                 typer.echo(content)
         typer.echo("")
+
+
+@app.command("report")
+def report_command(
+    execution: str = typer.Argument("latest", help="Execution ID or 'latest'."),
+    project: Path | None = typer.Option(None, "--project"),
+    path_only: bool = typer.Option(False, "--path-only"),
+) -> None:
+    try:
+        context = _project(project)
+        selected = resolve_execution(context, execution)
+        output = execution_output_path(context, selected)
+        report = output / "README.md"
+        if not report.is_file():
+            raise FileNotFoundError(f"Execution report not found: {report}")
+    except Exception as exc:
+        _fail(exc)
+    if path_only:
+        typer.echo(str(report))
+    else:
+        typer.echo(
+            f"Execution {selected.execution_label} — {selected.stage_display_name}"
+        )
+        typer.echo(report.read_text(encoding="utf-8"))
+
+
+@app.command("summary")
+def summary_command(
+    project: Path | None = typer.Option(None, "--project"),
+    stage: str | None = typer.Option(None, "--stage"),
+    status: str | None = typer.Option(None, "--status"),
+    latest: bool = typer.Option(False, "--latest"),
+    details: bool = typer.Option(False, "--details"),
+    assets: bool = typer.Option(False, "--assets"),
+    include_removed: bool = typer.Option(False, "--include-removed"),
+    output_format: SummaryFormat = typer.Option(SummaryFormat.table, "--format"),
+) -> None:
+    try:
+        context = _project(project)
+        records = execution_summaries(context, include_removed=include_removed)
+        if stage:
+            alias = resolve_stage_selector(stage).name
+            records = [item for item in records if item.stage == alias]
+        if status:
+            records = [item for item in records if item.status == status.lower()]
+        if latest and records:
+            records = [records[-1]]
+    except Exception as exc:
+        _fail(exc)
+
+    if output_format != SummaryFormat.table:
+        data = {
+            "schema_version": 1,
+            "project_id": context.project_metadata.project_id,
+            "executions": [item.model_dump(mode="json") for item in records],
+        }
+        _emit_machine(
+            data,
+            OutputFormat.json
+            if output_format == SummaryFormat.json
+            else OutputFormat.yaml,
+        )
+        return
+
+    typer.echo(
+        f"{'ID':<6} {'STAGE':<28} {'STATUS':<11} {'STARTED':<17} "
+        f"{'DONE/DURATION':<17} {'ASSETS':<9} OUTPUT"
+    )
+    for item in records:
+        started = item.started_at.strftime("%Y-%m-%d %H:%M") if item.started_at else "-"
+        if item.completed_at:
+            completed = item.completed_at.strftime("%Y-%m-%d %H:%M")
+        elif item.duration_seconds is not None:
+            completed = f"{item.duration_seconds:.0f}s"
+        else:
+            completed = "-"
+        label = f"{item.execution_label}{'*' if item.removed else ''}"
+        typer.echo(
+            f"{label:<6} {item.stage_display_name:<28} {item.status:<11} "
+            f"{started:<17} {completed:<17} {item.asset_effect:<9} "
+            f"{item.output_folder}"
+        )
+        if details:
+            typer.echo(
+                f"       technical={item.technical_run_id} "
+                f"workflow={item.workflow_run_id} slurm={item.slurm_job_id or '-'}"
+            )
+        if assets and item.asset_effect != "none":
+            typer.echo(
+                "       Reusable assets may have been created or modified; inspect "
+                "the stage manifest for canonical paths."
+            )
+    if not records:
+        typer.echo("No executions match the selection.")
+    if include_removed and any(item.removed for item in records):
+        typer.echo("* removed execution from the hidden technical audit")
+
+
+@app.command("remove")
+def remove_command(
+    execution: str = typer.Argument(..., help="Active execution ID."),
+    project: Path | None = typer.Option(None, "--project"),
+    yes: bool = typer.Option(False, "--yes"),
+    accept_asset_risk: bool = typer.Option(False, "--accept-asset-risk"),
+    reason: str | None = typer.Option(None, "--reason"),
+) -> None:
+    try:
+        context = _project(project)
+        selected = resolve_execution(context, execution)
+        output = execution_output_path(context, selected)
+    except Exception as exc:
+        _fail(exc)
+    risky = selected.asset_effect != "none"
+    typer.echo(
+        f"Remove execution {selected.execution_label} — "
+        f"{selected.stage_display_name}?"
+    )
+    typer.echo("")
+    typer.echo(f"Status: {selected.status}")
+    typer.echo(f"Output folder: {output}")
+    typer.echo(f"Technical execution ID: {selected.technical_run_id}")
+    typer.echo(f"Reusable asset effect: {selected.asset_effect}")
+    typer.echo("")
+    typer.echo(
+        "This removes the human-facing output folder and active workflow entry. "
+        "Permanent technical evidence is retained under .sbt/."
+    )
+    if not yes and not typer.confirm("Continue?", default=False):
+        raise typer.Abort()
+    if risky:
+        typer.echo("")
+        typer.echo(
+            "This execution created or modified reusable assets, or its effect is "
+            "unknown. Removal does not restore those assets and downstream analyses "
+            "may depend on them."
+        )
+        if yes and not accept_asset_risk:
+            _fail(
+                "Non-interactive removal requires --accept-asset-risk for this execution."
+            )
+        if not accept_asset_risk and not typer.confirm(
+            "Remove this execution from the visible workflow anyway?",
+            default=False,
+        ):
+            raise typer.Abort()
+    try:
+        audit = remove_execution(
+            context,
+            selected.execution_id,
+            reason=reason,
+            confirmation_mode="non_interactive" if yes else "interactive",
+        )
+    except Exception as exc:
+        _fail(exc)
+    typer.echo(
+        f"Removed execution {audit.previous_execution.execution_label}; "
+        f"renumbered {len(audit.renumbered)} later execution(s)."
+    )
+    typer.echo("Reusable project assets were not deleted or restored.")
 
 
 if __name__ == "__main__":

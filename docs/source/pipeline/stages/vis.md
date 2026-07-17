@@ -15,7 +15,7 @@ Generate UMAP/matrix/overlay/population visualization outputs
 
 ## Outputs
 
-- outputs/013_Visualisation/<run_id>/
+- outputs/<execution_id>_Visualisation/
 
 ## Configuration
 

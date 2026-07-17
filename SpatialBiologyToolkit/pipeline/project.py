@@ -244,6 +244,11 @@ def initialize_project(
             context.root, context.config.general.outputs_folder
         ),
     )
+    from SpatialBiologyToolkit.pipeline.executions import initialize_execution_index
+    from SpatialBiologyToolkit.reporting.render import refresh_project_index
+
+    initialize_execution_index(context)
+    refresh_project_index(context)
     return context
 
 
@@ -296,6 +301,15 @@ def adopt_project(
             context.root, context.config.general.outputs_folder
         ),
     )
+    from SpatialBiologyToolkit.pipeline.executions import (
+        has_legacy_execution_layout,
+        initialize_execution_index,
+    )
+    from SpatialBiologyToolkit.reporting.render import refresh_project_index
+
+    initialize_execution_index(context)
+    if not has_legacy_execution_layout(context):
+        refresh_project_index(context)
     assets = resolve_assets(config, project_root)
     initial_inventory = project_root / INITIAL_ASSET_INVENTORY
     if force or not initial_inventory.exists():
@@ -468,10 +482,7 @@ def validate_project(
     from SpatialBiologyToolkit.reporting.validation import validate_reporting_layout
 
     reporting_outputs = validate_reporting_layout(
-        project_root=context.root,
-        outputs_root=resolve_project_path(
-            context.root, context.config.general.outputs_folder
-        ),
+        context=context,
         legacy_qc=resolve_project_path(context.root, context.config.general.qc_folder),
     )
     outputs_root = resolve_project_path(

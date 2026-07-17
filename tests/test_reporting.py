@@ -10,6 +10,7 @@ import yaml
 from typer.testing import CliRunner
 
 from SpatialBiologyToolkit.cli.main import app
+from SpatialBiologyToolkit.pipeline.executions import load_execution_index
 from SpatialBiologyToolkit.pipeline.manifests import read_model, read_yaml
 from SpatialBiologyToolkit.pipeline.models import ProjectMetadata
 from SpatialBiologyToolkit.pipeline.planner import build_run_plan
@@ -63,17 +64,17 @@ class ReportingTests(unittest.TestCase):
         )
         return context, run, sbt_environment(context, run, stage)
 
-    def test_registry_has_unique_numbered_reporting_metadata_and_docs(self):
+    def test_registry_has_unique_unnumbered_reporting_metadata_and_docs(self):
         root = Path(__file__).resolve().parents[1]
-        output_folders = [stage.output_folder for stage in STAGES]
-        orders = [stage.display_order for stage in STAGES]
+        output_slugs = [stage.output_slug for stage in STAGES]
+        orders = [stage.catalogue_order for stage in STAGES]
 
-        self.assertEqual(len(output_folders), len(set(output_folders)))
+        self.assertEqual(len(output_slugs), len(set(output_slugs)))
         self.assertEqual(len(orders), len(set(orders)))
         self.assertEqual(sorted(orders), list(range(1, len(STAGES) + 1)))
         for stage in STAGES:
             self.assertTrue(stage.display_name)
-            self.assertRegex(stage.output_folder, r"^\d{3}_.+")
+            self.assertNotRegex(stage.output_slug, r"^\d{3}_")
             documentation = root / stage.documentation_path
             self.assertTrue(documentation.is_file(), documentation)
             content = documentation.read_text(encoding="utf-8")
@@ -117,15 +118,22 @@ class ReportingTests(unittest.TestCase):
                     environment={
                         "SBT_PROJECT_ROOT": str(root),
                         "SBT_PROJECT_ID": "project-id",
+                        "SBT_EXECUTION_ID": "7",
+                        "SBT_EXECUTION_LABEL": "007",
+                        "SBT_TECHNICAL_RUN_ID": "stage-id",
+                        "SBT_WORKFLOW_RUN_ID": "workflow-id",
                         "SBT_RUN_ID": "run-id",
-                        "SBT_RUN_DIR": str(root / ".sbt" / "runs" / "run-id"),
+                        "SBT_RUN_DIR": str(root / ".sbt" / "runs" / "workflow-id"),
                         "SBT_STAGE": stage.name,
                         "SBT_OUTPUTS_ROOT": str(root / "outputs"),
+                        "SBT_STAGE_OUTPUT_DIR": str(
+                            root / "outputs" / f"007_{stage.output_slug}"
+                        ),
                     }
                 )
                 self.assertEqual(
                     context.stage_run_dir,
-                    (root / "outputs" / stage.output_folder / "run-id").resolve(),
+                    (root / "outputs" / f"007_{stage.output_slug}").resolve(),
                     stage.name,
                 )
 
@@ -145,18 +153,18 @@ class ReportingTests(unittest.TestCase):
             self.assertEqual(manifest.metrics["rois_processed"], 2)
             self.assertEqual(manifest.metrics["tables"], 1)
             self.assertTrue((output_dir / "README.md").is_file())
-            self.assertTrue((output_dir.parent / "README.md").is_file())
             self.assertTrue((context.root / "outputs" / "README.md").is_file())
+            technical_id = run.execution_for_stage("prep").technical_run_id
             self.assertTrue(
                 (
                     run.run_dir
                     / STAGE_EVENTS_DIRECTORY
-                    / "prep.yaml"
+                    / f"{technical_id}.yaml"
                 ).is_file()
             )
             readme = (output_dir / "README.md").read_text(encoding="utf-8")
             self.assertIn("Focused reporting test.", readme)
-            self.assertIn("Technical run directory", readme)
+            self.assertIn("Technical workflow directory", readme)
             self.assertIn("## How to interpret these outputs", readme)
 
     def test_reporter_records_failure_and_reraises_scientific_exception(self):
@@ -191,8 +199,9 @@ class ReportingTests(unittest.TestCase):
                 StageManifest,
             )
             self.assertEqual(completed.status, "completed")
+            technical_id = run.execution_for_stage("debug").technical_run_id
             self.assertTrue(
-                (run.run_dir / STAGE_EVENTS_DIRECTORY / "debug.yaml").is_file()
+                (run.run_dir / STAGE_EVENTS_DIRECTORY / f"{technical_id}.yaml").is_file()
             )
             self.assertTrue((context.root / "outputs" / "README.md").is_file())
 
@@ -227,6 +236,12 @@ class ReportingTests(unittest.TestCase):
                 for key, value in os.environ.items()
                 if not key.startswith("SBT_")
             }
+            repository = str(Path(__file__).resolve().parents[1])
+            environment["PYTHONPATH"] = os.pathsep.join(
+                item
+                for item in (repository, environment.get("PYTHONPATH", ""))
+                if item
+            )
             completed = subprocess.run(
                 [
                     sys.executable,
@@ -245,8 +260,8 @@ class ReportingTests(unittest.TestCase):
             )
             self.assertEqual(completed.returncode, 3)
             manifests = list(
-                (root / "outputs" / "001_Preprocessing").glob(
-                    "direct-*/stage_manifest.yaml"
+                (root / "outputs" / "direct").glob(
+                    "direct-*_Preprocessing/stage_manifest.yaml"
                 )
             )
             self.assertEqual(len(manifests), 1)
@@ -280,17 +295,17 @@ class ReportingTests(unittest.TestCase):
             )
         self.assertEqual(original["general"]["qc_folder"], "QC")
 
-    def test_project_initialization_creates_complete_output_navigation(self):
+    def test_project_initialization_creates_empty_execution_navigation(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             context = initialize_project(Path(temp_dir) / "project")
             outputs = context.root / "outputs"
 
             self.assertTrue((outputs / "README.md").is_file())
-            for stage in STAGES:
-                self.assertTrue(
-                    (outputs / stage.output_folder / "README.md").is_file(),
-                    stage.name,
-                )
+            self.assertEqual(
+                [item.name for item in outputs.iterdir() if item.is_dir()],
+                [],
+            )
+            self.assertEqual(load_execution_index(context).executions, [])
             self.assertTrue((context.root / ".sbt" / "project_notes.md").is_file())
 
     def test_run_reason_notes_environment_and_log_paths_are_recorded(self):

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Callable
 
 from .manifests import utc_now, write_yaml
+from .executions import execution_output_path, update_execution
 from .models import (
     RunPlan,
     RunStatus,
@@ -38,6 +39,7 @@ def sbt_environment(
     stage_name: str,
 ) -> dict[str, str]:
     stage = get_stage(stage_name)
+    execution = run.execution_for_stage(stage_name)
     outputs_root = Path(context.config.general.outputs_folder).expanduser()
     if not outputs_root.is_absolute():
         outputs_root = context.root / outputs_root
@@ -46,13 +48,17 @@ def sbt_environment(
         "SBT_PROJECT_ROOT": str(context.root),
         "SBT_PROJECT_ID": context.project_metadata.project_id,
         "SBT_CONFIG": str(run.resolved_config_path),
-        "SBT_RUN_ID": run.run_id,
+        "SBT_EXECUTION_ID": str(execution.execution_id),
+        "SBT_EXECUTION_LABEL": execution.execution_label,
+        "SBT_OUTPUT_DIR": str(execution_output_path(context, execution)),
+        "SBT_TECHNICAL_RUN_ID": execution.technical_run_id,
+        "SBT_WORKFLOW_RUN_ID": run.workflow_run_id,
+        # Transitional aliases retained for wrappers and older stage adapters.
+        "SBT_RUN_ID": run.workflow_run_id,
         "SBT_RUN_DIR": str(run.run_dir),
         "SBT_STAGE": stage_name,
         "SBT_OUTPUTS_ROOT": str(outputs_root),
-        "SBT_STAGE_OUTPUT_DIR": str(
-            (outputs_root / stage.output_folder / run.run_id).resolve(strict=False)
-        ),
+        "SBT_STAGE_OUTPUT_DIR": str(execution_output_path(context, execution)),
         "SBT_STAGE_DISPLAY_NAME": stage.display_name,
         "SBT_STAGE_DOCUMENTATION": stage.documentation_path,
         "SBT_REPORTING_PYTHON": sys.executable,
@@ -88,7 +94,7 @@ def build_sbatch_command(
         "sbatch",
         "--parsable",
         f"--chdir={context.root}",
-        f"--job-name=sbt_{run.run_id[-8:]}_{stage_name}",
+        f"--job-name=sbt_{run.execution_for_stage(stage_name).execution_label}_{stage_name}",
         f"--output={output_pattern}",
         f"--error={error_pattern}",
         "--export=ALL",
@@ -118,12 +124,15 @@ def _write_submission_state(
         run.run_dir / STATUS_FILE,
         RunStatus(
             run_id=run.run_id,
+            workflow_run_id=run.workflow_run_id,
             project_id=context.project_metadata.project_id,
             checked_at=utc_now(),
             overall_status=overall_status,
             stages=[
                 StageStatus(
                     stage=job.stage,
+                    execution_id=job.execution_id,
+                    technical_run_id=job.technical_run_id,
                     job_id=job.job_id,
                     status=("pending" if job.state == "submitted" else "not_submitted"),
                     source="submission",
@@ -170,9 +179,13 @@ def submit_run(
     if not plan.ready:
         raise ValueError("Refusing to submit an invalid run plan.")
 
-    submitted = SubmittedJobs(run_id=run.run_id)
+    submitted = SubmittedJobs(
+        run_id=run.workflow_run_id,
+        workflow_run_id=run.workflow_run_id,
+    )
     previous_job_id: str | None = None
     for stage in plan.resolved_stages:
+        execution = run.execution_for_stage(stage.name)
         exported = sbt_environment(context, run, stage.name)
         command = build_sbatch_command(
             context=context,
@@ -205,6 +218,8 @@ def submit_run(
             submitted.jobs.append(
                 SubmissionRecord(
                     stage=stage.name,
+                    execution_id=execution.execution_id,
+                    technical_run_id=execution.technical_run_id,
                     state="submission_failed",
                     dependency_job_id=previous_job_id,
                     submitted_at=utc_now(),
@@ -221,6 +236,23 @@ def submit_run(
                 submitted,
                 overall_status="partial_submission_failed",
             )
+            update_execution(
+                context,
+                execution.technical_run_id,
+                status="failed",
+                completed_at=utc_now(),
+            )
+            failed_position = [item.name for item in plan.resolved_stages].index(
+                stage.name
+            )
+            for blocked_stage in plan.resolved_stages[failed_position + 1 :]:
+                blocked = run.execution_for_stage(blocked_stage.name)
+                update_execution(
+                    context,
+                    blocked.technical_run_id,
+                    status="blocked",
+                    completed_at=utc_now(),
+                )
             raise SubmissionError(
                 f"Failed to submit stage '{stage.name}': {exc}",
                 submitted,
@@ -230,6 +262,8 @@ def submit_run(
         submitted.jobs.append(
             SubmissionRecord(
                 stage=stage.name,
+                execution_id=execution.execution_id,
+                technical_run_id=execution.technical_run_id,
                 state="submitted",
                 job_id=job_id,
                 dependency_job_id=previous_job_id,
@@ -240,6 +274,15 @@ def submit_run(
                 stderr_log=stderr_log,
             )
         )
+        updated_execution = update_execution(
+            context,
+            execution.technical_run_id,
+            status="pending",
+            slurm_job_id=job_id,
+        )
+        from SpatialBiologyToolkit.reporting.render import prepare_execution_output
+
+        prepare_execution_output(context, run, updated_execution)
         _write_submission_state(context, run, submitted, overall_status="submitted")
         previous_job_id = job_id
 

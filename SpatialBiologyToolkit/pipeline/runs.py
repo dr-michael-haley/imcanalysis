@@ -5,6 +5,7 @@ from __future__ import annotations
 import getpass
 import importlib.metadata
 import shlex
+import shutil
 import socket
 import subprocess
 import uuid
@@ -17,7 +18,12 @@ from SpatialBiologyToolkit.config.export import write_resolved_config
 
 from .assets import inventory_assets
 from .manifests import read_model, utc_now, write_yaml
-from .models import RunManifest, RunPlan, RunStatus, SubmittedJobs
+from .executions import (
+    allocate_executions,
+    execution_reference,
+    preview_executions,
+)
+from .models import ExecutionRecord, RunManifest, RunPlan, RunStatus, SubmittedJobs
 from .project import ProjectContext, copy_user_config
 from .registry import toolkit_root
 
@@ -36,12 +42,26 @@ STAGE_EVENTS_DIRECTORY = "stage_events"
 
 @dataclass(frozen=True)
 class RunRecord:
-    run_id: str
+    workflow_run_id: str
     run_dir: Path
     manifest: RunManifest
     plan: RunPlan
     user_config_path: Path
     resolved_config_path: Path
+    executions: list[ExecutionRecord]
+
+    @property
+    def run_id(self) -> str:
+        """Deprecated compatibility alias for the workflow run ID."""
+        return self.workflow_run_id
+
+    def execution_for_stage(self, stage: str) -> ExecutionRecord:
+        matches = [item for item in self.executions if item.stage == stage]
+        if len(matches) != 1:
+            raise KeyError(
+                f"Expected one execution for stage '{stage}', found {len(matches)}."
+            )
+        return matches[0]
 
 
 def new_run_id(now: datetime | None = None) -> str:
@@ -86,10 +106,10 @@ def create_run_record(
 ) -> RunRecord:
     if not plan.ready:
         raise ValueError("Cannot create a submitted run record for an invalid plan.")
-    identifier = run_id or new_run_id()
-    run_dir = (context.runs_dir / identifier).resolve(strict=False)
+    workflow_run_id = run_id or new_run_id()
+    run_dir = (context.runs_dir / workflow_run_id).resolve(strict=False)
     if context.runs_dir not in run_dir.parents:
-        raise ValueError(f"Invalid run ID: {identifier}")
+        raise ValueError(f"Invalid workflow run ID: {workflow_run_id}")
     if run_dir.exists():
         raise FileExistsError(f"Run directory already exists: {run_dir}")
     run_dir.mkdir(parents=True)
@@ -101,8 +121,21 @@ def create_run_record(
     copy_user_config(context, user_config_path)
     write_resolved_config(context.config, resolved_config_path)
 
+    try:
+        executions = allocate_executions(
+            context,
+            [stage.name for stage in plan.resolved_stages],
+            workflow_run_id=workflow_run_id,
+        )
+    except Exception:
+        # Allocation is the first operation that links this technical workflow to
+        # the project-wide execution index. If it fails, this directory contains
+        # no durable run evidence and can safely be discarded.
+        shutil.rmtree(run_dir)
+        raise
     manifest = RunManifest(
-        run_id=identifier,
+        run_id=workflow_run_id,
+        workflow_run_id=workflow_run_id,
         project_id=context.project_metadata.project_id,
         project_root=context.root,
         created_at=utc_now(),
@@ -119,6 +152,7 @@ def create_run_record(
         git_commit=_git_commit(),
         hostname=socket.gethostname(),
         username=getpass.getuser(),
+        executions=[execution_reference(record) for record in executions],
     )
     write_yaml(run_dir / RUN_MANIFEST, manifest)
     write_yaml(run_dir / RUN_PLAN, plan)
@@ -133,12 +167,13 @@ def create_run_record(
     )
     write_yaml(
         run_dir / SUBMITTED_JOBS,
-        SubmittedJobs(run_id=identifier),
+        SubmittedJobs(run_id=workflow_run_id, workflow_run_id=workflow_run_id),
     )
     write_yaml(
         run_dir / STATUS_FILE,
         RunStatus(
-            run_id=identifier,
+            run_id=workflow_run_id,
+            workflow_run_id=workflow_run_id,
             project_id=context.project_metadata.project_id,
             checked_at=utc_now(),
             overall_status="created",
@@ -146,12 +181,13 @@ def create_run_record(
         ),
     )
     return RunRecord(
-        run_id=identifier,
+        workflow_run_id=workflow_run_id,
         run_dir=run_dir,
         manifest=manifest,
         plan=plan,
         user_config_path=user_config_path,
         resolved_config_path=resolved_config_path,
+        executions=executions,
     )
 
 
@@ -165,11 +201,17 @@ def prospective_run_record(
     notes: Iterable[str] = (),
 ) -> RunRecord:
     """Build run paths for a dry run without creating files or directories."""
-    identifier = run_id or new_run_id()
-    run_dir = (context.runs_dir / identifier).resolve(strict=False)
+    workflow_run_id = run_id or new_run_id()
+    run_dir = (context.runs_dir / workflow_run_id).resolve(strict=False)
     resolved_config_path = run_dir / RESOLVED_CONFIG
+    executions = preview_executions(
+        context,
+        [stage.name for stage in plan.resolved_stages],
+        workflow_run_id=workflow_run_id,
+    )
     manifest = RunManifest(
-        run_id=identifier,
+        run_id=workflow_run_id,
+        workflow_run_id=workflow_run_id,
         project_id=context.project_metadata.project_id,
         project_root=context.root,
         created_at=utc_now(),
@@ -185,14 +227,16 @@ def prospective_run_record(
         pipeline_version=_pipeline_version(),
         hostname=socket.gethostname(),
         username=getpass.getuser(),
+        executions=[execution_reference(record) for record in executions],
     )
     return RunRecord(
-        run_id=identifier,
+        workflow_run_id=workflow_run_id,
         run_dir=run_dir,
         manifest=manifest,
         plan=plan,
         user_config_path=run_dir / USER_CONFIG,
         resolved_config_path=resolved_config_path,
+        executions=executions,
     )
 
 

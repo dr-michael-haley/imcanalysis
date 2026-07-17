@@ -10,7 +10,7 @@
 #@DESC: Generate denoising side-by-side QC and panel consistency checks
 #@IN:   general.raw_images_folder + general.denoised_images_folder
 #@IN:   general.metadata_folder/panel.csv
-#@OUT:  outputs/003_Denoising_QC/<run_id>/ figures and panel/pixel QC tables
+#@OUT:  outputs/<execution_id>_Denoising_QC/ figures and panel/pixel QC tables
 #@ENV:  imc_denoise
 #@MODULE:  SpatialBiologyToolkit.scripts.denoising_qc
 #@ENV:  imc_segmentation

@@ -17,7 +17,7 @@ Run checkpointed population subclustering (template generation, subclustering QC
 
 - subclustering.output_adata_path (default anndata_subclustered.h5ad)
 - subclustering.output_subdir (default subclustering/) with settings, marker list, figures, remap CSVs
-- outputs/009_Subclustering/<run_id>/figures/ for human-facing plots under sbt
+- outputs/<execution_id>_Subclustering/figures/ for human-facing plots under sbt
 
 ## Configuration
 

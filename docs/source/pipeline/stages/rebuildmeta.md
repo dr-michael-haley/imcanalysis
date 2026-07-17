@@ -15,7 +15,7 @@ Rebuild metadata folder tables from an existing AnnData file
 ## Outputs
 
 - general.metadata_folder/{metadata.csv,dictionary.csv,panel.csv}
-- outputs/018_Metadata_Rebuild/<run_id>/ stage report
+- outputs/<execution_id>_Metadata_Rebuild/ stage report
 
 ## Configuration
 

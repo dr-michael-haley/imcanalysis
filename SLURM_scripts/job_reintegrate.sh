@@ -9,7 +9,7 @@
 #@DESC: Reintegrate markers previously removed from the processed AnnData
 #@IN:   process.output_adata_path + segmentation.removed_markers_anndata_path
 #@OUT:  process.output_adata_path (updated in place)
-#@OUT:  outputs/016_Marker_Reintegration/<run_id>/ stage report
+#@OUT:  outputs/<execution_id>_Marker_Reintegration/ stage report
 #@ENV:  imc_segmentation
 #@MODULE:  SpatialBiologyToolkit.scripts.reintegrate_markers
 #@CONFIG: general, segmentation, process, logging

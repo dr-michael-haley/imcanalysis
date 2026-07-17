@@ -12,7 +12,7 @@
 #@IN:   createmasks.dna_image_name channel (default DNA1)
 #@OUT:  createmasks.dna_preprocessing_output_folder_name/ (default preprocessed_dna/)
 #@OUT:  general.masks_folder/ (default masks/)
-#@OUT:  outputs/004_Segmentation/<run_id>/ plus reusable preprocessed DNA and masks
+#@OUT:  outputs/<execution_id>_Segmentation/ plus reusable preprocessed DNA and masks
 #@ENV:  imc_segmentation
 #@MODULE:  SpatialBiologyToolkit.scripts.preprocess_dna
 #@ENV:  imc_cellposesam

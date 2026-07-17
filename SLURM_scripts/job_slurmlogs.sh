@@ -11,7 +11,7 @@
 #@IN:   Current working directory containing slurm-<job_id>.out files
 #@OUT:  general.slurm_logs_folder with renamed logs and *_Unverified flags for unmatched files
 #@OUT:  general.slurm_logs_folder/slurmlogs_manifest.csv
-#@OUT:  outputs/022_Legacy_SLURM_Log_Migration/<run_id>/ stage report under sbt
+#@OUT:  outputs/<execution_id>_Legacy_SLURM_Log_Migration/ stage report under sbt
 #@ENV:  imc_segmentation
 #@MODULE:  SpatialBiologyToolkit.scripts.slurmlogs
 #@CONFIG: general, logging

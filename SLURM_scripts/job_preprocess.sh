@@ -11,7 +11,7 @@
 #@OUT:  general.tiff_stacks_folder (default tiff_stacks/)
 #@OUT:  general.raw_images_folder (default tiffs/)
 #@OUT:  general.metadata_folder/{metadata.csv,dictionary.csv,panel.csv[,panel_mapping.csv]}
-#@OUT:  outputs/001_Preprocessing/<run_id>/ stage report
+#@OUT:  outputs/<execution_id>_Preprocessing/ stage report
 #@ENV:  imc_segmentation
 #@MODULE:  SpatialBiologyToolkit.scripts.preprocess
 #@CONFIG: general, preprocess, logging

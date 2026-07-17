@@ -5,9 +5,9 @@
 #SBATCH --mail-user=${IMC_EMAIL}
 #SBATCH --mail-type=ALL
 
-#@DESC: Zip selected numbered human-facing output directories for download
+#@DESC: Zip selected sequential execution output directories for download
 #@IN:   outputs/ stage paths defined in Bash_scripts/zipqc (legacy QC fallback retained)
-#@OUT:  outputs/021_Output_Archive/<run_id>/files/<dataset>_<set>_<date>.zip under sbt
+#@OUT:  outputs/<execution_id>_Output_Archive/files/<dataset>_<set>_<date>.zip under sbt
 #@CONFIG: none
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"

@@ -12,7 +12,7 @@
 #@IN:   rapids.batch_correction_obs must exist in AnnData.obs when rapids.run_harmony=true
 #@IN:   rapids.filter_obs_key plus optional rapids.filter_min_value/filter_max_value filters cells after load
 #@OUT:  rapids.output_adata_path (default general.anndata_path)
-#@OUT:  outputs/007_RAPIDS_Processing/<run_id>/ figures, tables, and parameter scans
+#@OUT:  outputs/<execution_id>_RAPIDS_Processing/ figures, tables, and parameter scans
 #@ENV:  rapids_singlecell
 #@MODULE:  SpatialBiologyToolkit.scripts.basic_process_rapids
 #@CONFIG: general, rapids, visualization, logging

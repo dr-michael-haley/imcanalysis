@@ -10,7 +10,7 @@ It simplifies transfer, review, and handover of report material without duplicat
 
 ## Main inputs
 
-Numbered stage output folders, with deprecated QC paths supported as a fallback.
+Sequential execution output folders, with deprecated QC paths supported as a fallback.
 
 ## Reusable assets produced
 

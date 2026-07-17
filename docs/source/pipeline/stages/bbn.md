@@ -16,7 +16,7 @@ Batch correction with BioBatchNet + UMAP/Leiden post-processing
 ## Outputs
 
 - biobatchnet.output_adata_path (default general.anndata_path)
-- outputs/008_BioBatchNet_Integration/<run_id>/ (legacy direct fallback: general.qc_folder)
+- outputs/<execution_id>_BioBatchNet_Integration/ (legacy direct fallback: general.qc_folder)
 
 ## Configuration
 

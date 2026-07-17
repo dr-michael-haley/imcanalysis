@@ -11,7 +11,7 @@
 #@IN:   biobatchnet.input_adata_path (fallback: general.anndata_path)
 #@IN:   biobatchnet.batch_correction_obs must exist in AnnData.obs
 #@OUT:  biobatchnet.output_adata_path (default general.anndata_path)
-#@OUT:  outputs/008_BioBatchNet_Integration/<run_id>/ (legacy direct fallback: general.qc_folder)
+#@OUT:  outputs/<execution_id>_BioBatchNet_Integration/ (legacy direct fallback: general.qc_folder)
 #@ENV:  imc_biobatchnet
 #@MODULE:  SpatialBiologyToolkit.scripts.basic_process_biobatchnet
 #@CONFIG: general, biobatchnet, logging

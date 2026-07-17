@@ -43,13 +43,29 @@ class ErrorRecord(ReportingModel):
 
 
 class StageManifest(ReportingModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[1, 2] = 2
     project_id: str
-    run_id: str
+    execution_id: int | None = None
+    execution_label: str = ""
+    technical_run_id: str = ""
+    workflow_run_id: str = ""
+    output_folder: Path = Path(".")
+    run_id: str | None = None
     stage: str
     display_name: str
-    status: Literal["running", "completed", "failed"]
+    stage_display_name: str = ""
+    status: Literal[
+        "allocated",
+        "pending",
+        "running",
+        "completed",
+        "failed",
+        "cancelled",
+        "blocked",
+        "unknown",
+    ]
     managed_run: bool
+    asset_effect: Literal["none", "created", "modified", "unknown"] = "unknown"
 
     started_at: datetime
     completed_at: datetime | None = None

@@ -10,7 +10,7 @@
 #@IN:   batch_integration.input_adata_path (fallback: general.anndata_path)
 #@IN:   batch_integration.batch_correction_obs must exist in AnnData.obs for Harmony/BBKNN modes
 #@OUT:  batch_integration.output_adata_path (default general.anndata_path)
-#@OUT:  outputs/006_Batch_Integration/<run_id>/ (legacy direct fallback: general.qc_folder)
+#@OUT:  outputs/<execution_id>_Batch_Integration/ (legacy direct fallback: general.qc_folder)
 #@ENV:  imc_cellcharter
 #@MODULE:  SpatialBiologyToolkit.scripts.basic_process_batch_integration
 #@CONFIG: general, batch_integration, logging

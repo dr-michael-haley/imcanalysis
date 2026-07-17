@@ -15,7 +15,10 @@ from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal, NoReturn
 
+from SpatialBiologyToolkit.pipeline.executions import update_execution
 from SpatialBiologyToolkit.pipeline.manifests import read_model, write_yaml
+from SpatialBiologyToolkit.pipeline.models import AssetEffect, AssetInventory
+from SpatialBiologyToolkit.pipeline.runs import ASSETS_BEFORE
 from SpatialBiologyToolkit.pipeline.registry import get_stage, toolkit_root
 
 from .inventory import (
@@ -99,7 +102,18 @@ class StageReporter:
         if self.manifest_path.is_file():
             try:
                 existing = read_model(self.manifest_path, StageManifest)
-                return existing.model_copy(update={"status": "running"})
+                return existing.model_copy(
+                    update={
+                        "status": "running",
+                        "started_at": _started_at_from_environment(),
+                        "slurm_job_id": (
+                            os.environ.get("SBT_SLURM_JOB_ID")
+                            or os.environ.get("IMC_SLURM_JOB_ID")
+                            or os.environ.get("SLURM_JOB_ID")
+                            or existing.slurm_job_id
+                        ),
+                    }
+                )
             except (OSError, ValueError):
                 pass
         doc_path = documentation_path(self.context.stage)
@@ -114,9 +128,15 @@ class StageReporter:
         )
         return StageManifest(
             project_id=self.context.project_id,
-            run_id=self.context.run_id,
+            execution_id=self.context.execution_id,
+            execution_label=self.context.execution_label,
+            technical_run_id=self.context.technical_run_id,
+            workflow_run_id=self.context.workflow_run_id,
+            output_folder=self.context.output_dir,
+            run_id=self.context.workflow_run_id,
             stage=self.context.stage,
             display_name=self.spec.display_name,
+            stage_display_name=self.spec.display_name,
             status="running",
             managed_run=self.context.managed_run,
             started_at=_started_at_from_environment(),
@@ -142,11 +162,17 @@ class StageReporter:
         os.environ.setdefault("SBT_STAGE", self.context.stage)
         os.environ.setdefault("SBT_PROJECT_ROOT", str(self.context.project_root))
         os.environ.setdefault("SBT_PROJECT_ID", self.context.project_id)
-        os.environ.setdefault("SBT_RUN_ID", self.context.run_id)
+        os.environ.setdefault("SBT_EXECUTION_LABEL", self.context.execution_label)
+        os.environ.setdefault("SBT_TECHNICAL_RUN_ID", self.context.technical_run_id)
+        os.environ.setdefault("SBT_WORKFLOW_RUN_ID", self.context.workflow_run_id)
+        os.environ.setdefault("SBT_RUN_ID", self.context.workflow_run_id)
+        if self.context.execution_id is not None:
+            os.environ.setdefault("SBT_EXECUTION_ID", str(self.context.execution_id))
         os.environ.setdefault("SBT_OUTPUTS_ROOT", str(self.context.outputs_root))
         os.environ.setdefault(
             "SBT_STAGE_OUTPUT_DIR", str(self.context.stage_run_dir)
         )
+        os.environ.setdefault("SBT_OUTPUT_DIR", str(self.context.output_dir))
         if not self.context.managed_run:
             warning = (
                 "Direct execution: no managed SBT technical run record is available."
@@ -154,7 +180,70 @@ class StageReporter:
             if warning not in self.manifest.warnings:
                 self.manifest.warnings.append(warning)
         write_yaml(self.manifest_path, self.manifest)
+        if self.context.managed_run:
+            try:
+                from SpatialBiologyToolkit.pipeline.project import load_project
+
+                update_execution(
+                    load_project(self.context.project_root),
+                    self.context.technical_run_id,
+                    status="running",
+                    started_at=self.manifest.started_at,
+                    slurm_job_id=self.manifest.slurm_job_id,
+                )
+            except Exception:
+                logging.exception("Could not update the managed execution index.")
         return self
+
+    def _asset_effect(self) -> AssetEffect:
+        reusable = [
+            item
+            for item in self.manifest.produced_assets
+            if item.role not in {"human_outputs", "legacy_qc", "legacy_slurm_logs"}
+        ]
+        if not reusable:
+            return "none"
+        if not self.context.technical_run_record:
+            return "unknown"
+        before_path = self.context.technical_run_record / ASSETS_BEFORE
+        try:
+            before = read_model(before_path, AssetInventory)
+        except (OSError, ValueError):
+            return "unknown"
+        before_by_role = {item.role: item for item in before.assets}
+        effects: list[str] = []
+        for produced in reusable:
+            previous = before_by_role.get(produced.role)
+            if previous is None:
+                effects.append("unknown")
+                continue
+            exists_now = produced.path.exists()
+            if not previous.exists and exists_now:
+                effects.append("created")
+                continue
+            if previous.exists and exists_now:
+                try:
+                    modified = datetime.fromtimestamp(
+                        produced.path.stat().st_mtime,
+                        tz=timezone.utc,
+                    )
+                except OSError:
+                    effects.append("unknown")
+                    continue
+                effects.append(
+                    "modified"
+                    if previous.modified_at is None or modified != previous.modified_at
+                    else "none"
+                )
+                continue
+            effects.append("unknown")
+        if "modified" in effects:
+            return "modified"
+        if "unknown" in effects:
+            return "unknown"
+        if "created" in effects:
+            return "created"
+        return "none"
 
     def add_input(self, role: str, path: str | Path, description: str = "") -> None:
         resolved = Path(path).expanduser().resolve(strict=False)
@@ -257,6 +346,7 @@ class StageReporter:
             discover_generated_files(self.context.stage_run_dir),
         )
         self.manifest.parameters.update(extract_stage_parameters(self.context))
+        self.manifest.asset_effect = self._asset_effect()
         self.manifest.metrics.setdefault(
             "generated_files", len(self.manifest.generated_files)
         )
@@ -280,9 +370,25 @@ class StageReporter:
             event_path = (
                 self.context.technical_run_record
                 / "stage_events"
-                / f"{self.context.stage}.yaml"
+                / f"{self.context.technical_run_id}.yaml"
             )
             write_yaml(event_path, self.manifest)
+
+        if self.context.managed_run:
+            try:
+                from SpatialBiologyToolkit.pipeline.project import load_project
+
+                update_execution(
+                    load_project(self.context.project_root),
+                    self.context.technical_run_id,
+                    status=self.manifest.status,
+                    started_at=self.manifest.started_at,
+                    completed_at=self.manifest.completed_at,
+                    slurm_job_id=self.manifest.slurm_job_id,
+                    asset_effect=self.manifest.asset_effect,
+                )
+            except Exception:
+                logging.exception("Could not finalize the managed execution index.")
 
         try:
             write_indexes(self.context, self.manifest)

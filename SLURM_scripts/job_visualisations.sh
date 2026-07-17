@@ -9,7 +9,7 @@
 #@DESC: Generate UMAP/matrix/overlay/population visualization outputs
 #@IN:   visualization.input_adata_path or process.output_adata_path
 #@IN:   general.masks_folder, general.denoised_images_folder, general.metadata_folder
-#@OUT:  outputs/013_Visualisation/<run_id>/
+#@OUT:  outputs/<execution_id>_Visualisation/
 #@ENV:  imc_segmentation
 #@MODULE:  SpatialBiologyToolkit.scripts.basic_visualizations
 #@CONFIG: general, visualization, process, logging

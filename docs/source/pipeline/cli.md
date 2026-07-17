@@ -27,7 +27,8 @@ An SBT project combines:
 
 - a Pydantic-validated pipeline config, normally `config.yaml`;
 - canonical reusable project inputs and assets at paths configured under `general`;
-- numbered human-facing stage reports under `outputs/`;
+- automatically numbered human-facing execution reports under `outputs/`;
+- `.sbt/executions.yaml`, the locked active project execution index;
 - `.sbt/project.yaml`, which gives the project a stable UUID;
 - `.sbt/project_notes.md`, for durable human or agent-authored context;
 - `.sbt/runs/`, which contains operational run records, stage events, and logs.
@@ -48,8 +49,9 @@ sbt project init
 ```
 
 This creates `config.yaml`, the configured raw IMC and metadata folders,
-`.sbt/project.yaml`, `.sbt/project_notes.md`, `.sbt/runs/`, and a complete
-numbered `outputs/` navigation tree. Use `--config-level complete` for every
+`.sbt/project.yaml`, `.sbt/project_notes.md`, `.sbt/runs/`, an empty execution
+index, and `outputs/README.md`. Execution folders are created only as stages
+are accepted for submission. Use `--config-level complete` for every
 current default. Existing scientific files are not overwritten.
 
 Adopt an existing project without moving or rewriting data:
@@ -104,7 +106,7 @@ sbt modes explain segmentation
 ```
 
 The typed Python registry contains every alias mirrored in
-`SLURM_scripts/pipeline.conf`, with fixed display order, numbered output folder,
+`SLURM_scripts/pipeline.conf`, with documentation order, an unnumbered output slug,
 shared scientific explainer, wrapper paths, dependencies, workflow groups,
 asset roles, expected outputs, and log patterns. `sbt stages explain` renders
 the same explainer snapshot used in generated reports.
@@ -157,7 +159,7 @@ sbt run cellpose --note "Review ROI_17 carefully." --note "Compare with run 2026
 Each submitted run creates:
 
 ```text
-.sbt/runs/<run_id>/
+.sbt/runs/<workflow_run_id>/
   run_manifest.yaml
   run_plan.yaml
   config.user.yaml
@@ -171,9 +173,10 @@ Each submitted run creates:
 ```
 
 Jobs use `sbatch --parsable`, explicit stdout/stderr paths, and `afterok`
-dependencies. Each receives `SBT_PROJECT_ROOT`, `SBT_PROJECT_ID`, `SBT_CONFIG`,
-`SBT_RUN_ID`, `SBT_RUN_DIR`, `SBT_STAGE`, `SBT_OUTPUTS_ROOT`, and
-`SBT_STAGE_OUTPUT_DIR`, plus optional reason and notes.
+dependencies. Each receives the project, config, execution ID, immutable
+technical execution ID, workflow run ID, output directory, stage, reason, and
+notes. Transitional `SBT_RUN_ID` and `SBT_STAGE_OUTPUT_DIR` aliases remain for
+existing wrappers.
 
 The shared scientific-stage config parser honors `SBT_CONFIG`, so jobs read the
 run's resolved config while executing from the project root. The user's source
@@ -183,7 +186,7 @@ first `sbatch` failure and records the partial submission.
 Each stage also writes:
 
 ```text
-outputs/<numbered_stage_folder>/<run_id>/
+outputs/<execution_id>_<stage_slug>/
   README.md
   stage_manifest.yaml
   figures/
@@ -196,19 +199,30 @@ The stage report links back to the technical run and its logs. Start a project
 handover or review at `outputs/README.md`. See the
 [outputs and reporting guide](reporting.md) for the complete convention.
 
-## Status and logs
+IDs are allocated automatically in project execution order. Stage types have
+no permanent number, rerunning a stage creates another sequential folder, and
+a multi-stage request receives consecutive IDs. Workflow, technical execution,
+and scheduler job IDs remain separate.
+
+## Summary, status, reports, and logs
 
 ```bash
+sbt summary
+sbt summary --stage cellpose
+sbt summary --status failed
+sbt summary --format json
+
 sbt status latest
-sbt status <run-id>
+sbt status 003
+sbt status --technical-run-id stage-...
 sbt status latest --format yaml
 sbt status latest --format json
 
 sbt logs latest
-sbt logs latest --stage cellpose
-sbt logs latest --stage cellpose --stderr
-sbt logs latest --stage cellpose --stdout --tail 100
-sbt logs latest --stage cellpose --path-only
+sbt logs 003 --stderr
+sbt logs 003 --stdout --tail 100
+sbt logs 003 --path-only
+sbt report 003
 ```
 
 Status combines active `squeue` data with `sacct` history. Missing accounting,
@@ -217,6 +231,20 @@ guessed states. The result is written to `status.yaml`.
 
 Logs are resolved from recorded paths and tailed from the end of each file;
 large directory trees are not scanned.
+
+Remove a visible execution with `sbt remove 003`. The command confirms the
+identity and output path, warns again for created, modified, or unknown reusable
+asset effects, removes only the human-facing folder and active index entry, and
+renumbers later visible executions. It never claims to restore reusable assets.
+The hidden audit is available only through `sbt summary --include-removed`.
+
+Projects using the former fixed-stage-folder layout require an explicit,
+non-silent upgrade:
+
+```bash
+sbt project migrate-execution-layout --dry-run
+sbt project migrate-execution-layout
+```
 
 ## Legacy interfaces and provenance boundary
 

@@ -76,7 +76,10 @@ class RunControlTests(unittest.TestCase):
             ):
                 self.assertTrue((run.run_dir / filename).is_file(), filename)
             self.assertTrue((run.run_dir / "logs").is_dir())
-            self.assertEqual(read_yaml(run.run_dir / RUN_MANIFEST)["schema_version"], 1)
+            manifest = read_yaml(run.run_dir / RUN_MANIFEST)
+            self.assertEqual(manifest["schema_version"], 2)
+            self.assertEqual(manifest["workflow_run_id"], run.workflow_run_id)
+            self.assertEqual(len(manifest["executions"]), len(plan.resolved_stages))
             self.assertIn("logging", read_yaml(run.run_dir / RESOLVED_CONFIG))
 
     def test_sbatch_commands_dependencies_and_exported_environment(self):
@@ -105,6 +108,15 @@ class RunControlTests(unittest.TestCase):
             )
             self.assertEqual(exported["SBT_CONFIG"], str(run.resolved_config_path))
             self.assertEqual(exported["SBT_RUN_ID"], run.run_id)
+            self.assertEqual(exported["SBT_WORKFLOW_RUN_ID"], run.workflow_run_id)
+            self.assertEqual(exported["SBT_EXECUTION_ID"], "1")
+            self.assertEqual(exported["SBT_EXECUTION_LABEL"], "001")
+            self.assertTrue(exported["SBT_TECHNICAL_RUN_ID"].startswith("stage-"))
+            self.assertNotEqual(submitted.jobs[0].job_id, exported["SBT_EXECUTION_ID"])
+            self.assertNotEqual(
+                submitted.jobs[0].job_id,
+                exported["SBT_TECHNICAL_RUN_ID"],
+            )
             self.assertEqual(exported["SBT_STAGE"], "prep")
 
     def test_shared_scientific_config_parser_honors_sbt_config(self):

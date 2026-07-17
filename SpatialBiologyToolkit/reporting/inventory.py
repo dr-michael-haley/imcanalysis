@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from SpatialBiologyToolkit.config import load_config
 from SpatialBiologyToolkit.pipeline.assets import asset_map, resolve_assets
@@ -112,7 +112,7 @@ ASSET_DESCRIPTIONS = {
     "masks": "Reusable segmentation masks.",
     "cell_tables": "Reusable quantified cell tables.",
     "anndata": "Canonical reusable AnnData object.",
-    "human_outputs": "Human-facing numbered stage outputs.",
+    "human_outputs": "Human-facing sequential execution outputs.",
     "legacy_qc": "Deprecated legacy QC output folder.",
     "legacy_slurm_logs": "Deprecated legacy SLURM log folder.",
 }

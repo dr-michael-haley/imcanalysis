@@ -10,8 +10,10 @@ order](workflow.md), then use the generated [SLURM stage
 reference](stages/index.md) for exact inputs, outputs, environments, and config
 sections.
 
-The [outputs and reporting guide](reporting.md) explains numbered human-facing
-reports, reusable root assets, technical run records, and migration from `QC/`.
+The [outputs and reporting guide](reporting.md) explains sequential human-facing
+executions, reusable root assets, technical records, safe removal, and explicit
+legacy-layout migration. The concise [execution-layout design](execution-layout-design.md)
+defines the underlying identity and locking model.
 Stable scientific context for every stage is in the
 [shared stage explainers](../stages/index.md).
 
@@ -23,6 +25,7 @@ Stable scientific context for every stage is in the
 cli
 workflow
 reporting
+execution-layout-design
 stages/index
 ../stages/index
 subclustering

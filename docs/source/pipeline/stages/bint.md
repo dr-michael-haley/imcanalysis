@@ -16,7 +16,7 @@ Batch integration with Harmony and/or BBKNN, followed by UMAP/Leiden post-proces
 ## Outputs
 
 - batch_integration.output_adata_path (default general.anndata_path)
-- outputs/006_Batch_Integration/<run_id>/ (legacy direct fallback: general.qc_folder)
+- outputs/<execution_id>_Batch_Integration/ (legacy direct fallback: general.qc_folder)
 
 ## Configuration
 

@@ -68,12 +68,13 @@ Plan with machine-readable output:
 sbt plan segmentation --format yaml
 ```
 
-Submit and inspect the latest run:
+Submit and inspect the latest execution:
 
 ```bash
 sbt run segmentation
 sbt status latest
-sbt logs latest --stage cellpose
+sbt summary
+sbt logs 004
 ```
 
 Run a single wrapper locally for debugging:
@@ -148,11 +149,11 @@ for the complete set of defaults.
 
 ## Adding or changing a pipeline stage
 
-1. Add or update the typed stage registry entry, including display/reporting metadata.
+1. Add or update the typed stage registry entry, including display/reporting metadata. Do not assign a fixed output number.
 2. Add or update the shared explainer under `docs/source/stages/`.
 3. Add or update a `SLURM_scripts/job_*.sh` wrapper and its `#@` metadata.
 4. Keep the legacy `SLURM_scripts/pipeline.conf` mirror aligned.
-5. Integrate the shared reporter and route human-facing output to the stage run folder.
+5. Integrate the shared reporter and route human-facing output to the current execution folder.
 6. Run `make docs-generate`, then `make docs-check`.
 
 The generator creates a compact table and one focused page per alias. Put

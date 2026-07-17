@@ -15,7 +15,7 @@ Generate denoising side-by-side QC and panel consistency checks
 
 ## Outputs
 
-- outputs/003_Denoising_QC/<run_id>/ figures and panel/pixel QC tables
+- outputs/<execution_id>_Denoising_QC/ figures and panel/pixel QC tables
 
 ## Configuration
 

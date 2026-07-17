@@ -5,8 +5,10 @@ from __future__ import annotations
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
 
 from .manifests import utc_now, write_yaml
+from .executions import resolve_technical_execution, update_execution
 from .models import RunStatus, StageStatus, SubmittedJobs
 from .project import ProjectContext
 from .runs import STATUS_FILE, load_run_manifest, load_submitted_jobs
@@ -66,7 +68,9 @@ def _parse_sacct(output: str, job_ids: set[str]) -> dict[str, tuple[str, str, st
     return states
 
 
-def _normalize_state(raw_state: str) -> str:
+def _normalize_state(
+    raw_state: str,
+) -> Literal["pending", "running", "completed", "failed", "cancelled", "unknown"]:
     normalized = raw_state.strip().upper().split("+", 1)[0].split(maxsplit=1)
     if not normalized:
         return "unknown"
@@ -163,6 +167,8 @@ def inspect_run_status(
             stage_statuses.append(
                 StageStatus(
                     stage=job.stage,
+                    execution_id=job.execution_id,
+                    technical_run_id=job.technical_run_id,
                     job_id=job.job_id,
                     status="not_submitted",
                     source="run record",
@@ -176,6 +182,8 @@ def inspect_run_status(
             stage_statuses.append(
                 StageStatus(
                     stage=job.stage,
+                    execution_id=job.execution_id,
+                    technical_run_id=job.technical_run_id,
                     job_id=job.job_id,
                     status=_normalize_state(raw_state),
                     source="squeue",
@@ -197,6 +205,8 @@ def inspect_run_status(
             stage_statuses.append(
                 StageStatus(
                     stage=job.stage,
+                    execution_id=job.execution_id,
+                    technical_run_id=job.technical_run_id,
                     job_id=job.job_id,
                     status=_normalize_state(raw_state),
                     source="sacct",
@@ -207,6 +217,8 @@ def inspect_run_status(
         stage_statuses.append(
             StageStatus(
                 stage=job.stage,
+                execution_id=job.execution_id,
+                technical_run_id=job.technical_run_id,
                 job_id=job.job_id,
                 status="unknown",
                 source="SLURM",
@@ -216,6 +228,7 @@ def inspect_run_status(
 
     report = RunStatus(
         run_id=manifest.run_id,
+        workflow_run_id=manifest.workflow_run_id or manifest.run_id,
         project_id=manifest.project_id,
         checked_at=utc_now(),
         overall_status=_overall_status(stage_statuses, submitted),
@@ -223,6 +236,24 @@ def inspect_run_status(
         warnings=warnings,
     )
     write_yaml(directory / STATUS_FILE, report)
+    for stage in report.stages:
+        if not stage.technical_run_id:
+            continue
+        status = "failed" if stage.status == "not_submitted" else stage.status
+        changes: dict[str, object] = {"status": status}
+        try:
+            current = resolve_technical_execution(context, stage.technical_run_id)
+        except FileNotFoundError:
+            continue
+        if status == "running" and current.started_at is None:
+            changes["started_at"] = utc_now()
+        if status in {"completed", "failed", "cancelled"}:
+            changes["completed_at"] = utc_now()
+        try:
+            update_execution(context, stage.technical_run_id, **changes)
+        except FileNotFoundError:
+            # A removed execution remains in immutable technical records.
+            continue
     return report
 
 

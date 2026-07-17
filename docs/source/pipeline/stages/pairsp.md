@@ -15,7 +15,7 @@ Run pairwise spatial analyses (Squidpy interactions, distance bootstrap, and PCF
 
 ## Outputs
 
-- outputs/014_Pairwise_Spatial_Analysis/<run_id>/
+- outputs/<execution_id>_Pairwise_Spatial_Analysis/
 
 ## Configuration
 

@@ -25,8 +25,8 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `outputs_folder` | `str` | `outputs` | `basic` | Root folder for numbered, human-facing stage reports, figures, and tables. | Keep reusable assets in their dedicated root folders; use this folder for material intended for human inspection. |
-| `qc_folder` | `str` | `QC` | `expert` | Deprecated legacy catch-all QC folder retained for existing projects and direct compatibility runs. | New managed runs use general.outputs_folder and numbered stage folders. Do not repurpose this field for new output layouts. |
+| `outputs_folder` | `str` | `outputs` | `basic` | Root folder for sequential, human-facing execution reports, figures, and tables. | Keep reusable assets in their dedicated root folders; use this folder for material intended for human inspection. |
+| `qc_folder` | `str` | `QC` | `expert` | Deprecated legacy catch-all QC folder retained for existing projects and direct compatibility runs. | New managed runs use general.outputs_folder and sequential execution folders. Do not repurpose this field for new output layouts. |
 
 ## Observation columns
 

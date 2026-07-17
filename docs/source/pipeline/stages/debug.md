@@ -13,7 +13,7 @@ Run environment + module import diagnostics for SLURM job scripts
 ## Outputs
 
 - imc_env_test_%j.out
-- outputs/023_Environment_Diagnostics/<run_id>/ stage report under sbt
+- outputs/<execution_id>_Environment_Diagnostics/ stage report under sbt
 
 ## Configuration
 

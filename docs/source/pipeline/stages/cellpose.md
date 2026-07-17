@@ -17,7 +17,7 @@ DNA preprocessing + CellPose-SAM mask generation
 
 - createmasks.dna_preprocessing_output_folder_name/ (default preprocessed_dna/)
 - general.masks_folder/ (default masks/)
-- outputs/004_Segmentation/<run_id>/ plus reusable preprocessed DNA and masks
+- outputs/<execution_id>_Segmentation/ plus reusable preprocessed DNA and masks
 
 ## Configuration
 

@@ -12,7 +12,7 @@
 #@IN:   cellcharter.input_adata_path (fallback: process.output_adata_path, then process.input_adata_path)
 #@IN:   adata.obs sample key (default cellcharter.sample_key=ROI) and spatial coords (obsm['spatial'] or X_loc/Y_loc)
 #@OUT:  cellcharter.output_adata_path (default anndata_cellcharter.h5ad)
-#@OUT:  outputs/010_CellCharter_Neighbourhoods/<run_id>/ (legacy direct fallback: general.qc_folder)
+#@OUT:  outputs/<execution_id>_CellCharter_Neighbourhoods/ (legacy direct fallback: general.qc_folder)
 #@ENV:  imc_cellcharter
 #@MODULE:  SpatialBiologyToolkit.scripts.cellcharter_neighborhoods
 #@CONFIG: general, process, cellcharter, logging

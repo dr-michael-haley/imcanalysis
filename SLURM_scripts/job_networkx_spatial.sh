@@ -9,7 +9,7 @@
 #@DESC: Run per-ROI Squidpy/NetworkX spatial graph metrics (assortativity, per-population clustering, bootstrapped nulls, and case aggregation)
 #@IN:   networkx_spatial.input_adata_path (fallback: general.anndata_path)
 #@IN:   adata.obs keys configured in networkx_spatial (population_obs, roi_obs, case_obs optional, X/Y coords)
-#@OUT:  outputs/015_NetworkX_Spatial_Analysis/<run_id>/
+#@OUT:  outputs/<execution_id>_NetworkX_Spatial_Analysis/
 #@ENV:  imc_cellcharter
 #@MODULE:  SpatialBiologyToolkit.scripts.networkx_spatial
 #@CONFIG: general, process, networkx_spatial, logging

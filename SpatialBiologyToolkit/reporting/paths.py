@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Mapping
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from SpatialBiologyToolkit.pipeline.registry import get_stage, toolkit_root
 
@@ -19,29 +19,41 @@ class ReportingContext:
     stage: str
     project_root: Path
     project_id: str
-    run_id: str
+    execution_id: int | None
+    execution_label: str
+    technical_run_id: str
+    workflow_run_id: str
     outputs_root: Path
-    stage_root: Path
-    stage_run_dir: Path
+    output_dir: Path
     technical_run_record: Path | None
     config_path: Path | None
     managed_run: bool
 
     @property
+    def stage_run_dir(self) -> Path:
+        """Compatibility alias for the resolved execution output directory."""
+        return self.output_dir
+
+    @property
+    def stage_root(self) -> Path:
+        """Compatibility alias; stage types no longer own fixed output roots."""
+        return self.output_dir.parent
+
+    @property
     def figures_dir(self) -> Path:
-        return self.stage_run_dir / "figures"
+        return self.output_dir / "figures"
 
     @property
     def tables_dir(self) -> Path:
-        return self.stage_run_dir / "tables"
+        return self.output_dir / "tables"
 
     @property
     def summaries_dir(self) -> Path:
-        return self.stage_run_dir / "summaries"
+        return self.output_dir / "summaries"
 
     @property
     def files_dir(self) -> Path:
-        return self.stage_run_dir / "files"
+        return self.output_dir / "files"
 
 
 def infer_stage_from_main_module() -> str | None:
@@ -132,17 +144,35 @@ def resolve_reporting_context(
         or metadata.get("project_id")
         or f"direct:{root.name or 'project'}"
     )
-    managed = bool(env.get("SBT_RUN_ID") and env.get("SBT_RUN_DIR"))
-    run_id = env.get("SBT_RUN_ID") or _direct_run_id(now)
+    workflow_run_id = (
+        env.get("SBT_WORKFLOW_RUN_ID")
+        or env.get("SBT_RUN_ID")
+        or _direct_run_id(now)
+    )
+    technical_run_id = (
+        env.get("SBT_TECHNICAL_RUN_ID")
+        or env.get("SBT_RUN_ID")
+        or workflow_run_id
+    )
+    raw_execution_id = env.get("SBT_EXECUTION_ID")
+    execution_id = int(raw_execution_id) if raw_execution_id else None
+    execution_label = env.get("SBT_EXECUTION_LABEL") or (
+        f"{execution_id:03d}" if execution_id is not None else technical_run_id
+    )
+    managed = bool(env.get("SBT_RUN_DIR") and env.get("SBT_STAGE_OUTPUT_DIR"))
     config_path = _config_path(env, root)
     outputs_root = _outputs_root(env, root, config_path)
-    stage_root = outputs_root / spec.output_folder
-    explicit_run_dir = env.get("SBT_STAGE_OUTPUT_DIR")
-    stage_run_dir = (
-        Path(explicit_run_dir).expanduser().resolve(strict=False)
-        if explicit_run_dir
-        else (stage_root / run_id).resolve(strict=False)
-    )
+    explicit_output_dir = env.get("SBT_OUTPUT_DIR") or env.get("SBT_STAGE_OUTPUT_DIR")
+    if explicit_output_dir:
+        output_dir = Path(explicit_output_dir).expanduser().resolve(strict=False)
+    else:
+        direct_id = _direct_run_id(now)
+        execution_label = direct_id
+        technical_run_id = direct_id
+        workflow_run_id = direct_id
+        output_dir = (
+            outputs_root / "direct" / f"{direct_id}_{spec.output_slug}"
+        ).resolve(strict=False)
     technical = env.get("SBT_RUN_DIR")
     technical_path = (
         Path(technical).expanduser().resolve(strict=False) if technical else None
@@ -151,10 +181,12 @@ def resolve_reporting_context(
         stage=stage_name,
         project_root=root,
         project_id=project_id,
-        run_id=run_id,
+        execution_id=execution_id,
+        execution_label=execution_label,
+        technical_run_id=technical_run_id,
+        workflow_run_id=workflow_run_id,
         outputs_root=outputs_root,
-        stage_root=stage_root.resolve(strict=False),
-        stage_run_dir=stage_run_dir,
+        output_dir=output_dir,
         technical_run_record=technical_path,
         config_path=config_path,
         managed_run=managed,
