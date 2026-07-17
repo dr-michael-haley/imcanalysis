@@ -20,7 +20,7 @@ source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 echo "SLURM log organizer is using $SLURM_NTASKS CPU core(s)"
 
-conda activate "${IMC_ENV_SEGMENTATION:-imc_segmentation}"
+conda activate "${SBT_CONDA_ENV:-${IMC_ENV_SEGMENTATION:-imc_segmentation}}"
 # Fix ctypes error
 export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
 

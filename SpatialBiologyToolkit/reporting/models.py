@@ -42,8 +42,16 @@ class ErrorRecord(ReportingModel):
     traceback: str | None = None
 
 
+class EnvironmentReportReference(ReportingModel):
+    key: str
+    conda_name: str
+    manifest: Path
+    specification_snapshot: Path
+    additional_keys: list[str] = Field(default_factory=list)
+
+
 class StageManifest(ReportingModel):
-    schema_version: Literal[1, 2] = 2
+    schema_version: Literal[1, 2, 3] = 3
     project_id: str
     execution_id: int | None = None
     execution_label: str = ""
@@ -89,10 +97,12 @@ class StageManifest(ReportingModel):
     warnings: list[str] = Field(default_factory=list)
     errors: list[ErrorRecord] = Field(default_factory=list)
     rendering_errors: list[str] = Field(default_factory=list)
+    environment: EnvironmentReportReference | None = None
 
 
 __all__ = [
     "ErrorRecord",
+    "EnvironmentReportReference",
     "GeneratedFile",
     "ParameterRecord",
     "PathRecord",

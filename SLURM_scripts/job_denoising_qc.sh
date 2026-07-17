@@ -21,10 +21,10 @@ source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 echo "Job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 
-conda activate "${IMC_ENV_DENOISE:-imc_denoise}"
+conda activate "${SBT_CONDA_ENV_DENOISE:-${IMC_ENV_DENOISE:-imc_denoise}}"
 python -m SpatialBiologyToolkit.scripts.denoising_qc
 
-conda activate "${IMC_ENV_SEGMENTATION:-imc_segmentation}"
+conda activate "${SBT_CONDA_ENV_SEGMENTATION:-${IMC_ENV_SEGMENTATION:-imc_segmentation}}"
 # Fix ctypes error
 export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
 python -m SpatialBiologyToolkit.scripts.check_panel_consistency 

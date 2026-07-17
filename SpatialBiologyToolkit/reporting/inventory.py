@@ -39,7 +39,13 @@ def discover_generated_files(run_dir: Path) -> list[GeneratedFile]:
     if not run_dir.is_dir():
         return records
     for path in sorted(run_dir.rglob("*"), key=lambda item: str(item).lower()):
-        if not path.is_file() or path.name in REPORT_FILES or path.name.startswith("."):
+        relative = path.relative_to(run_dir)
+        if (
+            not path.is_file()
+            or path.name in REPORT_FILES
+            or path.name.startswith(".")
+            or (relative.parts and relative.parts[0] == "environment")
+        ):
             continue
         try:
             size = path.stat().st_size

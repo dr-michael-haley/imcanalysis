@@ -21,7 +21,7 @@ source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 echo "RAPIDS single-cell job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 
-conda activate "${IMC_ENV_RAPIDS_SINGLECELL:-rapids_singlecell}"
+conda activate "${SBT_CONDA_ENV:-${IMC_ENV_RAPIDS_SINGLECELL:-rapids_singlecell}}"
 # Fix ctypes error
 export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
 

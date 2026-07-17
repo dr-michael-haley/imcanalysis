@@ -9,6 +9,8 @@ import sys
 from pathlib import Path
 from typing import Callable
 
+from SpatialBiologyToolkit.environments.registry import load_environment_registry
+
 from .manifests import utc_now, write_yaml
 from .executions import execution_output_path, update_execution
 from .models import (
@@ -63,6 +65,21 @@ def sbt_environment(
         "SBT_STAGE_DOCUMENTATION": stage.documentation_path,
         "SBT_REPORTING_PYTHON": sys.executable,
     }
+    environment_registry = load_environment_registry()
+    environment_keys = stage.environment_keys
+    if environment_keys:
+        environment["SBT_ENVIRONMENT_KEY"] = environment_keys[0]
+        environment["SBT_ENVIRONMENT_KEYS"] = ",".join(environment_keys)
+        environment["SBT_CONDA_ENV"] = environment_registry.environments[
+            environment_keys[0]
+        ].conda_name
+        for environment_key in environment_keys:
+            variable = "SBT_CONDA_ENV_" + re.sub(
+                r"[^A-Za-z0-9]", "_", environment_key
+            ).upper()
+            environment[variable] = environment_registry.environments[
+                environment_key
+            ].conda_name
     if run.manifest.reason:
         environment["SBT_RUN_REASON"] = run.manifest.reason
     if run.manifest.notes:

@@ -22,7 +22,7 @@ source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 echo "STARLING job is using ${SLURM_GPUS:-0} GPU(s) with ID(s) ${CUDA_VISIBLE_DEVICES:-none} and ${SLURM_NTASKS:-${SLURM_NTASKS_PER_NODE:-1}} CPU core(s)"
 
-conda activate "${IMC_ENV_STARLING:-imc_starling}"
+conda activate "${SBT_CONDA_ENV:-${IMC_ENV_STARLING:-imc_starling}}"
 export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
 
 python -m SpatialBiologyToolkit.scripts.starling_analysis

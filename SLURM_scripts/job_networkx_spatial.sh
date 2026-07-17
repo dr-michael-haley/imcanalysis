@@ -18,7 +18,7 @@ source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 echo "NetworkX spatial job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 
-conda activate "${IMC_ENV_CELLCHARTER:-imc_cellcharter}"
+conda activate "${SBT_CONDA_ENV:-${IMC_ENV_CELLCHARTER:-imc_cellcharter}}"
 # Fix ctypes error
 export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
 

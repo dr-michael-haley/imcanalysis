@@ -20,5 +20,5 @@ source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 echo "Denoising job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 
-conda activate "${IMC_ENV_DENOISE:-imc_denoise}"
+conda activate "${SBT_CONDA_ENV:-${IMC_ENV_DENOISE:-imc_denoise}}"
 python -m SpatialBiologyToolkit.scripts.denoising

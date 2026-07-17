@@ -25,6 +25,8 @@ Stable scientific context for every stage is in the
 cli
 workflow
 reporting
+environments
+environment-migration
 execution-layout-design
 stages/index
 ../stages/index

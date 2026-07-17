@@ -21,6 +21,18 @@ sbt --help
 The editable install supplies `sbt` without installing the full scientific
 dependency stack into the launcher environment.
 
+Manage the fixed scientific environments through `sbt env`, not an independent
+installer implementation:
+
+```bash
+sbt env doctor
+sbt env list
+sbt env sync --all --dry-run
+```
+
+See the [fixed Conda environment guide](environments.md) for synchronization,
+capture, drift comparison, lock maintenance, smoke tests, and stage provenance.
+
 ## SBT projects
 
 An SBT project combines:
@@ -263,7 +275,8 @@ output versioning remain outside the current scope.
 
 - `sbatch`, `squeue`, and usually `sacct` are available on the login node.
 - The existing wrappers can source `$HOME/imcanalysis/SLURM_scripts/job_env.sh`.
-- The configured stage environments and `IMC_ENV_*` overrides already exist.
+- Repository-managed environments have been synchronized with `sbt env`; any
+  external environments exist under the fixed names in the central registry.
 - The site accepts standard `--parsable`, `--chdir`, `--output`, `--error`,
   `--export`, and `afterok` options.
 

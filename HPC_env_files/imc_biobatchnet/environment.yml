@@ -28,5 +28,3 @@ dependencies:
   - libstdcxx-ng>=13
   - libgcc-ng>=13
   - pip
-  - pip:
-      - git+https://github.com/UoM-HealthAI/BioBatchNet.git

@@ -285,6 +285,11 @@ def _api_modules(repo_root: Path) -> list[tuple[str, str]]:
         for path in sorted((package_dir / "reporting").glob("*.py"))
         if path.name not in {"__init__.py", "events.py"}
     )
+    modules.extend(
+        (f"environments_{path.stem}", f"SpatialBiologyToolkit.environments.{path.stem}")
+        for path in sorted((package_dir / "environments").glob("*.py"))
+        if path.name != "__init__.py"
+    )
     return modules
 
 

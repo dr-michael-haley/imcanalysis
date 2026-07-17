@@ -81,6 +81,7 @@ class StageSpec(PipelineModel):
     documentation_path: str
     description: str
     slurm_script: str
+    environment_keys: list[str] = Field(default_factory=list)
     config_sections: list[str] = Field(default_factory=list)
     python_modules: list[str] = Field(default_factory=list)
     depends_on: list[str] = Field(default_factory=list)

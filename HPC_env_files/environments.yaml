@@ -1,0 +1,102 @@
+schema_version: 1
+
+environments:
+  segmentation:
+    conda_name: imc_segmentation
+    specification_directory: HPC_env_files/imc_segmentation
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
+      - [python, -c, "import scanpy, readimc, skimage"]
+
+  denoise:
+    conda_name: imc_denoise
+    specification_directory: HPC_env_files/imc_denoise
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
+      - [python, -c, "import IMC_Denoise, tensorflow, tifffile"]
+
+  cellposesam:
+    conda_name: imc_cellposesam
+    specification_directory: HPC_env_files/imc_cellposesam
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
+      - [python, -c, "import cellpose, skimage"]
+
+  biobatchnet:
+    conda_name: imc_biobatchnet
+    specification_directory: HPC_env_files/imc_biobatchnet
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
+      - [python, -c, "import scanpy, torch"]
+    notes:
+      - BioBatchNet is installed from its upstream VCS repository and requires review during capture.
+
+  cellcharter:
+    conda_name: imc_cellcharter
+    specification_directory: HPC_env_files/imc_cellcharter
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
+      - [python, -c, "import cellcharter, scanpy, torch"]
+
+  rapids:
+    conda_name: rapids_singlecell
+    managed: false
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, rapids_singlecell"]
+    notes:
+      - External GPU environment; no repository lockfile is currently maintained.
+
+  starling:
+    conda_name: imc_starling
+    managed: false
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, starling, torch"]
+    notes:
+      - External environment; no repository lockfile is currently maintained.
+
+  scportrait:
+    conda_name: scPortrait
+    managed: false
+    platform: linux-64
+    toolkit_overlay: none
+    smoke_tests:
+      - [python, -c, "import scportrait"]
+    notes:
+      - External environment and converter checkout managed outside this repository.
+
+stage_environments:
+  prep: [segmentation]
+  vis: [segmentation]
+  nimbus: [segmentation]
+  bint: [cellcharter]
+  rapids: [rapids]
+  bbn: [biobatchnet]
+  subcl: [segmentation]
+  cchar: [cellcharter]
+  starling: [starling]
+  dnqc: [denoise, segmentation]
+  aiinter: [segmentation]
+  denoise: [denoise]
+  config: [segmentation]
+  cellpose: [cellposesam, segmentation]
+  reint: [segmentation]
+  scport: [scportrait]
+  pairsp: [cellcharter]
+  nxsp: [cellcharter]
+  remap: [segmentation]
+  slogs: [segmentation]
+  rebuildmeta: [segmentation]

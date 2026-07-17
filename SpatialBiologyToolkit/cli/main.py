@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from SpatialBiologyToolkit.config import load_config
 from SpatialBiologyToolkit.config.export import write_resolved_config
+from SpatialBiologyToolkit.environments import EnvironmentManager, load_environment_registry
 from SpatialBiologyToolkit.pipeline.assets import (
     count_raw_imc_files,
     resolve_assets,
@@ -100,10 +101,12 @@ config_app = typer.Typer(help="Validate and export typed pipeline configuration.
 project_app = typer.Typer(help="Initialize, adopt, validate, and inspect SBT projects.")
 stages_app = typer.Typer(help="List and explain registered pipeline stages.")
 modes_app = typer.Typer(help="List and explain named workflow modes.")
+env_app = typer.Typer(help="Validate, compare, capture, and synchronize fixed Conda environments.")
 app.add_typer(config_app, name="config")
 app.add_typer(project_app, name="project")
 app.add_typer(stages_app, name="stages")
 app.add_typer(modes_app, name="modes")
+app.add_typer(env_app, name="env")
 
 
 def _fail(exc: Exception | str, *, code: int = 2) -> NoReturn:
@@ -564,10 +567,10 @@ def stages_list(
     if output_format != OutputFormat.text:
         _emit_machine(list(STAGES), output_format)
         return
-    typer.echo(f"{'STAGE':<12} {'DOC ORDER':<10} {'OUTPUT SLUG':<32} DISPLAY NAME")
+    typer.echo(f"{'STAGE':<12} {'ENVIRONMENT':<20} {'OUTPUT SLUG':<32} DISPLAY NAME")
     for stage in sorted(STAGES, key=lambda item: (item.catalogue_order, item.name)):
         typer.echo(
-            f"{stage.name:<12} {stage.catalogue_order:<10} "
+            f"{stage.name:<12} {','.join(stage.environment_keys) or '-':<20} "
             f"{stage.output_slug:<32} {stage.display_name}"
         )
         typer.echo(f"  {stage.description}")
@@ -592,6 +595,13 @@ def stages_explain(
     typer.echo(f"Output slug: {spec.output_slug}")
     typer.echo("Execution folder: assigned per project as NNN_<output slug>")
     typer.echo(f"SLURM script: {stage_script_path(spec)}")
+    environment_registry = load_environment_registry()
+    environment_names = [
+        environment_registry.environments[key].conda_name
+        for key in spec.environment_keys
+    ]
+    typer.echo(f"Environment keys: {', '.join(spec.environment_keys) or '-'}")
+    typer.echo(f"Fixed Conda names: {', '.join(environment_names) or '-'}")
     typer.echo(f"Documentation: {documentation}")
     typer.echo("")
     if documentation.is_file():
@@ -629,6 +639,327 @@ def modes_explain(
     typer.echo(f"Mode: {spec.name}")
     typer.echo(f"Purpose: {spec.description}")
     typer.echo(f"Stages: {' -> '.join(spec.stages)}")
+
+
+def _env_manager(toolkit: Path | None) -> EnvironmentManager:
+    return EnvironmentManager(toolkit)
+
+
+def _env_machine(value: Any, output_format: SummaryFormat | OutputFormat) -> None:
+    selected = OutputFormat.json if output_format.value == "json" else OutputFormat.yaml
+    _emit_machine(value, selected)
+
+
+@env_app.command("list")
+def env_list(
+    output_format: SummaryFormat = typer.Option(SummaryFormat.table, "--format"),
+    compare: bool = typer.Option(False, "--compare", help="Inspect live package drift (slower)."),
+    toolkit: Path | None = typer.Option(None, "--toolkit-root"),
+) -> None:
+    """List registry environments, fixed names, availability, and stage use."""
+    try:
+        rows = _env_manager(toolkit).list_environments(compare=compare)
+    except Exception as exc:
+        _fail(exc)
+    if output_format != SummaryFormat.table:
+        _env_machine(rows, output_format)
+        return
+    typer.echo(f"{'Key':<16} {'Conda name':<22} {'Managed':<8} {'Exists':<8} {'Drift':<9} Stages")
+    for row in rows:
+        exists = "unknown" if row.exists is None else "yes" if row.exists else "no"
+        typer.echo(
+            f"{row.key:<16} {row.conda_name:<22} "
+            f"{'yes' if row.managed else 'external':<8} {exists:<8} {row.drift:<9} "
+            f"{', '.join(row.stages) or '-'}"
+        )
+
+
+@env_app.command("show")
+def env_show(
+    environment: str = typer.Argument(..., help="Logical key or fixed Conda name."),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+    toolkit: Path | None = typer.Option(None, "--toolkit-root"),
+) -> None:
+    """Show one registry environment without importing scientific packages."""
+    try:
+        detail = _env_manager(toolkit).show(environment)
+    except Exception as exc:
+        _fail(exc)
+    if output_format != OutputFormat.text:
+        _emit_machine(detail, output_format)
+        return
+    typer.echo(f"Environment: {detail['key']}")
+    typer.echo(f"Conda name: {detail['conda_name']}")
+    typer.echo(f"Management: {'repository' if detail['managed'] else 'external'}")
+    typer.echo(f"Platform: {detail['platform']}")
+    typer.echo(f"Exists: {detail['exists'] if detail['exists'] is not None else 'unknown'}")
+    typer.echo(f"Prefix: {detail['prefix'] or '-'}")
+    typer.echo(f"Stages: {', '.join(detail['stages']) or '-'}")
+    typer.echo(f"Toolkit overlay: {detail['toolkit_overlay']}")
+    typer.echo("Specification:")
+    for name, path in detail["paths"].items():
+        if path:
+            typer.echo(f"  {name}: {path}")
+    typer.echo("Smoke tests:")
+    for command in detail["smoke_tests"]:
+        typer.echo(f"  {' '.join(command)}")
+    for note in detail["notes"]:
+        typer.echo(f"Note: {note}")
+
+
+@env_app.command("doctor")
+def env_doctor(
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+    toolkit: Path | None = typer.Option(None, "--toolkit-root"),
+) -> None:
+    """Run non-mutating launcher, registry, specification, and mapping checks."""
+    try:
+        report = _env_manager(toolkit).doctor()
+    except Exception as exc:
+        _fail(exc)
+    if output_format != OutputFormat.text:
+        _emit_machine(report, output_format)
+    else:
+        for check in report.checks:
+            marker = "OK" if check.status == "ok" else "WARN" if check.status == "warning" else "FAIL"
+            typer.echo(f"[{marker}] {check.name}: {check.detail}")
+    if not report.healthy:
+        raise typer.Exit(2)
+
+
+@env_app.command("validate-spec")
+def env_validate_spec(
+    environment: str | None = typer.Argument(None, help="Logical key or fixed Conda name."),
+    all_: bool = typer.Option(False, "--all"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+    toolkit: Path | None = typer.Option(None, "--toolkit-root"),
+) -> None:
+    """Validate environment.yml, lockfile, pip extras, names, and platforms."""
+    try:
+        manager = _env_manager(toolkit)
+        selected = manager.select(environment, all_environments=all_)
+        reports = [manager.validate(key) for key, _ in selected]
+    except Exception as exc:
+        _fail(exc)
+    if output_format != OutputFormat.text:
+        _emit_machine(reports, output_format)
+    else:
+        for report in reports:
+            typer.echo(
+                f"{report.environment_key} ({report.conda_name}): "
+                f"{'valid' if report.valid else 'INVALID'}"
+            )
+            for issue in report.issues:
+                typer.echo(f"  {issue.severity.upper()}: {issue.message}")
+    if any(not report.valid for report in reports):
+        raise typer.Exit(2)
+
+
+def _print_comparison(comparison) -> None:
+    typer.echo(f"Environment: {comparison.environment_key} ({comparison.conda_name})")
+    typer.echo(f"Exists: {'yes' if comparison.exists else 'no'}")
+    if comparison.error:
+        typer.echo(f"Error: {comparison.error}")
+    if comparison.drift:
+        for item in comparison.drift:
+            marker = "!" if item.material else "~"
+            typer.echo(f"  {marker} [{item.layer}] {item.message}")
+    elif comparison.completed:
+        typer.echo("  All declared Conda, lock, pip-extra, and toolkit checks match.")
+    typer.echo(f"Result: {comparison.result.upper()}")
+
+
+@env_app.command("compare")
+def env_compare(
+    environment: str | None = typer.Argument(None, help="Logical key or fixed Conda name."),
+    all_: bool = typer.Option(False, "--all"),
+    output_format: SummaryFormat = typer.Option(SummaryFormat.table, "--format"),
+    toolkit: Path | None = typer.Option(None, "--toolkit-root"),
+) -> None:
+    """Compare live Conda, pip extras, lock records, and toolkit overlay."""
+    try:
+        manager = _env_manager(toolkit)
+        selected = manager.select(environment, all_environments=all_)
+        comparisons = [manager.compare(key) for key, _ in selected]
+    except Exception as exc:
+        _fail(exc)
+    if output_format != SummaryFormat.table:
+        _env_machine(comparisons if all_ else comparisons[0], output_format)
+    else:
+        for index, comparison in enumerate(comparisons):
+            if index:
+                typer.echo("")
+            _print_comparison(comparison)
+    code = max((comparison.exit_code for comparison in comparisons), default=0)
+    if code:
+        raise typer.Exit(code)
+
+
+@env_app.command("lock")
+def env_lock(
+    environment: str | None = typer.Argument(None, help="Logical key or fixed Conda name."),
+    all_: bool = typer.Option(False, "--all"),
+    check: bool = typer.Option(False, "--check", help="Compare a temporary generated lock only."),
+    verbose: bool = typer.Option(False, "--verbose"),
+    toolkit: Path | None = typer.Option(None, "--toolkit-root"),
+) -> None:
+    """Generate target-platform lockfiles atomically with conda-lock."""
+    try:
+        manager = _env_manager(toolkit)
+        selected = manager.select(environment, all_environments=all_)
+        stale = False
+        for key, definition in selected:
+            if not definition.managed:
+                typer.echo(f"Skipping external environment {key} ({definition.conda_name}).")
+                continue
+            current, command = manager.lock(key, check=check, verbose=verbose)
+            typer.echo(
+                f"{key}: {'current' if current else 'would change' if check else 'updated'}"
+            )
+            if verbose:
+                typer.echo(f"  {' '.join(command)}")
+            if check and not current:
+                stale = True
+        if stale:
+            raise typer.Exit(1)
+    except typer.Exit:
+        raise
+    except Exception as exc:
+        _fail(exc)
+
+
+def _print_sync_plan(plan) -> None:
+    typer.echo(f"Environment: {plan.environment_key} ({plan.conda_name})")
+    typer.echo(f"Exists: {'yes' if plan.exists else 'no'}")
+    typer.echo(f"Drift: {plan.drift}")
+    typer.echo(f"Recreation required: {'yes' if plan.recreation_required else 'no'}")
+    typer.echo("Planned operations:")
+    for action in plan.actions:
+        typer.echo(f"  - {action}")
+    if not plan.actions:
+        typer.echo("  - No action required")
+    typer.echo("Smoke tests:")
+    for command in plan.smoke_tests:
+        typer.echo(f"  - {' '.join(command)}")
+
+
+@env_app.command("sync")
+def env_sync(
+    environment: str | None = typer.Argument(None, help="Logical key or fixed Conda name."),
+    all_: bool = typer.Option(False, "--all"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    recreate: bool = typer.Option(False, "--recreate", help="Allow fixed-name recreation when drift exists."),
+    yes: bool = typer.Option(False, "--yes", help="Confirm requested recreation non-interactively."),
+    verbose: bool = typer.Option(False, "--verbose"),
+    toolkit: Path | None = typer.Option(None, "--toolkit-root"),
+) -> None:
+    """Create or safely recreate fixed Conda environments from repository locks."""
+    try:
+        manager = _env_manager(toolkit)
+        selected = manager.select(environment, all_environments=all_)
+        for key, definition in selected:
+            if not definition.managed:
+                typer.echo(f"Skipping external environment {key} ({definition.conda_name}).")
+                continue
+            plan = manager.sync_plan(key)
+            _print_sync_plan(plan)
+            if dry_run or not plan.actions:
+                continue
+            confirmed = yes
+            if plan.recreation_required:
+                if not recreate:
+                    _fail(
+                        f"{definition.conda_name} has drift; rerun with --recreate after reviewing the plan."
+                    )
+                if not yes:
+                    confirmed = typer.confirm(
+                        f"Remove and recreate fixed environment {definition.conda_name}?",
+                        default=False,
+                    )
+                    if not confirmed:
+                        raise typer.Abort()
+            manager.sync(
+                key,
+                recreate=recreate,
+                confirmed=confirmed,
+                verbose=verbose,
+            )
+            typer.echo(f"Synchronized {definition.conda_name}.")
+    except (typer.Exit, typer.Abort):
+        raise
+    except Exception as exc:
+        _fail(exc)
+
+
+@env_app.command("capture")
+def env_capture(
+    environment: str = typer.Argument(..., help="Logical key or fixed Conda name."),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    write: bool = typer.Option(False, "--write"),
+    accept_vcs: bool = typer.Option(
+        False,
+        "--accept-vcs",
+        help="Explicitly retain observed VCS requirements in pip-extras.txt.",
+    ),
+    verbose: bool = typer.Option(False, "--verbose"),
+    toolkit: Path | None = typer.Option(None, "--toolkit-root"),
+) -> None:
+    """Capture a live environment into reviewed repository candidates."""
+    if dry_run and write:
+        _fail("Choose --dry-run or --write, not both.")
+    try:
+        plan = _env_manager(toolkit).capture(
+            environment, write=write, accept_vcs=accept_vcs, verbose=verbose
+        )
+    except Exception as exc:
+        _fail(exc)
+    typer.echo(f"Environment: {plan.environment_key} ({plan.conda_name})")
+    typer.echo(f"Candidate files: {plan.candidate_directory}")
+    for name, difference in plan.differences.items():
+        typer.echo(f"\nProposed {name} changes:")
+        typer.echo(difference)
+    typer.echo("\nExcluded toolkit overlay:")
+    typer.echo(f"  {plan.excluded_toolkit or 'not observed'}")
+    typer.echo("\nRequires manual review:")
+    for item in plan.review_requirements:
+        typer.echo(f"  {item}")
+    if not plan.review_requirements:
+        typer.echo("  none")
+    typer.echo("Repository files updated." if write else "Dry run: repository files were not modified.")
+
+
+@env_app.command("test")
+def env_test(
+    environment: str | None = typer.Argument(None, help="Logical key or fixed Conda name."),
+    all_: bool = typer.Option(False, "--all"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+    verbose: bool = typer.Option(False, "--verbose"),
+    toolkit: Path | None = typer.Option(None, "--toolkit-root"),
+) -> None:
+    """Run registered lightweight smoke tests through conda run."""
+    try:
+        manager = _env_manager(toolkit)
+        selected = manager.select(environment, all_environments=all_)
+        reports = [manager.test(key, verbose=verbose) for key, _ in selected]
+    except Exception as exc:
+        _fail(exc)
+    if output_format != OutputFormat.text:
+        _emit_machine(reports, output_format)
+    else:
+        for report in reports:
+            typer.echo(
+                f"{report.environment_key} ({report.conda_name}): "
+                f"{'PASS' if report.passed else 'FAIL'}"
+            )
+            for result in report.tests:
+                typer.echo(
+                    f"  {'PASS' if result.passed else 'FAIL'} "
+                    f"({result.duration_seconds:.2f}s) {' '.join(result.command)}"
+                )
+                if result.stderr_tail and not result.passed:
+                    typer.echo(f"    {result.stderr_tail}")
+    if any(not report.passed for report in reports):
+        raise typer.Exit(1)
 
 
 @app.command(

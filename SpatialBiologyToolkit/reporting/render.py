@@ -57,6 +57,38 @@ def _file_rows(records: Iterable[GeneratedFile], source_dir: Path) -> list[str]:
     return rows or ["- None recorded."]
 
 
+def _environment_rows(manifest: StageManifest, source_dir: Path) -> list[str]:
+    reference = manifest.environment
+    if reference is None:
+        return ["No managed environment record was available for this execution."]
+    manifest_path = source_dir / reference.manifest
+    runtime: dict = {}
+    try:
+        loaded = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        runtime = loaded.get("runtime", {}) if isinstance(loaded, dict) else {}
+    except (OSError, yaml.YAMLError):
+        pass
+    rows = [
+        f"This stage used the fixed Conda environment `{reference.conda_name}`.",
+        "",
+        f"[Environment specification and installed-package snapshot]"
+        f"({_link(source_dir / reference.specification_snapshot, source_dir)})",
+        "",
+        f"- Environment key: `{reference.key}`",
+        f"- Python: `{runtime.get('python_version') or '-'}`",
+        f"- Toolkit commit: `{runtime.get('toolkit_git_commit') or '-'}`",
+        f"- Editable toolkit installation: `{'yes' if runtime.get('toolkit_editable') else 'no'}`",
+        f"- Environment drift at execution: `{runtime.get('drift') or 'unknown'}`",
+    ]
+    if reference.additional_keys:
+        rows.append(
+            "- Additional stage environments: `"
+            + "`, `".join(reference.additional_keys)
+            + "`"
+        )
+    return rows
+
+
 def render_run_readme(manifest: StageManifest, destination: Path) -> str:
     source_dir = destination.parent
     rationale = manifest.reason or (
@@ -91,6 +123,9 @@ def render_run_readme(manifest: StageManifest, destination: Path) -> str:
     ]
     if manifest.notes:
         lines.extend(["Run notes:", "", *(f"- {note}" for note in manifest.notes), ""])
+    lines.extend(
+        ["## Software environment", "", *_environment_rows(manifest, source_dir), ""]
+    )
     lines.extend(["## Inputs", "", *_path_rows(manifest.inputs, source_dir), ""])
     lines.extend(
         [
@@ -287,6 +322,15 @@ def prepare_execution_output(
         explainer = doc_path.read_text(encoding="utf-8")
     except OSError:
         explainer = ""
+    from SpatialBiologyToolkit.environments.provenance import (
+        snapshot_stage_environment_specifications,
+    )
+
+    environment_reference = snapshot_stage_environment_specifications(
+        stage=execution.stage,
+        output_directory=output,
+        repository_root=toolkit_root(),
+    )
     manifest = StageManifest(
         project_id=context.project_metadata.project_id,
         execution_id=execution.execution_id,
@@ -308,6 +352,7 @@ def prepare_execution_output(
         notes=run.manifest.notes,
         documentation_source=doc_path if doc_path.is_file() else None,
         explainer_snapshot=explainer,
+        environment=environment_reference,
     )
     write_yaml(output / "stage_manifest.yaml", manifest)
     write_text(output / "README.md", render_run_readme(manifest, output / "README.md"))

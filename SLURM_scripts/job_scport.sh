@@ -21,7 +21,7 @@ echo "scPortrait job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICE
 
 set -euo pipefail
 
-conda activate "${IMC_ENV_SCPORTRAIT:-scPortrait}"
+conda activate "${SBT_CONDA_ENV:-${IMC_ENV_SCPORTRAIT:-scPortrait}}"
 
 python ~/scPortrait_to_IMC/imc_to_single_cells.py \
   --channels-dir processed \

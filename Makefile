@@ -18,8 +18,8 @@ update:
 	@bash install/setup.sh
 	
 envs:
-	@echo "🐍 Setting up Conda environments..."
-	@bash install/setup_envs.sh
+	@echo "Synchronizing fixed Conda environments through sbt..."
+	@sbt env sync --all
 
 docs-generate:
 	@$(PYTHON) docs/tools/generate_docs.py

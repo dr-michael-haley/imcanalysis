@@ -2579,8 +2579,8 @@ if __name__ == "__main__":
         raise FileNotFoundError(f"AnnData could not be loaded for visualization stage: {adata_path}")
     logging.info('AnnData loaded successfully.')
 
-    # Set up QC output folder
-    qc_base = Path(general_config.qc_folder) / 'BasicProcess_QC'
+    # Set up output folder
+    qc_base = Path(general_config.outputs_folder)
     
     # Set up output directories
     qc_umap_dir = qc_base / 'UMAPs'

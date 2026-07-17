@@ -21,7 +21,3 @@ dependencies:
   - pip
   - libstdcxx-ng>=13
   - libgcc-ng>=13
-
-  - pip:
-      - openai==2.7.1
-      - SpatialDM==0.3.1

@@ -118,6 +118,11 @@ class RunControlTests(unittest.TestCase):
                 exported["SBT_TECHNICAL_RUN_ID"],
             )
             self.assertEqual(exported["SBT_STAGE"], "prep")
+            self.assertEqual(exported["SBT_ENVIRONMENT_KEY"], "segmentation")
+            self.assertEqual(exported["SBT_CONDA_ENV"], "imc_segmentation")
+            self.assertEqual(
+                exported["SBT_CONDA_ENV_SEGMENTATION"], "imc_segmentation"
+            )
 
     def test_shared_scientific_config_parser_honors_sbt_config(self):
         config_path = str(Path("run") / "config.resolved.yaml")

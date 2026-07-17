@@ -11,6 +11,17 @@ from .reporter import StageReporter
 def start_shell_stage() -> None:
     reporter = StageReporter.from_environment()
     reporter.__enter__()
+    from SpatialBiologyToolkit.environments.provenance import (
+        attach_environment_reference,
+        capture_stage_environment_runtime,
+    )
+
+    reference = capture_stage_environment_runtime(
+        stage=reporter.context.stage,
+        output_directory=reporter.context.stage_run_dir,
+    )
+    reporter.manifest.environment = reference
+    attach_environment_reference(reporter.manifest_path, reference)
 
 
 def finalize_shell_stage(exit_code: int) -> None:

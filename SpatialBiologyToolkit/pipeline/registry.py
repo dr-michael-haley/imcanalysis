@@ -6,6 +6,8 @@ import difflib
 import os
 from pathlib import Path
 
+from SpatialBiologyToolkit.environments.registry import environment_keys_for_stage
+
 from .models import ModeSpec, StageSpec
 
 
@@ -178,6 +180,7 @@ def _stage(
         documentation_path=f"docs/source/stages/{doc_name}",
         description=description,
         slurm_script=f"SLURM_scripts/{script}",
+        environment_keys=environment_keys_for_stage(name),
         config_sections=list(STAGE_CONFIG_SECTIONS[name]),
         python_modules=list(STAGE_MODULES.get(name, ())),
         depends_on=list(depends_on),

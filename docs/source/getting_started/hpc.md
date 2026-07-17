@@ -93,9 +93,8 @@ environments:
 
 ```bash
 cd ~/imcanalysis
-conda env create -f Local_envs/sbt_cli_env.yml
+bash install/bootstrap_sbt.sh
 conda activate sbt-cli
-pip install --no-deps -e .
 sbt --help
 ```
 
@@ -110,20 +109,33 @@ planning, submission, status, and logs.
 
 ## 3. Create the pipeline conda environments
 
-Set up the pipeline environments from pinned lockfiles:
+Validate and preview the fixed-name pipeline environments:
 
+```bash
+sbt env doctor
+sbt env validate-spec --all
+sbt env sync --all --dry-run
 ```
-make envs
+
+Then synchronize repository-managed environments from their lockfiles:
+
+```bash
+sbt env sync --all
 ```
 
-This will:
+`make envs` remains a convenience wrapper for the final command. Existing
+environments are never silently removed: inspect drift and use `--recreate`
+with confirmation when a fixed environment genuinely needs rebuilding.
 
-- Create (or skip) the pipeline envs from lockfiles
-- Record environment names in `~/.imc_config` for the SLURM jobs to use
-- Ensure SLURM job scripts are executable
-- Install `SpatialBiologyToolkit` into each env (editable, no dependencies)
+Synchronization:
 
-`make envs` creates these environments from the repository lockfiles:
+- creates repository-managed environments from exact lockfiles;
+- installs intentional `pip-extras.txt` packages afterward;
+- installs `SpatialBiologyToolkit` editable with `--no-deps`;
+- runs lightweight registered smoke tests;
+- writes an observed package snapshot outside the Git checkout.
+
+Repository lockfiles cover:
 
 - `imc_segmentation`
 - `imc_denoise`
@@ -131,18 +143,11 @@ This will:
 - `imc_biobatchnet`
 - `imc_cellcharter`
 
-It writes the following variables to `~/.imc_config` (defaults shown):
+The central mapping is `HPC_env_files/environments.yaml`. RAPIDS, STARLING,
+and scPortrait remain explicit external/pre-existing environments.
 
-```
-export IMC_ENV_SEGMENTATION="imc_segmentation"
-export IMC_ENV_DENOISE="imc_denoise"
-export IMC_ENV_CELLPOSESAM="imc_cellposesam"
-export IMC_ENV_BIOBATCHNET="imc_biobatchnet"
-export IMC_ENV_CELLCHARTER="imc_cellcharter"
-export IMC_ENV_RAPIDS_SINGLECELL="rapids_singlecell"
-export IMC_ENV_STARLING="imc_starling"
-export IMC_ENV_SCPORTRAIT="scPortrait"
-```
+See [fixed Conda environment management](../pipeline/environments.md) for
+comparison, capture, lock maintenance, recreation safeguards, and provenance.
 
 ---
 
@@ -164,21 +169,11 @@ Example:
 ```
 export IMC_EMAIL="your.email@domain.com"
 export OPENAI_API_KEY="sk-..."
-export IMC_ENV_SEGMENTATION="imc_segmentation"
-export IMC_ENV_DENOISE="imc_denoise"
-export IMC_ENV_RAPIDS_SINGLECELL="rapids_singlecell"
-export IMC_ENV_STARLING="imc_starling"
 ```
 
-The RAPIDS, STARLING, and scPortrait variables name optional external or
-pre-existing environments. `make envs` records those defaults but does not
-create those three environments.
-
-Tip: you can edit the `IMC_ENV_*` values later if you want the SLURM jobs to use different environment names.
-
-The RAPIDS stage expects an existing RAPIDS-compatible conda environment named `rapids_singlecell` by default; set `IMC_ENV_RAPIDS_SINGLECELL` if your local environment name differs.
-
-The STARLING stage expects an existing Starling-compatible conda environment named `imc_starling` by default; set `IMC_ENV_STARLING` if your environment name differs.
+Managed `sbt run` submissions resolve fixed environment names through the
+central registry. Existing `IMC_ENV_*` variables remain supported only as
+transitional fallbacks for direct invocation of SLURM wrappers.
 
 ---
 
@@ -191,10 +186,11 @@ cd ~/imcanalysis
 make update
 ```
 
-If you change environment lockfiles or want to re-apply permissions, re-run:
+If environment specifications change, inspect and synchronize explicitly:
 
 ```bash
-make envs
+sbt env lock --all --check
+sbt env sync --all --dry-run
 ```
 
 ---
@@ -289,13 +285,7 @@ source ~/.profile
 
 If you see `Permission denied` when running `pll` locally, your SLURM job scripts are not executable.
 
-Fix it with either:
-
-```bash
-make envs
-```
-
-or:
+Fix it with:
 
 ```bash
 chmod +x ~/imcanalysis/SLURM_scripts/*.sh

@@ -38,3 +38,9 @@ This reference is split by module so the site navigation stays compact.
    reporting_render
    reporting_reporter
    reporting_validation
+   environments_manager
+   environments_models
+   environments_provenance
+   environments_registry
+   environments_runtime
+   environments_specification

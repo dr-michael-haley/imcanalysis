@@ -163,6 +163,7 @@ stage facts in the wrapper metadata.
 ## Operational notes
 
 - Job email notifications use `IMC_EMAIL`.
-- Environment names can be overridden with the `IMC_ENV_*` variables used by the wrappers.
-- `rapids_singlecell`, `imc_starling`, and `scPortrait` are external/pre-existing environments rather than environments created by `make envs`.
+- Managed runs resolve environment keys and fixed names from
+  `HPC_env_files/environments.yaml`. `IMC_ENV_*` remains a transitional direct-wrapper fallback.
+- `rapids_singlecell`, `imc_starling`, and `scPortrait` are external/pre-existing environments rather than environments synchronized by `sbt env`.
 - If executable bits are missing, run `chmod +x ~/imcanalysis/SLURM_scripts/*.sh`.

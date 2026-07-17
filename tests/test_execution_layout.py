@@ -299,7 +299,7 @@ class ExecutionLayoutTests(unittest.TestCase):
                 ["remove", "001", "--project", str(context.root), "--yes"],
             )
             self.assertNotEqual(refused.exit_code, 0)
-            self.assertIn("--accept-asset-risk", refused.stdout)
+            self.assertIn("--accept-asset-risk", refused.output)
             self.assertEqual(len(load_execution_index(context).executions), 1)
             accepted = runner.invoke(
                 app,
