@@ -82,10 +82,18 @@ class SummaryFormat(str, Enum):
     json = "json"
 
 
+REPOSITORY_URL = "https://github.com/dr-michael-haley/imcanalysis"
+DOCUMENTATION_URL = "https://imcanalysis.readthedocs.io/en/latest/"
+
 app = typer.Typer(
     name="sbt",
-    help="Spatial Biology Toolkit project and SLURM control interface.",
-    no_args_is_help=True,
+    help=(
+        "Spatial Biology Toolkit project and SLURM control interface.\n\n"
+        f"Repository: {REPOSITORY_URL}\n\n"
+        f"Documentation: {DOCUMENTATION_URL}"
+    ),
+    invoke_without_command=True,
+    no_args_is_help=False,
     pretty_exceptions_show_locals=False,
 )
 config_app = typer.Typer(help="Validate and export typed pipeline configuration.")
@@ -213,6 +221,7 @@ def _print_validation(report) -> None:
 
 @app.callback()
 def main(
+    context: typer.Context,
     version: bool = typer.Option(
         False,
         "--version",
@@ -229,6 +238,8 @@ def main(
             value = "development"
         typer.echo(value)
         raise typer.Exit()
+    if context.invoked_subcommand is None:
+        typer.echo(context.get_help())
 
 
 @config_app.command("validate")
@@ -620,7 +631,10 @@ def modes_explain(
     typer.echo(f"Stages: {' -> '.join(spec.stages)}")
 
 
-@app.command("plan")
+@app.command(
+    "plan",
+    help="Validate and preview stages, dependencies, assets, and readiness.",
+)
 def plan_command(
     targets: list[str] = typer.Argument(..., help="Stage aliases or workflow modes."),
     project: Path | None = typer.Option(None, "--project"),
@@ -640,7 +654,10 @@ def plan_command(
         raise typer.Exit(1)
 
 
-@app.command("run")
+@app.command(
+    "run",
+    help="Allocate execution IDs and submit validated stages to SLURM.",
+)
 def run_command(
     targets: list[str] = typer.Argument(..., help="Stage aliases or workflow modes."),
     project: Path | None = typer.Option(None, "--project"),
@@ -734,7 +751,10 @@ def run_command(
     typer.echo(f"  sbt summary --project {context.root}")
 
 
-@app.command("status")
+@app.command(
+    "status",
+    help="Refresh and show scheduler status for one project execution.",
+)
 def status_command(
     execution: str = typer.Argument("latest", help="Execution ID or 'latest'."),
     project: Path | None = typer.Option(None, "--project"),
@@ -791,7 +811,10 @@ def status_command(
         typer.echo(f"Warning: {warning}")
 
 
-@app.command("logs")
+@app.command(
+    "logs",
+    help="Show or locate recorded stdout and stderr for one execution.",
+)
 def logs_command(
     execution: str = typer.Argument("latest", help="Execution ID or 'latest'."),
     project: Path | None = typer.Option(None, "--project"),
@@ -848,7 +871,10 @@ def logs_command(
         typer.echo("")
 
 
-@app.command("report")
+@app.command(
+    "report",
+    help="Display the human-facing report for one project execution.",
+)
 def report_command(
     execution: str = typer.Argument("latest", help="Execution ID or 'latest'."),
     project: Path | None = typer.Option(None, "--project"),
@@ -872,7 +898,10 @@ def report_command(
         typer.echo(report.read_text(encoding="utf-8"))
 
 
-@app.command("summary")
+@app.command(
+    "summary",
+    help="List project executions with their statuses, assets, and outputs.",
+)
 def summary_command(
     project: Path | None = typer.Option(None, "--project"),
     stage: str | None = typer.Option(None, "--stage"),
@@ -944,7 +973,10 @@ def summary_command(
         typer.echo("* removed execution from the hidden technical audit")
 
 
-@app.command("remove")
+@app.command(
+    "remove",
+    help="Remove a visible execution safely and renumber later executions.",
+)
 def remove_command(
     execution: str = typer.Argument(..., help="Active execution ID."),
     project: Path | None = typer.Option(None, "--project"),

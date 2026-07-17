@@ -5,7 +5,7 @@ import unittest
 
 from typer.testing import CliRunner
 
-from SpatialBiologyToolkit.cli.main import app
+from SpatialBiologyToolkit.cli.main import DOCUMENTATION_URL, REPOSITORY_URL, app
 
 
 class LightweightCliTests(unittest.TestCase):
@@ -33,21 +33,35 @@ class LightweightCliTests(unittest.TestCase):
         imported = json.loads(completed.stdout)
         self.assertEqual(imported, {name: False for name in heavy_modules})
 
-    def test_expected_command_groups_are_exposed(self):
-        result = CliRunner().invoke(app, ["--help"])
+    def test_homepage_links_and_explained_commands_are_exposed(self):
+        runner = CliRunner()
+        result = runner.invoke(app, ["--help"])
 
         self.assertEqual(result.exit_code, 0, result.stdout)
-        for command in (
-            "config",
-            "project",
-            "stages",
-            "modes",
-            "plan",
-            "run",
-            "status",
-            "logs",
-        ):
+        self.assertIn(REPOSITORY_URL, result.stdout)
+        self.assertIn(DOCUMENTATION_URL, result.stdout)
+        expected = {
+            "plan": "Validate and preview stages",
+            "run": "Allocate execution IDs",
+            "status": "Refresh and show scheduler status",
+            "logs": "Show or locate recorded stdout and stderr",
+            "report": "Display the human-facing report",
+            "summary": "List project executions",
+            "remove": "Remove a visible execution safely",
+            "config": "Validate and export typed pipeline configuration",
+            "project": "Initialize, adopt, validate, and inspect SBT projects",
+            "stages": "List and explain registered pipeline stages",
+            "modes": "List and explain named workflow modes",
+        }
+        for command, explanation in expected.items():
             self.assertIn(command, result.stdout)
+            self.assertIn(explanation, result.stdout)
+
+        homepage = runner.invoke(app)
+        self.assertEqual(homepage.exit_code, 0, homepage.stdout)
+        self.assertIn(REPOSITORY_URL, homepage.stdout)
+        self.assertIn(DOCUMENTATION_URL, homepage.stdout)
+        self.assertIn("Commands", homepage.stdout)
 
 
 if __name__ == "__main__":
