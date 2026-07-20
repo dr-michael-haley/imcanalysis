@@ -2170,6 +2170,534 @@
       "title": "CellCharterConfig",
       "type": "object"
     },
+    "CellVisionConfig": {
+      "description": "Configuration for single-cell image representation learning and clustering.",
+      "properties": {
+        "input_adata_path": {
+          "advice": "Leave unset to use the project's canonical AnnData object.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional CellVision source AnnData path; defaults to general.anndata_path.",
+          "level": "basic",
+          "stage": "cellvision",
+          "title": "Input Adata Path",
+          "ui_group": "Inputs and reusable assets"
+        },
+        "images_folder": {
+          "advice": "The folder must contain one subdirectory per ROI with one TIFF per marker.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional ROI/channel image folder; defaults to general.denoised_images_folder.",
+          "level": "basic",
+          "stage": "cellvision",
+          "title": "Images Folder",
+          "ui_group": "Inputs and reusable assets"
+        },
+        "masks_folder": {
+          "advice": "Mask filenames must match ROI values and mask labels must match object_id_obs.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional labelled cell-mask folder; defaults to general.masks_folder.",
+          "level": "basic",
+          "stage": "cellvision",
+          "title": "Masks Folder",
+          "ui_group": "Inputs and reusable assets"
+        },
+        "asset_folder": {
+          "advice": "Keep this outside general.outputs_folder; execution figures and tables are routed separately.",
+          "default": "scPortrait/CellVision",
+          "description": "Canonical project-relative folder for reusable CellVision assets.",
+          "level": "basic",
+          "minLength": 1,
+          "stage": "cellvision",
+          "title": "Asset Folder",
+          "type": "string",
+          "ui_group": "Inputs and reusable assets"
+        },
+        "roi_obs": {
+          "advice": "Values must match image subdirectory and mask filename stems exactly.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "AnnData observation column containing ROI identifiers; defaults to general.roi_obs.",
+          "level": "basic",
+          "stage": "cellvision",
+          "title": "Roi Obs",
+          "ui_group": "Cell identity and selection"
+        },
+        "object_id_obs": {
+          "advice": "The pair (ROI, object ID) must uniquely identify every selected source cell.",
+          "default": "ObjectNumber",
+          "description": "AnnData observation column containing the integer label used in each ROI mask.",
+          "level": "basic",
+          "minLength": 1,
+          "stage": "cellvision",
+          "title": "Object Id Obs",
+          "type": "string",
+          "ui_group": "Cell identity and selection"
+        },
+        "population_obs": {
+          "advice": "Leave unset to analyse all cells without original-population comparison plots.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional source population annotation used for filtering, comparison, and plots.",
+          "level": "basic",
+          "stage": "cellvision",
+          "title": "Population Obs",
+          "ui_group": "Cell identity and selection"
+        },
+        "populations": {
+          "advice": "Leave unset to retain every cell, even when population_obs is set for plotting.",
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional population values to retain from population_obs.",
+          "level": "basic",
+          "stage": "cellvision",
+          "title": "Populations",
+          "ui_group": "Cell identity and selection"
+        },
+        "markers": {
+          "advice": "Names may match either the channel-name or channel-label portion of IMC TIFF filenames; leave unset for all channels.",
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional ordered marker/channel names to include in cell images and VICReg training.",
+          "level": "basic",
+          "stage": "cellvision",
+          "title": "Markers",
+          "ui_group": "Cell identity and selection"
+        },
+        "image_size": {
+          "advice": "The 36 px default is intended to retain even relatively large IMC cells while limiting model size.",
+          "default": 36,
+          "description": "Height and width in pixels of each extracted single-cell image.",
+          "level": "basic",
+          "maximum": 512,
+          "minimum": 8,
+          "stage": "cellvision",
+          "title": "Image Size",
+          "type": "integer",
+          "ui_group": "scPortrait extraction"
+        },
+        "extraction_threads": {
+          "advice": "Do not exceed the CPUs allocated by the CellVision SLURM wrapper.",
+          "default": 12,
+          "description": "Worker processes used by scPortrait HDF5 cell extraction.",
+          "level": "advanced",
+          "minimum": 1,
+          "stage": "cellvision",
+          "title": "Extraction Threads",
+          "type": "integer",
+          "ui_group": "scPortrait extraction"
+        },
+        "mask_expand_px": {
+          "advice": "Keep zero to train strictly on the segmented cell boundary.",
+          "default": 0,
+          "description": "Optional labelled-mask expansion distance before extracting cell portraits.",
+          "level": "advanced",
+          "minimum": 0,
+          "stage": "cellvision",
+          "title": "Mask Expand Px",
+          "type": "integer",
+          "ui_group": "scPortrait extraction"
+        },
+        "scportrait_normalize_output": {
+          "advice": "False preserves more between-cell intensity information; VICReg input scaling is controlled separately.",
+          "default": false,
+          "description": "Whether scPortrait applies per-cell percentile normalization during extraction.",
+          "level": "advanced",
+          "stage": "cellvision",
+          "title": "Scportrait Normalize Output",
+          "type": "boolean",
+          "ui_group": "scPortrait extraction"
+        },
+        "scportrait_normalization_range": {
+          "advice": "Both values must lie in [0, 1] and the lower value must be smaller.",
+          "description": "Lower and upper quantiles used when scPortrait output normalization is enabled.",
+          "items": {
+            "type": "number"
+          },
+          "level": "advanced",
+          "stage": "cellvision",
+          "title": "Scportrait Normalization Range",
+          "type": "array",
+          "ui_group": "scPortrait extraction"
+        },
+        "overwrite": {
+          "advice": "Enable only when inputs, selections, markers, or model settings have deliberately changed.",
+          "default": false,
+          "description": "Regenerate existing reusable CellVision assets instead of validating and reusing them.",
+          "level": "advanced",
+          "stage": "cellvision",
+          "title": "Overwrite",
+          "type": "boolean",
+          "ui_group": "scPortrait extraction"
+        },
+        "encoder_width": {
+          "advice": "Increase only when GPU memory and training-set size justify a larger encoder.",
+          "default": 32,
+          "description": "Base channel width of the compact residual VICReg encoder.",
+          "level": "advanced",
+          "minimum": 8,
+          "stage": "cellvision",
+          "title": "Encoder Width",
+          "type": "integer",
+          "ui_group": "VICReg model"
+        },
+        "embedding_dim": {
+          "advice": "This is the representation saved for every extracted source cell.",
+          "default": 256,
+          "description": "Number of cell-level features emitted by the VICReg encoder.",
+          "level": "basic",
+          "minimum": 8,
+          "stage": "cellvision",
+          "title": "Embedding Dim",
+          "type": "integer",
+          "ui_group": "VICReg model"
+        },
+        "projector_dim": {
+          "advice": "The projector is used only for the self-supervised loss and is not exported as the cell embedding.",
+          "default": 512,
+          "description": "Hidden and output width of the VICReg training projector.",
+          "level": "advanced",
+          "minimum": 16,
+          "stage": "cellvision",
+          "title": "Projector Dim",
+          "type": "integer",
+          "ui_group": "VICReg model"
+        },
+        "epochs": {
+          "advice": "Inspect the training-loss report before increasing this value.",
+          "default": 30,
+          "description": "Number of self-supervised VICReg training epochs.",
+          "level": "basic",
+          "minimum": 1,
+          "stage": "cellvision",
+          "title": "Epochs",
+          "type": "integer",
+          "ui_group": "VICReg model"
+        },
+        "batch_size": {
+          "advice": "VICReg variance/covariance estimates benefit from larger batches; reduce for GPU memory pressure.",
+          "default": 256,
+          "description": "VICReg training and inference batch size.",
+          "level": "basic",
+          "minimum": 2,
+          "stage": "cellvision",
+          "title": "Batch Size",
+          "type": "integer",
+          "ui_group": "VICReg model"
+        },
+        "learning_rate": {
+          "advice": "The schedule uses linear warmup followed by cosine decay.",
+          "default": 0.0003,
+          "description": "Initial AdamW learning rate for VICReg training.",
+          "exclusiveMinimum": 0,
+          "level": "advanced",
+          "stage": "cellvision",
+          "title": "Learning Rate",
+          "type": "number",
+          "ui_group": "VICReg model"
+        },
+        "weight_decay": {
+          "advice": "Keep small so image morphology is not over-regularized.",
+          "default": 1e-06,
+          "description": "AdamW weight decay used during VICReg training.",
+          "level": "advanced",
+          "minimum": 0,
+          "stage": "cellvision",
+          "title": "Weight Decay",
+          "type": "number",
+          "ui_group": "VICReg model"
+        },
+        "warmup_epochs": {
+          "advice": "Must not exceed epochs.",
+          "default": 3,
+          "description": "Number of linear learning-rate warmup epochs before cosine decay.",
+          "level": "advanced",
+          "minimum": 0,
+          "stage": "cellvision",
+          "title": "Warmup Epochs",
+          "type": "integer",
+          "ui_group": "VICReg model"
+        },
+        "num_workers": {
+          "advice": "Keep below the SLURM CPU allocation and reduce if the HDF5 filesystem is congested.",
+          "default": 4,
+          "description": "PyTorch DataLoader worker processes for H5SC image reads.",
+          "level": "advanced",
+          "minimum": 0,
+          "stage": "cellvision",
+          "title": "Num Workers",
+          "type": "integer",
+          "ui_group": "VICReg model"
+        },
+        "seed": {
+          "advice": "Keep fixed when comparing marker sets or populations.",
+          "default": 0,
+          "description": "Random seed used for selection fingerprints, augmentations, training, and galleries.",
+          "level": "basic",
+          "minimum": 0,
+          "stage": "cellvision",
+          "title": "Seed",
+          "type": "integer",
+          "ui_group": "VICReg model"
+        },
+        "amp": {
+          "advice": "Disable when diagnosing numerical instability or using unsupported hardware.",
+          "default": true,
+          "description": "Use automatic mixed precision for CUDA VICReg training.",
+          "level": "advanced",
+          "stage": "cellvision",
+          "title": "Amp",
+          "type": "boolean",
+          "ui_group": "VICReg model"
+        },
+        "normalization_quantile": {
+          "advice": "Scaling is fitted once and stored in the checkpoint; exact zero background remains zero.",
+          "default": 0.995,
+          "description": "Positive-pixel per-channel quantile used to scale VICReg inputs to [0, 1].",
+          "exclusiveMinimum": 0.5,
+          "level": "advanced",
+          "maximum": 1.0,
+          "stage": "cellvision",
+          "title": "Normalization Quantile",
+          "type": "number",
+          "ui_group": "VICReg model"
+        },
+        "normalization_sample_cells": {
+          "advice": "Increase for very heterogeneous cohorts when I/O permits.",
+          "default": 2048,
+          "description": "Maximum number of H5SC cells sampled to estimate per-channel input scales.",
+          "level": "advanced",
+          "minimum": 2,
+          "stage": "cellvision",
+          "title": "Normalization Sample Cells",
+          "type": "integer",
+          "ui_group": "VICReg model"
+        },
+        "vicreg_invariance_weight": {
+          "advice": "The default follows the standard VICReg balance.",
+          "default": 25.0,
+          "description": "Weight of the VICReg invariance loss between augmented views.",
+          "exclusiveMinimum": 0,
+          "level": "advanced",
+          "stage": "cellvision",
+          "title": "Vicreg Invariance Weight",
+          "type": "number",
+          "ui_group": "VICReg loss"
+        },
+        "vicreg_variance_weight": {
+          "advice": "The default follows the standard VICReg balance.",
+          "default": 25.0,
+          "description": "Weight of the VICReg per-dimension variance regularizer.",
+          "exclusiveMinimum": 0,
+          "level": "advanced",
+          "stage": "cellvision",
+          "title": "Vicreg Variance Weight",
+          "type": "number",
+          "ui_group": "VICReg loss"
+        },
+        "vicreg_covariance_weight": {
+          "advice": "The default follows the standard VICReg balance.",
+          "default": 1.0,
+          "description": "Weight of the VICReg off-diagonal covariance regularizer.",
+          "exclusiveMinimum": 0,
+          "level": "advanced",
+          "stage": "cellvision",
+          "title": "Vicreg Covariance Weight",
+          "type": "number",
+          "ui_group": "VICReg loss"
+        },
+        "augmentation_translation_px": {
+          "advice": "Small translations preserve the complete 36 px cell crop without wraparound.",
+          "default": 2,
+          "description": "Maximum zero-filled integer translation applied to VICReg image views.",
+          "level": "advanced",
+          "minimum": 0,
+          "stage": "cellvision",
+          "title": "Augmentation Translation Px",
+          "type": "integer",
+          "ui_group": "Mask-safe augmentations"
+        },
+        "augmentation_intensity_jitter": {
+          "advice": "No hue, saturation, channel mixing, or artificial background is applied to multiplex IMC images.",
+          "default": 0.2,
+          "description": "Maximum independent multiplicative intensity perturbation per marker channel.",
+          "exclusiveMaximum": 1,
+          "level": "advanced",
+          "minimum": 0,
+          "stage": "cellvision",
+          "title": "Augmentation Intensity Jitter",
+          "type": "number",
+          "ui_group": "Mask-safe augmentations"
+        },
+        "augmentation_noise_std": {
+          "advice": "Background pixels remain exactly zero in both VICReg views.",
+          "default": 0.02,
+          "description": "Standard deviation of Gaussian noise applied only to nonzero cell pixels.",
+          "level": "advanced",
+          "minimum": 0,
+          "stage": "cellvision",
+          "title": "Augmentation Noise Std",
+          "type": "number",
+          "ui_group": "Mask-safe augmentations"
+        },
+        "n_pcs": {
+          "advice": "The runtime value is capped by the number of cells and embedding dimensions.",
+          "default": 50,
+          "description": "Single PCA component count used before RAPIDS neighbor construction.",
+          "level": "basic",
+          "minimum": 2,
+          "stage": "cellvision",
+          "title": "N Pcs",
+          "type": "integer",
+          "ui_group": "RAPIDS clustering"
+        },
+        "n_neighbors": {
+          "advice": "The runtime value is capped below the number of embedded cells.",
+          "default": 15,
+          "description": "Single neighbor count used for the RAPIDS cell graph.",
+          "level": "basic",
+          "minimum": 2,
+          "stage": "cellvision",
+          "title": "N Neighbors",
+          "type": "integer",
+          "ui_group": "RAPIDS clustering"
+        },
+        "leiden_resolutions": {
+          "advice": "Each value creates a namespaced cellvision_leiden_<resolution> annotation and report set.",
+          "description": "Leiden resolutions evaluated on the one CellVision neighbor graph.",
+          "items": {
+            "type": "number"
+          },
+          "level": "basic",
+          "stage": "cellvision",
+          "title": "Leiden Resolutions",
+          "type": "array",
+          "ui_group": "RAPIDS clustering"
+        },
+        "umap_min_dist": {
+          "advice": "Use the same value for directly comparable runs.",
+          "default": 0.1,
+          "description": "Minimum distance used for the CellVision RAPIDS UMAP.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "cellvision",
+          "title": "Umap Min Dist",
+          "type": "number",
+          "ui_group": "RAPIDS clustering"
+        },
+        "source_umap_key": {
+          "advice": "Projection is skipped with a warning when this embedding is absent.",
+          "default": "X_umap",
+          "description": "Source AnnData obsm key on which new CellVision labels are projected.",
+          "level": "advanced",
+          "minLength": 1,
+          "stage": "cellvision",
+          "title": "Source Umap Key",
+          "type": "string",
+          "ui_group": "Plots and galleries"
+        },
+        "gallery_cells_per_cluster": {
+          "advice": "Every selected marker is a column; a composite column is added when there are at most three markers.",
+          "default": 10,
+          "description": "Maximum randomly sampled cells shown as rows in each Leiden gallery.",
+          "level": "basic",
+          "minimum": 1,
+          "stage": "cellvision",
+          "title": "Gallery Cells Per Cluster",
+          "type": "integer",
+          "ui_group": "Plots and galleries"
+        },
+        "gallery_max_clusters": {
+          "advice": "Leave unset to generate a gallery for every discovered cluster.",
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional maximum number of Leiden clusters receiving galleries per resolution.",
+          "level": "advanced",
+          "stage": "cellvision",
+          "title": "Gallery Max Clusters",
+          "ui_group": "Plots and galleries"
+        },
+        "figure_dpi": {
+          "advice": "Increase for publication export at the cost of larger reports.",
+          "default": 200,
+          "description": "Resolution in dots per inch for CellVision raster figures.",
+          "level": "advanced",
+          "maximum": 600,
+          "minimum": 72,
+          "stage": "cellvision",
+          "title": "Figure Dpi",
+          "type": "integer",
+          "ui_group": "Plots and galleries"
+        }
+      },
+      "title": "CellVisionConfig",
+      "type": "object"
+    },
     "CreateMasksConfig": {
       "properties": {
         "specific_rois": {
@@ -7797,6 +8325,14 @@
       "$ref": "#/$defs/RapidsProcessConfig",
       "advice": "",
       "description": "Configuration value for rapids.",
+      "level": "advanced",
+      "stage": "pipeline",
+      "ui_group": "Pipeline"
+    },
+    "cellvision": {
+      "$ref": "#/$defs/CellVisionConfig",
+      "advice": "",
+      "description": "Configuration value for cellvision.",
       "level": "advanced",
       "stage": "pipeline",
       "ui_group": "Pipeline"

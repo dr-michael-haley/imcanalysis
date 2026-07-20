@@ -11,6 +11,8 @@ This reference is split by module so the site navigation stays compact.
    :maxdepth: 1
 
    backgating
+   cellvision
+   cellvision_vicreg
    correlate_outcomes
    cox_survival
    denoising

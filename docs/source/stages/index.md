@@ -14,6 +14,7 @@ segmentation
 quantification
 batch_integration
 rapids
+cellvision
 biobatchnet
 subclustering
 cellcharter

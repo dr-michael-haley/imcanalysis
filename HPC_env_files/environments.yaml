@@ -72,11 +72,11 @@ environments:
     conda_name: scPortrait
     managed: false
     platform: linux-64
-    toolkit_overlay: none
+    toolkit_overlay: editable-no-deps
     smoke_tests:
-      - [python, -c, "import scportrait"]
+      - [python, -c, "import SpatialBiologyToolkit, scportrait, torch, h5py"]
     notes:
-      - External environment and converter checkout managed outside this repository.
+      - External environment; CellVision uses the repository implementation and does not require the old converter checkout.
 
 stage_environments:
   prep: [segmentation]
@@ -84,6 +84,7 @@ stage_environments:
   nimbus: [segmentation]
   bint: [cellcharter]
   rapids: [rapids]
+  cellvision: [scportrait, rapids]
   bbn: [biobatchnet]
   subcl: [segmentation]
   cchar: [cellcharter]

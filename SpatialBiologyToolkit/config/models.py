@@ -565,6 +565,396 @@ class RapidsProcessConfig(ConfigModel):
     leiden_params: Dict[str, Any] = Field(default_factory=dict)
 
 
+@config_section("cellvision")
+class CellVisionConfig(ConfigModel):
+    """Configuration for single-cell image representation learning and clustering."""
+
+    input_adata_path: Optional[str] = config_field(
+        None,
+        description="Optional CellVision source AnnData path; defaults to general.anndata_path.",
+        level="basic",
+        stage="cellvision",
+        ui_group="Inputs and reusable assets",
+        advice="Leave unset to use the project's canonical AnnData object.",
+    )
+    images_folder: Optional[str] = config_field(
+        None,
+        description="Optional ROI/channel image folder; defaults to general.denoised_images_folder.",
+        level="basic",
+        stage="cellvision",
+        ui_group="Inputs and reusable assets",
+        advice="The folder must contain one subdirectory per ROI with one TIFF per marker.",
+    )
+    masks_folder: Optional[str] = config_field(
+        None,
+        description="Optional labelled cell-mask folder; defaults to general.masks_folder.",
+        level="basic",
+        stage="cellvision",
+        ui_group="Inputs and reusable assets",
+        advice="Mask filenames must match ROI values and mask labels must match object_id_obs.",
+    )
+    asset_folder: str = config_field(
+        "scPortrait/CellVision",
+        description="Canonical project-relative folder for reusable CellVision assets.",
+        level="basic",
+        stage="cellvision",
+        ui_group="Inputs and reusable assets",
+        advice="Keep this outside general.outputs_folder; execution figures and tables are routed separately.",
+        min_length=1,
+    )
+    roi_obs: Optional[str] = config_field(
+        None,
+        description="AnnData observation column containing ROI identifiers; defaults to general.roi_obs.",
+        level="basic",
+        stage="cellvision",
+        ui_group="Cell identity and selection",
+        advice="Values must match image subdirectory and mask filename stems exactly.",
+    )
+    object_id_obs: str = config_field(
+        "ObjectNumber",
+        description="AnnData observation column containing the integer label used in each ROI mask.",
+        level="basic",
+        stage="cellvision",
+        ui_group="Cell identity and selection",
+        advice="The pair (ROI, object ID) must uniquely identify every selected source cell.",
+        min_length=1,
+    )
+    population_obs: Optional[str] = config_field(
+        None,
+        description="Optional source population annotation used for filtering, comparison, and plots.",
+        level="basic",
+        stage="cellvision",
+        ui_group="Cell identity and selection",
+        advice="Leave unset to analyse all cells without original-population comparison plots.",
+    )
+    populations: Optional[List[str]] = config_field(
+        None,
+        description="Optional population values to retain from population_obs.",
+        level="basic",
+        stage="cellvision",
+        ui_group="Cell identity and selection",
+        advice="Leave unset to retain every cell, even when population_obs is set for plotting.",
+    )
+    markers: Optional[List[str]] = config_field(
+        None,
+        description="Optional ordered marker/channel names to include in cell images and VICReg training.",
+        level="basic",
+        stage="cellvision",
+        ui_group="Cell identity and selection",
+        advice="Names may match either the channel-name or channel-label portion of IMC TIFF filenames; leave unset for all channels.",
+    )
+
+    image_size: int = config_field(
+        36,
+        description="Height and width in pixels of each extracted single-cell image.",
+        level="basic",
+        stage="cellvision",
+        ui_group="scPortrait extraction",
+        advice="The 36 px default is intended to retain even relatively large IMC cells while limiting model size.",
+        ge=8,
+        le=512,
+    )
+    extraction_threads: int = config_field(
+        12,
+        description="Worker processes used by scPortrait HDF5 cell extraction.",
+        stage="cellvision",
+        ui_group="scPortrait extraction",
+        advice="Do not exceed the CPUs allocated by the CellVision SLURM wrapper.",
+        ge=1,
+    )
+    mask_expand_px: int = config_field(
+        0,
+        description="Optional labelled-mask expansion distance before extracting cell portraits.",
+        stage="cellvision",
+        ui_group="scPortrait extraction",
+        advice="Keep zero to train strictly on the segmented cell boundary.",
+        ge=0,
+    )
+    scportrait_normalize_output: bool = config_field(
+        False,
+        description="Whether scPortrait applies per-cell percentile normalization during extraction.",
+        stage="cellvision",
+        ui_group="scPortrait extraction",
+        advice="False preserves more between-cell intensity information; VICReg input scaling is controlled separately.",
+    )
+    scportrait_normalization_range: List[float] = config_field(
+        default_factory=lambda: [0.001, 0.999],
+        description="Lower and upper quantiles used when scPortrait output normalization is enabled.",
+        stage="cellvision",
+        ui_group="scPortrait extraction",
+        advice="Both values must lie in [0, 1] and the lower value must be smaller.",
+    )
+    overwrite: bool = config_field(
+        False,
+        description="Regenerate existing reusable CellVision assets instead of validating and reusing them.",
+        stage="cellvision",
+        ui_group="scPortrait extraction",
+        advice="Enable only when inputs, selections, markers, or model settings have deliberately changed.",
+    )
+
+    encoder_width: int = config_field(
+        32,
+        description="Base channel width of the compact residual VICReg encoder.",
+        stage="cellvision",
+        ui_group="VICReg model",
+        advice="Increase only when GPU memory and training-set size justify a larger encoder.",
+        ge=8,
+    )
+    embedding_dim: int = config_field(
+        256,
+        description="Number of cell-level features emitted by the VICReg encoder.",
+        level="basic",
+        stage="cellvision",
+        ui_group="VICReg model",
+        advice="This is the representation saved for every extracted source cell.",
+        ge=8,
+    )
+    projector_dim: int = config_field(
+        512,
+        description="Hidden and output width of the VICReg training projector.",
+        stage="cellvision",
+        ui_group="VICReg model",
+        advice="The projector is used only for the self-supervised loss and is not exported as the cell embedding.",
+        ge=16,
+    )
+    epochs: int = config_field(
+        30,
+        description="Number of self-supervised VICReg training epochs.",
+        level="basic",
+        stage="cellvision",
+        ui_group="VICReg model",
+        advice="Inspect the training-loss report before increasing this value.",
+        ge=1,
+    )
+    batch_size: int = config_field(
+        256,
+        description="VICReg training and inference batch size.",
+        level="basic",
+        stage="cellvision",
+        ui_group="VICReg model",
+        advice="VICReg variance/covariance estimates benefit from larger batches; reduce for GPU memory pressure.",
+        ge=2,
+    )
+    learning_rate: float = config_field(
+        0.0003,
+        description="Initial AdamW learning rate for VICReg training.",
+        stage="cellvision",
+        ui_group="VICReg model",
+        advice="The schedule uses linear warmup followed by cosine decay.",
+        gt=0,
+    )
+    weight_decay: float = config_field(
+        0.000001,
+        description="AdamW weight decay used during VICReg training.",
+        stage="cellvision",
+        ui_group="VICReg model",
+        advice="Keep small so image morphology is not over-regularized.",
+        ge=0,
+    )
+    warmup_epochs: int = config_field(
+        3,
+        description="Number of linear learning-rate warmup epochs before cosine decay.",
+        stage="cellvision",
+        ui_group="VICReg model",
+        advice="Must not exceed epochs.",
+        ge=0,
+    )
+    num_workers: int = config_field(
+        4,
+        description="PyTorch DataLoader worker processes for H5SC image reads.",
+        stage="cellvision",
+        ui_group="VICReg model",
+        advice="Keep below the SLURM CPU allocation and reduce if the HDF5 filesystem is congested.",
+        ge=0,
+    )
+    seed: int = config_field(
+        0,
+        description="Random seed used for selection fingerprints, augmentations, training, and galleries.",
+        level="basic",
+        stage="cellvision",
+        ui_group="VICReg model",
+        advice="Keep fixed when comparing marker sets or populations.",
+        ge=0,
+    )
+    amp: bool = config_field(
+        True,
+        description="Use automatic mixed precision for CUDA VICReg training.",
+        stage="cellvision",
+        ui_group="VICReg model",
+        advice="Disable when diagnosing numerical instability or using unsupported hardware.",
+    )
+    normalization_quantile: float = config_field(
+        0.995,
+        description="Positive-pixel per-channel quantile used to scale VICReg inputs to [0, 1].",
+        stage="cellvision",
+        ui_group="VICReg model",
+        advice="Scaling is fitted once and stored in the checkpoint; exact zero background remains zero.",
+        gt=0.5,
+        le=1.0,
+    )
+    normalization_sample_cells: int = config_field(
+        2048,
+        description="Maximum number of H5SC cells sampled to estimate per-channel input scales.",
+        stage="cellvision",
+        ui_group="VICReg model",
+        advice="Increase for very heterogeneous cohorts when I/O permits.",
+        ge=2,
+    )
+    vicreg_invariance_weight: float = config_field(
+        25.0,
+        description="Weight of the VICReg invariance loss between augmented views.",
+        stage="cellvision",
+        ui_group="VICReg loss",
+        advice="The default follows the standard VICReg balance.",
+        gt=0,
+    )
+    vicreg_variance_weight: float = config_field(
+        25.0,
+        description="Weight of the VICReg per-dimension variance regularizer.",
+        stage="cellvision",
+        ui_group="VICReg loss",
+        advice="The default follows the standard VICReg balance.",
+        gt=0,
+    )
+    vicreg_covariance_weight: float = config_field(
+        1.0,
+        description="Weight of the VICReg off-diagonal covariance regularizer.",
+        stage="cellvision",
+        ui_group="VICReg loss",
+        advice="The default follows the standard VICReg balance.",
+        gt=0,
+    )
+    augmentation_translation_px: int = config_field(
+        2,
+        description="Maximum zero-filled integer translation applied to VICReg image views.",
+        stage="cellvision",
+        ui_group="Mask-safe augmentations",
+        advice="Small translations preserve the complete 36 px cell crop without wraparound.",
+        ge=0,
+    )
+    augmentation_intensity_jitter: float = config_field(
+        0.2,
+        description="Maximum independent multiplicative intensity perturbation per marker channel.",
+        stage="cellvision",
+        ui_group="Mask-safe augmentations",
+        advice="No hue, saturation, channel mixing, or artificial background is applied to multiplex IMC images.",
+        ge=0,
+        lt=1,
+    )
+    augmentation_noise_std: float = config_field(
+        0.02,
+        description="Standard deviation of Gaussian noise applied only to nonzero cell pixels.",
+        stage="cellvision",
+        ui_group="Mask-safe augmentations",
+        advice="Background pixels remain exactly zero in both VICReg views.",
+        ge=0,
+    )
+
+    n_pcs: int = config_field(
+        50,
+        description="Single PCA component count used before RAPIDS neighbor construction.",
+        level="basic",
+        stage="cellvision",
+        ui_group="RAPIDS clustering",
+        advice="The runtime value is capped by the number of cells and embedding dimensions.",
+        ge=2,
+    )
+    n_neighbors: int = config_field(
+        15,
+        description="Single neighbor count used for the RAPIDS cell graph.",
+        level="basic",
+        stage="cellvision",
+        ui_group="RAPIDS clustering",
+        advice="The runtime value is capped below the number of embedded cells.",
+        ge=2,
+    )
+    leiden_resolutions: List[float] = config_field(
+        default_factory=lambda: [0.3, 1.0],
+        description="Leiden resolutions evaluated on the one CellVision neighbor graph.",
+        level="basic",
+        stage="cellvision",
+        ui_group="RAPIDS clustering",
+        advice="Each value creates a namespaced cellvision_leiden_<resolution> annotation and report set.",
+    )
+    umap_min_dist: float = config_field(
+        0.1,
+        description="Minimum distance used for the CellVision RAPIDS UMAP.",
+        stage="cellvision",
+        ui_group="RAPIDS clustering",
+        advice="Use the same value for directly comparable runs.",
+        ge=0,
+        le=1,
+    )
+
+    source_umap_key: str = config_field(
+        "X_umap",
+        description="Source AnnData obsm key on which new CellVision labels are projected.",
+        stage="cellvision",
+        ui_group="Plots and galleries",
+        advice="Projection is skipped with a warning when this embedding is absent.",
+        min_length=1,
+    )
+    gallery_cells_per_cluster: int = config_field(
+        10,
+        description="Maximum randomly sampled cells shown as rows in each Leiden gallery.",
+        level="basic",
+        stage="cellvision",
+        ui_group="Plots and galleries",
+        advice="Every selected marker is a column; a composite column is added when there are at most three markers.",
+        ge=1,
+    )
+    gallery_max_clusters: Optional[int] = config_field(
+        None,
+        description="Optional maximum number of Leiden clusters receiving galleries per resolution.",
+        stage="cellvision",
+        ui_group="Plots and galleries",
+        advice="Leave unset to generate a gallery for every discovered cluster.",
+        ge=1,
+    )
+    figure_dpi: int = config_field(
+        200,
+        description="Resolution in dots per inch for CellVision raster figures.",
+        stage="cellvision",
+        ui_group="Plots and galleries",
+        advice="Increase for publication export at the cost of larger reports.",
+        ge=72,
+        le=600,
+    )
+
+    @model_validator(mode="after")
+    def _validate_cellvision_combinations(self):
+        if self.populations is not None and self.population_obs is None:
+            raise ValueError("cellvision.populations requires cellvision.population_obs")
+        for field_name in ("populations", "markers"):
+            values = getattr(self, field_name)
+            if values is not None:
+                cleaned = [str(value).strip() for value in values]
+                if not cleaned or any(not value for value in cleaned):
+                    raise ValueError(f"cellvision.{field_name} must contain non-empty values")
+                if len(set(cleaned)) != len(cleaned):
+                    raise ValueError(f"cellvision.{field_name} cannot contain duplicates")
+                setattr(self, field_name, cleaned)
+        if len(self.scportrait_normalization_range) != 2:
+            raise ValueError("cellvision.scportrait_normalization_range must contain two values")
+        lower, upper = (float(value) for value in self.scportrait_normalization_range)
+        if not 0 <= lower < upper <= 1:
+            raise ValueError(
+                "cellvision.scportrait_normalization_range must satisfy 0 <= lower < upper <= 1"
+            )
+        self.scportrait_normalization_range = [lower, upper]
+        if self.warmup_epochs > self.epochs:
+            raise ValueError("cellvision.warmup_epochs cannot exceed cellvision.epochs")
+        if not self.leiden_resolutions:
+            raise ValueError("cellvision.leiden_resolutions cannot be empty")
+        resolutions = [float(value) for value in self.leiden_resolutions]
+        if any(value <= 0 for value in resolutions):
+            raise ValueError("cellvision.leiden_resolutions must contain positive values")
+        if len(set(resolutions)) != len(resolutions):
+            raise ValueError("cellvision.leiden_resolutions cannot contain duplicates")
+        self.leiden_resolutions = resolutions
+        return self
+
+
 @config_section("biobatchnet")
 class BioBatchNetConfig(ConfigModel):
     # Input/output
@@ -1252,6 +1642,7 @@ class PipelineConfig(ConfigModel):
     nimbus: NimbusConfig = Field(default_factory=NimbusConfig)
     batch_integration: BatchIntegrationConfig = Field(default_factory=BatchIntegrationConfig)
     rapids: RapidsProcessConfig = Field(default_factory=RapidsProcessConfig)
+    cellvision: CellVisionConfig = Field(default_factory=CellVisionConfig)
     biobatchnet: BioBatchNetConfig = Field(default_factory=BioBatchNetConfig)
     process: BasicProcessConfig = Field(default_factory=BasicProcessConfig)
     visualization: VisualizationConfig = Field(default_factory=VisualizationConfig)
@@ -1274,6 +1665,7 @@ DEFAULT_CONFIG_CLASSES = {
     "nimbus": NimbusConfig,
     "batch_integration": BatchIntegrationConfig,
     "rapids": RapidsProcessConfig,
+    "cellvision": CellVisionConfig,
     "biobatchnet": BioBatchNetConfig,
     "process": BasicProcessConfig,
     "visualization": VisualizationConfig,

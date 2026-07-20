@@ -15,6 +15,7 @@ from SpatialBiologyToolkit.config.models import (  # noqa: F401 - legacy re-expo
     BasicProcessConfig,
     BatchIntegrationConfig,
     BioBatchNetConfig,
+    CellVisionConfig,
     CellCharterConfig,
     CreateMasksConfig,
     DEFAULT_CONFIG_CLASSES,

@@ -14,6 +14,7 @@ for ordering and usage guidance.
 | [`nimbus`](nimbus.md) | Segment/quantify cells with Nimbus and build AnnData outputs | `imc_segmentation` | general, segmentation, nimbus, logging |
 | [`bint`](bint.md) | Batch integration with Harmony and/or BBKNN, followed by UMAP/Leiden post-processing | `imc_cellcharter` | general, batch_integration, logging |
 | [`rapids`](rapids.md) | GPU processing with rapids-singlecell: optional cell filtering, PCA, optional Harmony, neighbors, UMAP, Leiden, optional parameter scan | `rapids_singlecell` | general, rapids, visualization, logging |
+| [`cellvision`](cellvision.md) | Learn identity-tracked CellVision VICReg embeddings, cluster with RAPIDS, and generate comparison/gallery reports in one GPU job | `scPortrait, rapids_singlecell, scPortrait` | general, cellvision, logging |
 | [`bbn`](bbn.md) | Batch correction with BioBatchNet + UMAP/Leiden post-processing | `imc_biobatchnet` | general, biobatchnet, logging |
 | [`subcl`](subcl.md) | Run checkpointed population subclustering (template generation, subclustering QC, optional remap integration) | `imc_segmentation` | general, process, subclustering, logging |
 | [`cchar`](cchar.md) | Identify spatial neighborhoods with CellCharter (TRVAE reduction by default) and save QC summaries | `imc_cellcharter` | general, process, cellcharter, logging |
@@ -42,6 +43,7 @@ vis
 nimbus
 bint
 rapids
+cellvision
 bbn
 subcl
 cchar

@@ -115,7 +115,7 @@ def resolve_assets(
     count_limit: int = DEFAULT_COUNT_LIMIT,
 ) -> list[ProjectAsset]:
     general = config.general
-    return [
+    assets = [
         inspect_asset(
             role=role,
             path=resolve_project_path(root, getattr(general, field_name)),
@@ -125,6 +125,16 @@ def resolve_assets(
         )
         for role, field_name, kind, lifecycle in ASSET_FIELDS
     ]
+    assets.append(
+        inspect_asset(
+            role="cellvision_assets",
+            path=resolve_project_path(root, config.cellvision.asset_folder),
+            kind="directory",
+            lifecycle="generated_output",
+            count_limit=count_limit,
+        )
+    )
+    return assets
 
 
 def asset_map(assets: Iterable[ProjectAsset]) -> dict[str, ProjectAsset]:

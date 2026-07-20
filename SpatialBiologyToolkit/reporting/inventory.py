@@ -118,6 +118,7 @@ ASSET_DESCRIPTIONS = {
     "masks": "Reusable segmentation masks.",
     "cell_tables": "Reusable quantified cell tables.",
     "anndata": "Canonical reusable AnnData object.",
+    "cellvision_assets": "Reusable CellVision H5SC, identity, model, embedding, and clustering assets.",
     "human_outputs": "Human-facing sequential execution outputs.",
     "legacy_qc": "Deprecated legacy QC output folder.",
     "legacy_slurm_logs": "Deprecated legacy SLURM log folder.",

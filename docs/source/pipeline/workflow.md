@@ -21,7 +21,7 @@ The normal Nimbus workflow is:
 5. `nimbus` - quantify cells and create AnnData.
 6. Choose one of `bint`, `rapids`, or `bbn` for batch-aware processing.
 7. Optionally run `remap` and `subcl` to curate/refine labels.
-8. Optionally branch to `cchar`, `starling`, `pairsp`, or `nxsp` analyses.
+8. Optionally branch to `cellvision`, `cchar`, `starling`, `pairsp`, or `nxsp` analyses.
 9. Optionally run `aiinter` for AI-assisted cluster labels.
 10. Run `vis` for the standard figures and QC outputs.
 11. Optionally run `reint` and package selected QC outputs.
@@ -43,6 +43,7 @@ former control-plane role.
 - `bint`, `rapids`, and `bbn` are alternative processing routes. Run more than one only when deliberately comparing methods.
 - `remap`, `subcl`, `aiinter`, and `reint` are optional core stages.
 - `cchar`, `starling`, `pairsp`, and `nxsp` are independent analysis branches after processing.
+- `cellvision` is an optional image-representation branch after quantification. Its combined wrapper keeps scPortrait extraction/VICReg, RAPIDS clustering, and plotting in one GPU allocation.
 - `scport` is an external single-cell portrait branch after denoising and mask generation. Its environment and external converter are not installed by the standard environment setup.
 - `aiinter` needs `OPENAI_API_KEY` when AI interpretation is enabled.
 

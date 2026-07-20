@@ -281,6 +281,49 @@ class SpatialDataConversionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "At least one cell"):
                 plot_spatialdata_cells(sdata, [])
 
+    def test_cell_gallery_can_isolate_target_pixels_and_outline(self):
+        import matplotlib.pyplot as plt
+        from skimage.segmentation import find_boundaries
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            adata = _write_fixture(root)
+            sdata = create_spatialdata(
+                adata,
+                root / "images",
+                root / "masks",
+                raster_chunks=(2, 3),
+            )
+
+            figure, axes = plot_spatialdata_cells(
+                sdata,
+                "cell_1",
+                channel="CD3",
+                crop_size=(5, 6),
+                fill_alpha=0.0,
+                outline_target_only=True,
+                mask_outside_target=True,
+            )
+
+            labels = tifffile.imread(root / "masks" / "ROI 1.tiff")
+            target_mask = labels == 1
+            rgba_layers = [
+                np.asarray(image.get_array())
+                for image in axes[0].images
+                if image.get_array().ndim == 3 and image.get_array().shape[-1] == 4
+            ]
+            self.assertEqual(len(rgba_layers), 3)
+            outside_mask, _target_fill, boundaries = rgba_layers
+            np.testing.assert_array_equal(
+                outside_mask[..., 3],
+                (~target_mask).astype(float),
+            )
+            np.testing.assert_array_equal(
+                boundaries[..., 3] > 0,
+                find_boundaries(target_mask, mode="inner"),
+            )
+            plt.close(figure)
+
 
 if __name__ == "__main__":
     unittest.main()

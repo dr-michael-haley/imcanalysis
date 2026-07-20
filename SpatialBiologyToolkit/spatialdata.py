@@ -924,6 +924,8 @@ def plot_spatialdata_cells(
     image_cmap: str = "gray",
     fill_alpha: float = 0.35,
     contour_px: int | None = 1,
+    outline_target_only: bool = False,
+    mask_outside_target: bool = False,
     target_color: str = "#00FFFF",
     boundary_color: str = "white",
     ax_title_size: float = 9.0,
@@ -971,6 +973,11 @@ def plot_spatialdata_cells(
         Crop height and width in pixels, either as one integer or ``(h, w)``.
     ncols
         Maximum number of gallery columns.
+    outline_target_only
+        If true, draw only the selected cell's boundary instead of outlining
+        every labelled cell visible in its crop.
+    mask_outside_target
+        If true, cover every pixel outside the selected cell with opaque black.
     """
 
     import matplotlib.pyplot as plt
@@ -1272,6 +1279,7 @@ def plot_spatialdata_cells(
             y_slice = _centered_slice(y_center, crop_shape[0], labels.shape[0])
             x_slice = _centered_slice(x_center, crop_shape[1], labels.shape[1])
             labels_crop = labels[y_slice, x_slice]
+            target_mask = labels_crop == instance_id
             axis = flat_axes[record["gallery_index"]]
 
             if image_planes:
@@ -1295,26 +1303,35 @@ def plot_spatialdata_cells(
                     interpolation="nearest",
                 )
 
-            target_mask = labels_crop == instance_id
+            if mask_outside_target:
+                outside_rgba = np.zeros((*labels_crop.shape, 4), dtype=float)
+                outside_rgba[~target_mask] = (0.0, 0.0, 0.0, 1.0)
+                axis.imshow(outside_rgba, interpolation="nearest")
+
             face_color = cell_colors[record["gallery_index"]]
             target_rgba = np.zeros((*labels_crop.shape, 4), dtype=float)
             target_rgba[target_mask] = (*face_color[:3], fill_alpha)
             axis.imshow(target_rgba, interpolation="nearest")
 
             if contour_px is not None and contour_px > 0:
-                all_boundaries = find_boundaries(labels_crop, mode="inner")
                 target_boundaries = find_boundaries(target_mask, mode="inner")
                 if contour_px > 1:
                     from scipy.ndimage import binary_dilation
 
-                    all_boundaries = binary_dilation(
-                        all_boundaries, iterations=contour_px - 1
-                    )
                     target_boundaries = binary_dilation(
                         target_boundaries, iterations=contour_px - 1
                     )
                 boundary_rgba = np.zeros((*labels_crop.shape, 4), dtype=float)
-                boundary_rgba[all_boundaries] = (*to_rgba(boundary_color)[:3], 0.6)
+                if not outline_target_only:
+                    all_boundaries = find_boundaries(labels_crop, mode="inner")
+                    if contour_px > 1:
+                        all_boundaries = binary_dilation(
+                            all_boundaries, iterations=contour_px - 1
+                        )
+                    boundary_rgba[all_boundaries] = (
+                        *to_rgba(boundary_color)[:3],
+                        0.6,
+                    )
                 boundary_rgba[target_boundaries] = (*face_color[:3], 1.0)
                 axis.imshow(boundary_rgba, interpolation="nearest")
 

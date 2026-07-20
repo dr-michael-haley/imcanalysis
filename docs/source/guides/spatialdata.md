@@ -114,6 +114,9 @@ figure, axes = plot_spatialdata_cells(
     cell_key="ObjectNumber",
     roi="example_roi",
     channel="CD3",
+    outline_target_only=True,
+    mask_outside_target=True,
+    fill_alpha=0.0,  # Optional: retain the outline without a coloured fill.
 )
 ```
 
@@ -124,7 +127,10 @@ fixed-size crops centred on the selected mask instances. By default, `cells`
 contains unique AnnData observation names. When `cell_key` is provided, each
 requested value must identify exactly one table row after applying the optional
 `roi` restriction; ambiguous matches raise an error rather than silently
-plotting the wrong cell.
+plotting the wrong cell. Set `outline_target_only=True` to omit neighbouring
+cell boundaries, and `mask_outside_target=True` to replace everything outside
+each target mask with black. The two display options are independent and both
+default to `False` for backward compatibility.
 
 ## Limitations
 
