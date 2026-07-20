@@ -994,6 +994,14 @@ def run_command(
     project: Path | None = typer.Option(None, "--project"),
     config: Path | None = typer.Option(None, "--config"),
     dry_run: bool = typer.Option(False, "--dry-run"),
+    no_deps: bool = typer.Option(
+        False,
+        "--no-deps",
+        help=(
+            "Submit only explicitly selected stages; require their upstream assets "
+            "to exist instead of scheduling dependency stages."
+        ),
+    ),
     reason: str | None = typer.Option(
         None,
         "--reason",
@@ -1007,7 +1015,11 @@ def run_command(
 ) -> None:
     try:
         context = _project(project, config)
-        plan = build_run_plan(context, targets)
+        plan = build_run_plan(
+            context,
+            targets,
+            include_dependencies=not no_deps,
+        )
     except Exception as exc:
         _fail(exc)
     if not plan.ready:

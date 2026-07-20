@@ -58,16 +58,31 @@ def build_run_plan(
     requested: Iterable[str],
     *,
     toolkit_directory: str | Path | None = None,
+    include_dependencies: bool = True,
 ) -> RunPlan:
     requested_names = list(requested)
     expanded = expand_requested(requested_names)
-    stages = resolve_dependencies(expanded)
+    if include_dependencies:
+        stages = resolve_dependencies(expanded)
+    else:
+        seen: set[str] = set()
+        stages = []
+        for name in expanded:
+            stage = get_stage(name)
+            if stage.name not in seen:
+                stages.append(stage)
+                seen.add(stage.name)
     assets = resolve_assets(context.config, context.root)
     mapped_assets = asset_map(assets)
     available = {role for role, asset in mapped_assets.items() if asset_is_ready(asset)}
     produced_in_plan: set[str] = set()
     errors: list[str] = []
     warnings: list[str] = []
+    if not include_dependencies:
+        warnings.append(
+            "Dependency expansion is disabled; only explicitly selected stages "
+            "will run, and their required assets must already exist."
+        )
     planned: list[PlannedStage] = []
     project_validation = validate_project(context)
     if not project_validation.valid:
@@ -118,7 +133,7 @@ def build_run_plan(
                 name=stage.name,
                 description=stage.description,
                 slurm_script=script,
-                depends_on=stage.depends_on,
+                depends_on=stage.depends_on if include_dependencies else [],
                 requires_assets=stage.requires_assets,
                 produces_assets=stage.produces_assets,
                 expected_outputs=stage.expected_outputs,

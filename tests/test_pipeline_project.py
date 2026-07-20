@@ -172,6 +172,47 @@ class ProjectAndPlanningTests(unittest.TestCase):
             self.assertEqual(yaml_data["execution_backend"], "slurm_scripts")
             self.assertEqual(json_data["resolved_stages"][0]["name"], "prep")
 
+    def test_plan_can_skip_dependencies_but_requires_existing_stage_assets(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "project"
+            context = initialize_project(root)
+            assets = {asset.role: asset for asset in resolve_assets(context.config, root)}
+
+            missing = build_run_plan(
+                context,
+                ["cellvision"],
+                include_dependencies=False,
+            )
+            self.assertFalse(missing.ready)
+            self.assertEqual(
+                [stage.name for stage in missing.resolved_stages],
+                ["cellvision"],
+            )
+            self.assertEqual(missing.resolved_stages[0].depends_on, [])
+            self.assertIn("anndata", missing.resolved_stages[0].missing_assets)
+            self.assertIn("denoised_images", missing.resolved_stages[0].missing_assets)
+            self.assertIn("masks", missing.resolved_stages[0].missing_assets)
+
+            assets["anndata"].path.parent.mkdir(parents=True, exist_ok=True)
+            assets["anndata"].path.write_bytes(b"placeholder")
+            for role in ("denoised_images", "masks"):
+                assets[role].path.mkdir(parents=True, exist_ok=True)
+                (assets[role].path / "placeholder.tif").write_bytes(b"placeholder")
+
+            ready = build_run_plan(
+                context,
+                ["cellvision"],
+                include_dependencies=False,
+            )
+            self.assertTrue(ready.ready, ready.errors)
+            self.assertEqual(
+                [stage.name for stage in ready.resolved_stages],
+                ["cellvision"],
+            )
+            self.assertTrue(
+                any("Dependency expansion is disabled" in item for item in ready.warnings)
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

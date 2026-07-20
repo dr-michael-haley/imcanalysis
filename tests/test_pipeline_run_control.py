@@ -7,6 +7,7 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from SpatialBiologyToolkit.cli.main import app
+from SpatialBiologyToolkit.pipeline.assets import resolve_assets
 from SpatialBiologyToolkit.pipeline.logs import resolve_run_logs, tail_text
 from SpatialBiologyToolkit.pipeline.manifests import read_yaml
 from SpatialBiologyToolkit.pipeline.planner import build_run_plan
@@ -269,6 +270,56 @@ class RunControlTests(unittest.TestCase):
             self.assertEqual(result.exit_code, 0, result.stdout)
             self.assertIn("no run directory was created", result.stdout)
             self.assertEqual(list(runs_dir.iterdir()), [])
+
+    def test_no_deps_dry_run_submits_only_requested_stage(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "project"
+            context = initialize_project(root)
+            assets = {
+                asset.role: asset
+                for asset in resolve_assets(context.config, root)
+            }
+            assets["anndata"].path.parent.mkdir(parents=True, exist_ok=True)
+            assets["anndata"].path.write_bytes(b"placeholder")
+            for role in ("denoised_images", "masks"):
+                assets[role].path.mkdir(parents=True, exist_ok=True)
+                (assets[role].path / "placeholder.tif").write_bytes(b"placeholder")
+            runs_dir = root / ".sbt" / "runs"
+
+            result = CliRunner().invoke(
+                app,
+                [
+                    "run",
+                    "cellvision",
+                    "--project",
+                    str(root),
+                    "--no-deps",
+                    "--dry-run",
+                ],
+            )
+
+            self.assertEqual(result.exit_code, 0, result.stdout)
+            self.assertIn("1. cellvision", result.stdout)
+            self.assertNotIn("2. ", result.stdout)
+            self.assertIn("job_cellvision.sh", result.stdout)
+            self.assertNotIn("--dependency=afterok", result.stdout)
+            self.assertEqual(list(runs_dir.iterdir()), [])
+
+    def test_no_deps_stops_before_submission_when_stage_assets_are_missing(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "project"
+            initialize_project(root)
+
+            with patch("SpatialBiologyToolkit.cli.main.submit_run") as submit_mock:
+                result = CliRunner().invoke(
+                    app,
+                    ["run", "cellvision", "--project", str(root), "--no-deps"],
+                )
+
+            self.assertNotEqual(result.exit_code, 0)
+            self.assertIn("missing required project assets", result.stdout)
+            submit_mock.assert_not_called()
+            self.assertEqual(list((root / ".sbt" / "runs").iterdir()), [])
 
 
 if __name__ == "__main__":

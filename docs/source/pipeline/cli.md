@@ -168,6 +168,18 @@ sbt run cellpose --reason "Repeat with a larger diameter after fragmentation."
 sbt run cellpose --note "Review ROI_17 carefully." --note "Compare with run 2026..."
 ```
 
+To submit only the explicitly requested stage when its upstream assets already
+exist, disable dependency expansion:
+
+```bash
+sbt run cellvision --no-deps --dry-run
+sbt run cellvision --no-deps
+```
+
+`--no-deps` does not relax input validation. The command fails before submission
+when the selected stage's required assets are absent. Use the dry run first to
+confirm that the plan contains only the intended stage.
+
 Each submitted run creates:
 
 ```text
