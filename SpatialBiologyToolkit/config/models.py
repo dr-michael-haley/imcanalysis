@@ -860,7 +860,7 @@ class CellVisionConfig(ConfigModel):
         ge=2,
     )
     n_neighbors: int = config_field(
-        15,
+        50,
         description="Single neighbor count used for the RAPIDS cell graph.",
         level="basic",
         stage="cellvision",
@@ -869,7 +869,7 @@ class CellVisionConfig(ConfigModel):
         ge=2,
     )
     leiden_resolutions: List[float] = config_field(
-        default_factory=lambda: [0.3, 1.0],
+        default_factory=lambda: [0.2, 0.3, 0.5, 0.7, 1.0],
         description="Leiden resolutions evaluated on the one CellVision neighbor graph.",
         level="basic",
         stage="cellvision",
@@ -904,7 +904,7 @@ class CellVisionConfig(ConfigModel):
         ge=1,
     )
     gallery_max_clusters: Optional[int] = config_field(
-        None,
+        20,
         description="Optional maximum number of Leiden clusters receiving galleries per resolution.",
         stage="cellvision",
         ui_group="Plots and galleries",
