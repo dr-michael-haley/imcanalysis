@@ -25,6 +25,7 @@ This reference is split by module so the site navigation stays compact.
    population_identification
    scrnaseq_to_imc_matching
    spatial
+   spatialdata
    utils
    visium
    config_documentation

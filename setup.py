@@ -16,6 +16,7 @@ setup(
         "tqdm",
 
         "anndata",
+        "dask[array]",
         "scanpy",
         "bbknn",
         "harmonypy",
@@ -28,6 +29,8 @@ setup(
         "sc3s",
         #"ehrapy",
         "squidpy",
+        "spatialdata",
+        "spatialdata-plot",
         "readimc",
 
         "matplotlib",

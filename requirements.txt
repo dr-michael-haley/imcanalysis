@@ -3,6 +3,7 @@ numpy
 pandas
 scipy
 anndata
+dask[array]
 scanpy
 bbknn
 harmonypy
@@ -25,6 +26,8 @@ tifffile
 shapely
 networkx
 squidpy
+spatialdata
+spatialdata-plot
 scikit-image
 ipython
 
