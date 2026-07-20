@@ -33,6 +33,7 @@ for ordering and usage guidance.
 | [`remap`](remap.md) | Apply a simple CSV-based remap onto adata.obs, or generate a blank remap template from an existing obs column | `imc_segmentation` | general, remap_obs, logging |
 | [`slogs`](slogs.md) | Organize SLURM output files using AnnData pipeline run metadata and verify against recorded jobs | `imc_segmentation` | general, logging |
 | [`rebuildmeta`](rebuildmeta.md) | Rebuild metadata folder tables from an existing AnnData file | `imc_segmentation` | general, rebuild_metadata, logging |
+| [`popqc`](popqc.md) | Assess population support from existing graph, UMAP, PCA, and precomputed clustering-sweep state | `imc_cellcharter` | general, population_embedding_qc, logging |
 
 ```{toctree}
 :maxdepth: 1
@@ -62,4 +63,5 @@ nxsp
 remap
 slogs
 rebuildmeta
+popqc
 ```

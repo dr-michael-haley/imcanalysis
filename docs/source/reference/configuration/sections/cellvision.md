@@ -71,8 +71,8 @@
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
 | `n_pcs` | `int` | `50` | `basic` | Single PCA component count used before RAPIDS neighbor construction. | The runtime value is capped by the number of cells and embedding dimensions. |
-| `n_neighbors` | `int` | `15` | `basic` | Single neighbor count used for the RAPIDS cell graph. | The runtime value is capped below the number of embedded cells. |
-| `leiden_resolutions` | `List[float]` | `[0.3, 1.0]` | `basic` | Leiden resolutions evaluated on the one CellVision neighbor graph. | Each value creates a namespaced cellvision_leiden_<resolution> annotation and report set. |
+| `n_neighbors` | `int` | `50` | `basic` | Single neighbor count used for the RAPIDS cell graph. | The runtime value is capped below the number of embedded cells. |
+| `leiden_resolutions` | `List[float]` | `[0.2, 0.3, 0.5, 0.7, 1.0]` | `basic` | Leiden resolutions evaluated on the one CellVision neighbor graph. | Each value creates a namespaced cellvision_leiden_<resolution> annotation and report set. |
 | `umap_min_dist` | `float` | `0.1` | `advanced` | Minimum distance used for the CellVision RAPIDS UMAP. | Use the same value for directly comparable runs. |
 
 ## Plots and galleries
@@ -81,5 +81,5 @@
 |---|---|---|---|---|---|
 | `source_umap_key` | `str` | `X_umap` | `advanced` | Source AnnData obsm key on which new CellVision labels are projected. | Projection is skipped with a warning when this embedding is absent. |
 | `gallery_cells_per_cluster` | `int` | `10` | `basic` | Maximum randomly sampled cells shown as rows in each Leiden gallery. | Every selected marker is a column; a composite column is added when there are at most three markers. |
-| `gallery_max_clusters` | `Optional[int]` | `null` | `advanced` | Optional maximum number of Leiden clusters receiving galleries per resolution. | Leave unset to generate a gallery for every discovered cluster. |
+| `gallery_max_clusters` | `Optional[int]` | `20` | `advanced` | Optional maximum number of Leiden clusters receiving galleries per resolution. | Leave unset to generate a gallery for every discovered cluster. |
 | `figure_dpi` | `int` | `200` | `advanced` | Resolution in dots per inch for CellVision raster figures. | Increase for publication export at the cost of larger reports. |

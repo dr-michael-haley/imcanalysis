@@ -2609,7 +2609,7 @@
         },
         "n_neighbors": {
           "advice": "The runtime value is capped below the number of embedded cells.",
-          "default": 15,
+          "default": 50,
           "description": "Single neighbor count used for the RAPIDS cell graph.",
           "level": "basic",
           "minimum": 2,
@@ -2675,7 +2675,7 @@
               "type": "null"
             }
           ],
-          "default": null,
+          "default": 20,
           "description": "Optional maximum number of Leiden clusters receiving galleries per resolution.",
           "level": "advanced",
           "stage": "cellvision",
@@ -5719,6 +5719,397 @@
       "title": "PairwiseSpatialConfig",
       "type": "object"
     },
+    "PopulationEmbeddingQCConfig": {
+      "description": "Configuration for population embedding and clustering structural QC.",
+      "properties": {
+        "enabled": {
+          "advice": "",
+          "default": true,
+          "description": "Enable population embedding and clustering QC when the stage is run.",
+          "level": "basic",
+          "stage": "population_embedding_qc",
+          "title": "Enabled",
+          "type": "boolean",
+          "ui_group": "Execution"
+        },
+        "input_adata_path": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional input AnnData path; defaults to general.anndata_path.",
+          "level": "basic",
+          "stage": "population_embedding_qc",
+          "title": "Input Adata Path",
+          "ui_group": "Inputs"
+        },
+        "mode": {
+          "advice": "",
+          "default": "auto",
+          "description": "Analysis mode: auto-detect available evidence, analyse one column, or require a Leiden sweep.",
+          "enum": [
+            "auto",
+            "single",
+            "sweep"
+          ],
+          "level": "basic",
+          "stage": "population_embedding_qc",
+          "title": "Mode",
+          "type": "string",
+          "ui_group": "Clustering selection"
+        },
+        "population_obs": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reference population column; auto mode falls back to population, leiden, or the median sweep resolution.",
+          "level": "basic",
+          "stage": "population_embedding_qc",
+          "title": "Population Obs",
+          "ui_group": "Clustering selection"
+        },
+        "sweep_regex": {
+          "advice": "",
+          "default": "^leiden_(?P<resolution>\\d+(?:\\.\\d+)?)$",
+          "description": "Regular expression used to detect precomputed Leiden sweep columns; it must expose a named resolution group.",
+          "level": "advanced",
+          "stage": "population_embedding_qc",
+          "title": "Sweep Regex",
+          "type": "string",
+          "ui_group": "Clustering selection"
+        },
+        "sweep_columns": {
+          "advice": "",
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional explicit, numerically ordered Leiden sweep column list instead of regex discovery.",
+          "level": "advanced",
+          "stage": "population_embedding_qc",
+          "title": "Sweep Columns",
+          "ui_group": "Clustering selection"
+        },
+        "reference_resolution": {
+          "advice": "",
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional sweep resolution to use as the reference clustering when no population column is supplied.",
+          "level": "advanced",
+          "stage": "population_embedding_qc",
+          "title": "Reference Resolution",
+          "ui_group": "Clustering selection"
+        },
+        "umap_key": {
+          "advice": "",
+          "default": "X_umap",
+          "description": "Existing adata.obsm key containing the required UMAP embedding.",
+          "level": "basic",
+          "stage": "population_embedding_qc",
+          "title": "Umap Key",
+          "type": "string",
+          "ui_group": "Representations"
+        },
+        "pca_key": {
+          "advice": "",
+          "default": "X_pca",
+          "description": "Existing optional adata.obsm key containing PCA coordinates; PCA is never recalculated.",
+          "level": "advanced",
+          "stage": "population_embedding_qc",
+          "title": "Pca Key",
+          "type": "string",
+          "ui_group": "Representations"
+        },
+        "connectivities_key": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional adata.obsp connectivity key; otherwise use neighbors.connectivities_key then connectivities.",
+          "level": "advanced",
+          "stage": "population_embedding_qc",
+          "title": "Connectivities Key",
+          "ui_group": "Representations"
+        },
+        "sample_obs": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional sample or case obs column counted as a cluster annotation in summary heatmaps.",
+          "level": "advanced",
+          "stage": "population_embedding_qc",
+          "title": "Sample Obs",
+          "ui_group": "Representations"
+        },
+        "roi_obs": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional ROI obs column counted as a cluster annotation in summary heatmaps.",
+          "level": "advanced",
+          "stage": "population_embedding_qc",
+          "title": "Roi Obs",
+          "ui_group": "Representations"
+        },
+        "pca_dimensions": {
+          "advice": "",
+          "default": 30,
+          "description": "Maximum number of stored PCA dimensions used for distance metrics.",
+          "level": "advanced",
+          "minimum": 1,
+          "stage": "population_embedding_qc",
+          "title": "Pca Dimensions",
+          "type": "integer",
+          "ui_group": "Representations"
+        },
+        "umap_k": {
+          "advice": "",
+          "default": 15,
+          "description": "Number of nearest UMAP neighbours used for local separation and preservation metrics.",
+          "level": "advanced",
+          "minimum": 2,
+          "stage": "population_embedding_qc",
+          "title": "Umap K",
+          "type": "integer",
+          "ui_group": "Metric calculation"
+        },
+        "graph_boundary_threshold": {
+          "advice": "",
+          "default": 0.7,
+          "description": "Graph or UMAP purity below which a cell is classified as a boundary cell.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "population_embedding_qc",
+          "title": "Graph Boundary Threshold",
+          "type": "number",
+          "ui_group": "Metric calculation"
+        },
+        "core_purity_threshold": {
+          "advice": "",
+          "default": 0.9,
+          "description": "Purity at or above which a cell is classified as a core cell.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "population_embedding_qc",
+          "title": "Core Purity Threshold",
+          "type": "number",
+          "ui_group": "Metric calculation"
+        },
+        "high_entropy_threshold": {
+          "advice": "",
+          "default": 0.6,
+          "description": "Normalized local label entropy above which a cell is counted as high entropy.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "population_embedding_qc",
+          "title": "High Entropy Threshold",
+          "type": "number",
+          "ui_group": "Metric calculation"
+        },
+        "min_cluster_size": {
+          "advice": "",
+          "default": 20,
+          "description": "Clusters below this size remain visible but are flagged and may have unavailable metrics.",
+          "level": "basic",
+          "minimum": 2,
+          "stage": "population_embedding_qc",
+          "title": "Min Cluster Size",
+          "type": "integer",
+          "ui_group": "Metric calculation"
+        },
+        "min_component_size": {
+          "advice": "",
+          "default": 5,
+          "description": "Minimum connected-component cell count used in substantial-component summaries.",
+          "level": "advanced",
+          "minimum": 1,
+          "stage": "population_embedding_qc",
+          "title": "Min Component Size",
+          "type": "integer",
+          "ui_group": "Metric calculation"
+        },
+        "persistence_jaccard_threshold": {
+          "advice": "",
+          "default": 0.75,
+          "description": "Minimum best-match Jaccard used to count resolution-sweep support.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "population_embedding_qc",
+          "title": "Persistence Jaccard Threshold",
+          "type": "number",
+          "ui_group": "Sweep metrics"
+        },
+        "transition_min_fraction": {
+          "advice": "",
+          "default": 0.01,
+          "description": "Minimum source-cell fraction shown as an edge in sweep transition plots.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "population_embedding_qc",
+          "title": "Transition Min Fraction",
+          "type": "number",
+          "ui_group": "Sweep metrics"
+        },
+        "silhouette_max_cells": {
+          "advice": "",
+          "default": 10000,
+          "description": "Maximum deterministic stratified sample used for each silhouette calculation.",
+          "level": "advanced",
+          "minimum": 100,
+          "stage": "population_embedding_qc",
+          "title": "Silhouette Max Cells",
+          "type": "integer",
+          "ui_group": "Scalability"
+        },
+        "density_max_cells_per_cluster": {
+          "advice": "",
+          "default": 5000,
+          "description": "Maximum deterministic sample per cluster used for UMAP density overlap.",
+          "level": "advanced",
+          "minimum": 20,
+          "stage": "population_embedding_qc",
+          "title": "Density Max Cells Per Cluster",
+          "type": "integer",
+          "ui_group": "Scalability"
+        },
+        "density_grid_size": {
+          "advice": "",
+          "default": 64,
+          "description": "Number of bins per UMAP axis used by the scalable density-overlap approximation.",
+          "level": "advanced",
+          "maximum": 512,
+          "minimum": 16,
+          "stage": "population_embedding_qc",
+          "title": "Density Grid Size",
+          "type": "integer",
+          "ui_group": "Scalability"
+        },
+        "metric_config_path": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional YAML or JSON file overriding metric anchors, raw thresholds, inclusion, or weights.",
+          "level": "advanced",
+          "stage": "population_embedding_qc",
+          "title": "Metric Config Path",
+          "ui_group": "Scoring"
+        },
+        "include_optional_metrics": {
+          "advice": "",
+          "default": false,
+          "description": "Calculate optional PCA-neighbour and UMAP-to-PCA preservation diagnostics.",
+          "level": "advanced",
+          "stage": "population_embedding_qc",
+          "title": "Include Optional Metrics",
+          "type": "boolean",
+          "ui_group": "Metric calculation"
+        },
+        "write_per_cell_metrics": {
+          "advice": "",
+          "default": false,
+          "description": "Write namespaced per-cell QC values as Parquet when a Parquet engine is available.",
+          "level": "advanced",
+          "stage": "population_embedding_qc",
+          "title": "Write Per Cell Metrics",
+          "type": "boolean",
+          "ui_group": "Outputs"
+        },
+        "write_annotated_h5ad": {
+          "advice": "",
+          "default": false,
+          "description": "Write a separate annotated AnnData copy; the input is never modified in place.",
+          "level": "basic",
+          "stage": "population_embedding_qc",
+          "title": "Write Annotated H5Ad",
+          "type": "boolean",
+          "ui_group": "Outputs"
+        },
+        "annotated_adata_path": {
+          "advice": "",
+          "default": "population_embedding_qc.h5ad",
+          "description": "Configured project asset path for the optional annotated AnnData copy.",
+          "level": "advanced",
+          "stage": "population_embedding_qc",
+          "title": "Annotated Adata Path",
+          "type": "string",
+          "ui_group": "Outputs"
+        },
+        "random_seed": {
+          "advice": "",
+          "default": 42,
+          "description": "Random seed used for every deterministic sampling decision.",
+          "level": "advanced",
+          "minimum": 0,
+          "stage": "population_embedding_qc",
+          "title": "Random Seed",
+          "type": "integer",
+          "ui_group": "Scalability"
+        }
+      },
+      "title": "PopulationEmbeddingQCConfig",
+      "type": "object"
+    },
     "PreprocessConfig": {
       "properties": {
         "minimum_roi_dimensions": {
@@ -8357,6 +8748,14 @@
       "$ref": "#/$defs/VisualizationConfig",
       "advice": "",
       "description": "Configuration value for visualization.",
+      "level": "advanced",
+      "stage": "pipeline",
+      "ui_group": "Pipeline"
+    },
+    "population_embedding_qc": {
+      "$ref": "#/$defs/PopulationEmbeddingQCConfig",
+      "advice": "",
+      "description": "Configuration value for population embedding qc.",
       "level": "advanced",
       "stage": "pipeline",
       "ui_group": "Pipeline"

@@ -8,7 +8,7 @@ first when extending these models.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, List, Literal, Optional, Type
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -1173,6 +1173,227 @@ class VisualizationConfig(ConfigModel):
     save_high_res: bool = True  # Save high-resolution figures (300 DPI)
     figure_format: str = 'png'  # Default figure format ('png', 'pdf', 'svg')
 
+
+@config_section("population_embedding_qc")
+class PopulationEmbeddingQCConfig(ConfigModel):
+    """Configuration for population embedding and clustering structural QC."""
+
+    enabled: bool = config_field(
+        True,
+        description="Enable population embedding and clustering QC when the stage is run.",
+        level="basic",
+        stage="population_embedding_qc",
+        ui_group="Execution",
+    )
+    input_adata_path: Optional[str] = config_field(
+        None,
+        description="Optional input AnnData path; defaults to general.anndata_path.",
+        level="basic",
+        stage="population_embedding_qc",
+        ui_group="Inputs",
+    )
+    mode: Literal["auto", "single", "sweep"] = config_field(
+        "auto",
+        description="Analysis mode: auto-detect available evidence, analyse one column, or require a Leiden sweep.",
+        level="basic",
+        stage="population_embedding_qc",
+        ui_group="Clustering selection",
+    )
+    population_obs: Optional[str] = config_field(
+        None,
+        description="Reference population column; auto mode falls back to population, leiden, or the median sweep resolution.",
+        level="basic",
+        stage="population_embedding_qc",
+        ui_group="Clustering selection",
+    )
+    sweep_regex: str = config_field(
+        r"^leiden_(?P<resolution>\d+(?:\.\d+)?)$",
+        description="Regular expression used to detect precomputed Leiden sweep columns; it must expose a named resolution group.",
+        stage="population_embedding_qc",
+        ui_group="Clustering selection",
+    )
+    sweep_columns: Optional[List[str]] = config_field(
+        None,
+        description="Optional explicit, numerically ordered Leiden sweep column list instead of regex discovery.",
+        stage="population_embedding_qc",
+        ui_group="Clustering selection",
+    )
+    reference_resolution: Optional[float] = config_field(
+        None,
+        description="Optional sweep resolution to use as the reference clustering when no population column is supplied.",
+        stage="population_embedding_qc",
+        ui_group="Clustering selection",
+        ge=0,
+    )
+    umap_key: str = config_field(
+        "X_umap",
+        description="Existing adata.obsm key containing the required UMAP embedding.",
+        level="basic",
+        stage="population_embedding_qc",
+        ui_group="Representations",
+    )
+    pca_key: str = config_field(
+        "X_pca",
+        description="Existing optional adata.obsm key containing PCA coordinates; PCA is never recalculated.",
+        stage="population_embedding_qc",
+        ui_group="Representations",
+    )
+    connectivities_key: Optional[str] = config_field(
+        None,
+        description="Optional adata.obsp connectivity key; otherwise use neighbors.connectivities_key then connectivities.",
+        stage="population_embedding_qc",
+        ui_group="Representations",
+    )
+    sample_obs: Optional[str] = config_field(
+        None,
+        description="Optional sample or case obs column counted as a cluster annotation in summary heatmaps.",
+        stage="population_embedding_qc",
+        ui_group="Representations",
+    )
+    roi_obs: Optional[str] = config_field(
+        None,
+        description="Optional ROI obs column counted as a cluster annotation in summary heatmaps.",
+        stage="population_embedding_qc",
+        ui_group="Representations",
+    )
+    pca_dimensions: int = config_field(
+        30,
+        description="Maximum number of stored PCA dimensions used for distance metrics.",
+        stage="population_embedding_qc",
+        ui_group="Representations",
+        ge=1,
+    )
+    umap_k: int = config_field(
+        15,
+        description="Number of nearest UMAP neighbours used for local separation and preservation metrics.",
+        stage="population_embedding_qc",
+        ui_group="Metric calculation",
+        ge=2,
+    )
+    graph_boundary_threshold: float = config_field(
+        0.7,
+        description="Graph or UMAP purity below which a cell is classified as a boundary cell.",
+        stage="population_embedding_qc",
+        ui_group="Metric calculation",
+        ge=0,
+        le=1,
+    )
+    core_purity_threshold: float = config_field(
+        0.9,
+        description="Purity at or above which a cell is classified as a core cell.",
+        stage="population_embedding_qc",
+        ui_group="Metric calculation",
+        ge=0,
+        le=1,
+    )
+    high_entropy_threshold: float = config_field(
+        0.6,
+        description="Normalized local label entropy above which a cell is counted as high entropy.",
+        stage="population_embedding_qc",
+        ui_group="Metric calculation",
+        ge=0,
+        le=1,
+    )
+    min_cluster_size: int = config_field(
+        20,
+        description="Clusters below this size remain visible but are flagged and may have unavailable metrics.",
+        level="basic",
+        stage="population_embedding_qc",
+        ui_group="Metric calculation",
+        ge=2,
+    )
+    min_component_size: int = config_field(
+        5,
+        description="Minimum connected-component cell count used in substantial-component summaries.",
+        stage="population_embedding_qc",
+        ui_group="Metric calculation",
+        ge=1,
+    )
+    persistence_jaccard_threshold: float = config_field(
+        0.75,
+        description="Minimum best-match Jaccard used to count resolution-sweep support.",
+        stage="population_embedding_qc",
+        ui_group="Sweep metrics",
+        ge=0,
+        le=1,
+    )
+    transition_min_fraction: float = config_field(
+        0.01,
+        description="Minimum source-cell fraction shown as an edge in sweep transition plots.",
+        stage="population_embedding_qc",
+        ui_group="Sweep metrics",
+        ge=0,
+        le=1,
+    )
+    silhouette_max_cells: int = config_field(
+        10000,
+        description="Maximum deterministic stratified sample used for each silhouette calculation.",
+        stage="population_embedding_qc",
+        ui_group="Scalability",
+        ge=100,
+    )
+    density_max_cells_per_cluster: int = config_field(
+        5000,
+        description="Maximum deterministic sample per cluster used for UMAP density overlap.",
+        stage="population_embedding_qc",
+        ui_group="Scalability",
+        ge=20,
+    )
+    density_grid_size: int = config_field(
+        64,
+        description="Number of bins per UMAP axis used by the scalable density-overlap approximation.",
+        stage="population_embedding_qc",
+        ui_group="Scalability",
+        ge=16,
+        le=512,
+    )
+    metric_config_path: Optional[str] = config_field(
+        None,
+        description="Optional YAML or JSON file overriding metric anchors, raw thresholds, inclusion, or weights.",
+        stage="population_embedding_qc",
+        ui_group="Scoring",
+    )
+    include_optional_metrics: bool = config_field(
+        False,
+        description="Calculate optional PCA-neighbour and UMAP-to-PCA preservation diagnostics.",
+        stage="population_embedding_qc",
+        ui_group="Metric calculation",
+    )
+    write_per_cell_metrics: bool = config_field(
+        False,
+        description="Write namespaced per-cell QC values as Parquet when a Parquet engine is available.",
+        stage="population_embedding_qc",
+        ui_group="Outputs",
+    )
+    write_annotated_h5ad: bool = config_field(
+        False,
+        description="Write a separate annotated AnnData copy; the input is never modified in place.",
+        level="basic",
+        stage="population_embedding_qc",
+        ui_group="Outputs",
+    )
+    annotated_adata_path: str = config_field(
+        "population_embedding_qc.h5ad",
+        description="Configured project asset path for the optional annotated AnnData copy.",
+        stage="population_embedding_qc",
+        ui_group="Outputs",
+    )
+    random_seed: int = config_field(
+        42,
+        description="Random seed used for every deterministic sampling decision.",
+        stage="population_embedding_qc",
+        ui_group="Scalability",
+        ge=0,
+    )
+
+    @model_validator(mode="after")
+    def validate_population_qc_settings(self):
+        if self.core_purity_threshold < self.graph_boundary_threshold:
+            raise ValueError(
+                "population_embedding_qc.core_purity_threshold must be greater than or equal to graph_boundary_threshold"
+            )
+        return self
+
 @config_section("cellcharter")
 class CellCharterConfig(ConfigModel):
     # Input/output
@@ -1646,6 +1867,7 @@ class PipelineConfig(ConfigModel):
     biobatchnet: BioBatchNetConfig = Field(default_factory=BioBatchNetConfig)
     process: BasicProcessConfig = Field(default_factory=BasicProcessConfig)
     visualization: VisualizationConfig = Field(default_factory=VisualizationConfig)
+    population_embedding_qc: PopulationEmbeddingQCConfig = Field(default_factory=PopulationEmbeddingQCConfig)
     cellcharter: CellCharterConfig = Field(default_factory=CellCharterConfig)
     starling: StarlingConfig = Field(default_factory=StarlingConfig)
     pairwise_spatial: PairwiseSpatialConfig = Field(default_factory=PairwiseSpatialConfig)
@@ -1669,6 +1891,7 @@ DEFAULT_CONFIG_CLASSES = {
     "biobatchnet": BioBatchNetConfig,
     "process": BasicProcessConfig,
     "visualization": VisualizationConfig,
+    "population_embedding_qc": PopulationEmbeddingQCConfig,
     "cellcharter": CellCharterConfig,
     "starling": StarlingConfig,
     "pairwise_spatial": PairwiseSpatialConfig,
@@ -1694,6 +1917,7 @@ __all__ = [
     "NimbusConfig",
     "PairwiseSpatialConfig",
     "PipelineConfig",
+    "PopulationEmbeddingQCConfig",
     "PreprocessConfig",
     "RapidsProcessConfig",
     "RebuildMetadataConfig",

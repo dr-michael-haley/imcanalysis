@@ -47,3 +47,4 @@ This reference is split by module so the site navigation stays compact.
    environments_registry
    environments_runtime
    environments_specification
+   population_embedding_qc

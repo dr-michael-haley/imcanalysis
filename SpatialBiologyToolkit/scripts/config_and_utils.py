@@ -25,6 +25,7 @@ from SpatialBiologyToolkit.config.models import (  # noqa: F401 - legacy re-expo
     NetworkxSpatialConfig,
     NimbusConfig,
     PairwiseSpatialConfig,
+    PopulationEmbeddingQCConfig,
     PreprocessConfig,
     RapidsProcessConfig,
     RebuildMetadataConfig,

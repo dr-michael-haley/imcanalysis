@@ -290,6 +290,11 @@ def _api_modules(repo_root: Path) -> list[tuple[str, str]]:
         for path in sorted((package_dir / "environments").glob("*.py"))
         if path.name != "__init__.py"
     )
+    population_qc_package = package_dir / "population_embedding_qc"
+    if (population_qc_package / "__init__.py").is_file():
+        modules.append(
+            ("population_embedding_qc", "SpatialBiologyToolkit.population_embedding_qc")
+        )
     return modules
 
 

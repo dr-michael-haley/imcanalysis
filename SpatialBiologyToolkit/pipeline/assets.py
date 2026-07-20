@@ -134,6 +134,17 @@ def resolve_assets(
             count_limit=count_limit,
         )
     )
+    assets.append(
+        inspect_asset(
+            role="population_qc_anndata",
+            path=resolve_project_path(
+                root, config.population_embedding_qc.annotated_adata_path
+            ),
+            kind="file",
+            lifecycle="generated_output",
+            count_limit=count_limit,
+        )
+    )
     return assets
 
 

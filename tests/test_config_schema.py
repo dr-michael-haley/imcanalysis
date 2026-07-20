@@ -14,8 +14,9 @@ class ConfigSchemaTests(unittest.TestCase):
     def test_schema_contains_all_sections_and_field_metadata(self):
         schema = generate_json_schema()
 
-        self.assertEqual(len(schema["properties"]), 20)
+        self.assertEqual(len(schema["properties"]), 21)
         self.assertIn("general", schema["properties"])
+        self.assertIn("population_embedding_qc", schema["properties"])
         diameter = schema["$defs"]["CreateMasksConfig"]["properties"][
             "cellpose_cell_diameter"
         ]

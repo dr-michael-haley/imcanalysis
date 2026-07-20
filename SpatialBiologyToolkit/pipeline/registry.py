@@ -101,6 +101,12 @@ STAGE_PRESENTATION: dict[str, tuple[str, int, str, str]] = {
         "Environment_Diagnostics",
         "environment_diagnostics.md",
     ),
+    "popqc": (
+        "Population Embedding QC",
+        25,
+        "Population_Embedding_QC",
+        "population_embedding_qc.md",
+    ),
 }
 
 STAGE_MODULES: dict[str, tuple[str, ...]] = {
@@ -136,6 +142,7 @@ STAGE_MODULES: dict[str, tuple[str, ...]] = {
     "remap": ("SpatialBiologyToolkit.scripts.remap_obs",),
     "slogs": ("SpatialBiologyToolkit.scripts.slurmlogs",),
     "rebuildmeta": ("SpatialBiologyToolkit.scripts.rebuild_metadata",),
+    "popqc": ("SpatialBiologyToolkit.scripts.population_embedding_qc",),
 }
 
 STAGE_CONFIG_SECTIONS: dict[str, tuple[str, ...]] = {
@@ -163,6 +170,7 @@ STAGE_CONFIG_SECTIONS: dict[str, tuple[str, ...]] = {
     "remap": ("general", "remap_obs"),
     "slogs": ("general",),
     "rebuildmeta": ("general", "rebuild_metadata"),
+    "popqc": ("general", "population_embedding_qc"),
 }
 
 
@@ -443,6 +451,23 @@ STAGES: tuple[StageSpec, ...] = (
         requires=("anndata",),
         produces=("metadata",),
         outputs=("Rebuilt metadata.csv, dictionary.csv, and panel.csv",),
+    ),
+    _stage(
+        "popqc",
+        "job_population_embedding_qc.sh",
+        "Assess population support from existing graph, UMAP, PCA, and clustering-sweep state.",
+        groups=("qc",),
+        requires=("anndata",),
+        produces=("human_outputs",),
+        outputs=(
+            "Raw structural QC metrics, concern scores, and threshold flags",
+            "Population QC figures and deterministic interpretation report",
+            "Optional separately annotated AnnData asset",
+        ),
+        notes=(
+            "This stage never recalculates Leiden, PCA, UMAP, or the Scanpy neighbour graph.",
+            "No fixed integration-stage dependency is imposed because curated and multiple integration routes are supported.",
+        ),
     ),
 )
 

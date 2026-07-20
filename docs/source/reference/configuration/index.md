@@ -26,6 +26,7 @@ sections/cellvision
 sections/biobatchnet
 sections/process
 sections/visualization
+sections/population_embedding_qc
 sections/cellcharter
 sections/starling
 sections/pairwise_spatial

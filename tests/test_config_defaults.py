@@ -15,7 +15,8 @@ class ConfigDefaultsTests(unittest.TestCase):
         resolved = PipelineConfig().model_dump(mode="python")
 
         self.assertEqual(resolved, expected)
-        self.assertEqual(len(resolved), 20)
+        self.assertEqual(len(resolved), 21)
+        self.assertEqual(resolved["population_embedding_qc"]["mode"], "auto")
 
     def test_sparse_data_fills_missing_sections_and_fields(self):
         config = load_config_data(
