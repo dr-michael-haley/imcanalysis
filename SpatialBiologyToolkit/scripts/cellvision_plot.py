@@ -37,6 +37,7 @@ def main() -> None:
         load_runtime,
         reporter,
     )
+    from SpatialBiologyToolkit.scripts.config_and_utils import read_h5ad_compat
 
     config, paths = load_runtime("plot")
     cellvision = config.cellvision
@@ -44,7 +45,7 @@ def main() -> None:
     for path in (paths.clustered, paths.h5sc, source_path):
         if not path.is_file():
             raise FileNotFoundError(f"CellVision plotting input does not exist: {path}")
-    clustered = ad.read_h5ad(paths.clustered)
+    clustered = read_h5ad_compat(paths.clustered)
     source = ad.read_h5ad(source_path)
     if "X_cellvision_umap" not in clustered.obsm:
         raise KeyError("CellVision clustered AnnData lacks obsm['X_cellvision_umap'].")

@@ -8,6 +8,17 @@ from pathlib import Path
 
 
 def _atomic_write_h5ad(adata, path: Path) -> None:
+    from SpatialBiologyToolkit.scripts.config_and_utils import (
+        _sanitize_anndata_uns_inplace,
+    )
+
+    removed = _sanitize_anndata_uns_inplace(adata)
+    if removed:
+        logging.info(
+            "Removed %d null-like AnnData.uns entries before writing the "
+            "cross-environment CellVision asset.",
+            removed,
+        )
     temporary = path.with_suffix(path.suffix + ".tmp")
     adata.write_h5ad(temporary)
     os.replace(temporary, path)

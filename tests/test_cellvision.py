@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import anndata as ad
 import h5py
@@ -35,6 +36,8 @@ from SpatialBiologyToolkit.pipeline.project import initialize_project
 from SpatialBiologyToolkit.pipeline.registry import get_mode, get_stage
 from SpatialBiologyToolkit.pipeline.runs import create_run_record
 from SpatialBiologyToolkit.pipeline.slurm import sbt_environment
+from SpatialBiologyToolkit.scripts.cellvision_cluster import _atomic_write_h5ad
+from SpatialBiologyToolkit.scripts.config_and_utils import read_h5ad_compat
 
 
 class CellVisionIdentityTests(unittest.TestCase):
@@ -134,6 +137,46 @@ class CellVisionIdentityTests(unittest.TestCase):
         )
 
         self.assertNotEqual(first, second)
+
+
+class CellVisionAnnDataCompatibilityTests(unittest.TestCase):
+    def test_cluster_write_removes_null_rapids_metadata(self):
+        data = ad.AnnData(X=np.zeros((3, 2), dtype=np.float32))
+        data.uns["X_cellvision_pca"] = {
+            "params": {"mask_var": None, "n_comps": 2}
+        }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "cellvision_clustered.h5ad"
+            _atomic_write_h5ad(data, output)
+            restored = ad.read_h5ad(output)
+
+        self.assertNotIn(
+            "mask_var", restored.uns["X_cellvision_pca"]["params"]
+        )
+        self.assertEqual(restored.uns["X_cellvision_pca"]["params"]["n_comps"], 2)
+
+    def test_compat_reader_repairs_null_uns_encoding_and_retries(self):
+        expected = object()
+        error = RuntimeError(
+            "No read method registered for IOSpec(encoding_type='null', "
+            "encoding_version='0.1.0')"
+        )
+        path = Path("cellvision_clustered.h5ad")
+
+        with (
+            patch("anndata.read_h5ad", side_effect=[error, expected]) as read,
+            patch(
+                "SpatialBiologyToolkit.scripts.config_and_utils."
+                "_remove_null_encoded_uns_entries_in_h5ad",
+                return_value=["/uns/X_cellvision_pca/params/mask_var"],
+            ) as repair,
+        ):
+            result = read_h5ad_compat(path)
+
+        self.assertIs(result, expected)
+        self.assertEqual(read.call_count, 2)
+        repair.assert_called_once_with(path)
 
 
 class CellVisionChannelAndConfigTests(unittest.TestCase):

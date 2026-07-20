@@ -2,8 +2,7 @@
 #SBATCH -p gpuA
 #SBATCH -G 1
 #SBATCH -t 2-0
-#SBATCH -n 8
-#SBATCH --mem=48G
+#SBATCH -n 12
 
 #SBATCH --mail-user=${IMC_EMAIL}
 #SBATCH --mail-type=ALL
