@@ -468,6 +468,43 @@ def _looks_like_null_encoding_read_error(exc: Exception) -> bool:
     return False
 
 
+def read_h5ad_compat(anndata_path: Path, **read_kwargs: Any) -> Any:
+    """Read H5AD while repairing newer ``null`` encodings under ``/uns``.
+
+    Some pipeline stages run in environments with different AnnData versions.
+    Newer writers can persist ``None`` as a ``null`` dataset, while older readers
+    do not register that encoding. Null values in ``uns`` are optional metadata,
+    so remove only those datasets and retry the read.
+    """
+    import anndata as ad
+
+    try:
+        return ad.read_h5ad(anndata_path, **read_kwargs)
+    except Exception as exc:
+        if not _looks_like_null_encoding_read_error(exc):
+            raise
+
+        logging.warning(
+            "AnnData read failed due null-encoded payloads (likely from a newer "
+            "anndata/scanpy version). Attempting in-place repair of /uns in %s.",
+            anndata_path,
+        )
+        removed_paths = _remove_null_encoded_uns_entries_in_h5ad(anndata_path)
+        if not removed_paths:
+            raise
+
+        preview = ", ".join(removed_paths[:5])
+        if len(removed_paths) > 5:
+            preview += ", ..."
+        logging.warning(
+            "Removed %d null-encoded /uns entries from %s: %s",
+            len(removed_paths),
+            anndata_path,
+            preview,
+        )
+        return ad.read_h5ad(anndata_path, **read_kwargs)
+
+
 def _sanitize_for_uns(value: Any) -> Any:
     """Recursively sanitize values for safe storage in adata.uns and drop None entries."""
     if value is None:
@@ -705,8 +742,6 @@ def load_pipeline_anndata(
     tuple
         (adata_or_none, resolved_path, skip_stage, decision_message)
     """
-    import anndata as ad
-
     anndata_path = resolve_anndata_path(general_config, override_path=override_path)
     if not anndata_path.exists():
         if allow_missing:
@@ -716,31 +751,7 @@ def load_pipeline_anndata(
         raise FileNotFoundError(f"AnnData file not found: {anndata_path}")
 
     logging.info("Loading AnnData from %s", anndata_path)
-    try:
-        adata = ad.read_h5ad(anndata_path)
-    except Exception as exc:
-        if not _looks_like_null_encoding_read_error(exc):
-            raise
-
-        logging.warning(
-            "AnnData read failed due null-encoded payloads (likely from newer anndata/scanpy). "
-            "Attempting in-place repair of /uns in %s.",
-            anndata_path,
-        )
-        removed_paths = _remove_null_encoded_uns_entries_in_h5ad(anndata_path)
-        if not removed_paths:
-            raise
-
-        preview = ", ".join(removed_paths[:5])
-        if len(removed_paths) > 5:
-            preview += ", ..."
-        logging.warning(
-            "Removed %d null-encoded /uns entries from %s: %s",
-            len(removed_paths),
-            anndata_path,
-            preview,
-        )
-        adata = ad.read_h5ad(anndata_path)
+    adata = read_h5ad_compat(anndata_path)
 
     removed_from_uns = _sanitize_anndata_uns_inplace(adata)
     if removed_from_uns > 0:

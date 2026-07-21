@@ -2,7 +2,6 @@
 #SBATCH -p himem
 #SBATCH -t 1-0
 #SBATCH -n 12
-#SBATCH --mem=64G
 
 #SBATCH --mail-user=${IMC_EMAIL}
 #SBATCH --mail-type=ALL
