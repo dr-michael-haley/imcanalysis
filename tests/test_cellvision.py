@@ -213,6 +213,42 @@ class CellVisionChannelAndConfigTests(unittest.TestCase):
         self.assertEqual(names, ("CD45", "CD3"))
         self.assertEqual([path.name for path in files], ["02_01_Sm149_CD45.tiff", "01_01_Nd143_CD3.tiff"])
 
+    def test_channel_resolution_supports_full_suffixes_and_avoids_substrings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            roi = Path(temp_dir) / "ROI_1"
+            roi.mkdir()
+            imwrite(roi / "01_01_165Ho_CD11c.tiff", np.ones((4, 4), dtype=np.uint16))
+            imwrite(roi / "02_01_174Yb_MHCII.ome.tif", np.ones((4, 4), dtype=np.uint16))
+            imwrite(roi / "03_01_Nd143_CD3.tiff", np.ones((4, 4), dtype=np.uint16))
+            imwrite(roi / "04_01_Gd160_CD31.tiff", np.ones((4, 4), dtype=np.uint16))
+
+            files, names = resolve_roi_channels(
+                roi,
+                ["174yb_mhcii", "165Ho_CD11c", "CD3"],
+            )
+
+        self.assertEqual(names, ("174yb_mhcii", "165Ho_CD11c", "CD3"))
+        self.assertEqual(
+            [path.name for path in files],
+            [
+                "02_01_174Yb_MHCII.ome.tif",
+                "01_01_165Ho_CD11c.tiff",
+                "03_01_Nd143_CD3.tiff",
+            ],
+        )
+
+    def test_channel_resolution_rejects_ambiguous_or_duplicate_aliases(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            roi = Path(temp_dir) / "ROI_1"
+            roi.mkdir()
+            imwrite(roi / "01_01_Nd143_CD3.tiff", np.ones((4, 4), dtype=np.uint16))
+            imwrite(roi / "02_01_Er167_CD3.tiff", np.ones((4, 4), dtype=np.uint16))
+
+            with self.assertRaisesRegex(ValueError, "ambiguous"):
+                resolve_roi_channels(roi, ["CD3"])
+            with self.assertRaisesRegex(ValueError, "both resolve"):
+                resolve_roi_channels(roi, ["Nd143_CD3", "01_01_Nd143_CD3"])
+
     def test_config_defaults_and_cross_field_validation(self):
         config = CellVisionConfig()
         self.assertEqual(config.image_size, 36)
@@ -235,6 +271,33 @@ class CellVisionChannelAndConfigTests(unittest.TestCase):
         self.assertEqual(values, {"CD3": 12.5, "CD20": 8.0})
         with self.assertRaises(ValueError):
             validate_normalization_dict({"CD3": 1}, channel_names=["CD3", "CD20"])
+
+    def test_nimbus_normalization_dict_resolves_unique_channel_suffixes(self):
+        values = validate_normalization_dict(
+            {"CD11c": "18", "MHCII": "210", "CD3": "8", "CD31": "10"},
+            channel_names=["165Ho_CD11c", "174Yb_MHCII", "Nd143_CD3", "Gd160_CD31"],
+        )
+        self.assertEqual(
+            values,
+            {
+                "165Ho_CD11c": 18.0,
+                "174Yb_MHCII": 210.0,
+                "Nd143_CD3": 8.0,
+                "Gd160_CD31": 10.0,
+            },
+        )
+
+    def test_normalization_exact_match_precedes_suffix_and_ambiguity_fails(self):
+        values = validate_normalization_dict(
+            {"165Ho_CD11c": "19", "CD11c": "18"},
+            channel_names=["165ho_cd11c"],
+        )
+        self.assertEqual(values, {"165ho_cd11c": 19.0})
+        with self.assertRaisesRegex(ValueError, "ambiguous"):
+            validate_normalization_dict(
+                {"CD3": 8, "Nd143_CD3": 9},
+                channel_names=["prefix_Nd143_CD3"],
+            )
 
     def test_normalized_uint16_conversion_has_no_float_max_heuristic(self):
         first = _normalized_uint16_image(

@@ -641,7 +641,7 @@ class CellVisionConfig(ConfigModel):
         level="basic",
         stage="cellvision",
         ui_group="Cell identity and selection",
-        advice="Names may match either the channel-name or channel-label portion of IMC TIFF filenames; leave unset for all channels.",
+        advice="Each name must match the case-insensitive suffix immediately before a TIFF extension; both 165Ho_CD11c and CD11c can match a prefixed IMC filename. Leave unset for all channels.",
     )
 
     image_size: int = config_field(
@@ -679,10 +679,10 @@ class CellVisionConfig(ConfigModel):
     )
     normalization_dict_path: Optional[str] = config_field(
         None,
-        description="Optional Nimbus-format normalization_dict.json containing one positive scale per selected marker.",
+        description="Optional Nimbus-format normalization_dict.json containing one positive scale per selected marker or unambiguous marker suffix.",
         stage="cellvision",
         ui_group="Input normalization",
-        advice="Relative paths resolve from the project root; leave unset to compute the dictionary from all in-mask ROI pixels.",
+        advice="Exact keys take priority; short Nimbus keys such as CD11c match a selected 165Ho_CD11c channel, while ambiguous suffixes fail. Relative paths resolve from the project root.",
     )
     normalization_quantile: float = config_field(
         0.999,

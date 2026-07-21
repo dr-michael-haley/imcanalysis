@@ -51,10 +51,16 @@ runs.
   (`cellvision.object_id_obs`, default `ObjectNumber`).
 - Optional `cellvision.population_obs` plus `cellvision.populations` selection.
 - Optional ordered `cellvision.markers`; all discovered channels are used when
-  this is unset.
+  this is unset. Each configured marker is matched case-insensitively against
+  the end of a TIFF stem, immediately before `.tif`, `.tiff`, or their OME
+  variants. Thus both `165Ho_CD11c` and `CD11c` can select a prefixed
+  `..._165Ho_CD11c.tiff`, while `CD3` cannot select `..._CD31.tiff`.
 - Optional `cellvision.normalization_dict_path` pointing to the same
   marker-to-value `normalization_dict.json` format produced and reviewed by
-  Nimbus. Relative paths resolve from the project root.
+  Nimbus. Nimbus short keys such as `CD11c` are resolved to configured full
+  names such as `165Ho_CD11c` by the same suffix rule. Exact keys take priority;
+  missing or ambiguous matches fail before extraction. Relative paths resolve
+  from the project root.
 
 Source AnnData observation names must be unique, and each `(ROI, object ID)` pair
 must be unique and present in the corresponding labelled mask. These are checked
@@ -116,7 +122,10 @@ reports. Across those reports, CellVision produces:
 - `mask_gaussian_blur=false` keeps the extraction mask binary by default for
   1 µm/pixel IMC. Enabling it restores scPortrait's sigma-1 softened mask edge.
 - `normalization_dict_path` reuses reviewed Nimbus channel scales. When it is
-  unset, CellVision follows Nimbus defaults: for each channel, calculate the
+  supplied, its keys may be exact configured marker names or unique short
+  suffixes from Nimbus; resolved values remain keyed by the configured
+  CellVision names downstream. When it is unset, CellVision follows Nimbus
+  defaults: for each channel, calculate the
   0.999 quantile of in-mask pixels per ROI, average the ROI values, and floor
   the result at 3.0. Images are divided by those values, clipped to `[0, 1]`,
   and stored that way in H5SC. VICReg validates this range and does not rescale.

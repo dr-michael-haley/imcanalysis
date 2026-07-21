@@ -19,7 +19,7 @@
 | `object_id_obs` | `str` | `ObjectNumber` | `basic` | AnnData observation column containing the integer label used in each ROI mask. | The pair (ROI, object ID) must uniquely identify every selected source cell. |
 | `population_obs` | `Optional[str]` | `null` | `basic` | Optional source population annotation used for filtering, comparison, and plots. | Leave unset to analyse all cells without original-population comparison plots. |
 | `populations` | `Optional[List[str]]` | `null` | `basic` | Optional population values to retain from population_obs. | Leave unset to retain every cell, even when population_obs is set for plotting. |
-| `markers` | `Optional[List[str]]` | `null` | `basic` | Optional ordered marker/channel names to include in cell images and VICReg training. | Names may match either the channel-name or channel-label portion of IMC TIFF filenames; leave unset for all channels. |
+| `markers` | `Optional[List[str]]` | `null` | `basic` | Optional ordered marker/channel names to include in cell images and VICReg training. | Each name must match the case-insensitive suffix immediately before a TIFF extension; both 165Ho_CD11c and CD11c can match a prefixed IMC filename. Leave unset for all channels. |
 
 ## scPortrait extraction
 
@@ -35,7 +35,7 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `normalization_dict_path` | `Optional[str]` | `null` | `advanced` | Optional Nimbus-format normalization_dict.json containing one positive scale per selected marker. | Relative paths resolve from the project root; leave unset to compute the dictionary from all in-mask ROI pixels. |
+| `normalization_dict_path` | `Optional[str]` | `null` | `advanced` | Optional Nimbus-format normalization_dict.json containing one positive scale per selected marker or unambiguous marker suffix. | Exact keys take priority; short Nimbus keys such as CD11c match a selected 165Ho_CD11c channel, while ambiguous suffixes fail. Relative paths resolve from the project root. |
 | `normalization_quantile` | `float` | `0.999` | `advanced` | Per-ROI in-mask quantile averaged to compute each channel normalization value. | Matches the current Nimbus default and is used only when normalization_dict_path is unset. |
 | `normalization_min_value` | `float` | `3.0` | `advanced` | Minimum computed normalization value used to avoid scaling background noise. | Matches the current Nimbus default; supplied dictionary values are preserved after positive-value validation. |
 | `normalization_clip` | `List[float]` | `[0.0, 1.0]` | `advanced` | Lower and upper bounds applied after division by the channel normalization value. | CellVision H5SC training images must remain within [0, 1]. |

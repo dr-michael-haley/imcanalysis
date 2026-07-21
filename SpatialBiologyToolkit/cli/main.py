@@ -567,13 +567,46 @@ def stages_list(
     if output_format != OutputFormat.text:
         _emit_machine(list(STAGES), output_format)
         return
-    typer.echo(f"{'STAGE':<12} {'ENVIRONMENT':<20} {'OUTPUT SLUG':<32} DISPLAY NAME")
-    for stage in sorted(STAGES, key=lambda item: (item.catalogue_order, item.name)):
-        typer.echo(
-            f"{stage.name:<12} {','.join(stage.environment_keys) or '-':<20} "
-            f"{stage.output_slug:<32} {stage.display_name}"
+    stages = sorted(STAGES, key=lambda item: (item.catalogue_order, item.name))
+    stage_width = max(len("STAGE"), *(len(stage.name) for stage in stages))
+    environment_width = max(
+        len("ENVIRONMENT"),
+        *(len(",".join(stage.environment_keys) or "-") for stage in stages),
+    )
+    slug_width = max(len("OUTPUT SLUG"), *(len(stage.output_slug) for stage in stages))
+
+    typer.echo(
+        typer.style(
+            f"{'STAGE':<{stage_width}} "
+            f"{'ENVIRONMENT':<{environment_width}} "
+            f"{'OUTPUT SLUG':<{slug_width}} DISPLAY NAME",
+            fg=typer.colors.BRIGHT_CYAN,
+            bold=True,
         )
-        typer.echo(f"  {stage.description}")
+    )
+    for stage in stages:
+        environment = ",".join(stage.environment_keys) or "-"
+        typer.echo(
+            " ".join(
+                (
+                    typer.style(
+                        f"{stage.name:<{stage_width}}",
+                        fg=typer.colors.BRIGHT_GREEN,
+                        bold=True,
+                    ),
+                    typer.style(
+                        f"{environment:<{environment_width}}",
+                        fg=typer.colors.BRIGHT_YELLOW,
+                    ),
+                    typer.style(
+                        f"{stage.output_slug:<{slug_width}}",
+                        fg=typer.colors.BRIGHT_MAGENTA,
+                    ),
+                    typer.style(stage.display_name, fg=typer.colors.BRIGHT_CYAN),
+                )
+            )
+        )
+        typer.secho(f"  {stage.description}", fg=typer.colors.WHITE)
 
 
 @stages_app.command("explain")

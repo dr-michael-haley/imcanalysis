@@ -262,7 +262,7 @@ def resolve_roi_channels(
     roi_directory: Path,
     markers: Sequence[str] | None,
 ) -> tuple[tuple[Path, ...], tuple[str, ...]]:
-    """Resolve a deterministic ordered channel list for one ROI."""
+    """Resolve ordered channels by an exact, case-insensitive TIFF-stem suffix."""
     files = _tiff_files(roi_directory)
     if not files:
         raise ValueError(f"No TIFF channel files were found in {roi_directory}")
@@ -279,27 +279,32 @@ def resolve_roi_channels(
     selected_files: list[Path] = []
     selected_names: list[str] = []
     for marker in markers:
-        key = str(marker).strip().casefold()
-        matches = [
-            path
-            for path, (channel_name, channel_label, full_stem) in components.items()
-            if key in {channel_name.casefold(), channel_label.casefold(), full_stem.casefold()}
-        ]
+        marker_name = str(marker).strip()
+        if not marker_name:
+            raise ValueError("CellVision marker names cannot be empty.")
+        key = marker_name.casefold()
+        matches = [path for path in files if _tiff_stem(path).casefold().endswith(key)]
         if not matches:
-            available = sorted(
-                {value for channel_name, channel_label, _ in components.values() for value in (channel_name, channel_label)}
-            )
+            available = [_tiff_stem(path) for path in files]
             raise ValueError(
                 f"Marker {marker!r} was not found in ROI {roi_directory.name}. "
-                f"Available channel names/labels: {available}"
+                "Markers must match the case-insensitive suffix immediately before the "
+                f"TIFF extension. Available TIFF stems: {available}"
             )
         if len(matches) > 1:
             raise ValueError(
                 f"Marker {marker!r} is ambiguous in ROI {roi_directory.name}: "
                 f"{[path.name for path in matches]}"
             )
+        if matches[0] in selected_files:
+            previous = selected_names[selected_files.index(matches[0])]
+            raise ValueError(
+                f"CellVision markers {previous!r} and {marker_name!r} both resolve to "
+                f"{matches[0].name!r} in ROI {roi_directory.name}. Use one canonical "
+                "name for each selected TIFF channel."
+            )
         selected_files.append(matches[0])
-        selected_names.append(str(marker))
+        selected_names.append(marker_name)
     return tuple(selected_files), tuple(selected_names)
 
 
@@ -413,15 +418,70 @@ def validate_normalization_dict(
     *,
     channel_names: Sequence[str],
 ) -> dict[str, float]:
-    """Validate a Nimbus-format marker-to-normalization-value mapping."""
-    expected = [str(name) for name in channel_names]
-    missing = [name for name in expected if name not in values]
-    extra = sorted(set(str(key) for key in values).difference(expected))
-    if missing:
+    """Resolve and validate a Nimbus-format marker-to-normalization mapping.
+
+    CellVision channel names remain canonical downstream identities. Dictionary
+    keys are resolved case-insensitively, preferring an exact match and otherwise
+    requiring one unique suffix-compatible match. This permits a Nimbus key such
+    as ``CD11c`` to serve ``165Ho_CD11c`` without allowing ``CD3`` to match
+    ``CD31``.
+    """
+    expected = [str(name).strip() for name in channel_names]
+    if any(not name for name in expected):
+        raise ValueError("CellVision channel names cannot be empty.")
+    if len({name.casefold() for name in expected}) != len(expected):
         raise ValueError(
-            "CellVision normalization dictionary is missing selected markers; "
-            f"missing={missing}."
+            f"CellVision channel names must be unique ignoring case; got {expected}."
         )
+
+    keyed_values = [(str(key).strip(), key, value) for key, value in values.items()]
+    empty_keys = [original for key, original, _ in keyed_values if not key]
+    if empty_keys:
+        raise ValueError(
+            f"CellVision normalization dictionary contains empty key(s): {empty_keys}."
+        )
+
+    resolved: dict[str, tuple[str, Any, Any]] = {}
+    used_original_keys: set[Any] = set()
+    for channel_name in expected:
+        folded = channel_name.casefold()
+        exact = [entry for entry in keyed_values if entry[0].casefold() == folded]
+        candidates = exact or [
+            entry
+            for entry in keyed_values
+            if folded.endswith(entry[0].casefold())
+            or entry[0].casefold().endswith(folded)
+        ]
+        if not candidates:
+            raise ValueError(
+                "CellVision normalization dictionary is missing a selected marker; "
+                f"channel={channel_name!r}. Keys may be exact names or unique "
+                "case-insensitive suffix aliases."
+            )
+        if len(candidates) > 1:
+            raise ValueError(
+                f"Normalization dictionary match for channel {channel_name!r} is "
+                f"ambiguous: {[entry[0] for entry in candidates]}. Use an exact, "
+                "unique key."
+            )
+        matched_key, original_key, raw_value = candidates[0]
+        if original_key in used_original_keys:
+            previous = next(
+                name for name, (_, key, _) in resolved.items() if key == original_key
+            )
+            raise ValueError(
+                f"Normalization key {matched_key!r} matches more than one selected "
+                f"channel ({previous!r}, {channel_name!r}). Supply exact keys for "
+                "those channels."
+            )
+        resolved[channel_name] = candidates[0]
+        used_original_keys.add(original_key)
+
+    extra = sorted(
+        displayed_key
+        for displayed_key, original_key, _ in keyed_values
+        if original_key not in used_original_keys
+    )
     if extra:
         logging.info(
             "Ignoring %d normalization dictionary channel(s) not selected for CellVision: %s",
@@ -430,17 +490,26 @@ def validate_normalization_dict(
         )
     normalized: dict[str, float] = {}
     for name in expected:
+        matched_key, _, raw_value = resolved[name]
         try:
-            value = float(values[name])
+            value = float(raw_value)
         except (TypeError, ValueError) as exc:
             raise ValueError(
-                f"Normalization value for channel {name!r} is not numeric: {values[name]!r}"
+                f"Normalization value for channel {name!r} (dictionary key "
+                f"{matched_key!r}) is not numeric: {raw_value!r}"
             ) from exc
         if not np.isfinite(value) or value <= 0:
             raise ValueError(
-                f"Normalization value for channel {name!r} must be finite and positive; got {value}."
+                f"Normalization value for channel {name!r} (dictionary key "
+                f"{matched_key!r}) must be finite and positive; got {value}."
             )
         normalized[name] = value
+        if matched_key != name:
+            logging.info(
+                "Matched CellVision channel %r to normalization dictionary key %r.",
+                name,
+                matched_key,
+            )
     return normalized
 
 

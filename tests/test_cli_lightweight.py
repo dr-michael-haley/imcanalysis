@@ -63,6 +63,32 @@ class LightweightCliTests(unittest.TestCase):
         self.assertIn(DOCUMENTATION_URL, homepage.stdout)
         self.assertIn("Commands", homepage.stdout)
 
+    def test_stages_list_uses_color_for_terminal_table_only(self):
+        runner = CliRunner()
+        colored = runner.invoke(app, ["stages", "list"], color=True)
+
+        self.assertEqual(colored.exit_code, 0, colored.stdout)
+        self.assertIn("\x1b[", colored.stdout)
+        self.assertIn("cellvision-cluster", colored.stdout)
+
+        plain = runner.invoke(app, ["stages", "list"], color=False)
+        self.assertEqual(plain.exit_code, 0, plain.stdout)
+        self.assertNotIn("\x1b[", plain.stdout)
+        header = plain.stdout.splitlines()[0]
+        cluster_row = next(
+            line
+            for line in plain.stdout.splitlines()
+            if line.startswith("cellvision-cluster")
+        )
+        self.assertEqual(header.index("ENVIRONMENT"), cluster_row.index("rapids"))
+
+        machine = runner.invoke(
+            app, ["stages", "list", "--format", "json"], color=True
+        )
+        self.assertEqual(machine.exit_code, 0, machine.stdout)
+        self.assertNotIn("\x1b[", machine.stdout)
+        self.assertEqual(json.loads(machine.stdout)[0]["name"], "prep")
+
 
 if __name__ == "__main__":
     unittest.main()

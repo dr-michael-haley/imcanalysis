@@ -117,6 +117,10 @@ sbt modes list
 sbt modes explain segmentation
 ```
 
+In an interactive terminal, `sbt stages list` color-codes the stage,
+environment, output-slug, and display-name columns. Redirected output remains
+plain text, while `--format yaml` and `--format json` are always ANSI-free.
+
 The typed Python registry contains every alias mirrored in
 `SLURM_scripts/pipeline.conf`, with documentation order, an unnumbered output slug,
 shared scientific explainer, wrapper paths, dependencies, workflow groups,
