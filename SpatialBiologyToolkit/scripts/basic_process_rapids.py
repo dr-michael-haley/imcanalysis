@@ -778,8 +778,14 @@ def _run_rapids_leiden(
     enabled: bool,
     neighbors_key: str,
     leiden_params: Dict[str, Any],
+    key_prefix: str = "leiden",
 ) -> List[str]:
-    """Run RAPIDS Leiden clustering for each configured resolution."""
+    """Run RAPIDS Leiden clustering for each configured resolution.
+
+    ``key_prefix`` lets callers isolate labels produced in a distinct feature
+    space without temporarily overwriting an existing ``leiden_<resolution>``
+    observation column.
+    """
     if not enabled:
         logging.info("Leiden clustering skipped (run_leiden=False).")
         return []
@@ -794,7 +800,7 @@ def _run_rapids_leiden(
 
     leiden_keys: List[str] = []
     for res in resolutions:
-        leiden_key = f"leiden_{res}"
+        leiden_key = f"{key_prefix}_{res}"
         logging.info("Running RAPIDS Leiden clustering at resolution %s.", res)
         rsc.tl.leiden(adata, resolution=res, key_added=leiden_key, **params)
         leiden_keys.append(leiden_key)

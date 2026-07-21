@@ -131,18 +131,28 @@ def main() -> None:
             umap_key="X_cellvision_umap",
             umap_params={"random_state": cellvision.seed},
         )
-        temporary_leiden = _run_rapids_leiden(
+        generated_leiden = _run_rapids_leiden(
             embeddings,
             resolutions=list(cellvision.leiden_resolutions),
             enabled=True,
             neighbors_key=graph_key,
             leiden_params={"random_state": cellvision.seed},
+            key_prefix="cellvision_leiden",
         )
         final_leiden: list[str] = []
-        for resolution, old_key in zip(cellvision.leiden_resolutions, temporary_leiden, strict=True):
-            new_key = leiden_key(resolution)
-            embeddings.obs[new_key] = embeddings.obs.pop(old_key).astype("category")
-            final_leiden.append(new_key)
+        for resolution, generated_key in zip(
+            cellvision.leiden_resolutions, generated_leiden, strict=True
+        ):
+            expected_key = leiden_key(resolution)
+            if generated_key != expected_key:
+                raise RuntimeError(
+                    "RAPIDS returned an unexpected CellVision Leiden key: "
+                    f"{generated_key!r} != {expected_key!r}."
+                )
+            embeddings.obs[generated_key] = embeddings.obs[generated_key].astype(
+                "category"
+            )
+            final_leiden.append(generated_key)
     finally:
         _move_input_matrix_to_cpu(embeddings, gpu_layer)
         _ensure_cpu_storage(embeddings)

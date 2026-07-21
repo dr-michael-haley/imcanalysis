@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import importlib
+import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -397,6 +400,43 @@ class CellVisionVICRegTests(unittest.TestCase):
         self.assertEqual(int(counts.loc["A"].sum()), 2)
         self.assertAlmostEqual(float(normalized.loc["A"].sum()), 1.0)
         self.assertEqual(leiden_key(0.3), "cellvision_leiden_0.3")
+
+    def test_namespaced_rapids_leiden_preserves_source_column(self):
+        class FakeTools:
+            @staticmethod
+            def leiden(adata, *, resolution, key_added, **_kwargs):
+                adata.obs[key_added] = pd.Categorical(
+                    [f"cellvision-{resolution}"] * adata.n_obs
+                )
+
+        fake_rapids = SimpleNamespace(tl=FakeTools())
+        with patch.dict(sys.modules, {"rapids_singlecell": fake_rapids}):
+            rapids_module = importlib.import_module(
+                "SpatialBiologyToolkit.scripts.basic_process_rapids"
+            )
+        with patch.object(rapids_module, "rsc", fake_rapids):
+            data = ad.AnnData(
+                X=np.ones((2, 1)),
+                obs=pd.DataFrame(
+                    {"leiden_1.0": pd.Categorical(["4", "5"])},
+                    index=["cell-1", "cell-2"],
+                ),
+            )
+            keys = rapids_module._run_rapids_leiden(
+                data,
+                resolutions=[1.0],
+                enabled=True,
+                neighbors_key="cellvision_neighbors",
+                leiden_params={},
+                key_prefix="cellvision_leiden",
+            )
+
+        self.assertEqual(keys, ["cellvision_leiden_1.0"])
+        self.assertEqual(data.obs["leiden_1.0"].astype(str).tolist(), ["4", "5"])
+        self.assertEqual(
+            data.obs["cellvision_leiden_1.0"].astype(str).tolist(),
+            ["cellvision-1.0", "cellvision-1.0"],
+        )
 
 
 if __name__ == "__main__":

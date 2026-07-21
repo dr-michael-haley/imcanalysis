@@ -99,6 +99,9 @@ The active `outputs/<execution_id>_CellVision/` report contains:
 ## Important configuration options
 
 - `population_obs`, `populations`, and `markers` define the scientific scope.
+  The source population column is preserved under its original name, even when
+  it is named like `leiden_1.0`; CellVision clustering writes directly to the
+  separate `cellvision_leiden_<resolution>` namespace.
 - `image_size=36` defines the fixed scPortrait crop.
 - `mask_gaussian_blur=false` keeps the extraction mask binary by default for
   1 µm/pixel IMC. Enabling it restores scPortrait's sigma-1 softened mask edge.
