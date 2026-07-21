@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
 
 def _category_order(values) -> list[str]:
@@ -15,6 +16,17 @@ def _category_order(values) -> list[str]:
             return (1, value)
 
     return sorted(labels, key=key)
+
+
+def _report_roots() -> tuple[Path, Path]:
+    """Resolve plot outputs beneath the active atomic or composite stage."""
+    from SpatialBiologyToolkit.reporting import category_output_path
+
+    figures_root = category_output_path("figures") / "cellvision"
+    tables_root = category_output_path("tables") / "cellvision"
+    figures_root.mkdir(parents=True, exist_ok=True)
+    tables_root.mkdir(parents=True, exist_ok=True)
+    return figures_root, tables_root
 
 
 def main() -> None:
@@ -31,7 +43,6 @@ def main() -> None:
         plot_confusion_matrix,
         safe_slug,
     )
-    from SpatialBiologyToolkit.reporting import category_output_path
     from SpatialBiologyToolkit.scripts._cellvision_common import (
         input_paths,
         load_runtime,
@@ -71,10 +82,7 @@ def main() -> None:
             f"examples: {missing_h5sc[:10]}"
         )
 
-    figures_root = category_output_path("figures", stage="cellvision") / "cellvision"
-    tables_root = category_output_path("tables", stage="cellvision") / "cellvision"
-    figures_root.mkdir(parents=True, exist_ok=True)
-    tables_root.mkdir(parents=True, exist_ok=True)
+    figures_root, tables_root = _report_roots()
     stage_reporter = reporter()
     if stage_reporter is not None:
         stage_reporter.add_input("cellvision_clustered", paths.clustered, "CellVision UMAP and Leiden annotations.")

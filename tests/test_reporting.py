@@ -36,6 +36,8 @@ from SpatialBiologyToolkit.reporting.paths import (
     project_asset_path,
     resolve_reporting_context,
 )
+from SpatialBiologyToolkit.scripts.cellvision_embed import _training_report_paths
+from SpatialBiologyToolkit.scripts.cellvision_plot import _report_roots
 from SpatialBiologyToolkit.scripts.config_and_utils import (
     apply_reporting_output_routing,
 )
@@ -140,6 +142,31 @@ class ReportingTests(unittest.TestCase):
                     (root / "outputs" / f"007_{stage.output_slug}").resolve(),
                     stage.name,
                 )
+
+    def test_cellvision_outputs_follow_the_active_composite_stage(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir).resolve()
+            output_dir = root / "outputs" / "007_CellVision_Full"
+            environment = {
+                "SBT_PROJECT_ROOT": str(root),
+                "SBT_PROJECT_ID": "project-id",
+                "SBT_STAGE": "cellvision-full",
+                "SBT_STAGE_OUTPUT_DIR": str(output_dir),
+            }
+            with patch.dict(os.environ, environment, clear=True):
+                history_path, loss_path = _training_report_paths()
+                figures_root, tables_root = _report_roots()
+
+        self.assertEqual(
+            history_path,
+            output_dir / "tables" / "vicreg_training_history.csv",
+        )
+        self.assertEqual(
+            loss_path,
+            output_dir / "figures" / "vicreg_training_loss.png",
+        )
+        self.assertEqual(figures_root, output_dir / "figures" / "cellvision")
+        self.assertEqual(tables_root, output_dir / "tables" / "cellvision")
 
     def test_managed_reporter_writes_manifest_readmes_indexes_and_stage_event(self):
         with tempfile.TemporaryDirectory() as temp_dir:

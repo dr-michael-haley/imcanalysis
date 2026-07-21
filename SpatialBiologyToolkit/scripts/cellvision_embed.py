@@ -13,6 +13,15 @@ def _atomic_write_h5ad(adata, path: Path) -> None:
     os.replace(temporary, path)
 
 
+def _training_report_paths() -> tuple[Path, Path]:
+    """Resolve diagnostics beneath the active atomic or composite stage."""
+    from SpatialBiologyToolkit.reporting import category_output_path
+
+    history_path = category_output_path("tables", "vicreg_training_history.csv")
+    figure_path = category_output_path("figures", "vicreg_training_loss.png")
+    return history_path, figure_path
+
+
 def _validate_existing(
     paths, identity_fingerprint: str, training_fingerprint: str
 ) -> tuple[int, int]:
@@ -83,7 +92,6 @@ def main() -> None:
         train_vicreg,
         validate_h5sc_unit_range,
     )
-    from SpatialBiologyToolkit.reporting import category_output_path
     from SpatialBiologyToolkit.scripts._cellvision_common import load_runtime, reporter
 
     config, paths = load_runtime("embed")
@@ -250,9 +258,8 @@ def main() -> None:
     }
     _atomic_write_h5ad(embedding_adata, paths.embeddings)
 
-    history_path = category_output_path("tables", "vicreg_training_history.csv", stage="cellvision")
+    history_path, figure_path = _training_report_paths()
     history.to_csv(history_path, index=False)
-    figure_path = category_output_path("figures", "vicreg_training_loss.png", stage="cellvision")
     plot_training_history(history, figure_path, dpi=cellvision.figure_dpi)
     logging.info("Saved %s CellVision embeddings with %s dimensions.", *embeddings.shape)
     if stage_reporter is not None:
