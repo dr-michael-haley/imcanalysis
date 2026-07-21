@@ -3,7 +3,7 @@ CellCharter neighborhood analysis stage for IMC AnnData outputs.
 
 This stage:
 1. Loads an AnnData object from the configured pipeline output.
-2. Computes TRVAE latent embeddings (default, configurable).
+2. Selects an existing embedding or optionally computes TRVAE latent embeddings.
 3. Builds a spatial graph per ROI/sample.
 4. Aggregates neighborhood features with CellCharter.
 5. Clusters cells into spatial neighborhoods.

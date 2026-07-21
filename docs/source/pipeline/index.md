@@ -1,4 +1,4 @@
-# Pipeline
+# ⚙️ Pipeline
 
 The preferred interface is the lightweight, project-aware [`sbt` CLI](cli.md).
 It initializes or adopts projects, validates configured assets, plans workflows,
@@ -14,8 +14,8 @@ The [outputs and reporting guide](reporting.md) explains sequential human-facing
 executions, reusable root assets, technical records, safe removal, and explicit
 legacy-layout migration. The concise [execution-layout design](execution-layout-design.md)
 defines the underlying identity and locking model.
-Stable scientific context for every stage is in the
-[shared stage explainers](../stages/index.md).
+Stable scientific context for every stage is collected in the
+[Scientific Guides](../stages/index.md).
 
 ![Core and analysis pipeline flow](../_static/pipeline_stage_flow.svg)
 
@@ -29,7 +29,6 @@ environments
 environment-migration
 execution-layout-design
 stages/index
-../stages/index
 subclustering
 python_stages
 bash_helpers

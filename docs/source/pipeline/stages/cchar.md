@@ -2,7 +2,7 @@
 
 # `cchar`
 
-Identify spatial neighborhoods with CellCharter (TRVAE reduction by default) and save QC summaries
+Identify spatial neighborhoods with CellCharter from an existing embedding or optional TRVAE and save QC summaries
 
 - Wrapper: [`job_cellcharter.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_cellcharter.sh)
 - Conda environment: `imc_cellcharter`

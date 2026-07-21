@@ -124,8 +124,10 @@ reports. Across those reports, CellVision produces:
 - `normalization_dict_path` reuses reviewed Nimbus channel scales. When it is
   supplied, its keys may be exact configured marker names or unique short
   suffixes from Nimbus; resolved values remain keyed by the configured
-  CellVision names downstream. When it is unset, CellVision follows Nimbus
-  defaults: for each channel, calculate the
+  CellVision names downstream. If a selected marker is absent from the supplied
+  dictionary, CellVision logs the marker and falls back for that channel only
+  to the same default calculation used when no dictionary is supplied. Existing
+  supplied marker values are retained. CellVision's default is to calculate the
   0.999 quantile of in-mask pixels per ROI, average the ROI values, and floor
   the result at 3.0. Images are divided by those values, clipped to `[0, 1]`,
   and stored that way in H5SC. VICReg validates this range and does not rescale.
@@ -189,8 +191,10 @@ discovery, not a validated out-of-sample classifier.
 - Missing or duplicated `(ROI, ObjectNumber)` values stop extraction because
   downstream cell identity would otherwise be ambiguous.
 - Marker labels must resolve consistently in every selected ROI.
-- A supplied normalization dictionary must contain finite positive values for
-  every selected marker; additional unselected Nimbus channels are ignored.
+- Values present in a supplied normalization dictionary must be finite and
+  positive. Missing selected markers use the configured per-channel in-mask
+  percentile fallback and are recorded in extraction metadata and reporting;
+  additional unselected Nimbus channels are ignored.
   Existing pre-change H5SC/model assets must
   be rebuilt because VICReg now requires extraction-normalized `[0, 1]` inputs.
 - Very small selections are unsuitable for VICReg variance/covariance learning

@@ -25,6 +25,7 @@ def main() -> None:
     from SpatialBiologyToolkit.cellvision import (
         annotate_h5sc_identity,
         assemble_scportrait_inputs,
+        complete_normalization_dict,
         compute_normalization_dict,
         discover_roi_inputs,
         identity_fingerprint,
@@ -76,10 +77,20 @@ def main() -> None:
         if cellvision.normalization_dict_path
         else None
     )
+    normalization_fallback_channels: list[str] = []
     if supplied_normalization_path is not None:
-        normalization_values = load_normalization_dict(
+        supplied_normalization_values = load_normalization_dict(
             supplied_normalization_path,
             channel_names=channel_names,
+            allow_missing=True,
+        )
+        normalization_values, normalization_fallback_channels = complete_normalization_dict(
+            supplied_normalization_values,
+            contexts,
+            channel_names=channel_names,
+            quantile=cellvision.normalization_quantile,
+            minimum_value=cellvision.normalization_min_value,
+            mask_expand_px=cellvision.mask_expand_px,
         )
     elif paths.root.exists() and not cellvision.overwrite:
         if not paths.normalization_dict.is_file():
@@ -87,9 +98,18 @@ def main() -> None:
                 "Existing CellVision extraction predates extraction-stage normalization. "
                 "Set cellvision.overwrite=true to rebuild its H5SC images."
             )
-        normalization_values = load_normalization_dict(
+        existing_normalization_values = load_normalization_dict(
             paths.normalization_dict,
             channel_names=channel_names,
+            allow_missing=True,
+        )
+        normalization_values, normalization_fallback_channels = complete_normalization_dict(
+            existing_normalization_values,
+            contexts,
+            channel_names=channel_names,
+            quantile=cellvision.normalization_quantile,
+            minimum_value=cellvision.normalization_min_value,
+            mask_expand_px=cellvision.mask_expand_px,
         )
     else:
         normalization_values = compute_normalization_dict(
@@ -130,6 +150,16 @@ def main() -> None:
                 "normalization_dict",
                 supplied_normalization_path,
                 "Nimbus-format per-channel normalization values supplied by the user.",
+            )
+        if normalization_fallback_channels:
+            stage_reporter.add_warning(
+                "Normalization dictionary lacked selected channels; used configured "
+                "in-mask percentile normalization for: "
+                + ", ".join(normalization_fallback_channels)
+            )
+            stage_reporter.add_metric(
+                "normalization_fallback_channels",
+                len(normalization_fallback_channels),
             )
 
     if paths.root.exists() and not cellvision.overwrite:
@@ -217,6 +247,16 @@ def main() -> None:
         "mask_gaussian_blur": bool(cellvision.mask_gaussian_blur),
         "normalization_dict": str(paths.normalization_dict),
         "normalization_values": normalization_values,
+        "normalization_fallback_channels": normalization_fallback_channels,
+        "normalization_channel_sources": {
+            channel_name: (
+                "computed_in_mask_percentile"
+                if supplied_normalization_path is None
+                or channel_name in normalization_fallback_channels
+                else "supplied_normalization_dict"
+            )
+            for channel_name in channel_names
+        },
         "normalization_source": (
             str(supplied_normalization_path)
             if supplied_normalization_path is not None

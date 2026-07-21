@@ -11,9 +11,9 @@
 | `metadata_columns` | `Optional[List[str]]` | `null` | `advanced` | Configuration value for metadata columns. | - |
 | `groupby_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for groupby obs. | - |
 | `groupby_obs_groups` | `Optional[List[str]]` | `null` | `advanced` | Configuration value for groupby obs groups. | - |
-| `enable_ai` | `bool` | `True` | `advanced` | Configuration value for enable ai. | - |
-| `tissue` | `str` | `Unknown tissue` | `advanced` | Configuration value for tissue. | - |
-| `repeat_ai_interpretation` | `bool` | `False` | `advanced` | Configuration value for repeat ai interpretation. | - |
+| `enable_ai` | `bool` | `True` | `advanced` | Send summary statistics for existing Leiden clusters to the configured OpenAI call and add its provisional cluster names as *_AIlabel columns. | - |
+| `tissue` | `str` | `Unknown tissue` | `advanced` | Free-text tissue context included in the AI prompt to help it interpret the marker summaries. | - |
+| `repeat_ai_interpretation` | `bool` | `False` | `advanced` | Run AI interpretation again when any AnnData observation column ending in *_AIlabel already exists. | - |
 | `create_umaps` | `bool` | `True` | `advanced` | Configuration value for create umaps. | - |
 | `create_matrix_plots` | `bool` | `True` | `advanced` | Configuration value for create matrix plots. | - |
 | `create_tissue_overlays` | `bool` | `True` | `advanced` | Configuration value for create tissue overlays. | - |

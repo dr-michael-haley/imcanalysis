@@ -417,6 +417,7 @@ def validate_normalization_dict(
     values: Mapping[str, Any],
     *,
     channel_names: Sequence[str],
+    allow_missing: bool = False,
 ) -> dict[str, float]:
     """Resolve and validate a Nimbus-format marker-to-normalization mapping.
 
@@ -453,6 +454,8 @@ def validate_normalization_dict(
             or entry[0].casefold().endswith(folded)
         ]
         if not candidates:
+            if allow_missing:
+                continue
             raise ValueError(
                 "CellVision normalization dictionary is missing a selected marker; "
                 f"channel={channel_name!r}. Keys may be exact names or unique "
@@ -490,6 +493,8 @@ def validate_normalization_dict(
         )
     normalized: dict[str, float] = {}
     for name in expected:
+        if name not in resolved:
+            continue
         matched_key, _, raw_value = resolved[name]
         try:
             value = float(raw_value)
@@ -517,11 +522,16 @@ def load_normalization_dict(
     path: Path,
     *,
     channel_names: Sequence[str],
+    allow_missing: bool = False,
 ) -> dict[str, float]:
     """Load and validate the marker-to-value JSON format produced by Nimbus."""
     if not path.is_file():
         raise FileNotFoundError(f"CellVision normalization dictionary does not exist: {path}")
-    return validate_normalization_dict(read_json(path), channel_names=channel_names)
+    return validate_normalization_dict(
+        read_json(path),
+        channel_names=channel_names,
+        allow_missing=allow_missing,
+    )
 
 
 def compute_normalization_dict(
@@ -530,6 +540,7 @@ def compute_normalization_dict(
     quantile: float,
     minimum_value: float,
     mask_expand_px: int,
+    channel_names: Sequence[str] | None = None,
 ) -> dict[str, float]:
     """Compute Nimbus-compatible mean per-ROI, in-mask channel quantiles."""
     from skimage.segmentation import expand_labels
@@ -541,10 +552,36 @@ def compute_normalization_dict(
         raise ValueError("CellVision normalization quantile must lie in (0, 1].")
     if not np.isfinite(minimum_value) or float(minimum_value) <= 0:
         raise ValueError("CellVision normalization minimum must be finite and positive.")
+    available_channels = [str(name) for name in contexts[0].channel_names]
+    selected_channels = (
+        [str(name) for name in channel_names]
+        if channel_names is not None
+        else available_channels
+    )
+    if not selected_channels:
+        return {}
+    if len(set(selected_channels)) != len(selected_channels):
+        raise ValueError(
+            f"CellVision normalization channels must be unique; got {selected_channels}."
+        )
+    missing_channels = [
+        name for name in selected_channels if name not in available_channels
+    ]
+    if missing_channels:
+        raise ValueError(
+            "Cannot compute CellVision normalization for channels absent from ROI "
+            f"inputs: {missing_channels}."
+        )
     per_channel: dict[str, list[float]] = {
-        str(name): [] for name in contexts[0].channel_names
+        name: [] for name in selected_channels
     }
     for context in contexts:
+        context_channels = [str(name) for name in context.channel_names]
+        if context_channels != available_channels:
+            raise ValueError(
+                f"ROI {context.name!r} channels {context_channels} do not match "
+                f"the expected ordered channels {available_channels}."
+            )
         raw_mask = np.asarray(np.squeeze(imread(context.mask_path)))
         if raw_mask.shape != context.spatial_shape:
             raise ValueError(
@@ -556,7 +593,8 @@ def compute_normalization_dict(
         mask_bool = raw_mask > 0
         if not np.any(mask_bool):
             continue
-        for channel_index, channel_name in enumerate(context.channel_names):
+        for channel_name in selected_channels:
+            channel_index = available_channels.index(channel_name)
             image = _validate_channel_image(
                 imread(context.channel_files[channel_index]),
                 path=context.channel_files[channel_index],
@@ -581,6 +619,50 @@ def compute_normalization_dict(
             )
             result[channel_name] = float(minimum_value)
     return validate_normalization_dict(result, channel_names=list(per_channel))
+
+
+def complete_normalization_dict(
+    supplied_values: Mapping[str, Any],
+    contexts: Sequence[ROIInput],
+    *,
+    channel_names: Sequence[str],
+    quantile: float,
+    minimum_value: float,
+    mask_expand_px: int,
+) -> tuple[dict[str, float], list[str]]:
+    """Fill missing supplied channel scales with standard in-mask quantiles.
+
+    Supplied values retain exact/suffix matching and strict numeric validation.
+    Only selected channels with no dictionary match are calculated from the
+    configured percentile of staining pixels inside ROI cell masks.
+    """
+    selected = [str(name) for name in channel_names]
+    supplied = validate_normalization_dict(
+        supplied_values,
+        channel_names=selected,
+        allow_missing=True,
+    )
+    fallback_channels = [name for name in selected if name not in supplied]
+    computed: dict[str, float] = {}
+    if fallback_channels:
+        logging.warning(
+            "CellVision normalization dictionary is missing %d selected channel(s); "
+            "using the configured in-mask percentile normalization for: %s",
+            len(fallback_channels),
+            fallback_channels,
+        )
+        computed = compute_normalization_dict(
+            contexts,
+            quantile=quantile,
+            minimum_value=minimum_value,
+            mask_expand_px=mask_expand_px,
+            channel_names=fallback_channels,
+        )
+    merged = {
+        name: supplied[name] if name in supplied else computed[name]
+        for name in selected
+    }
+    return validate_normalization_dict(merged, channel_names=selected), fallback_channels
 
 
 def write_normalization_dict(path: Path, values: Mapping[str, float]) -> None:
@@ -1219,6 +1301,7 @@ __all__ = [
     "assemble_scportrait_inputs",
     "categorical_palette",
     "compute_normalization_dict",
+    "complete_normalization_dict",
     "configuration_fingerprint",
     "confusion_tables",
     "discover_roi_inputs",

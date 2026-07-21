@@ -1,5 +1,5 @@
 
-# IMC Analysis – HPC Setup (Scripted Pipeline)
+# SpatialBiologyToolkit – HPC Setup (Scripted Pipeline)
 
 This guide is for running the **scripted pipeline on an HPC cluster** (via SLURM job scripts).
 

@@ -1,7 +1,7 @@
-# Guides
+# 🛠️ Technical Guides
 
-These guides cover interactive tools that sit alongside the config-driven
-pipeline.
+These technical guides cover interactive tools that sit alongside the
+config-driven pipeline.
 
 ```{toctree}
 :maxdepth: 1

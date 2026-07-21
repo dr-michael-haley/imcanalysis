@@ -6,44 +6,44 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `specific_rois` | `Optional[List[str]]` | `null` | `advanced` | Configuration value for specific rois. | - |
-| `dna_image_name` | `str` | `DNA1` | `advanced` | Configuration value for dna image name. | - |
-| `dna_preprocessing_output_folder_name` | `str` | `preprocessed_dna` | `advanced` | Configuration value for dna preprocessing output folder name. | - |
-| `upscale_ratio` | `float` | `1.7` | `advanced` | Configuration value for upscale ratio. | - |
-| `expand_masks` | `int` | `1` | `advanced` | Configuration value for expand masks. | - |
-| `perform_qc` | `bool` | `True` | `advanced` | Configuration value for perform qc. | - |
-| `qc_boundary_dilation` | `int` | `0` | `advanced` | Configuration value for qc boundary dilation. | - |
-| `min_cell_area` | `Optional[int]` | `15` | `advanced` | Configuration value for min cell area. | - |
-| `max_cell_area` | `Optional[int]` | `200` | `advanced` | Configuration value for max cell area. | - |
-| `cell_pose_model` | `str` | `nuclei` | `advanced` | Configuration value for cell pose model. | - |
-| `cell_pose_sam_model` | `str` | `cpsam` | `advanced` | Configuration value for cell pose sam model. | - |
-| `cellprob_threshold` | `float` | `0.0` | `advanced` | Configuration value for cellprob threshold. | - |
-| `flow_threshold` | `float` | `0.4` | `advanced` | Configuration value for flow threshold. | - |
-| `run_deblur` | `bool` | `True` | `advanced` | Configuration value for run deblur. | - |
-| `run_upscale` | `bool` | `True` | `advanced` | Configuration value for run upscale. | - |
-| `image_normalise` | `bool` | `True` | `advanced` | Configuration value for image normalise. | - |
-| `image_normalise_percentile_lower` | `float` | `0.0` | `advanced` | Configuration value for image normalise percentile lower. | - |
-| `image_normalise_percentile_upper` | `float` | `99.9` | `advanced` | Configuration value for image normalise percentile upper. | - |
-| `dpi_qc_images` | `int` | `300` | `advanced` | Configuration value for dpi qc images. | - |
-| `max_size_fraction` | `float` | `0.4` | `advanced` | Configuration value for max size fraction. | - |
-| `remove_edge_masks` | `bool` | `False` | `advanced` | Configuration value for remove edge masks. | - |
-| `fill_holes` | `bool` | `True` | `advanced` | Configuration value for fill holes. | - |
-| `batch_size` | `int` | `128` | `advanced` | Configuration value for batch size. | - |
-| `resample` | `bool` | `True` | `advanced` | Configuration value for resample. | - |
-| `augment` | `bool` | `False` | `advanced` | Configuration value for augment. | - |
-| `tile_overlap` | `float` | `0.1` | `advanced` | Configuration value for tile overlap. | - |
-| `upscale_model_type` | `str` | `upsample_nuclei` | `advanced` | Configuration value for upscale model type. | - |
-| `run_parameter_scan` | `bool` | `False` | `advanced` | Configuration value for run parameter scan. | - |
-| `param_a` | `Optional[str]` | `cellprob_threshold` | `advanced` | Configuration value for param a. | - |
-| `param_a_values` | `Optional[List[Any]]` | `[-4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0]` | `advanced` | Configuration value for param a values. | - |
-| `param_b` | `Optional[str]` | `flow_threshold` | `advanced` | Configuration value for param b. | - |
-| `param_b_values` | `Optional[List[Any]]` | `[0.3, 0.4, 0.5, 0.6, 0.7, 0.8]` | `advanced` | Configuration value for param b values. | - |
-| `window_size` | `Optional[int]` | `250` | `advanced` | Configuration value for window size. | - |
-| `num_rois_to_scan` | `int` | `3` | `advanced` | Configuration value for num rois to scan. | - |
-| `scan_rois` | `Optional[List[str]]` | `null` | `advanced` | Configuration value for scan rois. | - |
+| `specific_rois` | `Optional[List[str]]` | `null` | `advanced` | Exact ROI folder names to process in both DNA restoration and Cellpose-SAM; use null to process every ROI found in the denoised-image folder. | - |
+| `dna_image_name` | `str` | `DNA1` | `advanced` | Case-sensitive substring used to identify the nuclear DNA TIFF within each ROI folder. Exactly one filename must contain this value. | - |
+| `dna_preprocessing_output_folder_name` | `str` | `preprocessed_dna` | `advanced` | Project-relative directory that receives one Cellpose3-restored DNA TIFF per ROI and supplies the images subsequently segmented by Cellpose-SAM. | - |
+| `upscale_ratio` | `float` | `1.7` | `advanced` | Fallback reported and segmentation target-to-input diameter ratio used only for an unrecognised custom upscale_model_type; supported nuclei and cyto3 restorers instead use fixed assumed targets of 17 and 30 pixels. | - |
+| `expand_masks` | `int` | `1` | `advanced` | Number of original-resolution pixels by which to expand each nuclear label after segmentation; expansion stops where neighbouring labels meet and values at or below zero disable it. | - |
+| `perform_qc` | `bool` | `True` | `advanced` | Generate DNA restoration comparisons and Cellpose-SAM boundary overlays in the QC directory. This does not replace visual review of every biologically distinct tissue or acquisition batch. | - |
+| `qc_boundary_dilation` | `int` | `0` | `advanced` | Extra dilation, in display pixels, applied only to mask outlines in QC overlays; it does not alter the saved masks or any downstream measurements. | - |
+| `min_cell_area` | `Optional[int]` | `15` | `advanced` | Minimum accepted nuclear-object area in pixels. Null is treated as 15; the value is used during Cellpose inference and again on masks restored to the original IMC grid. | - |
+| `max_cell_area` | `Optional[int]` | `200` | `advanced` | Legacy absolute maximum-area setting retained for configuration compatibility; the active Cellpose-SAM stage does not read it. Use max_size_fraction for the current upper-size filter. | - |
+| `cell_pose_model` | `str` | `nuclei` | `advanced` | Legacy Cellpose3 segmentation-model name retained for compatibility; the active two-step stage uses Cellpose3 only for restoration and does not read this field. | - |
+| `cell_pose_sam_model` | `str` | `cpsam` | `advanced` | Cellpose-SAM model identifier or path to a compatible custom model. Use cpsam for the bundled generalist model; obsolete nuclei/cyto model names fall back to cpsam. | - |
+| `cellprob_threshold` | `float` | `0.0` | `advanced` | Foreground logit threshold for Cellpose-SAM mask formation. Lower values generally admit more pixels and objects; higher values make foreground assignment more conservative. | - |
+| `flow_threshold` | `float` | `0.4` | `advanced` | Maximum Cellpose flow-consistency error accepted for a candidate mask. Lower values reject more irregular masks; higher values retain more candidates, including potential failures. | - |
+| `run_deblur` | `bool` | `True` | `advanced` | Apply the Cellpose3 deblur_nuclei restoration model to each DNA image before any upsampling. The result is intended to aid segmentation, not marker quantification. | - |
+| `run_upscale` | `bool` | `True` | `advanced` | Apply Cellpose3 learned upsampling before Cellpose-SAM, then return the resulting labels to the original IMC dimensions using nearest-neighbour resizing. | - |
+| `image_normalise` | `bool` | `True` | `advanced` | Percentile-normalise each restored DNA image inside Cellpose-SAM before inference; disable only when intensities have already been placed on a suitable model-input scale. | - |
+| `image_normalise_percentile_lower` | `float` | `0.0` | `advanced` | Lower per-image percentile mapped to the bottom of the Cellpose-SAM normalisation range when image_normalise is enabled. | - |
+| `image_normalise_percentile_upper` | `float` | `99.9` | `advanced` | Upper per-image percentile mapped to the top of the Cellpose-SAM normalisation range when image_normalise is enabled; reducing it increases clipping of bright DNA pixels. | - |
+| `dpi_qc_images` | `int` | `300` | `advanced` | Resolution in dots per inch for saved restoration and segmentation QC figures; it changes figure rendering only, not segmentation. | - |
+| `max_size_fraction` | `float` | `0.4` | `advanced` | Largest accepted object area as a fraction of the original ROI area in the pipeline's post-filter. Cellpose-SAM also applies its own 0.4 default internally because this field is not forwarded to model inference. | - |
+| `remove_edge_masks` | `bool` | `False` | `advanced` | Remove every label that touches an image border after masks are returned to the original IMC grid. Enable when partial border nuclei would bias object-level measurements. | - |
+| `fill_holes` | `bool` | `True` | `advanced` | Fill enclosed background holes separately within each predicted nuclear label before expansion and area filtering. | - |
+| `batch_size` | `int` | `128` | `advanced` | Cellpose-SAM inference batch size used when a GPU is available; CPU execution is forced to a batch size of one. Reduce this value if GPU memory is exhausted. | - |
+| `resample` | `bool` | `True` | `advanced` | Legacy inference setting retained for compatibility; the active wrapper does not forward it, so the pinned Cellpose-SAM implementation uses its own default. | - |
+| `augment` | `bool` | `False` | `advanced` | Enable Cellpose-SAM test-time tiling and flip augmentation. This can change boundaries and increase runtime, so compare QC on representative tissue before adopting it. | - |
+| `tile_overlap` | `float` | `0.1` | `advanced` | Legacy tile-overlap setting retained for compatibility; the active wrapper does not forward it and Cellpose-SAM therefore uses its own 0.1 default. | - |
+| `upscale_model_type` | `str` | `upsample_nuclei` | `advanced` | Cellpose3 restoration model used for learned upsampling. Use upsample_nuclei for IMC DNA (17-pixel training target); upsample_cyto3 targets 30-pixel cellular objects. | - |
+| `run_parameter_scan` | `bool` | `False` | `advanced` | Run a two-parameter grid search with separate masks and QC outputs for comparison, rather than produce the canonical masks used downstream. Rerun normally after choosing settings. | - |
+| `param_a` | `Optional[str]` | `cellprob_threshold` | `advanced` | Name of the first createmasks field varied by the parameter scan; normally cellprob_threshold. | - |
+| `param_a_values` | `Optional[List[Any]]` | `[-4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0]` | `advanced` | Candidate values for param_a; each is crossed with every param_b value, so list length directly affects scan runtime and output volume. | - |
+| `param_b` | `Optional[str]` | `flow_threshold` | `advanced` | Name of the second createmasks field varied by the parameter scan; normally flow_threshold. | - |
+| `param_b_values` | `Optional[List[Any]]` | `[0.3, 0.4, 0.5, 0.6, 0.7, 0.8]` | `advanced` | Candidate values for param_b; each is crossed with every param_a value to form the scan grid. | - |
+| `window_size` | `Optional[int]` | `250` | `advanced` | Legacy parameter-scan window size retained for configuration compatibility; the active Cellpose-SAM scan does not read it. | - |
+| `num_rois_to_scan` | `int` | `3` | `advanced` | Number of available restored ROIs selected at random for a parameter scan when specific_rois is null; selection currently has no fixed random seed. | - |
+| `scan_rois` | `Optional[List[str]]` | `null` | `advanced` | Legacy scan-specific ROI list retained for configuration compatibility; the active scan does not read it, so use specific_rois to choose ROIs. | - |
 
 ## Segmentation
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `cellpose_cell_diameter` | `float` | `10.0` | `basic` | Approximate Cellpose cell diameter in pixels. | Increase when cells are fragmented; decrease when neighbouring cells are merged. |
+| `cellpose_cell_diameter` | `float` | `10.0` | `basic` | Estimated median nuclear diameter in pixels on the original IMC image. Cellpose3 uses it to determine restoration scale; Cellpose-SAM also uses it when upscaling is disabled. | Increase when nuclei are fragmented; decrease when neighbouring nuclei are merged. |

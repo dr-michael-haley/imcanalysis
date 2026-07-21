@@ -1,4 +1,4 @@
-# 🧪 IMC Analysis – Absolute Beginner Guide (Explainers)
+# 🧪 SpatialBiologyToolkit – Absolute Beginner Guide (Explainers)
 
 This page explains the key ideas you’ll see throughout the repo (command line, conda, environments, notebooks, config files).
 

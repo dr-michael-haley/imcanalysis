@@ -21,7 +21,7 @@ for ordering and usage guidance.
 | [`cellvision-full`](cellvision-full.md) | Run CellVision extraction, VICReg embedding, RAPIDS clustering, and plotting in one GPU job | `scPortrait, rapids_singlecell, scPortrait` | general, cellvision, logging |
 | [`bbn`](bbn.md) | Batch correction with BioBatchNet + UMAP/Leiden post-processing | `imc_biobatchnet` | general, biobatchnet, logging |
 | [`subcl`](subcl.md) | Run checkpointed population subclustering (template generation, subclustering QC, optional remap integration) | `imc_segmentation` | general, process, subclustering, logging |
-| [`cchar`](cchar.md) | Identify spatial neighborhoods with CellCharter (TRVAE reduction by default) and save QC summaries | `imc_cellcharter` | general, process, cellcharter, logging |
+| [`cchar`](cchar.md) | Identify spatial neighborhoods with CellCharter from an existing embedding or optional TRVAE and save QC summaries | `imc_cellcharter` | general, process, cellcharter, logging |
 | [`starling`](starling.md) | Run STARLING segmentation-aware probabilistic phenotyping from IMC AnnData marker expression | `imc_starling` | general, starling, logging |
 | [`dnqc`](dnqc.md) | Generate denoising side-by-side QC and panel consistency checks | `imc_denoise, imc_segmentation` | general, denoising, logging (plus check_panel_consistency defaults) |
 | [`aiinter`](aiinter.md) | AI labeling of Leiden populations and writing *_AIlabel columns | `imc_segmentation` | general, visualization, process, logging |

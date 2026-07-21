@@ -6,45 +6,45 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `input_adata_path` | `Optional[str]` | `null` | `advanced` | Configuration value for input adata path. | - |
-| `output_adata_path` | `Optional[str]` | `null` | `advanced` | Configuration value for output adata path. | - |
-| `qc_output_subdir` | `str` | `Starling_QC` | `advanced` | Configuration value for qc output subdir. | - |
-| `starling_repo_path` | `Optional[str]` | `null` | `advanced` | Configuration value for starling repo path. | - |
-| `use_layer` | `Optional[str]` | `null` | `advanced` | Configuration value for use layer. | - |
-| `marker_include` | `Optional[List[str]]` | `null` | `advanced` | Configuration value for marker include. | - |
-| `marker_exclude` | `List[str]` | `[]` | `advanced` | Configuration value for marker exclude. | - |
-| `clip_small_negative_values` | `bool` | `True` | `advanced` | Configuration value for clip small negative values. | - |
-| `negative_value_tolerance` | `float` | `1e-08` | `advanced` | Configuration value for negative value tolerance. | - |
-| `initial_clustering_method` | `str` | `User` | `advanced` | Configuration value for initial clustering method. | - |
-| `initial_label_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for initial label obs. | - |
-| `n_clusters` | `Optional[int]` | `null` | `advanced` | Configuration value for n clusters. | - |
-| `seed` | `int` | `10` | `advanced` | Configuration value for seed. | - |
-| `dist_option` | `str` | `T` | `advanced` | Configuration value for dist option. | - |
-| `singlet_prop` | `float` | `0.6` | `advanced` | Configuration value for singlet prop. | - |
-| `model_cell_size` | `bool` | `True` | `advanced` | Configuration value for model cell size. | - |
-| `cell_size_col_name` | `str` | `mask_area` | `advanced` | Configuration value for cell size col name. | - |
-| `cell_size_fallback_cols` | `List[str]` | `['area']` | `advanced` | Configuration value for cell size fallback cols. | - |
-| `model_zplane_overlap` | `bool` | `True` | `advanced` | Configuration value for model zplane overlap. | - |
-| `model_regularizer` | `float` | `1.0` | `advanced` | Configuration value for model regularizer. | - |
-| `learning_rate` | `float` | `0.001` | `advanced` | Configuration value for learning rate. | - |
-| `doublet_threshold` | `float` | `0.5` | `advanced` | Configuration value for doublet threshold. | - |
-| `max_epochs` | `Optional[int]` | `100` | `advanced` | Configuration value for max epochs. | - |
-| `early_stopping` | `bool` | `True` | `advanced` | Configuration value for early stopping. | - |
-| `early_stopping_monitor` | `str` | `train_loss` | `advanced` | Configuration value for early stopping monitor. | - |
-| `trainer_accelerator` | `str` | `auto` | `advanced` | Configuration value for trainer accelerator. | - |
-| `trainer_devices` | `Optional[int]` | `null` | `advanced` | Configuration value for trainer devices. | - |
-| `trainer_precision` | `Optional[str]` | `null` | `advanced` | Configuration value for trainer precision. | - |
-| `enable_checkpointing` | `bool` | `False` | `advanced` | Configuration value for enable checkpointing. | - |
-| `enable_progress_bar` | `bool` | `True` | `advanced` | Configuration value for enable progress bar. | - |
-| `log_every_n_steps` | `Optional[int]` | `null` | `advanced` | Configuration value for log every n steps. | - |
-| `limit_train_batches` | `Optional[Any]` | `null` | `advanced` | Configuration value for limit train batches. | - |
-| `tensorboard_logging` | `bool` | `True` | `advanced` | Configuration value for tensorboard logging. | - |
-| `output_prefix` | `str` | `starling` | `advanced` | Configuration value for output prefix. | - |
-| `write_canonical_starling_keys` | `bool` | `False` | `advanced` | Configuration value for write canonical starling keys. | - |
-| `store_assignment_prob_matrix` | `bool` | `True` | `advanced` | Configuration value for store assignment prob matrix. | - |
-| `store_gamma_assignment_prob_matrix` | `bool` | `False` | `advanced` | Configuration value for store gamma assignment prob matrix. | - |
-| `save_model` | `bool` | `False` | `advanced` | Configuration value for save model. | - |
-| `model_output_name` | `str` | `starling_model.pt` | `advanced` | Configuration value for model output name. | - |
-| `save_qc_tables` | `bool` | `True` | `advanced` | Configuration value for save qc tables. | - |
-| `save_qc_plots` | `bool` | `True` | `advanced` | Configuration value for save qc plots. | - |
-| `figure_format` | `str` | `png` | `advanced` | Configuration value for figure format. | - |
+| `input_adata_path` | `Optional[str]` | `null` | `advanced` | Optional AnnData input override; null uses the pipeline-managed general AnnData path. | - |
+| `output_adata_path` | `Optional[str]` | `null` | `advanced` | Optional AnnData output override; null updates the pipeline-managed general AnnData path. | - |
+| `qc_output_subdir` | `str` | `Starling_QC` | `advanced` | Subdirectory below the active QC or managed report location for STARLING tables, plots, and training logs. | - |
+| `starling_repo_path` | `Optional[str]` | `null` | `advanced` | Optional local STARLING repository prepended to Python's import path; null imports the biostarling installation from the active environment. | - |
+| `use_layer` | `Optional[str]` | `null` | `advanced` | Optional adata.layers key supplying the non-negative cell-by-marker matrix; null uses adata.X, and this stage applies no normalization or transformation. | - |
+| `marker_include` | `Optional[List[str]]` | `null` | `advanced` | Optional ordered marker subset used to fit STARLING; null starts from every adata.var_names feature before applying marker_exclude, and at least 10 must remain. | - |
+| `marker_exclude` | `List[str]` | `[]` | `advanced` | Exact marker names removed from the selected STARLING feature set, commonly used to exclude DNA, control, morphology, or technically unreliable channels. | - |
+| `clip_small_negative_values` | `bool` | `True` | `advanced` | Replace negative values with zero only when the matrix minimum lies within negative_value_tolerance; larger negative values always stop the stage. | - |
+| `negative_value_tolerance` | `float` | `1e-08` | `advanced` | Absolute numerical tolerance below zero within which tiny floating-point residuals may be clipped when clip_small_negative_values is enabled. | - |
+| `initial_clustering_method` | `str` | `User` | `advanced` | Cluster initialization used to seed STARLING centroids and cluster count: User labels, KM K-means, diagonal GMM, FS FlowSOM, or PG PhenoGraph. | - |
+| `initial_label_obs` | `Optional[str]` | `null` | `advanced` | AnnData observation containing complete starting labels in User mode; null falls back to general.population_obs_primary. | - |
+| `n_clusters` | `Optional[int]` | `null` | `advanced` | Requested number of starting clusters for KM, GMM, or FS initialization; required for those methods and ignored for User and PG. | - |
+| `seed` | `int` | `10` | `advanced` | Random seed applied through Lightning, including worker seeding, before initialization, synthetic-error generation, and model fitting. | - |
+| `dist_option` | `str` | `T` | `advanced` | Per-marker likelihood family: T uses a heavy-tailed Student-t distribution with 2 degrees of freedom, while N uses a Normal distribution. | - |
+| `singlet_prop` | `float` | `0.6` | `advanced` | Documented initial singlet proportion, optimized rather than enforced as the final fraction; the reviewed upstream 0.1.4 code reverses this value when initializing its singlet/error branches, so verify version behavior before tuning it. | - |
+| `model_cell_size` | `bool` | `True` | `advanced` | Include positive segmented-cell area as an additional phenotype-dependent signal when estimating singlet and segmentation-error probabilities. | - |
+| `cell_size_col_name` | `str` | `mask_area` | `advanced` | Preferred adata.obs column containing positive cell-mask areas when model_cell_size is enabled. | - |
+| `cell_size_fallback_cols` | `List[str]` | `['area']` | `advanced` | Ordered fallback adata.obs columns searched when cell_size_col_name is absent; the first complete, numeric, strictly positive column is used. | - |
+| `model_zplane_overlap` | `bool` | `True` | `advanced` | Request STARLING's overlapping-section model, in which a combined segment may have an area between the larger constituent cell and their summed areas; also controls synthetic-error area generation. | - |
+| `model_regularizer` | `float` | `1.0` | `advanced` | Multiplier on binary cross-entropy for on-the-fly synthetic singlet/error discrimination relative to the observed-data negative log-likelihood; the paper recommends 0.1, whereas this pipeline defaults to 1.0. | - |
+| `learning_rate` | `float` | `0.001` | `advanced` | Adam optimizer learning rate for STARLING's cluster, mixture, and segmentation-error parameters. | - |
+| `doublet_threshold` | `float` | `0.5` | `advanced` | Threshold above which the inferred segmentation-error probability is written as a binary doublet/error call; it changes the call, not the fitted probabilities or phenotype label. | - |
+| `max_epochs` | `Optional[int]` | `100` | `advanced` | Maximum Lightning training epochs for the single STARLING fit; null delegates epoch selection to Lightning defaults. | - |
+| `early_stopping` | `bool` | `True` | `advanced` | Stop fitting when the monitored training metric ceases to improve according to Lightning's EarlyStopping defaults. | - |
+| `early_stopping_monitor` | `str` | `train_loss` | `advanced` | Lightning metric monitored in minimization mode for early stopping; STARLING logs train_loss, train_nll, and train_bce but has no validation loop here. | - |
+| `trainer_accelerator` | `str` | `auto` | `advanced` | Lightning accelerator selection such as auto, cpu, gpu, or mps; auto chooses from resources visible in the Starling environment. | - |
+| `trainer_devices` | `Optional[int]` | `null` | `advanced` | Optional number of devices passed to Lightning; null retains Lightning's automatic device selection. | - |
+| `trainer_precision` | `Optional[str]` | `null` | `advanced` | Optional Lightning numerical-precision setting; null uses the installed Lightning default and non-default precision should be validated against STARLING's double-precision inputs. | - |
+| `enable_checkpointing` | `bool` | `False` | `advanced` | Enable Lightning's automatic training checkpoints; these are separate from the explicit reusable model saved by save_model. | - |
+| `enable_progress_bar` | `bool` | `True` | `advanced` | Show Lightning's interactive training progress bar in the stage log. | - |
+| `log_every_n_steps` | `Optional[int]` | `null` | `advanced` | Optional Lightning interval, in optimizer steps, for recording training metrics; null uses the installed Lightning default. | - |
+| `limit_train_batches` | `Optional[Any]` | `null` | `advanced` | Optional Lightning training-data limit: an integer selects a batch count and a float from 0 to 1 selects a fraction per epoch; null uses all batches. | - |
+| `tensorboard_logging` | `bool` | `True` | `advanced` | Write Lightning training metrics to a TensorBoard log below the STARLING QC directory. | - |
+| `output_prefix` | `str` | `starling` | `advanced` | Prefix cleaned and applied to STARLING observation, multidimensional, centroid, metadata, table, and plot keys to avoid collisions between runs. | - |
+| `write_canonical_starling_keys` | `bool` | `False` | `advanced` | Also write upstream unprefixed keys such as st_label, doublet_prob, and assignment_prob_matrix; enabling this may overwrite existing STARLING results. | - |
+| `store_assignment_prob_matrix` | `bool` | `True` | `advanced` | Store the N-by-C joint singlet-and-cluster posterior matrix in adata.obsm; rows do not generally sum to one because their sum is the cell's singlet probability. | - |
+| `store_gamma_assignment_prob_matrix` | `bool` | `False` | `advanced` | Store the N-by-C-by-C posterior matrix for all ordered phenotype pairs contributing to a segmentation error; memory use grows quadratically with cluster count. | - |
+| `save_model` | `bool` | `False` | `advanced` | Serialize the complete trained STARLING Lightning object with torch.save for reuse or inspection; this can be version-sensitive and is not needed to read saved cell results. | - |
+| `model_output_name` | `str` | `starling_model.pt` | `advanced` | Model output path used when save_model is enabled; a relative path is resolved as a reusable project asset rather than below the transient run directory. | - |
+| `save_qc_tables` | `bool` | `True` | `advanced` | Write initialization mappings, initial and fitted centroids, cluster counts, error calls by cluster, run summary, and per-cell results as CSV files. | - |
+| `save_qc_plots` | `bool` | `True` | `advanced` | Write histograms of segmentation-error and maximum joint assignment probabilities plus a STARLING cluster-count bar chart. | - |
+| `figure_format` | `str` | `png` | `advanced` | Filename extension for STARLING QC plots, supplied without a leading dot. | - |

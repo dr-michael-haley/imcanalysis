@@ -6,71 +6,71 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `input_adata_path` | `Optional[str]` | `null` | `advanced` | Configuration value for input adata path. | - |
-| `output_subdir` | `str` | `Pairwise_Spatial` | `advanced` | Configuration value for output subdir. | - |
-| `reload_saved_results` | `bool` | `True` | `advanced` | Configuration value for reload saved results. | - |
-| `population_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for population obs. | - |
-| `groupby_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for groupby obs. | - |
-| `groupby_obs_groups` | `Optional[List[str]]` | `null` | `advanced` | Configuration value for groupby obs groups. | - |
-| `roi_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for roi obs. | - |
-| `x_coord_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for x coord obs. | - |
-| `y_coord_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for y coord obs. | - |
-| `master_index_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for master index obs. | - |
-| `source_population_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for source population obs. | - |
-| `include_all_obs_metadata` | `bool` | `True` | `advanced` | Configuration value for include all obs metadata. | - |
-| `metadata_obs_columns` | `List[str]` | `[]` | `advanced` | Configuration value for metadata obs columns. | - |
-| `run_squidpy_interactions` | `bool` | `True` | `advanced` | Configuration value for run squidpy interactions. | - |
-| `squidpy_subregion_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for squidpy subregion obs. | - |
-| `squidpy_subregion_suffix` | `str` | `` | `advanced` | Configuration value for squidpy subregion suffix. | - |
-| `squidpy_radius_min_um` | `int` | `0` | `advanced` | Configuration value for squidpy radius min um. | - |
-| `squidpy_radius_max_um` | `int` | `20` | `advanced` | Configuration value for squidpy radius max um. | - |
-| `squidpy_n_permutations` | `int` | `1000` | `advanced` | Configuration value for squidpy n permutations. | - |
-| `run_distance_bootstrap` | `bool` | `True` | `advanced` | Configuration value for run distance bootstrap. | - |
-| `distance_populations` | `Optional[List[str]]` | `null` | `advanced` | Configuration value for distance populations. | - |
-| `distance_roi_ids` | `Optional[List[str]]` | `null` | `advanced` | Configuration value for distance roi ids. | - |
-| `distance_n_bootstraps` | `int` | `1000` | `advanced` | Configuration value for distance n bootstraps. | - |
-| `distance_n_jobs` | `int` | `-1` | `advanced` | Configuration value for distance n jobs. | - |
-| `distance_ddof` | `int` | `1` | `advanced` | Configuration value for distance ddof. | - |
-| `ignore_cells_without_label` | `bool` | `False` | `advanced` | Configuration value for ignore cells without label. | - |
-| `run_pcf` | `bool` | `True` | `advanced` | Configuration value for run pcf. | - |
-| `pcf_target_distance_um` | `float` | `20.0` | `advanced` | Configuration value for pcf target distance um. | - |
-| `pcf_max_radius_um` | `float` | `100.0` | `advanced` | Configuration value for pcf max radius um. | - |
-| `pcf_radius_step_um` | `float` | `10.0` | `advanced` | Configuration value for pcf radius step um. | - |
-| `pcf_num_bootstrap` | `int` | `1000` | `advanced` | Configuration value for pcf num bootstrap. | - |
-| `pcf_cluster_column` | `str` | `cluster` | `advanced` | Configuration value for pcf cluster column. | - |
-| `pcf_samples` | `Optional[List[str]]` | `null` | `advanced` | Configuration value for pcf samples. | - |
-| `population_pairs` | `Dict[str, Any]` | `{}` | `advanced` | Configuration value for population pairs. | - |
-| `make_matrix_plots` | `bool` | `True` | `advanced` | Configuration value for make matrix plots. | - |
-| `make_pair_barplots` | `bool` | `True` | `advanced` | Configuration value for make pair barplots. | - |
-| `heatmap_use_clustermap` | `bool` | `True` | `advanced` | Configuration value for heatmap use clustermap. | - |
-| `heatmap_row_cluster` | `bool` | `True` | `advanced` | Configuration value for heatmap row cluster. | - |
-| `heatmap_col_cluster` | `bool` | `True` | `advanced` | Configuration value for heatmap col cluster. | - |
-| `heatmap_figsize` | `List[float]` | `[5.0, 5.0]` | `advanced` | Configuration value for heatmap figsize. | - |
-| `heatmap_percentile` | `float` | `95.0` | `advanced` | Configuration value for heatmap percentile. | - |
-| `pairwise_matrices_cbar_corner` | `str` | `off_plot_right` | `advanced` | Configuration value for pairwise matrices cbar corner. | - |
-| `pairwise_matrices_share_vmax_vmin` | `bool` | `False` | `advanced` | Configuration value for pairwise matrices share vmax vmin. | - |
-| `heatmap_cmap_interactions` | `str` | `coolwarm` | `advanced` | Configuration value for heatmap cmap interactions. | - |
-| `heatmap_cmap_distance` | `str` | `coolwarm` | `advanced` | Configuration value for heatmap cmap distance. | - |
-| `heatmap_cmap_pcf` | `str` | `coolwarm` | `advanced` | Configuration value for heatmap cmap pcf. | - |
-| `heatmap_cmap_counts` | `str` | `viridis` | `advanced` | Configuration value for heatmap cmap counts. | - |
-| `barplot_figsize` | `List[float]` | `[3.0, 3.0]` | `advanced` | Configuration value for barplot figsize. | - |
-| `barplot_add_points` | `bool` | `True` | `advanced` | Configuration value for barplot add points. | - |
-| `barplot_y_scale` | `Dict[str, Any]` | `{'default': 'linear', 'squidpy': {'count': 'intelligent', 'zscore': 'intelligent', 'default': 'linear'}, 'distance': {'observed': 'intelligent', 'bootmean': 'intelligent', 'delta': 'intelligent', 'zscore': 'intelligent', 'default': 'intelligent'}, 'pcf': {'g': 'linear', 'g_mean': 'linear', 'default': 'linear'}}` | `advanced` | Configuration value for barplot y scale. | - |
-| `barplot_y_scale_intelligent_params` | `Dict[str, Any]` | `{'allow_log1p': True, 'dynamic_range_thresh': 100.0, 'skew_improve_ratio': 0.7, 'crush_frac_thresh': 0.7}` | `advanced` | Configuration value for barplot y scale intelligent params. | - |
-| `make_source_target_barplots` | `bool` | `True` | `advanced` | Configuration value for make source target barplots. | - |
-| `source_target_barplot_width_scale` | `float` | `0.35` | `advanced` | Configuration value for source target barplot width scale. | - |
-| `source_target_barplot_order_group` | `Optional[str]` | `null` | `advanced` | Configuration value for source target barplot order group. | - |
-| `make_enrichment_plots` | `bool` | `True` | `advanced` | Configuration value for make enrichment plots. | - |
-| `enrichment_plot_figsize` | `List[float]` | `[5.5, 4.0]` | `advanced` | Configuration value for enrichment plot figsize. | - |
-| `enrichment_plot_use_barplot` | `bool` | `True` | `advanced` | Configuration value for enrichment plot use barplot. | - |
-| `enrichment_plot_errorbar` | `str` | `ci95` | `advanced` | Configuration value for enrichment plot errorbar. | - |
-| `enrichment_plot_top_n` | `int` | `5` | `advanced` | Configuration value for enrichment plot top n. | - |
-| `enrichment_plot_bottom_n` | `int` | `5` | `advanced` | Configuration value for enrichment plot bottom n. | - |
-| `enrichment_plot_target_populations` | `Optional[List[str]]` | `null` | `advanced` | Configuration value for enrichment plot target populations. | - |
-| `enrichment_plot_exclude_homotypic` | `bool` | `True` | `advanced` | Configuration value for enrichment plot exclude homotypic. | - |
-| `enrichment_plot_share_x_axis_across_groups` | `bool` | `True` | `advanced` | Configuration value for enrichment plot share x axis across groups. | - |
-| `enrichment_plot_color_mode` | `str` | `direction` | `advanced` | Configuration value for enrichment plot color mode. | - |
-| `enrichment_plot_label_box_width` | `float` | `0.03` | `advanced` | Configuration value for enrichment plot label box width. | - |
-| `enrichment_plot_height_per_target` | `float` | `0.25` | `advanced` | Configuration value for enrichment plot height per target. | - |
-| `figure_extension` | `str` | `.png` | `advanced` | Configuration value for figure extension. | - |
-| `figure_dpi` | `int` | `300` | `advanced` | Configuration value for figure dpi. | - |
+| `input_adata_path` | `Optional[str]` | `null` | `advanced` | Optional AnnData input override; null uses the pipeline-managed general AnnData path. | - |
+| `output_subdir` | `str` | `Pairwise_Spatial` | `advanced` | Subdirectory below the active QC or managed report location for pairwise spatial tables, plots, and metadata. | - |
+| `reload_saved_results` | `bool` | `True` | `advanced` | Reuse structurally complete raw Squidpy, distance, and PCF tables when present, allowing plot-only reruns without repeating the analyses. | - |
+| `population_obs` | `Optional[str]` | `null` | `advanced` | AnnData observation containing the target population labels; null uses general.population_obs_primary, then the legacy population column. | - |
+| `groupby_obs` | `Optional[str]` | `null` | `advanced` | Optional AnnData observation used to stratify ROI results into biological or experimental groups; null uses general.groupby_obs. | - |
+| `groupby_obs_groups` | `Optional[List[str]]` | `null` | `advanced` | Optional ordered subset of groupby_obs categories retained for every analysis and plot; null uses general.groupby_obs_groups. | - |
+| `roi_obs` | `Optional[str]` | `null` | `advanced` | AnnData observation identifying independent images or regions within which spatial relationships are calculated; null uses general.roi_obs. | - |
+| `x_coord_obs` | `Optional[str]` | `null` | `advanced` | AnnData observation containing cell-centroid x coordinates; null uses general.x_coord_obs and values are assumed to be in the units named by the distance settings. | - |
+| `y_coord_obs` | `Optional[str]` | `null` | `advanced` | AnnData observation containing cell-centroid y coordinates; null uses general.y_coord_obs and values are assumed to be in the units named by the distance settings. | - |
+| `master_index_obs` | `Optional[str]` | `null` | `advanced` | AnnData observation uniquely identifying cells when distance results are mapped back to their original source populations; null uses general.master_index_obs. | - |
+| `source_population_obs` | `Optional[str]` | `null` | `advanced` | Optional separate observation used to group anchor cells in nearest-distance summaries; null uses population_obs for both source and target identities. | - |
+| `include_all_obs_metadata` | `bool` | `True` | `advanced` | Include every AnnData observation column in the saved cell snapshot and eligible ROI metadata exports. | - |
+| `metadata_obs_columns` | `List[str]` | `[]` | `advanced` | Additional AnnData observation columns exported with ROI-level results when include_all_obs_metadata is false; an empty list falls back to general.metadata_obs. | - |
+| `run_squidpy_interactions` | `bool` | `True` | `advanced` | Build a radius graph separately within each configured subregion and calculate Squidpy observed edge counts and label-permutation z-scores for every population pair. | - |
+| `squidpy_subregion_obs` | `Optional[str]` | `null` | `advanced` | AnnData observation whose categories are analysed separately by Squidpy; null uses roi_obs, which normally produces one graph and interaction matrix per ROI. | - |
+| `squidpy_subregion_suffix` | `str` | `` | `advanced` | Suffix appended to squidpy_subregion_obs when selecting the Squidpy library key used to prevent graph edges across spatial units. | - |
+| `squidpy_radius_min_um` | `int` | `0` | `advanced` | Lower distance bound passed to Squidpy radius-graph construction, in the unconverted units of the configured centroid coordinates. | - |
+| `squidpy_radius_max_um` | `int` | `20` | `advanced` | Upper distance bound passed to Squidpy radius-graph construction; cells within this annular range are treated as neighbours. | - |
+| `squidpy_n_permutations` | `int` | `1000` | `advanced` | Number of within-subregion population-label permutations used by Squidpy to estimate the null mean and standard deviation of interaction counts. | - |
+| `run_distance_bootstrap` | `bool` | `True` | `advanced` | Measure each cell's nearest target-population distance and compare it with distances obtained after repeatedly permuting target labels within each ROI. | - |
+| `distance_populations` | `Optional[List[str]]` | `null` | `advanced` | Optional ordered target-population subset for nearest-distance analysis; null evaluates every observed target population. | - |
+| `distance_roi_ids` | `Optional[List[str]]` | `null` | `advanced` | Optional subset of ROI identifiers included in nearest-distance analysis; null evaluates every ROI. | - |
+| `distance_n_bootstraps` | `int` | `1000` | `advanced` | Number of within-ROI target-label permutations used to form the nearest-distance null distribution; these are permutations, not resampled biological replicates. | - |
+| `distance_n_jobs` | `int` | `-1` | `advanced` | Joblib worker count for distance permutations; -1 uses all available CPU cores. | - |
+| `distance_ddof` | `int` | `1` | `advanced` | Delta degrees of freedom used when calculating the standard deviation of permuted cell-level distances for distance z-scores. | - |
+| `ignore_cells_without_label` | `bool` | `False` | `advanced` | Drop cells missing required source or target population labels during distance analysis; false stops with an error instead. | - |
+| `run_pcf` | `bool` | `True` | `advanced` | Calculate edge-corrected cross-pair-correlation functions for every ordered population pair and report g(r) at one selected distance bin. | - |
+| `pcf_target_distance_um` | `float` | `20.0` | `advanced` | Requested lower-radius value at which PCF summaries are extracted; the nearest available radius-step bin is used and reported as evaluated_um. | - |
+| `pcf_max_radius_um` | `float` | `100.0` | `advanced` | Outer extent of the PCF curve in the unconverted units of the configured coordinates. | - |
+| `pcf_radius_step_um` | `float` | `10.0` | `advanced` | Width of each PCF annulus and spacing between reported lower-radius values; with 10 and target 20, g is calculated for distances greater than 20 and at most 30. | - |
+| `pcf_num_bootstrap` | `int` | `1000` | `advanced` | Number of 100-by-100 spatial-grid resamples used to estimate condition-level PCF confidence bounds. | - |
+| `pcf_cluster_column` | `str` | `cluster` | `advanced` | Column name assigned to population labels in the exported SpOOx-style PCF statistics table; it is not an AnnData input key. | - |
+| `pcf_samples` | `Optional[List[str]]` | `null` | `advanced` | Optional ordered subset of ROI identifiers included in PCF analysis; null uses every ROI. | - |
+| `population_pairs` | `Dict[str, Any]` | `{}` | `advanced` | Source-to-target population selections used only for focused barplots; supports direct or observation-nested mappings plus ALL, ALL_OTHERS, MATCH_x, and NOT_x target tokens. | - |
+| `make_matrix_plots` | `bool` | `True` | `advanced` | Save population-by-population heatmaps or clustermaps for each available Squidpy, distance, and PCF metric. | - |
+| `make_pair_barplots` | `bool` | `True` | `advanced` | Save ROI-level barplots for source-target combinations selected by population_pairs. | - |
+| `heatmap_use_clustermap` | `bool` | `True` | `advanced` | Use seaborn clustermaps for pairwise matrices when possible; false uses fixed-order heatmaps. | - |
+| `heatmap_row_cluster` | `bool` | `True` | `advanced` | Hierarchically reorder source-population rows when clustermap plotting is enabled. | - |
+| `heatmap_col_cluster` | `bool` | `True` | `advanced` | Hierarchically reorder target-population columns when clustermap plotting is enabled. | - |
+| `heatmap_figsize` | `List[float]` | `[5.0, 5.0]` | `advanced` | Base pairwise-matrix figure width and height in inches. | - |
+| `heatmap_percentile` | `float` | `95.0` | `advanced` | Percentile of finite matrix magnitudes used to limit heatmap colour ranges and reduce domination by extreme values. | - |
+| `pairwise_matrices_cbar_corner` | `str` | `off_plot_right` | `advanced` | Pairwise-matrix colourbar position: lower_right, upper_left, or off_plot_right. | - |
+| `pairwise_matrices_share_vmax_vmin` | `bool` | `False` | `advanced` | Reuse each metric's all-data colour limits for its group-specific matrices so colours are directly comparable across groups. | - |
+| `heatmap_cmap_interactions` | `str` | `coolwarm` | `advanced` | Matplotlib colormap for Squidpy enrichment z-score matrices. | - |
+| `heatmap_cmap_distance` | `str` | `coolwarm` | `advanced` | Matplotlib colormap for nearest-distance matrices; the plotting code reverses this map so shorter distances receive the visual enrichment end. | - |
+| `heatmap_cmap_pcf` | `str` | `coolwarm` | `advanced` | Matplotlib colormap for PCF matrices centred on the null reference g(r)=1. | - |
+| `heatmap_cmap_counts` | `str` | `viridis` | `advanced` | Matplotlib colormap for non-negative Squidpy observed interaction-count matrices. | - |
+| `barplot_figsize` | `List[float]` | `[3.0, 3.0]` | `advanced` | Base width and height in inches for selected source-target barplots. | - |
+| `barplot_add_points` | `bool` | `True` | `advanced` | Overlay individual ROI or subregion values on selected-pair barplots so replication and heterogeneity remain visible. | - |
+| `barplot_y_scale` | `Dict[str, Any]` | `{'default': 'linear', 'squidpy': {'count': 'intelligent', 'zscore': 'intelligent', 'default': 'linear'}, 'distance': {'observed': 'intelligent', 'bootmean': 'intelligent', 'delta': 'intelligent', 'zscore': 'intelligent', 'default': 'intelligent'}, 'pcf': {'g': 'linear', 'g_mean': 'linear', 'default': 'linear'}}` | `advanced` | Nested per-analysis and per-metric axis-scale rules for barplots: linear, log, log1p, or intelligent automatic selection. | - |
+| `barplot_y_scale_intelligent_params` | `Dict[str, Any]` | `{'allow_log1p': True, 'dynamic_range_thresh': 100.0, 'skew_improve_ratio': 0.7, 'crush_frac_thresh': 0.7}` | `advanced` | Thresholds controlling when intelligent barplot scaling chooses linear, log, or log1p display; these settings never transform the saved statistics. | - |
+| `make_source_target_barplots` | `bool` | `True` | `advanced` | Also place all selected targets for each source population on a combined figure, with group as hue when available. | - |
+| `source_target_barplot_width_scale` | `float` | `0.35` | `advanced` | Automatic combined source-target figure width in inches per selected target, subject to barplot_figsize as a minimum. | - |
+| `source_target_barplot_order_group` | `Optional[str]` | `null` | `advanced` | Optional group category whose descending mean values determine target order in grouped source-to-all-target barplots. | - |
+| `make_enrichment_plots` | `bool` | `True` | `advanced` | Create per-source plots of the numerically highest and lowest target-pair metrics; enrichment here is a ranking label, not an additional hypothesis test. | - |
+| `enrichment_plot_figsize` | `List[float]` | `[5.5, 4.0]` | `advanced` | Base width and height in inches for per-source enriched/depleted target plots. | - |
+| `enrichment_plot_use_barplot` | `bool` | `True` | `advanced` | Display means with error bars in enrichment plots; false displays ROI-value distributions as boxplots. | - |
+| `enrichment_plot_errorbar` | `str` | `ci95` | `advanced` | Across-ROI error-bar display for enrichment barplots: ci95 for a seaborn 95% interval or se for standard error; neither performs a group-level test. | - |
+| `enrichment_plot_top_n` | `int` | `5` | `advanced` | Number of targets with the strongest enrichment-direction metric retained per source population. | - |
+| `enrichment_plot_bottom_n` | `int` | `5` | `advanced` | Number of targets with the strongest depletion-direction metric retained per source population. | - |
+| `enrichment_plot_target_populations` | `Optional[List[str]]` | `null` | `advanced` | Optional target-population subset eligible for enriched/depleted ranking; null allows every available target. | - |
+| `enrichment_plot_exclude_homotypic` | `bool` | `True` | `advanced` | Exclude source-to-same-population pairs when ranking targets for enrichment plots. | - |
+| `enrichment_plot_share_x_axis_across_groups` | `bool` | `True` | `advanced` | Use a common x-axis scale for group-specific enrichment plots of the same source and metric to support visual comparison. | - |
+| `enrichment_plot_color_mode` | `str` | `direction` | `advanced` | Colour enrichment-plot bars by enriched/depleted direction or by target population; accepted values are direction and population. | - |
+| `enrichment_plot_label_box_width` | `float` | `0.03` | `advanced` | Width in axes coordinates of the target-population colour strip drawn beside enrichment labels. | - |
+| `enrichment_plot_height_per_target` | `float` | `0.25` | `advanced` | Minimum figure height in inches allocated per displayed target population in enrichment plots. | - |
+| `figure_extension` | `str` | `.png` | `advanced` | File extension, including the leading dot, used for pairwise spatial figures. | - |
+| `figure_dpi` | `int` | `300` | `advanced` | Raster resolution in dots per inch for saved pairwise spatial figures. | - |

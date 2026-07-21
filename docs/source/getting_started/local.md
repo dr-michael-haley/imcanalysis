@@ -1,4 +1,4 @@
-# 🧪 IMC Analysis – Local Setup (Workstation / Laptop)
+# 🧪 SpatialBiologyToolkit – Local Setup (Workstation / Laptop)
 
 This guide is for running **local analyses** on your own machine (typically via Jupyter notebooks), and for running/iterating on parts of the pipeline without an HPC.
 
@@ -43,16 +43,33 @@ If you don’t use git, you can download the repo as a ZIP from GitHub, extract 
 
 ## 3) Create and activate the local environment
 
-Create the environment from the YAML:
+Create the environment from the YAML. On Windows:
 
 ```bash
 conda env create -f Local_envs/sbt_env.yml
 ```
 
-Activate it:
+On macOS, use the portable specification instead:
 
 ```bash
+conda env create -f Local_envs/sbt_env_macos.yml
+```
+
+The macOS environment intentionally omits CUDA and Windows runtime packages,
+along with the less portable R, Java/Bio-Formats, OpenCL, Napari/Qt, and optional
+SpatialData I/O/viewer and pip-only analysis extras from the Windows environment
+export. The specification has been solver-verified for Apple Silicon and has no
+architecture-specific pins; Intel macOS is expected to work but has not been
+solver-verified.
+
+Activate the environment:
+
+```bash
+# Windows
 conda activate sbt
+
+# macOS
+conda activate sbt-macos
 ```
 
 ---

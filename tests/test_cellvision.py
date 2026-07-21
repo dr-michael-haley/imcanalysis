@@ -20,6 +20,7 @@ from SpatialBiologyToolkit.cellvision import (
     ROIInput,
     _gallery_image,
     _normalized_uint16_image,
+    complete_normalization_dict,
     compute_normalization_dict,
     configuration_fingerprint,
     confusion_tables,
@@ -272,6 +273,13 @@ class CellVisionChannelAndConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_normalization_dict({"CD3": 1}, channel_names=["CD3", "CD20"])
 
+        partial = validate_normalization_dict(
+            {"CD3": 1},
+            channel_names=["CD3", "CD20"],
+            allow_missing=True,
+        )
+        self.assertEqual(partial, {"CD3": 1.0})
+
     def test_nimbus_normalization_dict_resolves_unique_channel_suffixes(self):
         values = validate_normalization_dict(
             {"CD11c": "18", "MHCII": "210", "CD3": "8", "CD31": "10"},
@@ -339,6 +347,41 @@ class CellVisionChannelAndConfigTests(unittest.TestCase):
             )
 
         self.assertEqual(values, {"A": 3.0})
+
+    def test_partial_normalization_dict_computes_only_missing_channel_fallbacks(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            mask_path = root / "ROI.tif"
+            first_path = root / "A.tif"
+            second_path = root / "DNA1.tif"
+            mask = np.zeros((4, 4), dtype=np.uint16)
+            mask[1, 1:3] = 1
+            first = np.zeros((4, 4), dtype=np.float32)
+            first[1, 1:3] = [100, 200]
+            second = np.zeros((4, 4), dtype=np.float32)
+            second[1, 1:3] = [2, 4]
+            imwrite(mask_path, mask)
+            imwrite(first_path, first)
+            imwrite(second_path, second)
+            context = ROIInput(
+                name="ROI",
+                channel_files=(first_path, second_path),
+                channel_names=("A", "DNA1"),
+                mask_path=mask_path,
+                spatial_shape=(4, 4),
+            )
+
+            values, fallback_channels = complete_normalization_dict(
+                {"A": "50"},
+                [context],
+                channel_names=["A", "DNA1"],
+                quantile=0.5,
+                minimum_value=1.0,
+                mask_expand_px=0,
+            )
+
+        self.assertEqual(values, {"A": 50.0, "DNA1": 3.0})
+        self.assertEqual(fallback_channels, ["DNA1"])
 
     def test_gallery_uses_stored_unit_range_without_autoscaling(self):
         image = np.array([[0.0, 0.001], [0.002, 0.0]], dtype=np.float32)

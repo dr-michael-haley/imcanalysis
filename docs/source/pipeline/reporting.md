@@ -71,8 +71,8 @@ controls project output numbers.
 Every accepted execution gets a typed `stage_manifest.yaml` and a Markdown
 README. The manifest records all identities, timing, status, job ID, software
 and Git identifiers, inputs, reusable assets, generated files, important
-parameters, metrics, warnings, and errors. The README snapshots the shared
-[stage explainer](../stages/index.md).
+parameters, metrics, warnings, and errors. The README snapshots the corresponding
+entry from the [Scientific Guides](../stages/index.md).
 
 If no SLURM job is accepted, submission-failure evidence remains under `.sbt`
 without creating a completed-looking output folder. Accepted jobs retain their

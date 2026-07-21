@@ -8,7 +8,7 @@
 #SBATCH --mail-user=${IMC_EMAIL}
 #SBATCH --mail-type=ALL
 
-#@DESC: Identify spatial neighborhoods with CellCharter (TRVAE reduction by default) and save QC summaries
+#@DESC: Identify spatial neighborhoods with CellCharter from an existing embedding or optional TRVAE and save QC summaries
 #@IN:   cellcharter.input_adata_path (fallback: process.output_adata_path, then process.input_adata_path)
 #@IN:   adata.obs sample key (default cellcharter.sample_key=ROI) and spatial coords (obsm['spatial'] or X_loc/Y_loc)
 #@OUT:  cellcharter.output_adata_path (default anndata_cellcharter.h5ad)

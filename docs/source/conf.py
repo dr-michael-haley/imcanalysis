@@ -9,7 +9,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-project = "IMC Analysis"
+project = "SpatialBiologyToolkit"
 copyright = "2024, Michael Haley"
 author = "Michael Haley"
 release = "0.1"
@@ -56,18 +56,21 @@ autodoc_mock_imports = [
     "tensorflow",
     "tifffile",
     "tkinter",
+    "torch",
     "tqdm",
     "umap",
     "vispy",
 ]
 
 html_theme = "sphinx_rtd_theme"
-html_title = "IMC Analysis"
-html_short_title = "IMC Analysis"
+html_title = "SpatialBiologyToolkit"
+html_short_title = "SpatialBiologyToolkit"
+html_logo = "_static/Logo_white.png"
 html_static_path = ["_static"]
 html_css_files = ["custom.css"]
 html_theme_options = {
     "collapse_navigation": True,
+    "logo_only": True,
     "navigation_depth": 3,
     "titles_only": True,
 }

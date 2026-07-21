@@ -11,7 +11,7 @@ stages, SLURM wrappers, tutorials, and HPC installation helpers.
 **The complete documentation is published at
 [imcanalysis.readthedocs.io](https://imcanalysis.readthedocs.io/en/latest/).**
 
-![SpatialBiologyToolkit overview](images/overview.PNG)
+![How SpatialBiologyToolkit fits together](docs/source/_static/repository_overview.png)
 
 ## Start here
 

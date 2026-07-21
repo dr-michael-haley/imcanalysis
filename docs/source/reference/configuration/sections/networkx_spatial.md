@@ -6,46 +6,46 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `input_adata_path` | `Optional[str]` | `null` | `advanced` | Configuration value for input adata path. | - |
-| `output_subdir` | `str` | `NetworkX_Spatial` | `advanced` | Configuration value for output subdir. | - |
-| `reload_saved_results` | `bool` | `True` | `advanced` | Configuration value for reload saved results. | - |
-| `population_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for population obs. | - |
-| `roi_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for roi obs. | - |
-| `case_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for case obs. | - |
-| `groupby_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for groupby obs. | - |
-| `x_coord_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for x coord obs. | - |
-| `y_coord_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for y coord obs. | - |
-| `spatial_key` | `Optional[str]` | `null` | `advanced` | Configuration value for spatial key. | - |
-| `master_index_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for master index obs. | - |
-| `include_all_obs_metadata` | `bool` | `True` | `advanced` | Configuration value for include all obs metadata. | - |
-| `metadata_obs_columns` | `List[str]` | `[]` | `advanced` | Configuration value for metadata obs columns. | - |
-| `ignore_cells_without_label` | `bool` | `False` | `advanced` | Configuration value for ignore cells without label. | - |
-| `graph_coord_type` | `str` | `generic` | `advanced` | Configuration value for graph coord type. | - |
-| `graph_delaunay` | `bool` | `False` | `advanced` | Configuration value for graph delaunay. | - |
-| `graph_n_neighs` | `Optional[int]` | `6` | `advanced` | Configuration value for graph n neighs. | - |
-| `graph_radius` | `Optional[List[float]]` | `null` | `advanced` | Configuration value for graph radius. | - |
-| `graph_percentile` | `Optional[float]` | `null` | `advanced` | Configuration value for graph percentile. | - |
-| `graph_transform` | `Optional[str]` | `null` | `advanced` | Configuration value for graph transform. | - |
-| `graph_set_diag` | `bool` | `False` | `advanced` | Configuration value for graph set diag. | - |
-| `minimum_cells_per_population` | `int` | `5` | `advanced` | Configuration value for minimum cells per population. | - |
-| `run_bootstrap` | `bool` | `True` | `advanced` | Configuration value for run bootstrap. | - |
-| `bootstrap_n_permutations` | `int` | `1000` | `advanced` | Configuration value for bootstrap n permutations. | - |
-| `bootstrap_static_populations` | `List[str]` | `[]` | `advanced` | Configuration value for bootstrap static populations. | - |
-| `bootstrap_ddof` | `int` | `1` | `advanced` | Configuration value for bootstrap ddof. | - |
-| `bootstrap_seed` | `Optional[int]` | `12345` | `advanced` | Configuration value for bootstrap seed. | - |
-| `n_threads` | `int` | `-1` | `advanced` | Configuration value for n threads. | - |
-| `save_bootstrap_samples` | `bool` | `False` | `advanced` | Configuration value for save bootstrap samples. | - |
-| `make_plots` | `bool` | `True` | `advanced` | Configuration value for make plots. | - |
-| `plot_kind` | `str` | `barplot` | `advanced` | Configuration value for plot kind. | - |
-| `plot_summary_level` | `str` | `case_if_available` | `advanced` | Configuration value for plot summary level. | - |
-| `plot_value_columns` | `List[str]` | `['observed', 'zscore']` | `advanced` | Configuration value for plot value columns. | - |
-| `make_all_populations_plots` | `bool` | `True` | `advanced` | Configuration value for make all populations plots. | - |
-| `all_populations_plot_populations` | `List[str]` | `[]` | `advanced` | Configuration value for all populations plot populations. | - |
-| `all_populations_figsize` | `Optional[List[float]]` | `null` | `advanced` | Configuration value for all populations figsize. | - |
-| `make_population_group_plots` | `bool` | `True` | `advanced` | Configuration value for make population group plots. | - |
-| `make_assortativity_group_plots` | `bool` | `True` | `advanced` | Configuration value for make assortativity group plots. | - |
-| `barplot_figsize` | `List[float]` | `[4.0, 3.0]` | `advanced` | Configuration value for barplot figsize. | - |
-| `all_populations_width_scale` | `float` | `0.45` | `advanced` | Configuration value for all populations width scale. | - |
-| `barplot_add_points` | `bool` | `True` | `advanced` | Configuration value for barplot add points. | - |
-| `figure_extension` | `str` | `.png` | `advanced` | Configuration value for figure extension. | - |
-| `figure_dpi` | `int` | `300` | `advanced` | Configuration value for figure dpi. | - |
+| `input_adata_path` | `Optional[str]` | `null` | `advanced` | Optional AnnData input override; null uses the pipeline-managed general AnnData path. | - |
+| `output_subdir` | `str` | `NetworkX_Spatial` | `advanced` | Subdirectory below the active QC or managed report location for NetworkX spatial summaries, plots, and metadata. | - |
+| `reload_saved_results` | `bool` | `True` | `advanced` | Reuse structurally complete ROI and case summary CSVs when present, allowing plot-only reruns without rebuilding graphs or null distributions. | - |
+| `population_obs` | `Optional[str]` | `null` | `advanced` | AnnData observation containing the categorical cell-population labels used for assortativity, induced subgraphs, and label permutations; null uses the general primary population key. | - |
+| `roi_obs` | `Optional[str]` | `null` | `advanced` | AnnData observation identifying images or regions for which separate spatial graphs are constructed; null uses general.roi_obs. | - |
+| `case_obs` | `Optional[str]` | `null` | `advanced` | Optional AnnData observation identifying biological cases across which their ROI metric and matched permutation values are averaged; null uses general.case_obs. | - |
+| `groupby_obs` | `Optional[str]` | `null` | `advanced` | Optional ROI or case metadata category used to colour and stratify summary plots; it does not filter cells or perform a group-comparison test. | - |
+| `x_coord_obs` | `Optional[str]` | `null` | `advanced` | AnnData observation containing cell-centroid x coordinates used to construct each ROI graph; null uses general.x_coord_obs. | - |
+| `y_coord_obs` | `Optional[str]` | `null` | `advanced` | AnnData observation containing cell-centroid y coordinates used to construct each ROI graph; null uses general.y_coord_obs. | - |
+| `spatial_key` | `Optional[str]` | `null` | `advanced` | Temporary AnnData obsm key under which the configured x/y coordinates are placed before Squidpy graph construction; null uses general.spatial_key. | - |
+| `master_index_obs` | `Optional[str]` | `null` | `advanced` | Optional unique-cell observation carried into the analysis metadata frame for compatibility; it does not alter graph construction or the current NetworkX metrics. | - |
+| `include_all_obs_metadata` | `bool` | `True` | `advanced` | Include all eligible AnnData observations in ROI and case metadata tables; the complete AnnData observation snapshot is written independently of this setting. | - |
+| `metadata_obs_columns` | `List[str]` | `[]` | `advanced` | Observation columns included in ROI and case metadata tables when include_all_obs_metadata is false; an empty list falls back to general.metadata_obs. | - |
+| `ignore_cells_without_label` | `bool` | `False` | `advanced` | Drop cells with null or blank population labels before constructing ROI graphs; false stops the stage when such labels are present. | - |
+| `graph_coord_type` | `str` | `generic` | `advanced` | Squidpy coordinate mode used for graph construction; generic is appropriate for continuous IMC centroids, while grid is intended for lattice-based observations. | - |
+| `graph_delaunay` | `bool` | `False` | `advanced` | Use a Delaunay triangulation for generic coordinates instead of the default k-nearest-neighbour graph; graph_n_neighs is ignored in Delaunay mode. | - |
+| `graph_n_neighs` | `Optional[int]` | `6` | `advanced` | Nearest-neighbour count for the default generic k-nearest-neighbour graph; null lets Squidpy resolve its default, and the value is ignored when radius or Delaunay mode is active. | - |
+| `graph_radius` | `Optional[List[float]]` | `null` | `advanced` | Optional spatial edge limit in unconverted coordinate units: one value gives a maximum radius and two values retain an interval; setting it selects or prunes the applicable generic graph mode. | - |
+| `graph_percentile` | `Optional[float]` | `null` | `advanced` | Optional percentile of generic-graph edge distances retained by Squidpy after graph construction; null applies no percentile pruning. | - |
+| `graph_transform` | `Optional[str]` | `null` | `advanced` | Optional Squidpy connectivity transform, spectral or cosine; NetworkX metrics are unweighted but any change to the nonzero edge pattern can change their result. | - |
+| `graph_set_diag` | `bool` | `False` | `advanced` | Ask Squidpy to include self-connectivity before conversion; the active stage subsequently removes every diagonal entry, so self-loops never enter the NetworkX metrics. | - |
+| `minimum_cells_per_population` | `int` | `5` | `advanced` | Minimum number of cells of a population required within an ROI before calculating average clustering on that population's induced subgraph. | - |
+| `run_bootstrap` | `bool` | `True` | `advanced` | Compare observed graph metrics with a fixed-graph null generated by permuting population labels within each ROI. | - |
+| `bootstrap_n_permutations` | `int` | `1000` | `advanced` | Number of within-ROI population-label permutations used to calculate null means, standard deviations, deltas, and z-scores. | - |
+| `bootstrap_static_populations` | `List[str]` | `[]` | `advanced` | Population labels kept on their original nodes while all remaining labels are permuted among non-static cells within each ROI. | - |
+| `bootstrap_ddof` | `int` | `1` | `advanced` | Delta degrees of freedom used for the standard deviation across permutation metric values. | - |
+| `bootstrap_seed` | `Optional[int]` | `12345` | `advanced` | Base random seed from which deterministic, independent ROI permutation streams are spawned; null requests non-deterministic streams. | - |
+| `n_threads` | `int` | `-1` | `advanced` | Number of ROI analyses run concurrently; -1 uses available SLURM or local CPU capacity, capped at the number of ROIs. | - |
+| `save_bootstrap_samples` | `bool` | `False` | `advanced` | Save every ROI-level and derived case-level permutation metric value in long CSV tables in addition to compact summaries. | - |
+| `make_plots` | `bool` | `True` | `advanced` | Generate assortativity and per-population average-clustering summary figures from the saved ROI or case tables. | - |
+| `plot_kind` | `str` | `barplot` | `advanced` | Summary display type: barplot for means with error bars or boxplot for distributions. | - |
+| `plot_summary_level` | `str` | `case_if_available` | `advanced` | Unit plotted: case_if_available prefers case means and falls back to ROIs, while case and roi request those levels explicitly. | - |
+| `plot_value_columns` | `List[str]` | `['observed', 'zscore']` | `advanced` | Summary metrics plotted from observed, bootstrap_mean, delta, and zscore; invalid names are ignored and an empty valid selection falls back to observed and zscore. | - |
+| `make_all_populations_plots` | `bool` | `True` | `advanced` | Plot average-clustering results for all selected populations on one axis, using groupby_obs as hue when available. | - |
+| `all_populations_plot_populations` | `List[str]` | `[]` | `advanced` | Optional ordered population subset shown in combined average-clustering plots; an empty list shows every population in annotation order. | - |
+| `all_populations_figsize` | `Optional[List[float]]` | `null` | `advanced` | Optional fixed width and height in inches for combined population plots; null calculates width from the number of displayed populations. | - |
+| `make_population_group_plots` | `bool` | `True` | `advanced` | When groupby_obs is available, save one average-clustering figure per population comparing the configured groups. | - |
+| `make_assortativity_group_plots` | `bool` | `True` | `advanced` | Save whole-graph assortativity plots, stratified by groupby_obs when that metadata is available. | - |
+| `barplot_figsize` | `List[float]` | `[4.0, 3.0]` | `advanced` | Base width and height in inches for NetworkX spatial summary plots. | - |
+| `all_populations_width_scale` | `float` | `0.45` | `advanced` | Automatic combined-population plot width in inches per population, subject to barplot_figsize as a minimum. | - |
+| `barplot_add_points` | `bool` | `True` | `advanced` | Overlay individual case or ROI observations on summary plots so replication and heterogeneity remain visible. | - |
+| `figure_extension` | `str` | `.png` | `advanced` | File extension, including the leading dot, used for NetworkX spatial figures. | - |
+| `figure_dpi` | `int` | `300` | `advanced` | Raster resolution in dots per inch for saved NetworkX spatial figures. | - |

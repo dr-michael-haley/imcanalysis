@@ -6,120 +6,120 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `input_adata_path` | `Optional[str]` | `null` | `advanced` | Configuration value for input adata path. | - |
-| `output_adata_path` | `Optional[str]` | `null` | `advanced` | Configuration value for output adata path. | - |
-| `qc_output_subdir` | `str` | `CellCharter_QC` | `advanced` | Configuration value for qc output subdir. | - |
-| `use_rep` | `Optional[str]` | `X_biobatchnet` | `advanced` | Configuration value for use rep. | - |
-| `use_layer` | `Optional[str]` | `null` | `advanced` | Configuration value for use layer. | - |
-| `scale_by_sample` | `bool` | `False` | `advanced` | Configuration value for scale by sample. | - |
-| `scaled_rep_key` | `str` | `X_cellcharter_scaled` | `advanced` | Configuration value for scaled rep key. | - |
-| `use_trvae` | `bool` | `False` | `advanced` | Configuration value for use trvae. | - |
-| `trvae_latent_key` | `str` | `X_trVAE` | `advanced` | Configuration value for trvae latent key. | - |
-| `trvae_condition_key` | `Optional[str]` | `dataset` | `advanced` | Configuration value for trvae condition key. | - |
-| `trvae_use_sample_key_fallback` | `bool` | `True` | `advanced` | Configuration value for trvae use sample key fallback. | - |
-| `trvae_constant_condition_label` | `str` | `all` | `advanced` | Configuration value for trvae constant condition label. | - |
-| `trvae_load_path` | `Optional[str]` | `null` | `advanced` | Configuration value for trvae load path. | - |
-| `trvae_save_path` | `str` | `trvae_model` | `advanced` | Configuration value for trvae save path. | - |
-| `trvae_map_location` | `str` | `gpu` | `advanced` | Configuration value for trvae map location. | - |
-| `trvae_train` | `bool` | `True` | `advanced` | Configuration value for trvae train. | - |
-| `trvae_train_early_stopping` | `bool` | `False` | `advanced` | Configuration value for trvae train early stopping. | - |
-| `trvae_train_enable_progress_bar` | `bool` | `True` | `advanced` | Configuration value for trvae train enable progress bar. | - |
-| `trvae_train_max_epochs` | `Optional[int]` | `null` | `advanced` | Configuration value for trvae train max epochs. | - |
-| `trvae_hidden_layer_sizes` | `List[int]` | `[128, 128]` | `advanced` | Configuration value for trvae hidden layer sizes. | - |
-| `trvae_latent_dim` | `int` | `10` | `advanced` | Configuration value for trvae latent dim. | - |
-| `trvae_dr_rate` | `float` | `0.05` | `advanced` | Configuration value for trvae dr rate. | - |
-| `trvae_use_mmd` | `bool` | `True` | `advanced` | Configuration value for trvae use mmd. | - |
-| `trvae_mmd_on` | `str` | `z` | `advanced` | Configuration value for trvae mmd on. | - |
-| `trvae_mmd_boundary` | `Optional[int]` | `null` | `advanced` | Configuration value for trvae mmd boundary. | - |
-| `trvae_recon_loss` | `str` | `mse` | `advanced` | Configuration value for trvae recon loss. | - |
-| `trvae_beta` | `float` | `1.0` | `advanced` | Configuration value for trvae beta. | - |
-| `trvae_use_bn` | `bool` | `False` | `advanced` | Configuration value for trvae use bn. | - |
-| `trvae_use_ln` | `bool` | `True` | `advanced` | Configuration value for trvae use ln. | - |
-| `delaunay` | `bool` | `True` | `advanced` | Configuration value for delaunay. | - |
-| `remove_long_links` | `bool` | `True` | `advanced` | Configuration value for remove long links. | - |
-| `distance_percentile` | `float` | `99.0` | `advanced` | Configuration value for distance percentile. | - |
-| `n_layers` | `int` | `3` | `advanced` | Configuration value for n layers. | - |
-| `aggregations` | `str` | `mean` | `advanced` | Configuration value for aggregations. | - |
-| `aggregated_rep_key` | `str` | `X_cellcharter` | `advanced` | Configuration value for aggregated rep key. | - |
-| `n_clusters` | `int` | `11` | `advanced` | Configuration value for n clusters. | - |
-| `random_state` | `int` | `12345` | `advanced` | Configuration value for random state. | - |
-| `covariance_type` | `str` | `full` | `advanced` | Configuration value for covariance type. | - |
-| `batch_size` | `Optional[int]` | `null` | `advanced` | Configuration value for batch size. | - |
-| `trainer_accelerator` | `str` | `auto` | `advanced` | Configuration value for trainer accelerator. | - |
-| `trainer_devices` | `Optional[int]` | `null` | `advanced` | Configuration value for trainer devices. | - |
-| `trainer_max_epochs` | `int` | `100` | `advanced` | Configuration value for trainer max epochs. | - |
-| `cluster_key` | `str` | `spatial_cluster` | `advanced` | Configuration value for cluster key. | - |
-| `repeat_analysis` | `Optional[bool]` | `null` | `advanced` | Configuration value for repeat analysis. | - |
-| `repeat_cluster_analysis` | `Optional[bool]` | `null` | `advanced` | Configuration value for repeat cluster analysis. | - |
-| `repeat_enrichment_analysis` | `Optional[bool]` | `null` | `advanced` | Configuration value for repeat enrichment analysis. | - |
-| `repeat_nhood_enrichment_analysis` | `Optional[bool]` | `null` | `advanced` | Configuration value for repeat nhood enrichment analysis. | - |
-| `repeat_diff_nhood_enrichment_analysis` | `Optional[bool]` | `null` | `advanced` | Configuration value for repeat diff nhood enrichment analysis. | - |
-| `repeat_shape_characterisation_analysis` | `Optional[bool]` | `null` | `advanced` | Configuration value for repeat shape characterisation analysis. | - |
-| `run_enrichment` | `bool` | `True` | `advanced` | Configuration value for run enrichment. | - |
-| `enrichment_with_pvalues` | `bool` | `False` | `advanced` | Configuration value for enrichment with pvalues. | - |
-| `enrichment_n_perms` | `int` | `1000` | `advanced` | Configuration value for enrichment n perms. | - |
-| `enrichment_plot_figsize` | `List[float]` | `[8.0, 6.0]` | `advanced` | Configuration value for enrichment plot figsize. | - |
-| `enrichment_plot_dot_scale` | `float` | `3.0` | `advanced` | Configuration value for enrichment plot dot scale. | - |
-| `enrichment_plot_show_pvalues` | `bool` | `False` | `advanced` | Configuration value for enrichment plot show pvalues. | - |
-| `enrichment_plot_significant_only` | `bool` | `False` | `advanced` | Configuration value for enrichment plot significant only. | - |
-| `run_nhood_enrichment` | `bool` | `True` | `advanced` | Configuration value for run nhood enrichment. | - |
-| `nhood_connectivity_key` | `Optional[str]` | `null` | `advanced` | Configuration value for nhood connectivity key. | - |
-| `nhood_log_fold_change` | `bool` | `False` | `advanced` | Configuration value for nhood log fold change. | - |
-| `nhood_only_inter` | `bool` | `True` | `advanced` | Configuration value for nhood only inter. | - |
-| `nhood_symmetric` | `bool` | `False` | `advanced` | Configuration value for nhood symmetric. | - |
-| `nhood_with_pvalues` | `bool` | `False` | `advanced` | Configuration value for nhood with pvalues. | - |
-| `nhood_n_perms` | `int` | `1000` | `advanced` | Configuration value for nhood n perms. | - |
-| `nhood_n_jobs` | `int` | `1` | `advanced` | Configuration value for nhood n jobs. | - |
-| `nhood_batch_size` | `int` | `10` | `advanced` | Configuration value for nhood batch size. | - |
-| `nhood_observed_expected` | `bool` | `True` | `advanced` | Configuration value for nhood observed expected. | - |
-| `save_nhood_enrichment_plot` | `bool` | `True` | `advanced` | Configuration value for save nhood enrichment plot. | - |
-| `nhood_plot_figsize` | `List[float]` | `[6.0, 3.0]` | `advanced` | Configuration value for nhood plot figsize. | - |
-| `nhood_enrichment_significance` | `Optional[float]` | `null` | `advanced` | Configuration value for nhood enrichment significance. | - |
-| `run_diff_nhood_enrichment` | `bool` | `False` | `advanced` | Configuration value for run diff nhood enrichment. | - |
-| `diff_nhood_condition_key` | `Optional[str]` | `null` | `advanced` | Configuration value for diff nhood condition key. | - |
-| `diff_nhood_condition_groups` | `Optional[List[str]]` | `null` | `advanced` | Configuration value for diff nhood condition groups. | - |
-| `diff_nhood_connectivity_key` | `Optional[str]` | `null` | `advanced` | Configuration value for diff nhood connectivity key. | - |
-| `diff_nhood_log_fold_change` | `bool` | `False` | `advanced` | Configuration value for diff nhood log fold change. | - |
-| `diff_nhood_only_inter` | `bool` | `True` | `advanced` | Configuration value for diff nhood only inter. | - |
-| `diff_nhood_symmetric` | `bool` | `False` | `advanced` | Configuration value for diff nhood symmetric. | - |
-| `diff_nhood_with_pvalues` | `bool` | `False` | `advanced` | Configuration value for diff nhood with pvalues. | - |
-| `diff_nhood_library_key` | `Optional[str]` | `null` | `advanced` | Configuration value for diff nhood library key. | - |
-| `diff_nhood_n_perms` | `int` | `1000` | `advanced` | Configuration value for diff nhood n perms. | - |
-| `diff_nhood_n_jobs` | `Optional[int]` | `null` | `advanced` | Configuration value for diff nhood n jobs. | - |
-| `diff_nhood_plot_ncols` | `int` | `2` | `advanced` | Configuration value for diff nhood plot ncols. | - |
-| `save_diff_nhood_enrichment_plot` | `bool` | `True` | `advanced` | Configuration value for save diff nhood enrichment plot. | - |
-| `run_shape_characterisation` | `bool` | `False` | `advanced` | Configuration value for run shape characterisation. | - |
-| `shape_component_key` | `str` | `component` | `advanced` | Configuration value for shape component key. | - |
-| `shape_component_cluster_key` | `Optional[str]` | `null` | `advanced` | Configuration value for shape component cluster key. | - |
-| `shape_connectivity_key` | `Optional[str]` | `null` | `advanced` | Configuration value for shape connectivity key. | - |
-| `shape_min_cells` | `int` | `250` | `advanced` | Configuration value for shape min cells. | - |
-| `shape_min_hole_area_ratio` | `float` | `0.1` | `advanced` | Configuration value for shape min hole area ratio. | - |
-| `shape_alpha_start` | `int` | `2000` | `advanced` | Configuration value for shape alpha start. | - |
-| `shape_compute_linearity` | `bool` | `True` | `advanced` | Configuration value for shape compute linearity. | - |
-| `shape_linearity_key` | `str` | `linearity` | `advanced` | Configuration value for shape linearity key. | - |
-| `shape_linearity_height` | `int` | `1000` | `advanced` | Configuration value for shape linearity height. | - |
-| `shape_linearity_min_ratio` | `float` | `0.05` | `advanced` | Configuration value for shape linearity min ratio. | - |
-| `shape_compute_curl` | `bool` | `True` | `advanced` | Configuration value for shape compute curl. | - |
-| `shape_curl_key` | `str` | `curl` | `advanced` | Configuration value for shape curl key. | - |
-| `shape_plot_metrics` | `bool` | `True` | `advanced` | Configuration value for shape plot metrics. | - |
-| `shape_metrics_condition_key` | `Optional[str]` | `null` | `advanced` | Configuration value for shape metrics condition key. | - |
-| `shape_metrics_condition_groups` | `Optional[List[str]]` | `null` | `advanced` | Configuration value for shape metrics condition groups. | - |
-| `shape_metrics_cluster_key` | `Optional[str]` | `null` | `advanced` | Configuration value for shape metrics cluster key. | - |
-| `shape_metrics_cluster_groups` | `Optional[List[str]]` | `null` | `advanced` | Configuration value for shape metrics cluster groups. | - |
-| `shape_metrics_ncols` | `int` | `2` | `advanced` | Configuration value for shape metrics ncols. | - |
-| `save_spatial_plots` | `bool` | `True` | `advanced` | Configuration value for save spatial plots. | - |
-| `max_rois_for_plots` | `int` | `12` | `advanced` | Configuration value for max rois for plots. | - |
-| `point_size` | `float` | `2.0` | `advanced` | Configuration value for point size. | - |
-| `save_enrichment_heatmap` | `bool` | `True` | `advanced` | Configuration value for save enrichment heatmap. | - |
-| `cluster_default_cmap` | `Optional[str]` | `null` | `advanced` | Configuration value for cluster default cmap. | - |
-| `save_cluster_umap` | `bool` | `True` | `advanced` | Configuration value for save cluster umap. | - |
-| `cluster_umap_point_size` | `float` | `10.0` | `advanced` | Configuration value for cluster umap point size. | - |
-| `cluster_umap_legend_loc` | `str` | `right margin` | `advanced` | Configuration value for cluster umap legend loc. | - |
-| `save_cluster_composition_plots` | `bool` | `True` | `advanced` | Configuration value for save cluster composition plots. | - |
-| `composition_order_by_environment` | `str` | `0` | `advanced` | Configuration value for composition order by environment. | - |
-| `composition_stacked_figsize` | `List[float]` | `[6.0, 3.0]` | `advanced` | Configuration value for composition stacked figsize. | - |
-| `composition_stacked_width_scale` | `float` | `0.3` | `advanced` | Configuration value for composition stacked width scale. | - |
-| `composition_group_barplot_figsize` | `List[float]` | `[6.0, 3.0]` | `advanced` | Configuration value for composition group barplot figsize. | - |
-| `figure_extension` | `str` | `.png` | `advanced` | Configuration value for figure extension. | - |
-| `figure_format` | `str` | `png` | `advanced` | Configuration value for figure format. | - |
-| `save_high_res` | `bool` | `True` | `advanced` | Configuration value for save high res. | - |
+| `input_adata_path` | `Optional[str]` | `null` | `advanced` | Optional AnnData input override; when unset, the stage reads general.anndata_path. | - |
+| `output_adata_path` | `Optional[str]` | `null` | `advanced` | Optional AnnData output override; when unset, the stage updates general.anndata_path. | - |
+| `qc_output_subdir` | `str` | `CellCharter_QC` | `advanced` | Subdirectory created under general.qc_folder for CellCharter tables and figures. | - |
+| `use_rep` | `Optional[str]` | `X_biobatchnet` | `advanced` | AnnData obsm representation aggregated in non-TRVAE mode; integration-family keys can fall back to another available pipeline embedding, and null selects a layer, an automatic reduced representation, or X. | - |
+| `use_layer` | `Optional[str]` | `null` | `advanced` | AnnData layer used instead of X when no non-TRVAE use_rep is selected, or used as the TRVAE input when TRVAE mode is enabled. | - |
+| `scale_by_sample` | `bool` | `False` | `advanced` | Z-score every input feature within each sample before TRVAE fitting or, in non-TRVAE mode, before neighbourhood aggregation. | - |
+| `scaled_rep_key` | `str` | `X_cellcharter_scaled` | `advanced` | AnnData obsm key used to store sample-scaled features or a layer copied into a matrix suitable for aggregation. | - |
+| `use_trvae` | `bool` | `False` | `advanced` | Train or load a TRVAE and aggregate its latent representation instead of using the existing non-TRVAE representation. | - |
+| `trvae_latent_key` | `str` | `X_trVAE` | `advanced` | AnnData obsm key receiving the TRVAE latent coordinates used for neighbourhood aggregation. | - |
+| `trvae_condition_key` | `Optional[str]` | `dataset` | `advanced` | AnnData obs column supplied to TRVAE as the batch or condition covariate to be integrated. | - |
+| `trvae_use_sample_key_fallback` | `bool` | `True` | `advanced` | Allow the resolved ROI/sample column to serve as the TRVAE condition when trvae_condition_key is unavailable. | - |
+| `trvae_constant_condition_label` | `str` | `all` | `advanced` | Label assigned to every cell when no usable TRVAE condition column can be resolved. | - |
+| `trvae_load_path` | `Optional[str]` | `null` | `advanced` | Optional directory containing a pretrained TRVAE model; a missing or invalid path causes a new model to be initialized. | - |
+| `trvae_save_path` | `str` | `trvae_model` | `advanced` | Directory for the reusable fitted TRVAE model; relative paths are resolved as project assets. | - |
+| `trvae_map_location` | `str` | `gpu` | `advanced` | Device location requested when loading a pretrained TRVAE model, such as gpu or cpu. | - |
+| `trvae_train` | `bool` | `True` | `advanced` | Fit a newly initialized TRVAE or continue training a loaded model before computing latent coordinates. | - |
+| `trvae_train_early_stopping` | `bool` | `False` | `advanced` | Enable TRVAE training early stopping when supported by the installed implementation. | - |
+| `trvae_train_enable_progress_bar` | `bool` | `True` | `advanced` | Show the TRVAE training progress bar when supported by the installed implementation. | - |
+| `trvae_train_max_epochs` | `Optional[int]` | `null` | `advanced` | Optional maximum TRVAE training epochs; null leaves the limit to the model's own default. | - |
+| `trvae_hidden_layer_sizes` | `List[int]` | `[128, 128]` | `advanced` | Widths of the TRVAE encoder and decoder hidden layers. | - |
+| `trvae_latent_dim` | `int` | `10` | `advanced` | Number of dimensions in the TRVAE latent representation. | - |
+| `trvae_dr_rate` | `float` | `0.05` | `advanced` | Dropout rate used by the TRVAE neural network. | - |
+| `trvae_use_mmd` | `bool` | `True` | `advanced` | Use maximum mean discrepancy regularization to align the configured TRVAE conditions. | - |
+| `trvae_mmd_on` | `str` | `z` | `advanced` | TRVAE representation on which maximum mean discrepancy is applied, normally the latent space z. | - |
+| `trvae_mmd_boundary` | `Optional[int]` | `null` | `advanced` | Optional number of conditions across which TRVAE calculates maximum mean discrepancy; null applies it across all conditions. | - |
+| `trvae_recon_loss` | `str` | `mse` | `advanced` | Reconstruction loss used to fit TRVAE; it should match the scale and distribution of the input features. | - |
+| `trvae_beta` | `float` | `1.0` | `advanced` | Weight applied to the TRVAE latent regularization term relative to reconstruction. | - |
+| `trvae_use_bn` | `bool` | `False` | `advanced` | Enable batch normalization in the TRVAE network. | - |
+| `trvae_use_ln` | `bool` | `True` | `advanced` | Enable layer normalization in the TRVAE network. | - |
+| `delaunay` | `bool` | `True` | `advanced` | Construct each sample's spatial graph by Delaunay triangulation; disabling it uses Squidpy's generic-coordinate neighbour construction. | - |
+| `remove_long_links` | `bool` | `True` | `advanced` | Remove unusually long spatial-graph edges after graph construction to reduce border-spanning artefacts. | - |
+| `distance_percentile` | `float` | `99.0` | `advanced` | Global percentile of positive edge distances above which links are removed when remove_long_links is enabled. | - |
+| `n_layers` | `int` | `3` | `advanced` | Maximum graph-hop layer to aggregate; an integer L includes the focal cell and separate summaries for hops 1 through L. | - |
+| `aggregations` | `str` | `mean` | `advanced` | Neighbour feature summary, such as mean or var; comma-separated values request multiple summaries for every nonzero hop layer. | - |
+| `aggregated_rep_key` | `str` | `X_cellcharter` | `advanced` | AnnData obsm key receiving the concatenated focal-cell and hop-specific neighbourhood features used for clustering. | - |
+| `n_clusters` | `int` | `11` | `advanced` | Fixed number of Gaussian-mixture spatial clusters to fit; this pipeline stage does not run CellCharter's automatic stability scan. | - |
+| `random_state` | `int` | `12345` | `advanced` | Random seed used to initialize the CellCharter Gaussian-mixture clustering model. | - |
+| `covariance_type` | `str` | `full` | `advanced` | Gaussian-mixture covariance parameterization; full allows each cluster its own unrestricted covariance matrix. | - |
+| `batch_size` | `Optional[int]` | `null` | `advanced` | Optional number of cells per Gaussian-mixture fitting batch; null lets CellCharter process the full matrix according to its default. | - |
+| `trainer_accelerator` | `str` | `auto` | `advanced` | Lightning accelerator used for Gaussian-mixture fitting, for example auto, cpu, gpu, or cuda where supported. | - |
+| `trainer_devices` | `Optional[int]` | `null` | `advanced` | Optional number of devices supplied to the CellCharter clustering trainer. | - |
+| `trainer_max_epochs` | `int` | `100` | `advanced` | Maximum training epochs for the Gaussian-mixture clustering model. | - |
+| `cluster_key` | `str` | `spatial_cluster` | `advanced` | AnnData obs column receiving categorical CellCharter niche labels; the numeric labels are identifiers without intrinsic order. | - |
+| `repeat_analysis` | `Optional[bool]` | `null` | `advanced` | Deprecated fallback for unset stage-specific repeat flags; null means each stage-specific flag defaults to recomputation. | - |
+| `repeat_cluster_analysis` | `Optional[bool]` | `null` | `advanced` | Recompute TRVAE, graph, aggregation, and clustering; false reuses cluster_key when it contains any non-null labels, while null defaults to recomputation. | - |
+| `repeat_enrichment_analysis` | `Optional[bool]` | `null` | `advanced` | Recompute cluster-by-cell-type enrichment; false reuses an existing compatible AnnData uns result, while null defaults to recomputation. | - |
+| `repeat_nhood_enrichment_analysis` | `Optional[bool]` | `null` | `advanced` | Recompute cluster neighbourhood enrichment; false reuses an existing AnnData uns result, while null defaults to recomputation. | - |
+| `repeat_diff_nhood_enrichment_analysis` | `Optional[bool]` | `null` | `advanced` | Recompute differential neighbourhood enrichment; false reuses an existing AnnData uns result, while null defaults to recomputation. | - |
+| `repeat_shape_characterisation_analysis` | `Optional[bool]` | `null` | `advanced` | Recompute connected components, boundaries, and shape metrics; false reuses complete existing component and uns outputs, while null defaults to recomputation. | - |
+| `run_enrichment` | `bool` | `True` | `advanced` | Calculate enrichment of general.population_obs_primary cell types within each spatial cluster when that annotation is available. | - |
+| `enrichment_with_pvalues` | `bool` | `False` | `advanced` | Estimate empirical P values for cluster-by-cell-type enrichment by permutation instead of reporting enrichment alone. | - |
+| `enrichment_n_perms` | `int` | `1000` | `advanced` | Number of permutations used when cluster-by-cell-type enrichment P values are enabled. | - |
+| `enrichment_plot_figsize` | `List[float]` | `[8.0, 6.0]` | `advanced` | Width and height in inches for the CellCharter cluster-by-cell-type enrichment dot plot. | - |
+| `enrichment_plot_dot_scale` | `float` | `3.0` | `advanced` | Scale factor controlling marker sizes in the cluster-by-cell-type enrichment dot plot. | - |
+| `enrichment_plot_show_pvalues` | `bool` | `False` | `advanced` | Display enrichment P-value information on the CellCharter enrichment plot when permutation P values exist. | - |
+| `enrichment_plot_significant_only` | `bool` | `False` | `advanced` | Restrict the CellCharter enrichment plot to statistically significant results when P values are available. | - |
+| `run_nhood_enrichment` | `bool` | `True` | `advanced` | Quantify whether pairs of spatial clusters share more or fewer graph edges than expected from their abundance and node degree. | - |
+| `nhood_connectivity_key` | `Optional[str]` | `null` | `advanced` | Optional AnnData obsp connectivity key for neighbourhood enrichment; null uses CellCharter's default spatial connectivity matrix. | - |
+| `nhood_log_fold_change` | `bool` | `False` | `advanced` | Report neighbourhood enrichment as log2 observed-over-expected instead of the default observed-minus-expected difference. | - |
+| `nhood_only_inter` | `bool` | `True` | `advanced` | Exclude within-cluster edges so the analysis focuses on contacts between different spatial clusters. | - |
+| `nhood_symmetric` | `bool` | `False` | `advanced` | Use symmetric edge-count enrichment; false uses directional edge proportions, so source-to-target and target-to-source values can differ. | - |
+| `nhood_with_pvalues` | `bool` | `False` | `advanced` | Use permutations to estimate neighbourhood-enrichment P values; false uses the faster analytical expectation without P values. | - |
+| `nhood_n_perms` | `int` | `1000` | `advanced` | Number of permutations used when neighbourhood-enrichment P values are enabled. | - |
+| `nhood_n_jobs` | `int` | `1` | `advanced` | Number of parallel workers used for permutation-based neighbourhood enrichment. | - |
+| `nhood_batch_size` | `int` | `10` | `advanced` | Number of neighbourhood-enrichment permutations processed in each computational batch. | - |
+| `nhood_observed_expected` | `bool` | `True` | `advanced` | Store the observed and expected edge matrices alongside the derived neighbourhood-enrichment matrix. | - |
+| `save_nhood_enrichment_plot` | `bool` | `True` | `advanced` | Save CellCharter's neighbourhood-enrichment visualization in addition to exported matrices. | - |
+| `nhood_plot_figsize` | `List[float]` | `[6.0, 3.0]` | `advanced` | Width and height in inches for the CellCharter neighbourhood-enrichment plot. | - |
+| `nhood_enrichment_significance` | `Optional[float]` | `null` | `advanced` | Optional P-value threshold used to mark or filter significance in the neighbourhood-enrichment plot. | - |
+| `run_diff_nhood_enrichment` | `bool` | `False` | `advanced` | Compare spatial-cluster neighbourhood-enrichment matrices between biological or experimental conditions. | - |
+| `diff_nhood_condition_key` | `Optional[str]` | `null` | `advanced` | AnnData obs column defining conditions; null falls back to general.groupby_obs and then common condition columns. | - |
+| `diff_nhood_condition_groups` | `Optional[List[str]]` | `null` | `advanced` | Optional ordered subset of condition levels to compare; null uses configured general group lists or all available levels. | - |
+| `diff_nhood_connectivity_key` | `Optional[str]` | `null` | `advanced` | Optional AnnData obsp connectivity key for differential neighbourhood enrichment; null uses CellCharter's default spatial graph. | - |
+| `diff_nhood_log_fold_change` | `bool` | `False` | `advanced` | Express each condition's neighbourhood enrichment as log2 observed-over-expected rather than observed-minus-expected before calculating contrasts. | - |
+| `diff_nhood_only_inter` | `bool` | `True` | `advanced` | Exclude within-cluster edges from differential neighbourhood-enrichment comparisons. | - |
+| `diff_nhood_symmetric` | `bool` | `False` | `advanced` | Use symmetric rather than directional neighbourhood enrichment within each condition. | - |
+| `diff_nhood_with_pvalues` | `bool` | `False` | `advanced` | Estimate empirical P values by resampling condition labels at the sample/library level. | - |
+| `diff_nhood_library_key` | `Optional[str]` | `null` | `advanced` | AnnData obs column identifying independent samples or libraries for differential-enrichment permutations; null uses the resolved sample key. | - |
+| `diff_nhood_n_perms` | `int` | `1000` | `advanced` | Number of sample-level condition permutations used for differential neighbourhood-enrichment P values. | - |
+| `diff_nhood_n_jobs` | `Optional[int]` | `null` | `advanced` | Optional number of parallel workers for differential neighbourhood-enrichment permutations. | - |
+| `diff_nhood_plot_ncols` | `int` | `2` | `advanced` | Number of columns in the grid of condition-pair differential neighbourhood-enrichment plots. | - |
+| `save_diff_nhood_enrichment_plot` | `bool` | `True` | `advanced` | Save CellCharter's differential neighbourhood-enrichment plot in addition to exported matrices. | - |
+| `run_shape_characterisation` | `bool` | `False` | `advanced` | Identify connected components of spatial clusters, reconstruct their boundaries, and calculate configured component-shape metrics. | - |
+| `shape_component_key` | `str` | `component` | `advanced` | AnnData obs column receiving connected-component identifiers for spatially contiguous regions of a cluster. | - |
+| `shape_component_cluster_key` | `Optional[str]` | `null` | `advanced` | AnnData obs labels whose connected components are characterized; null uses cluster_key. | - |
+| `shape_connectivity_key` | `Optional[str]` | `null` | `advanced` | Optional AnnData obsp graph used to define connected components; null uses CellCharter's default spatial connectivity matrix. | - |
+| `shape_min_cells` | `int` | `250` | `advanced` | Minimum cells required for a same-cluster connected component to be retained for shape analysis. | - |
+| `shape_min_hole_area_ratio` | `float` | `0.1` | `advanced` | Minimum hole area relative to its component boundary area for the hole to be retained in the alpha-shape polygon. | - |
+| `shape_alpha_start` | `int` | `2000` | `advanced` | Starting alpha value for CellCharter's iterative alpha-shape boundary reconstruction. | - |
+| `shape_compute_linearity` | `bool` | `True` | `advanced` | Calculate component linearity, the dominant skeleton path length divided by total skeleton length. | - |
+| `shape_linearity_key` | `str` | `linearity` | `advanced` | Key used to store the per-component linearity metric in the CellCharter shape result. | - |
+| `shape_linearity_height` | `int` | `1000` | `advanced` | Raster height used when converting component polygons to skeletons for the linearity calculation. | - |
+| `shape_linearity_min_ratio` | `float` | `0.05` | `advanced` | Minimum relative skeleton-branch length retained in the component linearity calculation. | - |
+| `shape_compute_curl` | `bool` | `True` | `advanced` | Calculate component curl, a measure of how curved or twisted a region is relative to its major axis and fibre length. | - |
+| `shape_curl_key` | `str` | `curl` | `advanced` | Key used to store the per-component curl metric in the CellCharter shape result. | - |
+| `shape_plot_metrics` | `bool` | `True` | `advanced` | Plot computed shape metrics across configured condition or cluster groups when suitable metadata exists. | - |
+| `shape_metrics_condition_key` | `Optional[str]` | `null` | `advanced` | AnnData obs condition used to group shape-metric plots; null falls back to the differential condition and then general.groupby_obs. | - |
+| `shape_metrics_condition_groups` | `Optional[List[str]]` | `null` | `advanced` | Optional ordered condition levels included in shape-metric plots. | - |
+| `shape_metrics_cluster_key` | `Optional[str]` | `null` | `advanced` | AnnData obs cluster annotation used to stratify shape-metric plots; null uses shape_component_cluster_key or cluster_key. | - |
+| `shape_metrics_cluster_groups` | `Optional[List[str]]` | `null` | `advanced` | Optional ordered cluster levels included in shape-metric plots. | - |
+| `shape_metrics_ncols` | `int` | `2` | `advanced` | Number of columns in the grid of CellCharter shape-metric plots. | - |
+| `save_spatial_plots` | `bool` | `True` | `advanced` | Save per-sample spatial scatter plots of CellCharter cluster assignments. | - |
+| `max_rois_for_plots` | `int` | `12` | `advanced` | Maximum number of samples or ROIs for which spatial cluster scatter plots are produced. | - |
+| `point_size` | `float` | `2.0` | `advanced` | Marker size used in per-sample spatial cluster scatter plots. | - |
+| `save_enrichment_heatmap` | `bool` | `True` | `advanced` | Save matrix heatmaps for cluster-by-cell-type and neighbourhood-enrichment results when available. | - |
+| `cluster_default_cmap` | `Optional[str]` | `null` | `advanced` | Matplotlib colormap used to assign cluster colours; null uses Scanpy's godsnot_102 categorical palette. | - |
+| `save_cluster_umap` | `bool` | `True` | `advanced` | Save a UMAP coloured by CellCharter cluster when a usable UMAP embedding can be found or computed. | - |
+| `cluster_umap_point_size` | `float` | `10.0` | `advanced` | Marker size used in the CellCharter cluster UMAP. | - |
+| `cluster_umap_legend_loc` | `str` | `right margin` | `advanced` | Scanpy legend-location setting for the CellCharter cluster UMAP. | - |
+| `save_cluster_composition_plots` | `bool` | `True` | `advanced` | Save case-level stacked cluster compositions and grouped summaries when general.case_obs is available. | - |
+| `composition_order_by_environment` | `str` | `0` | `advanced` | Spatial-cluster label whose abundance is used to order cases in stacked composition plots. | - |
+| `composition_stacked_figsize` | `List[float]` | `[6.0, 3.0]` | `advanced` | Base width and height in inches for case-level stacked cluster-composition plots. | - |
+| `composition_stacked_width_scale` | `float` | `0.3` | `advanced` | Additional automatic figure width in inches per case for stacked composition plots. | - |
+| `composition_group_barplot_figsize` | `List[float]` | `[6.0, 3.0]` | `advanced` | Width and height in inches for grouped cluster-composition bar plots. | - |
+| `figure_extension` | `str` | `.png` | `advanced` | Preferred extension for CellCharter figures, including the leading dot; a non-default value overrides the legacy figure_format. | - |
+| `figure_format` | `str` | `png` | `advanced` | Legacy figure-format setting used only when figure_extension remains at its default .png value. | - |
+| `save_high_res` | `bool` | `True` | `advanced` | Save supported CellCharter QC figures at high resolution, normally 300 dpi rather than 150 dpi. | - |

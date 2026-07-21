@@ -6,40 +6,40 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `run_denoising` | `bool` | `True` | `advanced` | Configuration value for run denoising. | - |
-| `method` | `str` | `deep_snf` | `advanced` | Configuration value for method. | - |
-| `channels` | `List[str]` | `[]` | `advanced` | Configuration value for channels. | - |
-| `n_neighbours` | `int` | `4` | `advanced` | Configuration value for n neighbours. | - |
-| `n_iter` | `int` | `3` | `advanced` | Configuration value for n iter. | - |
-| `window_size` | `int` | `3` | `advanced` | Configuration value for window size. | - |
-| `remove_outliers` | `bool` | `True` | `advanced` | Configuration value for remove outliers. | - |
-| `remove_outliers_min_threshold` | `int` | `500` | `advanced` | Configuration value for remove outliers min threshold. | - |
-| `patch_step_size` | `int` | `100` | `advanced` | Configuration value for patch step size. | - |
-| `intelligent_patch_size` | `bool` | `True` | `advanced` | Configuration value for intelligent patch size. | - |
-| `intelligent_patch_size_threshold` | `float` | `0.3` | `advanced` | Configuration value for intelligent patch size threshold. | - |
-| `intelligent_patch_size_minimum` | `int` | `40` | `advanced` | Configuration value for intelligent patch size minimum. | - |
-| `intelligent_patch_size_min_patches` | `int` | `5000` | `advanced` | Configuration value for intelligent patch size min patches. | - |
-| `intelligent_patch_size_max_patches` | `Optional[int]` | `null` | `advanced` | Configuration value for intelligent patch size max patches. | - |
-| `train_epochs` | `int` | `75` | `advanced` | Configuration value for train epochs. | - |
-| `train_initial_lr` | `float` | `0.001` | `advanced` | Configuration value for train initial lr. | - |
-| `train_batch_size` | `int` | `200` | `advanced` | Configuration value for train batch size. | - |
-| `ratio_thresh` | `float` | `0.8` | `advanced` | Configuration value for ratio thresh. | - |
-| `pixel_mask_percent` | `float` | `0.2` | `advanced` | Configuration value for pixel mask percent. | - |
-| `val_set_percent` | `float` | `0.15` | `advanced` | Configuration value for val set percent. | - |
-| `loss_function` | `str` | `I_divergence` | `advanced` | Configuration value for loss function. | - |
-| `loss_name` | `Optional[str]` | `null` | `advanced` | Configuration value for loss name. | - |
-| `weights_save_directory` | `Optional[str]` | `null` | `advanced` | Configuration value for weights save directory. | - |
-| `is_load_weights` | `bool` | `False` | `advanced` | Configuration value for is load weights. | - |
-| `lambda_HF` | `float` | `3e-06` | `advanced` | Configuration value for lambda HF. | - |
-| `network_size` | `str` | `small` | `advanced` | Configuration value for network size. | - |
-| `truncated_max_rate` | `float` | `0.99999` | `advanced` | Configuration value for truncated max rate. | - |
-| `run_parameter_scan` | `bool` | `False` | `advanced` | Configuration value for run parameter scan. | - |
-| `scan_parameter` | `Optional[str]` | `truncated_max_rate` | `advanced` | Configuration value for scan parameter. | - |
-| `scan_values` | `Optional[List[Any]]` | `[0.99, 0.999, 0.99999]` | `advanced` | Configuration value for scan values. | - |
-| `verbose_training` | `bool` | `False` | `advanced` | Configuration value for verbose training. | - |
-| `run_QC` | `bool` | `True` | `advanced` | Configuration value for run QC. | - |
-| `colourmap` | `str` | `jet` | `advanced` | Configuration value for colourmap. | - |
-| `dpi` | `int` | `100` | `advanced` | Configuration value for dpi. | - |
-| `qc_image_dir` | `str` | `denoising` | `advanced` | Configuration value for qc image dir. | - |
-| `qc_num_rois` | `Optional[int]` | `10` | `advanced` | Configuration value for qc num rois. | - |
-| `skip_already_denoised` | `bool` | `True` | `advanced` | Configuration value for skip already denoised. | - |
+| `run_denoising` | `bool` | `True` | `advanced` | Run the configured IMC-Denoise restoration method; panel-driven outlier removal and side-by-side QC are controlled separately. | - |
+| `method` | `str` | `deep_snf` | `advanced` | Restoration method: 'deep_snf' applies DIMR hot-pixel removal followed by self-supervised shot-noise filtering, whereas 'dimr' applies only DIMR. | - |
+| `channels` | `List[str]` | `[]` | `advanced` | Channel identifiers to denoise, matched case-insensitively within ROI TIFF filenames; an empty list selects panel rows marked to_denoise, or use_denoised for older panel files. | - |
+| `n_neighbours` | `int` | `4` | `advanced` | Number of locally most distribution-consistent neighbour differences summed by DIMR when classifying a centre pixel as a hot-pixel outlier. | - |
+| `n_iter` | `int` | `3` | `advanced` | Maximum number of iterative DIMR detection-and-median-replacement passes; later passes can remove small adjacent hot-pixel clusters exposed by earlier passes. | - |
+| `window_size` | `int` | `3` | `advanced` | Odd-width local DIMR window, in pixels, used to construct neighbour differences and to median-replace detected outliers. | - |
+| `remove_outliers` | `bool` | `True` | `advanced` | Before IMC-Denoise, apply each channel's optional panel.csv remove_outliers rule and overwrite above-threshold pixels with zero in the raw TIFFs; this is a pipeline-specific preprocessing step, not DIMR. | - |
+| `remove_outliers_min_threshold` | `int` | `500` | `advanced` | Minimum permitted intensity cutoff for percentile-based panel outlier rules; a channel is skipped when its calculated cutoff is below this guard value. | - |
+| `patch_step_size` | `int` | `100` | `advanced` | Initial horizontal and vertical stride, in pixels, between 64 x 64 DeepSNiF training patches; the stage also removes raw ROI folders whose recorded width or height is smaller than this value. | - |
+| `intelligent_patch_size` | `bool` | `True` | `advanced` | Adapt the training-patch stride in 20-pixel increments until the augmented patch count reaches the configured minimum and optional maximum. | - |
+| `intelligent_patch_size_threshold` | `float` | `0.3` | `advanced` | Deprecated compatibility setting retained in configuration; the current denoising implementation does not read this value. | - |
+| `intelligent_patch_size_minimum` | `int` | `40` | `advanced` | Smallest training-patch stride, in pixels, tried by adaptive patch sampling when too few patches are available. | - |
+| `intelligent_patch_size_min_patches` | `int` | `5000` | `advanced` | Target minimum number of DeepSNiF training patches after rotation and flip augmentation; training proceeds with a warning if this cannot be reached. | - |
+| `intelligent_patch_size_max_patches` | `Optional[int]` | `null` | `advanced` | Optional target maximum number of augmented DeepSNiF training patches; when exceeded, adaptive sampling increases the patch stride. | - |
+| `train_epochs` | `int` | `75` | `advanced` | Number of complete DeepSNiF training epochs run independently for each channel. | - |
+| `train_initial_lr` | `float` | `0.001` | `advanced` | Initial Adam learning rate for DeepSNiF training; the library reduces it when validation loss plateaus. | - |
+| `train_batch_size` | `int` | `200` | `advanced` | Number of 64 x 64 patches in each DeepSNiF training batch; lower values reduce GPU memory demand at the cost of more batch updates. | - |
+| `ratio_thresh` | `float` | `0.8` | `advanced` | Maximum fraction of pixels below intensity 1 permitted in a DIMR-corrected training patch; lower values retain only more signal-rich patches. | - |
+| `pixel_mask_percent` | `float` | `0.2` | `advanced` | Percentage of pixels per training patch replaced by nearby values for self-supervision; 0.2 means 0.2%, not a fraction of 0.2. | - |
+| `val_set_percent` | `float` | `0.15` | `advanced` | Fraction of generated patches held out with a fixed split for validation; 0.15 reserves 15%. | - |
+| `loss_function` | `str` | `I_divergence` | `advanced` | Masked-pixel data-fidelity loss: 'I_divergence' gives the Poisson-aware DeepSNiF objective; 'mse' and 'mse_relu' select the library's Noise2Void-style variants. | - |
+| `loss_name` | `Optional[str]` | `null` | `advanced` | Optional .npz or .mat filename for saving per-epoch training and validation losses in the weights directory. | - |
+| `weights_save_directory` | `Optional[str]` | `null` | `advanced` | Directory for per-channel .keras weights, normalization-range files, and optional loss histories; when unset, use trained_weights under the working directory. | - |
+| `is_load_weights` | `bool` | `False` | `advanced` | Load weights_<channel>.keras and its matching normalization-range file from the weights directory instead of generating patches and training a new channel model. | - |
+| `lambda_HF` | `float` | `3e-06` | `advanced` | Weight of Hessian-norm regularization in the DeepSNiF loss, balancing masked-pixel data fidelity against spatial continuity of the predicted biological signal. | - |
+| `network_size` | `str` | `small` | `advanced` | DeepSNiF U-Net capacity: 'small' uses the compact, faster network, while 'normal' uses the original larger residual U-Net. | - |
+| `truncated_max_rate` | `float` | `0.99999` | `advanced` | Training-pixel quantile used to define the normalization range as 1.1 times that quantile; 0.99999 corresponds to the 99.999th percentile. | - |
+| `run_parameter_scan` | `bool` | `False` | `advanced` | Repeat denoising for each configured scan value and write each result to a parameter-suffixed denoised-image and QC location. | - |
+| `scan_parameter` | `Optional[str]` | `truncated_max_rate` | `advanced` | Name of the single DenoisingConfig field varied during a parameter scan, such as truncated_max_rate, train_epochs, or lambda_HF. | - |
+| `scan_values` | `Optional[List[Any]]` | `[0.99, 0.999, 0.99999]` | `advanced` | Ordered values assigned to scan_parameter in separate denoising runs. | - |
+| `verbose_training` | `bool` | `False` | `advanced` | Show TensorFlow/Keras training logs and progress output instead of suppressing routine framework messages. | - |
+| `run_QC` | `bool` | `True` | `advanced` | Generate per-channel raw-versus-denoised comparison figures after processing; the denoised-pixel summary table is produced independently during denoising. | - |
+| `colourmap` | `str` | `jet` | `advanced` | Matplotlib colour map used only for raw-versus-denoised QC figures; it does not alter TIFF intensities or model inputs. | - |
+| `dpi` | `int` | `100` | `advanced` | Raster resolution, in dots per inch, of denoising comparison figures. | - |
+| `qc_image_dir` | `str` | `denoising` | `advanced` | Subdirectory name below the active QC/report location for side-by-side comparison figures; parameter scans append the parameter and value. | - |
+| `qc_num_rois` | `Optional[int]` | `10` | `advanced` | Maximum number of randomly sampled ROIs shown per channel in comparison figures; use null to include every ROI. | - |
+| `skip_already_denoised` | `bool` | `True` | `advanced` | Skip requested channels whose TIFF names are already present in the first existing denoised ROI folder, rather than overwrite those channel outputs. | - |

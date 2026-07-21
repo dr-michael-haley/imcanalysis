@@ -6,4 +6,4 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `minimum_roi_dimensions` | `int` | `200` | `basic` | Minimum accepted ROI width and height in pixels. | Reduce only when deliberately processing small ROIs. |
+| `minimum_roi_dimensions` | `int` | `200` | `basic` | Minimum MCD acquisition size: both readimc width_um and height_um must be strictly greater than this value for the ROI to be exported; the filter is not applied to TXT inputs. | Keep 200 for routine acquisitions; reduce it only when small MCD ROIs are intentional and verify that the retained regions contain enough tissue for downstream segmentation and analysis. |

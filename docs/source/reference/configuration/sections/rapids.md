@@ -6,32 +6,32 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `input_adata_path` | `Optional[str]` | `null` | `advanced` | Configuration value for input adata path. | - |
-| `output_adata_path` | `Optional[str]` | `null` | `advanced` | Configuration value for output adata path. | - |
-| `batch_correction_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for batch correction obs. | - |
-| `run_harmony` | `bool` | `False` | `advanced` | Configuration value for run harmony. | - |
-| `harmony_flavor` | `str` | `harmony2` | `advanced` | Configuration value for harmony flavor. | - |
-| `n_for_pca` | `Optional[int]` | `null` | `advanced` | Configuration value for n for pca. | - |
-| `n_pcs_neighbors` | `Optional[int]` | `null` | `advanced` | Configuration value for n pcs neighbors. | - |
-| `leiden_resolutions_list` | `List[float]` | `[0.3, 1.0]` | `advanced` | Configuration value for leiden resolutions list. | - |
-| `umap_min_dist` | `float` | `0.1` | `advanced` | Configuration value for umap min dist. | - |
-| `run_leiden` | `bool` | `True` | `advanced` | Configuration value for run leiden. | - |
-| `n_neighbors` | `Optional[int]` | `null` | `advanced` | Configuration value for n neighbors. | - |
-| `filter_obs_key` | `str` | `mask_area` | `advanced` | Configuration value for filter obs key. | - |
-| `filter_min_value` | `Optional[float]` | `null` | `advanced` | Configuration value for filter min value. | - |
-| `filter_max_value` | `Optional[float]` | `null` | `advanced` | Configuration value for filter max value. | - |
-| `parameter_scan_dict` | `Dict[str, Any]` | `{}` | `advanced` | Configuration value for parameter scan dict. | - |
-| `parameter_scan_save_anndata` | `bool` | `False` | `advanced` | Configuration value for parameter scan save anndata. | - |
-| `parameter_scan_qc_subdir` | `str` | `ParameterScan` | `advanced` | Configuration value for parameter scan qc subdir. | - |
-| `input_representation_key` | `Optional[str]` | `null` | `advanced` | Configuration value for input representation key. | - |
-| `pca_key` | `str` | `X_pca` | `advanced` | Configuration value for pca key. | - |
-| `harmony_key` | `str` | `X_pca_harmony` | `advanced` | Configuration value for harmony key. | - |
-| `representation_key` | `str` | `X_batch_integration` | `advanced` | Configuration value for representation key. | - |
-| `neighbors_key` | `Optional[str]` | `null` | `advanced` | Configuration value for neighbors key. | - |
-| `umap_key` | `Optional[str]` | `null` | `advanced` | Configuration value for umap key. | - |
-| `qc_output_subdir` | `str` | `RapidsProcess` | `advanced` | Configuration value for qc output subdir. | - |
-| `pca_params` | `Dict[str, Any]` | `{}` | `advanced` | Configuration value for pca params. | - |
-| `harmony_params` | `Dict[str, Any]` | `{'max_iter_harmony': 30, 'random_state': 0, 'verbose': True, 'dtype': 'float32'}` | `advanced` | Configuration value for harmony params. | - |
-| `neighbors_params` | `Dict[str, Any]` | `{}` | `advanced` | Configuration value for neighbors params. | - |
-| `umap_params` | `Dict[str, Any]` | `{}` | `advanced` | Configuration value for umap params. | - |
-| `leiden_params` | `Dict[str, Any]` | `{}` | `advanced` | Configuration value for leiden params. | - |
+| `input_adata_path` | `Optional[str]` | `null` | `advanced` | Optional source AnnData path for RAPIDS processing; use null to read general.anndata_path through the pipeline's normal stage-state checks. | - |
+| `output_adata_path` | `Optional[str]` | `null` | `advanced` | Optional destination for the processed AnnData; use null to update general.anndata_path with any filtering plus the new representations, graph, UMAP, Leiden labels, and provenance. | - |
+| `batch_correction_obs` | `Optional[str]` | `null` | `advanced` | AnnData obs column defining technical batches for GPU Harmony. It is required when run_harmony is true; when supplied without Harmony it is still validated and used to colour QC UMAPs. | - |
+| `run_harmony` | `bool` | `False` | `advanced` | Run RAPIDS-singlecell Harmony on newly computed PCA coordinates before neighbours. This changes an embedding, not marker values, and cannot be combined with input_representation_key. | - |
+| `harmony_flavor` | `str` | `harmony2` | `advanced` | GPU Harmony algorithm: harmony2 uses the stabilized diversity penalty, dynamic cluster-by-batch regularization, and batch pruning; harmony1 reproduces the original Harmony formulation. | - |
+| `n_for_pca` | `Optional[int]` | `null` | `advanced` | Number of GPU principal components computed from adata.X or pca_params.layer. Null requests markers minus one, clipped to the valid range set by cell and marker counts; ignored when using an existing representation. | - |
+| `n_pcs_neighbors` | `Optional[int]` | `null` | `advanced` | Number of leading columns from the active PCA, Harmony, or existing representation used to construct neighbours. Null uses every newly computed component, or lets RAPIDS choose when input_representation_key is set. | - |
+| `leiden_resolutions_list` | `List[float]` | `[0.3, 1.0]` | `advanced` | Leiden resolution values evaluated on the RAPIDS neighbour graph; each creates adata.obs['leiden_<resolution>'], with larger values generally yielding more graph communities. | - |
+| `umap_min_dist` | `float` | `0.1` | `advanced` | Minimum separation permitted between nearby points in the RAPIDS UMAP display. Lower values make visually tighter islands; this setting does not change the neighbour graph or Leiden labels. | - |
+| `run_leiden` | `bool` | `True` | `advanced` | Run GPU Leiden community detection at every configured resolution after neighbour construction; disable to retain the representation, graph, and UMAP without new cluster labels. | - |
+| `n_neighbors` | `Optional[int]` | `null` | `advanced` | Number of cells in each RAPIDS local neighbourhood. Smaller values emphasize fine local structure; larger values produce a more global graph. Null uses the installed library default, currently 15. | - |
+| `filter_obs_key` | `str` | `mask_area` | `advanced` | Numeric AnnData obs column used for optional pre-analysis cell filtering. The filter is disabled while both bounds are null; non-numeric or missing values are removed when it is active. | - |
+| `filter_min_value` | `Optional[float]` | `null` | `advanced` | Inclusive minimum accepted value in filter_obs_key; use null for no lower bound. With the default mask_area key, this can exclude small segmentation fragments but may also remove genuinely small cells. | - |
+| `filter_max_value` | `Optional[float]` | `null` | `advanced` | Inclusive maximum accepted value in filter_obs_key; use null for no upper bound. With mask_area, this can exclude large merged masks but may also remove genuinely large or multinucleated cells. | - |
+| `parameter_scan_dict` | `Dict[str, Any]` | `{}` | `advanced` | Lists of values expanded as a Cartesian-product scan. Supported keys are n_neighbors, n_for_pca, umap_min_dist, run_harmony, and harmony_flavor; an empty dictionary runs one normal analysis. | - |
+| `parameter_scan_save_anndata` | `bool` | `False` | `advanced` | Save a separately suffixed AnnData for every parameter-scan combination. When false, only QC and the scan summary are retained; scan mode never writes the normal canonical output. | - |
+| `parameter_scan_qc_subdir` | `str` | `ParameterScan` | `advanced` | Subdirectory below the RAPIDS QC/report directory containing one folder per scan combination and rapids_parameter_scan_summary.csv. | - |
+| `input_representation_key` | `Optional[str]` | `null` | `advanced` | Existing adata.obsm embedding used directly for neighbours, bypassing RAPIDS PCA and Harmony. It cannot be combined with run_harmony; n_for_pca and pca_params then have no effect. | - |
+| `pca_key` | `str` | `X_pca` | `advanced` | AnnData obsm key receiving newly computed GPU PCA coordinates when no existing input representation is selected. | - |
+| `harmony_key` | `str` | `X_pca_harmony` | `advanced` | AnnData obsm key receiving GPU Harmony-corrected PCA coordinates when run_harmony is enabled; adata.X and marker layers remain uncorrected. | - |
+| `representation_key` | `str` | `X_batch_integration` | `advanced` | Canonical AnnData obsm key copied from the active existing, PCA, or Harmony representation and used for RAPIDS neighbour construction and downstream stages. | - |
+| `neighbors_key` | `Optional[str]` | `null` | `advanced` | Optional name for a separate RAPIDS neighbour graph and its distance/connectivity matrices; null writes the standard AnnData neighbors and obsp keys, replacing their current contents. | - |
+| `umap_key` | `Optional[str]` | `null` | `advanced` | Optional AnnData obsm key for the RAPIDS UMAP embedding; null writes the standard X_umap key and replaces an existing UMAP. | - |
+| `qc_output_subdir` | `str` | `RapidsProcess` | `advanced` | Subdirectory below the active QC/report location for RAPIDS UMAPs, Leiden MatrixPlots, and optional parameter-scan outputs. | - |
+| `pca_params` | `Dict[str, Any]` | `{}` | `advanced` | Additional arguments for rapids_singlecell.pp.pca after null-like values are removed. Use layer to select an AnnData layer; n_comps, key_added, and copy are controlled by first-class fields and ignored here. | - |
+| `harmony_params` | `Dict[str, Any]` | `{'max_iter_harmony': 30, 'random_state': 0, 'verbose': True, 'dtype': 'float32'}` | `advanced` | Additional GPU Harmony arguments after null-like values are removed. Defaults use up to 30 rounds, seed 0, progress logging, and memory-efficient float32; float64 is more numerically stable but consumes more GPU memory. | - |
+| `neighbors_params` | `Dict[str, Any]` | `{}` | `advanced` | Additional arguments for rapids_singlecell.pp.neighbors, such as algorithm, metric, method, random_state, and algorithm_kwds. Dedicated fields override n_neighbors, n_pcs, use_rep, key_added, and copy. | - |
+| `umap_params` | `Dict[str, Any]` | `{}` | `advanced` | Additional arguments for rapids_singlecell.tl.umap, such as spread, n_components, maxiter, init_pos, and random_state. Dedicated fields override min_dist, key_added, neighbors_key, and copy. | - |
+| `leiden_params` | `Dict[str, Any]` | `{}` | `advanced` | Additional arguments for rapids_singlecell.tl.leiden, such as random_state, theta, n_iterations, use_weights, and dtype. Dedicated fields override resolution, key_added, neighbors_key, and copy. | - |

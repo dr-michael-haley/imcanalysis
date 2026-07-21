@@ -1,6 +1,7 @@
-# Scientific stage explainers
+# 🔬 Scientific Guides
 
-These files are the shared scientific explanations used by ReadTheDocs,
+These in-depth guides explain the biological purpose, scientific assumptions,
+interpretation, and limitations of each pipeline stage. They are shared by ReadTheDocs,
 `sbt stages explain`, and generated historical stage reports. Operational wrapper
 details remain in the [SLURM stage reference](../pipeline/stages/index.md).
 
@@ -21,6 +22,7 @@ cellcharter
 starling
 ai_interpretation
 visualisation
+population_embedding_qc
 pairwise_spatial
 networkx_spatial
 marker_reintegration

@@ -16,6 +16,14 @@
   color: #ffffff;
 }
 
+.wy-side-nav-search > a img.logo,
+.wy-side-nav-search .wy-dropdown > a img.logo {
+  width: 100%;
+  max-width: 260px;
+  height: auto;
+  margin: 0 auto 0.75rem;
+}
+
 .wy-side-nav-search input[type="text"]:focus {
   border-color: var(--imc-purple);
 }
@@ -94,5 +102,5 @@
 }
 
 .wy-nav-content {
-    max-width: 90% !important; /* Dynamic middle pane */
+    max-width: 100% !important; /* Dynamic middle pane */
 }

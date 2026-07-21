@@ -6,37 +6,37 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `output_dir` | `str` | `nimbus_output` | `advanced` | Configuration value for output dir. | - |
-| `roi_table_subfolder` | `str` | `nimbus_cell_tables` | `advanced` | Configuration value for roi table subfolder. | - |
-| `master_celltable` | `str` | `nimbus_celltable.csv` | `advanced` | Configuration value for master celltable. | - |
-| `master_classic_celltable` | `str` | `nimbus_classic_celltable.csv` | `advanced` | Configuration value for master classic celltable. | - |
-| `master_expansion_celltable` | `str` | `nimbus_expansion_celltable.csv` | `advanced` | Configuration value for master expansion celltable. | - |
-| `anndata_output` | `str` | `anndata.h5ad` | `advanced` | Configuration value for anndata output. | - |
-| `roi_table_prefix` | `str` | `nimbus_` | `advanced` | Configuration value for roi table prefix. | - |
-| `use_denoised_first` | `bool` | `True` | `advanced` | Configuration value for use denoised first. | - |
-| `allow_raw_fallback` | `bool` | `True` | `advanced` | Configuration value for allow raw fallback. | - |
-| `simple_image_names` | `bool` | `False` | `advanced` | Configuration value for simple image names. | - |
-| `mask_extensions` | `List[str]` | `['.tiff', '.tif']` | `advanced` | Configuration value for mask extensions. | - |
-| `mask_boundary_offset_pixels` | `int` | `0` | `advanced` | Configuration value for mask boundary offset pixels. | - |
-| `min_cell_area` | `Optional[int]` | `null` | `advanced` | Configuration value for min cell area. | - |
-| `max_cell_area` | `Optional[int]` | `null` | `advanced` | Configuration value for max cell area. | - |
-| `test_time_augmentation` | `bool` | `True` | `advanced` | Configuration value for test time augmentation. | - |
-| `batch_size` | `int` | `10` | `advanced` | Configuration value for batch size. | - |
-| `model_magnification` | `int` | `10` | `advanced` | Configuration value for model magnification. | - |
-| `dataset_magnification` | `int` | `10` | `advanced` | Configuration value for dataset magnification. | - |
-| `checkpoint` | `str` | `latest` | `advanced` | Configuration value for checkpoint. | - |
-| `device` | `str` | `auto` | `advanced` | Configuration value for device. | - |
-| `normalization_quantile` | `float` | `0.999` | `advanced` | Configuration value for normalization quantile. | - |
-| `normalization_subset` | `int` | `10` | `advanced` | Configuration value for normalization subset. | - |
-| `normalization_jobs` | `int` | `1` | `advanced` | Configuration value for normalization jobs. | - |
-| `normalization_clip` | `List[float]` | `[0.0, 1.0]` | `advanced` | Configuration value for normalization clip. | - |
-| `normalization_min_value` | `float` | `3.0` | `advanced` | Configuration value for normalization min value. | - |
-| `reuse_saved_normalization` | `bool` | `False` | `advanced` | Configuration value for reuse saved normalization. | - |
-| `norm_dict_qc_only` | `bool` | `False` | `advanced` | Configuration value for norm dict qc only. | - |
-| `save_prediction_maps` | `bool` | `False` | `advanced` | Configuration value for save prediction maps. | - |
-| `allow_prediction_resize` | `bool` | `False` | `advanced` | Configuration value for allow prediction resize. | - |
-| `use_existing_master_celltables` | `bool` | `False` | `advanced` | Configuration value for use existing master celltables. | - |
-| `extract_classic_intensities` | `bool` | `True` | `advanced` | Configuration value for extract classic intensities. | - |
-| `extract_expansion_intensities` | `bool` | `True` | `advanced` | Configuration value for extract expansion intensities. | - |
-| `expansion_pixels` | `int` | `10` | `advanced` | Configuration value for expansion pixels. | - |
-| `expansion_jobs` | `int` | `1` | `advanced` | Configuration value for expansion jobs. | - |
+| `output_dir` | `str` | `nimbus_output` | `advanced` | Directory for normalization_dict.json, master cell tables, and optional per-ROI Nimbus confidence maps. Relative paths resolve from the project working directory. | - |
+| `roi_table_subfolder` | `str` | `nimbus_cell_tables` | `advanced` | Subdirectory below general.celltable_folder for ROI-level Nimbus cell tables; use an empty string to write them directly into general.celltable_folder. | - |
+| `master_celltable` | `str` | `nimbus_celltable.csv` | `advanced` | Filename or path for the combined cell table containing mask geometry and per-marker Nimbus scores. Relative paths are placed below output_dir; an empty value falls back to segmentation.celltable_output. | - |
+| `master_classic_celltable` | `str` | `nimbus_classic_celltable.csv` | `advanced` | Filename or path for conventional mean image intensities measured inside each adjusted cell mask. Relative paths are placed below output_dir. | - |
+| `master_expansion_celltable` | `str` | `nimbus_expansion_celltable.csv` | `advanced` | Filename or path for mean image intensities measured after independently dilating each adjusted cell mask. Relative paths are placed below output_dir. | - |
+| `anndata_output` | `str` | `anndata.h5ad` | `advanced` | Deprecated compatibility path for the AnnData output. The current pipeline writes the canonical general.anndata_path and warns when this value differs. | - |
+| `roi_table_prefix` | `str` | `nimbus_` | `advanced` | Prefix added to each ROI name when writing ROI-level cell-table CSV filenames. | - |
+| `use_denoised_first` | `bool` | `True` | `advanced` | Deprecated compatibility setting not consulted by the current Nimbus stage. Image preference is selected per channel by panel.csv use_denoised and use_raw flags. | - |
+| `allow_raw_fallback` | `bool` | `True` | `advanced` | When a channel's panel-selected denoised or raw image is unavailable, also search the other image folder before declaring the channel missing. | - |
+| `simple_image_names` | `bool` | `False` | `advanced` | Match channel TIFFs using channel_label.tiff rather than the default channel_name_channel_label filename hint derived from panel.csv. | - |
+| `mask_extensions` | `List[str]` | `['.tiff', '.tif']` | `advanced` | Ordered filename extensions used to discover ROI label masks in general.masks_folder. | - |
+| `mask_boundary_offset_pixels` | `int` | `0` | `advanced` | Number of pixels by which to modify every cell mask before Nimbus scoring and all intensity extraction: positive values expand labels without overlap and negative values erode cells independently. | - |
+| `min_cell_area` | `Optional[int]` | `null` | `advanced` | Optional minimum cell area in pixels after mask-boundary adjustment; smaller labels are removed from Nimbus, cell tables, and AnnData. | - |
+| `max_cell_area` | `Optional[int]` | `null` | `advanced` | Optional maximum cell area in pixels after mask-boundary adjustment; larger labels are removed from Nimbus, cell tables, and AnnData. | - |
+| `test_time_augmentation` | `bool` | `True` | `advanced` | Average confidence maps predicted from 90-degree rotations and horizontal or vertical flips. This usually improves robustness but increases inference time. | - |
+| `batch_size` | `int` | `10` | `advanced` | Maximum number of image tiles processed together by tiled Nimbus inference; reduce it when accelerator memory is insufficient. | - |
+| `model_magnification` | `int` | `10` | `advanced` | Magnification expected by the selected Nimbus checkpoint. Inputs are rescaled from dataset_magnification to this value before inference. | - |
+| `dataset_magnification` | `int` | `10` | `advanced` | Magnification represented by the supplied channel images and masks. Set this to the true input scale so image and mask data are rescaled consistently for the model. | - |
+| `checkpoint` | `str` | `latest` | `advanced` | Nimbus model checkpoint. 'latest' checks Hugging Face for the newest V*.pt file and falls back to a cached checkpoint; any other value must name a local packaged checkpoint. | - |
+| `device` | `str` | `auto` | `advanced` | Torch inference device: 'auto' prefers Apple MPS, then CUDA, then CPU; explicit supported values are 'mps', 'cuda', and 'cpu'. | - |
+| `normalization_quantile` | `float` | `0.999` | `advanced` | Per-ROI, in-mask image quantile calculated for each channel; values are averaged across all usable ROIs to obtain the channel divisor before Nimbus inference. | - |
+| `normalization_subset` | `int` | `10` | `advanced` | Maximum number of randomly sampled ROIs displayed in each normalization QC gallery. Normalization itself uses all usable ROIs; set to 0 to skip the galleries. | - |
+| `normalization_jobs` | `int` | `1` | `advanced` | Compatibility setting for normalization concurrency. The current toolkit wrapper calculates normalization serially, so this value does not presently change execution. | - |
+| `normalization_clip` | `List[float]` | `[0.0, 1.0]` | `advanced` | Compatibility bounds used by normalization QC, whose second value sets the displayed upper clip. The pinned Nimbus loader clips inference images to [0, 1]. | - |
+| `normalization_min_value` | `float` | `3.0` | `advanced` | Positive lower bound applied to computed channel normalization divisors, preventing near-zero background estimates from amplifying noise. | - |
+| `reuse_saved_normalization` | `bool` | `False` | `advanced` | Load output_dir/normalization_dict.json instead of recomputing channel divisors. Finite positive manual values are retained and normalization QC is still regenerated. | - |
+| `norm_dict_qc_only` | `bool` | `False` | `advanced` | Stop after writing or loading normalization_dict.json and generating normalization QC; do not run Nimbus, extract intensities, or create cell tables and AnnData. | - |
+| `save_prediction_maps` | `bool` | `False` | `advanced` | Save each per-pixel Nimbus confidence map as an 8-bit TIFF under an ROI subdirectory of output_dir. Per-cell floating-point scores are produced regardless. | - |
+| `allow_prediction_resize` | `bool` | `False` | `advanced` | On an unexpected confidence-map versus mask shape mismatch, resize the prediction to the mask instead of failing. Enable only as a diagnosed fallback because resizing can alter cell-level scores. | - |
+| `use_existing_master_celltables` | `bool` | `False` | `advanced` | Reuse valid existing Nimbus, classic, and expansion master CSVs where available. This is automatically disabled when mask offsets or area filters could make tables stale. | - |
+| `extract_classic_intensities` | `bool` | `True` | `advanced` | Also calculate conventional mean source-image intensity inside each adjusted cell mask and add raw and marker-normalized AnnData layers. | - |
+| `extract_expansion_intensities` | `bool` | `True` | `advanced` | Also calculate mean source-image intensity after independently dilating each adjusted cell mask and add raw and marker-normalized AnnData layers. | - |
+| `expansion_pixels` | `int` | `10` | `advanced` | Number of binary-dilation iterations applied independently to each cell for expansion intensity extraction; expanded regions may overlap and include neighbouring signal. | - |
+| `expansion_jobs` | `int` | `1` | `advanced` | ROI-level worker processes for expansion extraction: 1 is sequential, -1 requests all available CPUs, and values above 1 request that many workers subject to ROI and CPU counts. | - |

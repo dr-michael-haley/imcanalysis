@@ -1,4 +1,4 @@
-# Getting started
+# 🚀 Getting Started
 
 Choose the route that matches where you will run the analysis:
 

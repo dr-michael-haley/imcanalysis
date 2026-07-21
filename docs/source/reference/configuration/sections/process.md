@@ -13,19 +13,19 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `batch_correction_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for batch correction obs. | - |
-| `n_for_pca` | `Optional[int]` | `null` | `advanced` | Configuration value for n for pca. | - |
-| `leiden_resolutions_list` | `List[float]` | `[0.3, 1.0]` | `advanced` | Configuration value for leiden resolutions list. | - |
-| `umap_min_dist` | `float` | `0.1` | `advanced` | Configuration value for umap min dist. | - |
-| `biobatchnet_params` | `Optional[Dict[str, Any]]` | `{'data_type': 'imc', 'latent_dim': 20, 'epochs': 100, 'device': None, 'use_raw': False, 'extra_params': {'loss_weights': {'recon_loss': 100.0, 'discriminator': 0.05, 'classifier': 1.0, 'kl_loss_1': 0.0005, 'kl_loss_2': 0.1, 'ortho_loss': 0.01}}}` | `advanced` | Configuration value for biobatchnet params. | - |
-| `biobatchnet_scan_parameter_sets` | `Optional[List[Dict[str, Any]]]` | `null` | `advanced` | Configuration value for biobatchnet scan parameter sets. | - |
-| `biobatchnet_scan_include_base` | `bool` | `True` | `advanced` | Configuration value for biobatchnet scan include base. | - |
-| `biobatchnet_run_postprocess` | `bool` | `True` | `advanced` | Configuration value for biobatchnet run postprocess. | - |
-| `biobatchnet_run_leiden` | `bool` | `True` | `advanced` | Configuration value for biobatchnet run leiden. | - |
-| `n_neighbors` | `Optional[int]` | `null` | `advanced` | Configuration value for n neighbors. | - |
-| `biobatchnet_data_type` | `Optional[str]` | `null` | `advanced` | Configuration value for biobatchnet data type. | - |
-| `biobatchnet_latent_dim` | `Optional[int]` | `null` | `advanced` | Configuration value for biobatchnet latent dim. | - |
-| `biobatchnet_epochs` | `Optional[int]` | `null` | `advanced` | Configuration value for biobatchnet epochs. | - |
-| `biobatchnet_device` | `Optional[str]` | `null` | `advanced` | Configuration value for biobatchnet device. | - |
-| `biobatchnet_kwargs` | `Optional[Dict[str, Any]]` | `null` | `advanced` | Configuration value for biobatchnet kwargs. | - |
-| `biobatchnet_use_raw` | `Optional[bool]` | `null` | `advanced` | Configuration value for biobatchnet use raw. | - |
+| `batch_correction_obs` | `Optional[str]` | `null` | `advanced` | Name of the adata.obs column that identifies technical batches to remove from the biological latent space. Values are converted to strings and encoded as consecutive integers; the column must exist and should describe technical rather than biological variation. | - |
+| `n_for_pca` | `Optional[int]` | `null` | `advanced` | Deprecated compatibility setting retained for older configurations. The current BioBatchNet stage does not run PCA and does not use this value. | - |
+| `leiden_resolutions_list` | `List[float]` | `[0.3, 1.0]` | `advanced` | Leiden resolutions calculated from the neighbour graph of X_biobatchnet when both biobatchnet_run_postprocess and biobatchnet_run_leiden are enabled. Each result is stored in adata.obs as leiden_<resolution>. | - |
+| `umap_min_dist` | `float` | `0.1` | `advanced` | Scanpy UMAP min_dist used when post-processing the biological BioBatchNet embedding; smaller values produce more compact local groupings but do not change model training. | - |
+| `biobatchnet_params` | `Optional[Dict[str, Any]]` | `{'data_type': 'imc', 'latent_dim': 20, 'epochs': 100, 'device': None, 'use_raw': False, 'extra_params': {'loss_weights': {'recon_loss': 100.0, 'discriminator': 0.05, 'classifier': 1.0, 'kl_loss_1': 0.0005, 'kl_loss_2': 0.1, 'ortho_loss': 0.01}}}` | `advanced` | BioBatchNet training parameters passed to the pinned BioBatchNet API. The mapping controls data_type, latent_dim, epochs, device, whether to use adata.raw, and extra_params such as the six legacy loss_weights. By default the model consumes adata.X and automatically uses CUDA when available. | - |
+| `biobatchnet_scan_parameter_sets` | `Optional[List[Dict[str, Any]]]` | `null` | `advanced` | Optional list of BioBatchNet parameter overrides to train as separate scan runs. A set may include a name used only as its output label; other keys override the base biobatchnet_params. Supplying extra_params.loss_weights replaces the complete base loss-weight mapping, so include all six required legacy keys. | - |
+| `biobatchnet_scan_include_base` | `bool` | `True` | `advanced` | Also run the unmodified biobatchnet_params configuration when parameter sets are scanned. The base run writes output_adata_path; named scan runs write sibling files. | - |
+| `biobatchnet_run_postprocess` | `bool` | `True` | `advanced` | Compute a Scanpy neighbour graph and UMAP from X_biobatchnet after training, and optionally Leiden clusters. Disable to retain only the learned embeddings and metadata. | - |
+| `biobatchnet_run_leiden` | `bool` | `True` | `advanced` | Run Leiden clustering at leiden_resolutions_list during BioBatchNet post-processing. This has no effect when biobatchnet_run_postprocess is disabled. | - |
+| `n_neighbors` | `Optional[int]` | `null` | `advanced` | Number of neighbours used to build the Scanpy graph from X_biobatchnet. When unset, Scanpy's default is used; this affects UMAP and Leiden but not BioBatchNet training. | - |
+| `biobatchnet_data_type` | `Optional[str]` | `null` | `advanced` | Deprecated flat alias for biobatchnet_params.data_type. Prefer the nested parameter mapping. | - |
+| `biobatchnet_latent_dim` | `Optional[int]` | `null` | `advanced` | Deprecated flat alias for biobatchnet_params.latent_dim. Prefer the nested parameter mapping. | - |
+| `biobatchnet_epochs` | `Optional[int]` | `null` | `advanced` | Deprecated flat alias for biobatchnet_params.epochs. Prefer the nested parameter mapping. | - |
+| `biobatchnet_device` | `Optional[str]` | `null` | `advanced` | Deprecated flat alias for biobatchnet_params.device. Prefer the nested parameter mapping. | - |
+| `biobatchnet_kwargs` | `Optional[Dict[str, Any]]` | `null` | `advanced` | Deprecated flat alias that replaces biobatchnet_params.extra_params. Prefer the nested parameter mapping. | - |
+| `biobatchnet_use_raw` | `Optional[bool]` | `null` | `advanced` | Deprecated flat alias for biobatchnet_params.use_raw. Prefer the nested parameter mapping. | - |

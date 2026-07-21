@@ -1,0 +1,70 @@
+# Portable macOS environment for local analysis and notebooks.
+#
+# This is intentionally a hand-maintained specification, not a platform export.
+# Conda chooses native Mac builds; this specification is verified on osx-arm64
+# and contains no architecture-specific package pins.
+# GPU/CUDA, Windows toolchain/runtime packages, R/rpy2, Java/Bio-Formats, OpenCL,
+# Napari/Qt, SpatialData I/O/viewer extras, and the less portable pip-only
+# analysis extras from sbt_env.yml are omitted. PyTorch uses the native
+# CPU/Metal build selected by conda-forge; no NVIDIA packages are requested.
+name: sbt
+channels:
+  - conda-forge
+  - bioconda
+  - nodefaults
+dependencies:
+  # Toolkit CLI and packaging
+  - python=3.12
+  - pip
+  - pydantic>=2.4,<3
+  - pyyaml>=6
+  - typer>=0.12,<1
+  - git
+
+  # Core scientific and single-cell analysis
+  - numpy>=2.1,<2.3
+  - pandas>=2.2
+  - scipy>=1.14
+  - anndata>=0.11,<0.13
+  - scanpy>=1.10,<1.12
+  - scikit-learn>=1.5
+  - scikit-image>=0.24
+  - statsmodels>=0.14
+  - h5py>=3.12
+  - dask
+  - numba
+  - networkx
+  - umap-learn
+  - bbknn
+  - harmonypy
+  - leidenalg
+  - lifelines
+  - scikit-survival
+  - pytorch
+
+  # Spatial and image analysis
+  - squidpy
+  - geojson
+  - shapely
+  - esda
+  - libpysal
+  - readimc
+  - readfcs
+  - tifffile
+  - tiffslide
+  - simpleitk
+
+  # Plotting and notebooks
+  - matplotlib-base
+  - seaborn
+  - colorcet
+  - plotly
+  - ipython
+  - ipykernel
+  - ipywidgets
+  - jupyterlab
+  - nbformat
+
+  # General utilities used across the toolkit
+  - psutil
+  - tqdm

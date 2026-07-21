@@ -6,19 +6,19 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `input_adata_path` | `Optional[str]` | `null` | `advanced` | Configuration value for input adata path. | - |
-| `output_adata_path` | `Optional[str]` | `null` | `advanced` | Configuration value for output adata path. | - |
-| `batch_correction_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for batch correction obs. | - |
-| `integration_method` | `str` | `harmony` | `advanced` | Configuration value for integration method. | - |
-| `batch_correction_method` | `Optional[str]` | `null` | `advanced` | Configuration value for batch correction method. | - |
-| `n_for_pca` | `Optional[int]` | `null` | `advanced` | Configuration value for n for pca. | - |
-| `leiden_resolutions_list` | `List[float]` | `[0.3, 1.0]` | `advanced` | Configuration value for leiden resolutions list. | - |
-| `umap_min_dist` | `float` | `0.1` | `advanced` | Configuration value for umap min dist. | - |
-| `run_leiden` | `bool` | `True` | `advanced` | Configuration value for run leiden. | - |
-| `n_neighbors` | `Optional[int]` | `null` | `advanced` | Configuration value for n neighbors. | - |
-| `pca_key` | `str` | `X_pca` | `advanced` | Configuration value for pca key. | - |
-| `harmony_key` | `str` | `X_pca_harmony` | `advanced` | Configuration value for harmony key. | - |
-| `representation_key` | `str` | `X_batch_integration` | `advanced` | Configuration value for representation key. | - |
-| `qc_output_subdir` | `str` | `BatchIntegration` | `advanced` | Configuration value for qc output subdir. | - |
-| `harmony_params` | `Dict[str, Any]` | `{'max_iter_harmony': 30, 'verbose': True, 'random_state': 0, 'device': None}` | `advanced` | Configuration value for harmony params. | - |
-| `bbknn_params` | `Dict[str, Any]` | `{}` | `advanced` | Configuration value for bbknn params. | - |
+| `input_adata_path` | `Optional[str]` | `null` | `advanced` | Optional AnnData input path for batch integration; use null to read general.anndata_path through the pipeline's normal stage-state checks. | - |
+| `output_adata_path` | `Optional[str]` | `null` | `advanced` | Optional destination for the integrated AnnData; use null to update general.anndata_path with the new PCA, integration, neighbour, UMAP, Leiden, and provenance entries. | - |
+| `batch_correction_obs` | `Optional[str]` | `null` | `advanced` | AnnData obs column defining the technical batches to balance or correct. It is required for harmony, bbknn, and both, and should not be a biological variable confounded with the comparison of interest. | - |
+| `integration_method` | `str` | `harmony` | `advanced` | Integration strategy: harmony corrects PCA coordinates; bbknn constructs a batch-balanced neighbour graph from uncorrected PCA; both applies Harmony then BBKNN; none uses ordinary Scanpy neighbours without batch correction. | - |
+| `batch_correction_method` | `Optional[str]` | `null` | `advanced` | Deprecated alias for integration_method retained for older YAML files. When set, this value overrides integration_method; new configurations should leave it null. | - |
+| `n_for_pca` | `Optional[int]` | `null` | `advanced` | Number of principal components recomputed from the current AnnData matrix and used for integration. Null requests markers minus one, clipped to the valid range set by cell and marker counts. | - |
+| `leiden_resolutions_list` | `List[float]` | `[0.3, 1.0]` | `advanced` | Leiden resolution values evaluated on the final neighbour graph; each value creates adata.obs['leiden_<resolution>'], with larger values generally producing more clusters. | - |
+| `umap_min_dist` | `float` | `0.1` | `advanced` | UMAP minimum-distance parameter used after integration; lower values permit tighter visual clusters, while higher values spread local neighbourhoods more broadly. It does not change the neighbour graph. | - |
+| `run_leiden` | `bool` | `True` | `advanced` | Run Leiden clustering for every configured resolution after constructing the final graph; disable to retain integration and UMAP without writing new Leiden labels. | - |
+| `n_neighbors` | `Optional[int]` | `null` | `advanced` | Target neighbourhood size. Harmony and none pass it to Scanpy neighbours; BBKNN converts it to ceil(n_neighbors / number_of_batches) neighbours per batch unless bbknn_params sets neighbors_within_batch. Null uses each library's default. | - |
+| `pca_key` | `str` | `X_pca` | `advanced` | AnnData obsm key read as the PCA input. Keep X_pca for normal runs because the stage recomputes PCA with Scanpy and Scanpy writes the result to that key. | - |
+| `harmony_key` | `str` | `X_pca_harmony` | `advanced` | AnnData obsm key that receives Harmony-corrected principal-component coordinates in harmony or both mode; marker values in adata.X are not corrected. | - |
+| `representation_key` | `str` | `X_batch_integration` | `advanced` | Canonical AnnData obsm key used for downstream graph construction: it stores copied PCA coordinates for bbknn or none, and corrected coordinates for harmony or both. | - |
+| `qc_output_subdir` | `str` | `BatchIntegration` | `advanced` | Subdirectory below the active QC/report location for batch-coloured and Leiden UMAP figures. It does not affect reusable AnnData output paths. | - |
+| `harmony_params` | `Dict[str, Any]` | `{'max_iter_harmony': 30, 'verbose': True, 'random_state': 0, 'device': None}` | `advanced` | Keyword arguments passed directly to harmonypy.run_harmony after null-like values are removed. Defaults allow 30 Harmony rounds, log progress, and seed stochastic steps with 0; advanced options include theta, sigma, lamb, and convergence settings. | - |
+| `bbknn_params` | `Dict[str, Any]` | `{}` | `advanced` | Keyword arguments passed to scanpy.external.pp.bbknn after null-like values are removed. The stage supplies use_rep and n_pcs when absent; common advanced options include neighbors_within_batch, trim, metric, and approximate-neighbour settings. | - |
