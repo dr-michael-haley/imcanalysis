@@ -13,6 +13,10 @@ from pydantic import ValidationError
 from tifffile import imwrite
 
 from SpatialBiologyToolkit.cellvision import (
+    ROIInput,
+    _gallery_image,
+    _normalized_uint16_image,
+    compute_normalization_dict,
     configuration_fingerprint,
     confusion_tables,
     identity_fingerprint,
@@ -20,12 +24,14 @@ from SpatialBiologyToolkit.cellvision import (
     relabel_selected_mask,
     resolve_roi_channels,
     select_source_cells,
+    validate_normalization_dict,
     write_scportrait_config,
 )
 from SpatialBiologyToolkit.cellvision_vicreg import (
     H5SCImageDataset,
     MaskSafeAugment,
     VICRegNetwork,
+    validate_h5sc_unit_range,
     vicreg_loss,
 )
 from SpatialBiologyToolkit.config.models import CellVisionConfig, PipelineConfig
@@ -144,8 +150,6 @@ class CellVisionChannelAndConfigTests(unittest.TestCase):
                 config_path,
                 image_size=36,
                 threads=1,
-                normalize_output=False,
-                normalization_range=[0.001, 0.999],
             )
 
             self.assertTrue(config_path.is_file())
@@ -166,11 +170,71 @@ class CellVisionChannelAndConfigTests(unittest.TestCase):
     def test_config_defaults_and_cross_field_validation(self):
         config = CellVisionConfig()
         self.assertEqual(config.image_size, 36)
-        self.assertEqual(config.leiden_resolutions, [0.3, 1.0])
+        self.assertFalse(config.mask_gaussian_blur)
+        self.assertEqual(config.normalization_quantile, 0.999)
+        self.assertEqual(config.normalization_clip, [0.0, 1.0])
+        self.assertEqual(config.leiden_resolutions, [0.2, 0.3, 0.5, 0.7, 1.0])
         with self.assertRaises(ValidationError):
             CellVisionConfig(populations=["T cell"])
         with self.assertRaises(ValidationError):
             CellVisionConfig(warmup_epochs=31, epochs=30)
+        with self.assertRaises(ValidationError):
+            CellVisionConfig(normalization_clip=[0, 2])
+
+    def test_nimbus_normalization_dict_accepts_string_values_and_exact_channels(self):
+        values = validate_normalization_dict(
+            {"CD3": "12.5", "CD20": 8, "unused": 99},
+            channel_names=["CD3", "CD20"],
+        )
+        self.assertEqual(values, {"CD3": 12.5, "CD20": 8.0})
+        with self.assertRaises(ValueError):
+            validate_normalization_dict({"CD3": 1}, channel_names=["CD3", "CD20"])
+
+    def test_normalized_uint16_conversion_has_no_float_max_heuristic(self):
+        first = _normalized_uint16_image(
+            np.array([[0.0, 0.5, 0.99], [0.0, 0.5, 0.99]], dtype=np.float32),
+            path=Path("first.tif"),
+            normalization_value=2.0,
+            clip_values=[0, 1],
+        )
+        second = _normalized_uint16_image(
+            np.array([[0.0, 0.5, 1.01], [0.0, 0.5, 1.01]], dtype=np.float32),
+            path=Path("second.tif"),
+            normalization_value=2.0,
+            clip_values=[0, 1],
+        )
+        self.assertEqual(int(first[0, 1]), int(second[0, 1]))
+        self.assertGreater(int(second[0, 2]), int(first[0, 2]))
+
+    def test_computed_normalization_uses_in_mask_quantile_and_nimbus_floor(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            image_path = root / "A.tif"
+            mask_path = root / "ROI.tif"
+            image = np.zeros((4, 4), dtype=np.float32)
+            image[1, 1] = 1
+            image[1, 2] = 3
+            mask = np.zeros((4, 4), dtype=np.uint16)
+            mask[1, 1:3] = 1
+            imwrite(image_path, image)
+            imwrite(mask_path, mask)
+            context = ROIInput(
+                name="ROI",
+                channel_files=(image_path,),
+                channel_names=("A",),
+                mask_path=mask_path,
+                spatial_shape=(4, 4),
+            )
+            values = compute_normalization_dict(
+                [context], quantile=0.5, minimum_value=3.0, mask_expand_px=0
+            )
+
+        self.assertEqual(values, {"A": 3.0})
+
+    def test_gallery_uses_stored_unit_range_without_autoscaling(self):
+        image = np.array([[0.0, 0.001], [0.002, 0.0]], dtype=np.float32)
+        displayed = _gallery_image(image, cell_id="cell", channel_name="CD3")
+        np.testing.assert_array_equal(displayed, image)
 
     def test_registry_environment_mode_and_asset_role(self):
         stage = get_stage("cellvision")
@@ -203,36 +267,60 @@ class CellVisionChannelAndConfigTests(unittest.TestCase):
 
 
 class CellVisionVICRegTests(unittest.TestCase):
-    def test_h5sc_dataset_selects_and_scales_only_image_channels(self):
+    def test_h5sc_dataset_reads_pre_normalized_images_and_mask(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "cells.h5sc"
             values = np.zeros((3, 3, 4, 4), dtype=np.float32)
-            values[:, 1] = 2
-            values[:, 2] = 8
+            values[:, 0, 1:3, 1:3] = 1
+            values[:, 1] = 0.25
+            values[:, 2] = 0.75
             with h5py.File(path, "w") as handle:
                 obsm = handle.create_group("obsm")
                 obsm.create_dataset("single_cell_images", data=values)
             dataset = H5SCImageDataset(
                 path,
                 channel_indices=[1, 2],
-                channel_scales=[2, 4],
+                mask_index=0,
             )
-            image, row = dataset[1]
+            image, mask, row = dataset[1]
             dataset.close()
 
         self.assertEqual(row, 1)
         self.assertEqual(tuple(image.shape), (2, 4, 4))
-        self.assertTrue(torch.allclose(image[0], torch.ones((4, 4))))
-        self.assertTrue(torch.allclose(image[1], torch.ones((4, 4))))
+        self.assertTrue(torch.allclose(image[0], torch.full((4, 4), 0.25)))
+        self.assertTrue(torch.allclose(image[1], torch.full((4, 4), 0.75)))
+        self.assertEqual(tuple(mask.shape), (1, 4, 4))
+
+    def test_h5sc_range_validation_rejects_unnormalized_images(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "cells.h5sc"
+            with h5py.File(path, "w") as handle:
+                obsm = handle.create_group("obsm")
+                obsm.create_dataset(
+                    "single_cell_images", data=np.full((2, 2, 3, 3), 1.01, dtype=np.float32)
+                )
+            with self.assertRaisesRegex(ValueError, r"\[0, 1\]"):
+                validate_h5sc_unit_range(path, channel_indices=[1])
 
     def test_mask_safe_noise_keeps_true_background_zero(self):
         image = torch.zeros((2, 2, 7, 7), dtype=torch.float32)
-        image[:, :, 3, 3] = 0.5
-        augment = MaskSafeAugment(translation_px=0, intensity_jitter=0, noise_std=0.1)
+        image[:, 0, 3, 3] = 0.5
+        masks = torch.zeros((2, 1, 7, 7), dtype=torch.float32)
+        masks[:, :, 2:5, 2:5] = 1
+        augment = MaskSafeAugment(
+            translation_px=0,
+            intensity_jitter=0,
+            noise_std=0.1,
+            horizontal_flip_probability=0,
+            vertical_flip_probability=0,
+            rotation_probability=0,
+            noise_support="channel",
+        )
 
-        result = augment(image)
+        result = augment(image, masks)
 
         self.assertTrue(torch.all(result[:, :, 0, 0] == 0))
+        self.assertTrue(torch.all(result[:, 1] == 0))
 
     def test_torch_model_and_vicreg_objective_are_finite(self):
         model = VICRegNetwork(

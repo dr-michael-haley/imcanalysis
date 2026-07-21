@@ -117,6 +117,7 @@ figure, axes = plot_spatialdata_cells(
     outline_target_only=True,
     mask_outside_target=True,
     fill_alpha=0.0,  # Optional: retain the outline without a coloured fill.
+    show_ax_titles=False,
 )
 ```
 
@@ -130,7 +131,9 @@ requested value must identify exactly one table row after applying the optional
 plotting the wrong cell. Set `outline_target_only=True` to omit neighbouring
 cell boundaries, and `mask_outside_target=True` to replace everything outside
 each target mask with black. The two display options are independent and both
-default to `False` for backward compatibility.
+default to `False` for backward compatibility. Set `show_ax_titles=False` to
+hide the per-cell observation, ROI, instance, and annotation titles while
+retaining an optional figure-level `title=`.
 
 ## Limitations
 

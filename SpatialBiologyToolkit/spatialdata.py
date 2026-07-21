@@ -928,6 +928,7 @@ def plot_spatialdata_cells(
     mask_outside_target: bool = False,
     target_color: str = "#00FFFF",
     boundary_color: str = "white",
+    show_ax_titles: bool = True,
     ax_title_size: float = 9.0,
     figsize: tuple[float, float] | None = None,
     title: str | None = None,
@@ -978,6 +979,10 @@ def plot_spatialdata_cells(
         every labelled cell visible in its crop.
     mask_outside_target
         If true, cover every pixel outside the selected cell with opaque black.
+    show_ax_titles
+        If false, hide the observation, ROI, instance, and annotation title
+        above each gallery panel.  This does not affect the figure-level
+        ``title``.
     """
 
     import matplotlib.pyplot as plt
@@ -1335,14 +1340,15 @@ def plot_spatialdata_cells(
                 boundary_rgba[target_boundaries] = (*face_color[:3], 1.0)
                 axis.imshow(boundary_rgba, interpolation="nearest")
 
-            panel_title = (
-                f"{record['obs_name']}\n{record['roi']} | "
-                f"{display_instance_key}={record['display_instance']}"
-            )
-            if color is not None:
-                annotation = selected_obs.iloc[record["gallery_index"]][color]
-                panel_title += f"\n{color}={annotation}"
-            axis.set_title(panel_title, fontsize=ax_title_size)
+            if show_ax_titles:
+                panel_title = (
+                    f"{record['obs_name']}\n{record['roi']} | "
+                    f"{display_instance_key}={record['display_instance']}"
+                )
+                if color is not None:
+                    annotation = selected_obs.iloc[record["gallery_index"]][color]
+                    panel_title += f"\n{color}={annotation}"
+                axis.set_title(panel_title, fontsize=ax_title_size)
             axis.set_axis_off()
 
     used_axes = flat_axes[: len(records)]

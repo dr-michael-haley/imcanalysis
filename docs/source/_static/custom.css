@@ -83,3 +83,16 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* Keep sidebar fixed, make content pane dynamic */
+.wy-nav-side {
+    width: 320px !important; /* Slightly wider fixed sidebar */
+}
+
+.wy-nav-content-wrap {
+    margin-left: 320px !important; /* Must match .wy-nav-side width */
+}
+
+.wy-nav-content {
+    max-width: 90% !important; /* Dynamic middle pane */
+}

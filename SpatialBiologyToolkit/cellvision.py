@@ -28,6 +28,7 @@ H5SC_FILENAME = "single_cells.h5sc"
 IDENTITY_FILENAME = "cell_identity.csv"
 EXTRACTION_METADATA_FILENAME = "extraction_metadata.json"
 SCPORTRAIT_CONFIG_FILENAME = "scportrait_config.generated.yml"
+NORMALIZATION_FILENAME = "normalization_dict.json"
 MODEL_FILENAME = "vicreg_encoder.pt"
 EMBEDDINGS_FILENAME = "cellvision_embeddings.h5ad"
 CLUSTERED_FILENAME = "cellvision_clustered.h5ad"
@@ -44,6 +45,7 @@ class CellVisionPaths:
     identity: Path
     extraction_metadata: Path
     scportrait_config: Path
+    normalization_dict: Path
     model: Path
     embeddings: Path
     clustered: Path
@@ -69,6 +71,7 @@ def resolve_cellvision_paths(asset_folder: str | Path) -> CellVisionPaths:
         identity=root / IDENTITY_FILENAME,
         extraction_metadata=root / EXTRACTION_METADATA_FILENAME,
         scportrait_config=root / SCPORTRAIT_CONFIG_FILENAME,
+        normalization_dict=root / NORMALIZATION_FILENAME,
         model=root / MODEL_FILENAME,
         embeddings=root / EMBEDDINGS_FILENAME,
         clustered=root / CLUSTERED_FILENAME,
@@ -394,7 +397,7 @@ def relabel_selected_mask(
     return lookup[labels]
 
 
-def _as_uint16_image(array: np.ndarray, *, path: Path) -> np.ndarray:
+def _validate_channel_image(array: np.ndarray, *, path: Path) -> np.ndarray:
     image = np.asarray(np.squeeze(array))
     if image.ndim != 2:
         raise ValueError(f"Expected 2D channel TIFF at {path}, got shape {array.shape}")
@@ -402,11 +405,138 @@ def _as_uint16_image(array: np.ndarray, *, path: Path) -> np.ndarray:
         raise ValueError(f"Channel TIFF contains non-finite or non-numeric values: {path}")
     if np.any(image < 0):
         raise ValueError(f"Channel TIFF contains negative intensities: {path}")
-    if np.issubdtype(image.dtype, np.floating) and float(image.max(initial=0)) <= 1.0:
-        image = image * np.iinfo(np.uint16).max
-    if float(image.max(initial=0)) > np.iinfo(np.uint16).max:
-        logging.warning("Clipping channel TIFF values above uint16 range: %s", path)
-    return np.rint(np.clip(image, 0, np.iinfo(np.uint16).max)).astype(np.uint16)
+    return image.astype(np.float32, copy=False)
+
+
+def validate_normalization_dict(
+    values: Mapping[str, Any],
+    *,
+    channel_names: Sequence[str],
+) -> dict[str, float]:
+    """Validate a Nimbus-format marker-to-normalization-value mapping."""
+    expected = [str(name) for name in channel_names]
+    missing = [name for name in expected if name not in values]
+    extra = sorted(set(str(key) for key in values).difference(expected))
+    if missing:
+        raise ValueError(
+            "CellVision normalization dictionary is missing selected markers; "
+            f"missing={missing}."
+        )
+    if extra:
+        logging.info(
+            "Ignoring %d normalization dictionary channel(s) not selected for CellVision: %s",
+            len(extra),
+            extra,
+        )
+    normalized: dict[str, float] = {}
+    for name in expected:
+        try:
+            value = float(values[name])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Normalization value for channel {name!r} is not numeric: {values[name]!r}"
+            ) from exc
+        if not np.isfinite(value) or value <= 0:
+            raise ValueError(
+                f"Normalization value for channel {name!r} must be finite and positive; got {value}."
+            )
+        normalized[name] = value
+    return normalized
+
+
+def load_normalization_dict(
+    path: Path,
+    *,
+    channel_names: Sequence[str],
+) -> dict[str, float]:
+    """Load and validate the marker-to-value JSON format produced by Nimbus."""
+    if not path.is_file():
+        raise FileNotFoundError(f"CellVision normalization dictionary does not exist: {path}")
+    return validate_normalization_dict(read_json(path), channel_names=channel_names)
+
+
+def compute_normalization_dict(
+    contexts: Sequence[ROIInput],
+    *,
+    quantile: float,
+    minimum_value: float,
+    mask_expand_px: int,
+) -> dict[str, float]:
+    """Compute Nimbus-compatible mean per-ROI, in-mask channel quantiles."""
+    from skimage.segmentation import expand_labels
+    from tifffile import imread
+
+    if not contexts:
+        raise ValueError("Cannot compute CellVision normalization without ROI inputs.")
+    if not 0 < float(quantile) <= 1:
+        raise ValueError("CellVision normalization quantile must lie in (0, 1].")
+    if not np.isfinite(minimum_value) or float(minimum_value) <= 0:
+        raise ValueError("CellVision normalization minimum must be finite and positive.")
+    per_channel: dict[str, list[float]] = {
+        str(name): [] for name in contexts[0].channel_names
+    }
+    for context in contexts:
+        raw_mask = np.asarray(np.squeeze(imread(context.mask_path)))
+        if raw_mask.shape != context.spatial_shape:
+            raise ValueError(
+                f"Mask for ROI {context.name!r} has shape {raw_mask.shape}; "
+                f"expected {context.spatial_shape}."
+            )
+        if mask_expand_px:
+            raw_mask = expand_labels(raw_mask.astype(np.int64), distance=int(mask_expand_px))
+        mask_bool = raw_mask > 0
+        if not np.any(mask_bool):
+            continue
+        for channel_index, channel_name in enumerate(context.channel_names):
+            image = _validate_channel_image(
+                imread(context.channel_files[channel_index]),
+                path=context.channel_files[channel_index],
+            )
+            finite = image[mask_bool]
+            finite = finite[np.isfinite(finite)]
+            if finite.size:
+                per_channel[str(channel_name)].append(
+                    float(np.quantile(finite, float(quantile)))
+                )
+
+    result: dict[str, float] = {}
+    for channel_name, roi_values in per_channel.items():
+        if roi_values:
+            value = float(np.mean(roi_values))
+            result[channel_name] = max(value, float(minimum_value))
+        else:
+            logging.warning(
+                "No finite in-mask pixels were available for channel %s; using %.3g.",
+                channel_name,
+                minimum_value,
+            )
+            result[channel_name] = float(minimum_value)
+    return validate_normalization_dict(result, channel_names=list(per_channel))
+
+
+def write_normalization_dict(path: Path, values: Mapping[str, float]) -> None:
+    """Write Nimbus-compatible normalization JSON with string-valued scalars."""
+    write_json(path, {str(key): str(float(value)) for key, value in values.items()})
+
+
+def _normalized_uint16_image(
+    array: np.ndarray,
+    *,
+    path: Path,
+    normalization_value: float,
+    clip_values: Sequence[float],
+) -> np.ndarray:
+    """Normalize raw intensity data to [0, 1] and encode it losslessly for scPortrait."""
+    image = _validate_channel_image(array, path=path)
+    if not np.isfinite(normalization_value) or float(normalization_value) <= 0:
+        raise ValueError(f"Invalid normalization value for {path}: {normalization_value}")
+    if len(clip_values) != 2:
+        raise ValueError("CellVision normalization clip requires two values.")
+    lower, upper = (float(value) for value in clip_values)
+    if not 0 <= lower < upper <= 1:
+        raise ValueError("CellVision normalization clip must satisfy 0 <= lower < upper <= 1.")
+    normalized = np.clip(image / float(normalization_value), lower, upper)
+    return np.rint(normalized * np.iinfo(np.uint16).max).astype(np.uint16)
 
 
 def assemble_scportrait_inputs(
@@ -418,6 +548,8 @@ def assemble_scportrait_inputs(
     assembled_folder: Path,
     image_size: int,
     mask_expand_px: int,
+    normalization_values: Mapping[str, float],
+    normalization_clip: Sequence[float],
 ) -> tuple[list[Path], np.ndarray]:
     """Assemble selected ROIs into the padded single-mask scPortrait workflow."""
     from skimage.segmentation import expand_labels
@@ -446,7 +578,12 @@ def assemble_scportrait_inputs(
         )
         for context in contexts:
             y0, y1, x0, x1 = offsets[context.name]
-            image = _as_uint16_image(imread(context.channel_files[channel_index]), path=context.channel_files[channel_index])
+            image = _normalized_uint16_image(
+                imread(context.channel_files[channel_index]),
+                path=context.channel_files[channel_index],
+                normalization_value=float(normalization_values[channel_name]),
+                clip_values=normalization_clip,
+            )
             if image.shape != context.spatial_shape:
                 raise ValueError(
                     f"Channel {channel_name!r} in ROI {context.name!r} has shape {image.shape}; "
@@ -485,8 +622,6 @@ def write_scportrait_config(
     *,
     image_size: int,
     threads: int,
-    normalize_output: bool,
-    normalization_range: Sequence[float],
 ) -> None:
     """Write the generated scPortrait adapter config from typed CellVision values."""
     import yaml
@@ -498,8 +633,9 @@ def write_scportrait_config(
         "HDF5CellExtraction": {
             "threads": int(threads),
             "image_size": int(image_size),
-            "normalize_output": bool(normalize_output),
-            "normalization_range": [float(value) for value in normalization_range],
+            # CellVision has already normalized every assembled marker to [0, 1].
+            # False makes scPortrait perform only its fixed uint16 -> float conversion.
+            "normalize_output": False,
             "compression": "lzf",
             "cache": str(cache_path),
         },
@@ -515,10 +651,12 @@ def run_scportrait_extraction(
     channel_paths: Sequence[Path],
     channel_names: Sequence[str],
     combined_mask: np.ndarray,
+    gaussian_blur_mask: bool,
     overwrite: bool,
 ) -> Path:
     """Run scPortrait's HDF5CellExtraction on preassembled IMC inputs."""
     try:
+        import scportrait.pipeline.extraction as extraction_module
         from scportrait.pipeline.extraction import HDF5CellExtraction
         from scportrait.pipeline.project import Project
     except ImportError as exc:  # pragma: no cover - environment-specific
@@ -550,7 +688,17 @@ def run_scportrait_extraction(
         )
         project.filehandler._add_centers(project.cyto_seg_name, overwrite=True)
         project.extraction_f.register_parameter("segmentation_mask", project.cyto_seg_name)
-        project.extract(overwrite=bool(overwrite))
+        original_gaussian = extraction_module.gaussian
+        if not gaussian_blur_mask:
+            # scPortrait 1.5.x hard-codes sigma=1. Linux fork workers inherit
+            # this adapter; Windows is forced to single-process by scPortrait.
+            extraction_module.gaussian = lambda image, **_kwargs: np.asarray(
+                image, dtype=np.float32
+            )
+        try:
+            project.extract(overwrite=bool(overwrite))
+        finally:
+            extraction_module.gaussian = original_gaussian
         output = Path(project.extraction_f.output_path)
     finally:
         shutil.rmtree(cache_root, ignore_errors=True)
@@ -690,7 +838,16 @@ def validate_existing_extraction(
     expected_fingerprint: str,
 ) -> dict[str, Any]:
     """Validate a reusable extraction before a non-overwriting stage reuses it."""
-    missing = [path for path in (paths.h5sc, paths.identity, paths.extraction_metadata) if not path.is_file()]
+    missing = [
+        path
+        for path in (
+            paths.h5sc,
+            paths.identity,
+            paths.extraction_metadata,
+            paths.normalization_dict,
+        )
+        if not path.is_file()
+    ]
     if missing:
         raise FileExistsError(
             f"CellVision asset folder already exists but extraction assets are incomplete: {missing}. "
@@ -756,6 +913,26 @@ def image_channel_metadata(var: pd.DataFrame, image_shape: Sequence[int]) -> tup
     if not indices:
         raise ValueError("H5SC contains no channels mapped as image_channel.")
     return indices, [names[index] for index in indices]
+
+
+def mask_channel_index(var: pd.DataFrame, image_shape: Sequence[int]) -> int:
+    """Return the unique H5SC segmentation-mask channel index."""
+    n_channels = int(image_shape[1])
+    if len(var) != n_channels:
+        raise ValueError(
+            f"H5SC var has {len(var)} rows but the image tensor has {n_channels} channels."
+        )
+    if "channel_mapping" not in var.columns:
+        logging.warning("H5SC var lacks channel_mapping; treating the first channel as the mask.")
+        return 0
+    indices = [
+        index
+        for index, value in enumerate(var["channel_mapping"].astype(str))
+        if value == "mask"
+    ]
+    if len(indices) != 1:
+        raise ValueError(f"Expected exactly one H5SC mask channel, found indices {indices}.")
+    return indices[0]
 
 
 def categorical_palette(categories: Sequence[str]) -> dict[str, Any]:
@@ -865,15 +1042,19 @@ def plot_confusion_matrix(
     return output_path
 
 
-def _display_scale(image: np.ndarray) -> np.ndarray:
-    image = np.asarray(image, dtype=np.float32)
-    positive = image[image > 0]
-    if positive.size == 0:
-        return np.zeros_like(image)
-    upper = float(np.quantile(positive, 0.995))
-    if upper <= 0:
-        return np.zeros_like(image)
-    return np.clip(image / upper, 0, 1)
+def _gallery_image(image: np.ndarray, *, cell_id: str, channel_name: str) -> np.ndarray:
+    """Return stored unit-range pixels unchanged for fixed-scale gallery display."""
+    values = np.asarray(image, dtype=np.float32)
+    if (
+        not np.all(np.isfinite(values))
+        or values.min(initial=0) < 0
+        or values.max(initial=0) > 1
+    ):
+        raise ValueError(
+            "CellVision galleries require stored H5SC images in [0, 1]; "
+            f"cell={cell_id!r}, channel={channel_name!r}."
+        )
+    return values
 
 
 def plot_cell_gallery(
@@ -907,7 +1088,11 @@ def plot_cell_gallery(
         for column, (channel_index, channel_name) in enumerate(
             zip(channel_indices, channel_names, strict=True)
         ):
-            image = _display_scale(np.asarray(images[int(image_index), int(channel_index)]))
+            image = _gallery_image(
+                images[int(image_index), int(channel_index)],
+                cell_id=str(cell_id),
+                channel_name=str(channel_name),
+            )
             channel_images.append(image)
             axes[row, column].imshow(image, cmap="gray", vmin=0, vmax=1)
             if row == 0:
@@ -964,6 +1149,7 @@ __all__ = [
     "annotate_h5sc_identity",
     "assemble_scportrait_inputs",
     "categorical_palette",
+    "compute_normalization_dict",
     "configuration_fingerprint",
     "confusion_tables",
     "discover_roi_inputs",
@@ -971,6 +1157,8 @@ __all__ = [
     "image_channel_metadata",
     "input_file_manifest",
     "leiden_key",
+    "load_normalization_dict",
+    "mask_channel_index",
     "open_h5sc_images",
     "plot_categorical_embedding",
     "plot_cell_gallery",
@@ -984,7 +1172,9 @@ __all__ = [
     "run_scportrait_extraction",
     "safe_slug",
     "select_source_cells",
+    "validate_normalization_dict",
     "validate_existing_extraction",
     "write_json",
+    "write_normalization_dict",
     "write_scportrait_config",
 ]

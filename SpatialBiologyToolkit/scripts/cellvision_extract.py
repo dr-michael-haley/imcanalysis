@@ -25,15 +25,19 @@ def main() -> None:
     from SpatialBiologyToolkit.cellvision import (
         annotate_h5sc_identity,
         assemble_scportrait_inputs,
+        compute_normalization_dict,
         discover_roi_inputs,
         identity_fingerprint,
         input_file_manifest,
+        load_normalization_dict,
         run_scportrait_extraction,
         select_source_cells,
         validate_existing_extraction,
         write_json,
+        write_normalization_dict,
         write_scportrait_config,
     )
+    from SpatialBiologyToolkit.reporting import project_asset_path
     from SpatialBiologyToolkit.scripts._cellvision_common import (
         input_paths,
         load_runtime,
@@ -67,6 +71,38 @@ def main() -> None:
         roi_obs=roi_obs,
         markers=cellvision.markers,
     )
+    supplied_normalization_path = (
+        project_asset_path(cellvision.normalization_dict_path)
+        if cellvision.normalization_dict_path
+        else None
+    )
+    if supplied_normalization_path is not None:
+        normalization_values = load_normalization_dict(
+            supplied_normalization_path,
+            channel_names=channel_names,
+        )
+    elif paths.root.exists() and not cellvision.overwrite:
+        if not paths.normalization_dict.is_file():
+            raise FileExistsError(
+                "Existing CellVision extraction predates extraction-stage normalization. "
+                "Set cellvision.overwrite=true to rebuild its H5SC images."
+            )
+        normalization_values = load_normalization_dict(
+            paths.normalization_dict,
+            channel_names=channel_names,
+        )
+    else:
+        normalization_values = compute_normalization_dict(
+            contexts,
+            quantile=cellvision.normalization_quantile,
+            minimum_value=cellvision.normalization_min_value,
+            mask_expand_px=cellvision.mask_expand_px,
+        )
+    source_files = [
+        source_path,
+        *(context.mask_path for context in contexts),
+        *(channel_path for context in contexts for channel_path in context.channel_files),
+    ]
     fingerprint = identity_fingerprint(
         identity,
         roi_obs=roi_obs,
@@ -75,22 +111,13 @@ def main() -> None:
         image_size=cellvision.image_size,
         extraction_parameters={
             "mask_expand_px": int(cellvision.mask_expand_px),
-            "scportrait_normalize_output": bool(cellvision.scportrait_normalize_output),
-            "scportrait_normalization_range": [
-                float(value) for value in cellvision.scportrait_normalization_range
-            ],
+            "mask_gaussian_blur": bool(cellvision.mask_gaussian_blur),
+            "normalization_values": normalization_values,
+            "normalization_quantile": float(cellvision.normalization_quantile),
+            "normalization_min_value": float(cellvision.normalization_min_value),
+            "normalization_clip": [float(value) for value in cellvision.normalization_clip],
         },
-        input_manifest=input_file_manifest(
-            [
-                source_path,
-                *(context.mask_path for context in contexts),
-                *(
-                    channel_path
-                    for context in contexts
-                    for channel_path in context.channel_files
-                ),
-            ]
-        ),
+        input_manifest=input_file_manifest(source_files),
     )
 
     stage_reporter = reporter()
@@ -98,6 +125,12 @@ def main() -> None:
         stage_reporter.add_input("anndata", source_path, "Source AnnData providing stable cell identities and labels.")
         stage_reporter.add_input("denoised_images", images_folder, "ROI/channel TIFFs used for cell portraits.")
         stage_reporter.add_input("masks", masks_folder, "Labelled ROI masks used for exact cell clipping.")
+        if supplied_normalization_path is not None:
+            stage_reporter.add_input(
+                "normalization_dict",
+                supplied_normalization_path,
+                "Nimbus-format per-channel normalization values supplied by the user.",
+            )
 
     if paths.root.exists() and not cellvision.overwrite:
         metadata = validate_existing_extraction(paths, expected_fingerprint=fingerprint)
@@ -105,6 +138,11 @@ def main() -> None:
         if stage_reporter is not None:
             stage_reporter.add_asset("cellvision_h5sc", paths.h5sc, "Validated reusable scPortrait single-cell images.")
             stage_reporter.add_asset("cellvision_identity", paths.identity, "Source-to-scPortrait cell identity table.")
+            stage_reporter.add_asset(
+                "cellvision_normalization_dict",
+                paths.normalization_dict,
+                "Nimbus-format scales used to create the stored [0, 1] H5SC marker images.",
+            )
             stage_reporter.add_metric("requested_cells", metadata["n_requested_cells"])
             stage_reporter.add_metric("extracted_cells", metadata["n_extracted_cells"])
             stage_reporter.add_metric("image_channels", len(metadata["markers"]))
@@ -120,6 +158,7 @@ def main() -> None:
             "Set cellvision.overwrite=true to replace incomplete assets."
         )
     paths.root.mkdir(parents=True, exist_ok=True)
+    write_normalization_dict(paths.normalization_dict, normalization_values)
 
     channel_paths, combined_mask = assemble_scportrait_inputs(
         contexts,
@@ -129,13 +168,13 @@ def main() -> None:
         assembled_folder=paths.root / "assembled_channels",
         image_size=cellvision.image_size,
         mask_expand_px=cellvision.mask_expand_px,
+        normalization_values=normalization_values,
+        normalization_clip=cellvision.normalization_clip,
     )
     write_scportrait_config(
         paths.scportrait_config,
         image_size=cellvision.image_size,
         threads=cellvision.extraction_threads,
-        normalize_output=cellvision.scportrait_normalize_output,
-        normalization_range=cellvision.scportrait_normalization_range,
     )
     output = run_scportrait_extraction(
         project_folder=paths.root,
@@ -143,6 +182,7 @@ def main() -> None:
         channel_paths=channel_paths,
         channel_names=channel_names,
         combined_mask=combined_mask,
+        gaussian_blur_mask=cellvision.mask_gaussian_blur,
         overwrite=True,
     )
     if output != paths.h5sc:
@@ -163,7 +203,7 @@ def main() -> None:
             f"scPortrait extracted only {extracted} CellVision cells; VICReg requires at least two."
         )
     metadata = {
-        "schema_version": 1,
+        "schema_version": 2,
         "identity_fingerprint": fingerprint,
         "source_anndata": str(source_path),
         "images_folder": str(images_folder),
@@ -174,6 +214,17 @@ def main() -> None:
         "populations": cellvision.populations,
         "markers": channel_names,
         "image_size": int(cellvision.image_size),
+        "mask_gaussian_blur": bool(cellvision.mask_gaussian_blur),
+        "normalization_dict": str(paths.normalization_dict),
+        "normalization_values": normalization_values,
+        "normalization_source": (
+            str(supplied_normalization_path)
+            if supplied_normalization_path is not None
+            else "computed_from_all_in_mask_roi_pixels"
+        ),
+        "normalization_quantile": float(cellvision.normalization_quantile),
+        "normalization_min_value": float(cellvision.normalization_min_value),
+        "normalization_clip": [float(value) for value in cellvision.normalization_clip],
         "n_requested_cells": int(len(identity)),
         "n_extracted_cells": extracted,
         "n_not_extracted_cells": int(len(identity) - extracted),
@@ -192,6 +243,11 @@ def main() -> None:
         stage_reporter.add_asset("cellvision_h5sc", paths.h5sc, "Identity-annotated scPortrait single-cell images.")
         stage_reporter.add_asset("cellvision_identity", paths.identity, "Source-to-scPortrait cell identity table including extraction status.")
         stage_reporter.add_asset("cellvision_extraction_metadata", paths.extraction_metadata, "Extraction selection and identity fingerprint.")
+        stage_reporter.add_asset(
+            "cellvision_normalization_dict",
+            paths.normalization_dict,
+            "Nimbus-format scales used to create the stored [0, 1] H5SC marker images.",
+        )
         stage_reporter.add_metric("requested_cells", len(identity))
         stage_reporter.add_metric("extracted_cells", extracted)
         stage_reporter.add_metric("not_extracted_cells", len(identity) - extracted)

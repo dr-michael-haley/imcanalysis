@@ -271,9 +271,11 @@ class SpatialDataConversionTests(unittest.TestCase):
                 sdata,
                 "cell_1",
                 crop_size=4,
+                show_ax_titles=False,
             )
             self.assertEqual(len(axes), 1)
             self.assertGreaterEqual(len(axes[0].images), 2)
+            self.assertEqual(axes[0].get_title(), "")
             plt.close(figure)
 
             with self.assertRaisesRegex(ValueError, "no image element"):

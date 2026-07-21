@@ -18,7 +18,6 @@ import h5py
 import numpy as np
 import pandas as pd
 import torch
-from numpy.typing import NDArray
 from torch import nn
 from torch.utils.data import DataLoader, Dataset
 
@@ -34,10 +33,11 @@ class H5SCImageDataset(Dataset):
         path: str | Path,
         *,
         channel_indices: Sequence[int],
-        channel_scales: Sequence[float] | None = None,
+        mask_index: int,
     ) -> None:
         self.path = str(Path(path).expanduser().resolve(strict=True))
         self.channel_indices = [int(value) for value in channel_indices]
+        self.mask_index = int(mask_index)
         if not self.channel_indices:
             raise ValueError("H5SCImageDataset requires at least one image channel.")
         with h5py.File(self.path, "r") as handle:
@@ -46,24 +46,13 @@ class H5SCImageDataset(Dataset):
             shape = tuple(int(value) for value in handle[H5SC_IMAGE_DATASET].shape)
         if len(shape) != 4:
             raise ValueError(f"Expected H5SC image shape (N, C, H, W), got {shape}")
-        if max(self.channel_indices) >= shape[1] or min(self.channel_indices) < 0:
+        all_indices = [*self.channel_indices, self.mask_index]
+        if max(all_indices) >= shape[1] or min(all_indices) < 0:
             raise IndexError(
                 f"Selected H5SC channel indices {self.channel_indices} exceed image shape {shape}."
             )
         self.shape = shape
         self._handle: h5py.File | None = None
-        self.channel_scales: np.ndarray
-        if channel_scales is None:
-            self.channel_scales = np.ones(len(self.channel_indices), dtype=np.float32)
-        else:
-            scales = np.asarray(channel_scales, dtype=np.float32)
-            if scales.shape != (len(self.channel_indices),):
-                raise ValueError(
-                    f"Expected {len(self.channel_indices)} channel scales, got {scales.shape}."
-                )
-            if not np.all(np.isfinite(scales)) or np.any(scales <= 0):
-                raise ValueError("All VICReg channel scales must be finite and positive.")
-            self.channel_scales = scales
 
     def __getstate__(self) -> dict[str, Any]:
         state = self.__dict__.copy()
@@ -86,69 +75,63 @@ class H5SCImageDataset(Dataset):
     def __len__(self) -> int:
         return self.shape[0]
 
-    def __getitem__(self, index: int) -> tuple[torch.Tensor, int]:
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, int]:
         image = np.asarray(
             self._images()[int(index), self.channel_indices, :, :],
             dtype=np.float32,
         )
-        image = np.clip(
-            image / self.channel_scales[:, None, None],
-            0.0,
-            1.0,
+        mask = np.asarray(
+            self._images()[int(index), self.mask_index, :, :],
+            dtype=np.float32,
         )
-        return torch.from_numpy(image), int(index)
+        if not np.all(np.isfinite(image)) or image.min(initial=0) < 0 or image.max(initial=0) > 1:
+            raise ValueError(
+                f"H5SC row {index} is outside the required CellVision [0, 1] input range."
+            )
+        return torch.from_numpy(image), torch.from_numpy(mask[None, ...]), int(index)
 
 
-def estimate_channel_scales(
+def validate_h5sc_unit_range(
     path: str | Path,
     *,
     channel_indices: Sequence[int],
-    quantile: float,
-    max_cells: int,
-    seed: int,
-    max_values_per_channel: int = 200_000,
-) -> np.ndarray:
-    """Estimate positive-pixel marker scales from a bounded random cell sample."""
-    rng = np.random.default_rng(int(seed))
+    chunk_cells: int = 256,
+) -> tuple[float, float]:
+    """Validate that stored H5SC marker images are finite and within [0, 1]."""
+    indices = [int(value) for value in channel_indices]
+    if not indices:
+        raise ValueError("CellVision H5SC range validation requires image channels.")
+    if int(chunk_cells) < 1:
+        raise ValueError("CellVision H5SC range-validation chunk size must be positive.")
+    minimum = float("inf")
+    maximum = float("-inf")
     with h5py.File(Path(path), "r") as handle:
+        if H5SC_IMAGE_DATASET not in handle:
+            raise KeyError(f"H5SC image tensor not found at /{H5SC_IMAGE_DATASET}")
         images = handle[H5SC_IMAGE_DATASET]
-        n_cells = int(images.shape[0])
-        if n_cells < 2:
-            raise ValueError("VICReg requires at least two extracted H5SC cells.")
-        sample_size = min(int(max_cells), n_cells)
-        rows = np.sort(rng.choice(n_cells, size=sample_size, replace=False))
-        reservoirs: list[list[np.ndarray]] = [[] for _ in channel_indices]
-        counts: NDArray[np.int64] = np.zeros(len(channel_indices), dtype=np.int64)
-        values_per_cell = max(16, int(max_values_per_channel // max(1, sample_size)))
-        for row in rows:
-            cell = np.asarray(images[int(row), list(channel_indices)], dtype=np.float32)
-            for channel, pixels in enumerate(cell):
-                positive = pixels[pixels > 0]
-                if positive.size > values_per_cell:
-                    positive = rng.choice(positive, size=values_per_cell, replace=False)
-                if positive.size:
-                    reservoirs[channel].append(np.asarray(positive, dtype=np.float32))
-                    counts[channel] += positive.size
-
-    scales: NDArray[np.float32] = np.ones(len(channel_indices), dtype=np.float32)
-    for channel, chunks in enumerate(reservoirs):
-        if not chunks:
-            logging.warning(
-                "H5SC image channel index %d contains no positive sampled pixels; using scale 1.",
-                channel_indices[channel],
+        if images.ndim != 4:
+            raise ValueError(f"Expected H5SC image shape (N, C, H, W), got {images.shape}")
+        if int(images.shape[0]) == 0:
+            raise ValueError("CellVision H5SC contains no cells.")
+        if min(indices) < 0 or max(indices) >= int(images.shape[1]):
+            raise IndexError(
+                f"Selected H5SC channel indices {indices} exceed image shape {images.shape}."
             )
-            continue
-        values = np.concatenate(chunks)
-        if values.size > max_values_per_channel:
-            values = rng.choice(values, size=max_values_per_channel, replace=False)
-        scale = float(np.quantile(values, float(quantile)))
-        scales[channel] = max(scale, float(np.finfo(np.float32).eps))
-    logging.info(
-        "Estimated VICReg positive-pixel channel scales from %d cells (sampled counts=%s).",
-        sample_size,
-        counts.tolist(),
-    )
-    return scales
+        for start in range(0, int(images.shape[0]), int(chunk_cells)):
+            block = np.asarray(
+                images[start : start + int(chunk_cells), indices, :, :],
+                dtype=np.float32,
+            )
+            if not np.all(np.isfinite(block)):
+                raise ValueError("H5SC marker images contain non-finite values.")
+            minimum = min(minimum, float(block.min(initial=0)))
+            maximum = max(maximum, float(block.max(initial=0)))
+    if minimum < 0 or maximum > 1:
+        raise ValueError(
+            "CellVision expects extraction-stage-normalized H5SC marker images in [0, 1]; "
+            f"observed range [{minimum:.6g}, {maximum:.6g}]. Re-run CellVision extraction."
+        )
+    return minimum, maximum
 
 
 def _translate_zero_filled(image: torch.Tensor, dy: int, dx: int) -> torch.Tensor:
@@ -172,20 +155,60 @@ def _translate_zero_filled(image: torch.Tensor, dy: int, dx: int) -> torch.Tenso
 class MaskSafeAugment:
     """Geometry/intensity augmentation that preserves exact zero background."""
 
-    def __init__(self, *, translation_px: int, intensity_jitter: float, noise_std: float):
+    def __init__(
+        self,
+        *,
+        translation_px: int,
+        intensity_jitter: float,
+        noise_std: float,
+        horizontal_flip_probability: float = 0.5,
+        vertical_flip_probability: float = 0.5,
+        rotation_probability: float = 1.0,
+        translation_probability: float = 1.0,
+        intensity_jitter_probability: float = 1.0,
+        noise_probability: float = 1.0,
+        noise_support: str = "channel",
+    ):
         self.translation_px = int(translation_px)
         self.intensity_jitter = float(intensity_jitter)
         self.noise_std = float(noise_std)
+        self.horizontal_flip_probability = float(horizontal_flip_probability)
+        self.vertical_flip_probability = float(vertical_flip_probability)
+        self.rotation_probability = float(rotation_probability)
+        self.translation_probability = float(translation_probability)
+        self.intensity_jitter_probability = float(intensity_jitter_probability)
+        self.noise_probability = float(noise_probability)
+        probabilities = {
+            "horizontal_flip_probability": self.horizontal_flip_probability,
+            "vertical_flip_probability": self.vertical_flip_probability,
+            "rotation_probability": self.rotation_probability,
+            "translation_probability": self.translation_probability,
+            "intensity_jitter_probability": self.intensity_jitter_probability,
+            "noise_probability": self.noise_probability,
+        }
+        invalid = {name: value for name, value in probabilities.items() if not 0 <= value <= 1}
+        if invalid:
+            raise ValueError(f"Augmentation probabilities must lie in [0, 1]: {invalid}")
+        if self.translation_px < 0 or not 0 <= self.intensity_jitter < 1 or self.noise_std < 0:
+            raise ValueError("Augmentation magnitudes must be non-negative and intensity jitter < 1.")
+        if noise_support not in {"channel", "segmentation_mask"}:
+            raise ValueError("noise_support must be 'channel' or 'segmentation_mask'.")
+        self.noise_support = noise_support
 
-    def _one(self, image: torch.Tensor) -> torch.Tensor:
+    def _one(self, image: torch.Tensor, segmentation_mask: torch.Tensor) -> torch.Tensor:
         output = image
-        if torch.rand((), device=output.device) < 0.5:
+        support = image.ne(0) if self.noise_support == "channel" else segmentation_mask.ne(0)
+        if torch.rand((), device=output.device) < self.horizontal_flip_probability:
             output = torch.flip(output, dims=(-1,))
-        if torch.rand((), device=output.device) < 0.5:
+            support = torch.flip(support, dims=(-1,))
+        if torch.rand((), device=output.device) < self.vertical_flip_probability:
             output = torch.flip(output, dims=(-2,))
-        rotations = int(torch.randint(0, 4, (), device=output.device).item())
-        output = torch.rot90(output, rotations, dims=(-2, -1))
-        if self.translation_px:
+            support = torch.flip(support, dims=(-2,))
+        if torch.rand((), device=output.device) < self.rotation_probability:
+            rotations = int(torch.randint(0, 4, (), device=output.device).item())
+            output = torch.rot90(output, rotations, dims=(-2, -1))
+            support = torch.rot90(support, rotations, dims=(-2, -1))
+        if self.translation_px and torch.rand((), device=output.device) < self.translation_probability:
             dy = int(
                 torch.randint(
                     -self.translation_px,
@@ -203,20 +226,23 @@ class MaskSafeAugment:
                 ).item()
             )
             output = _translate_zero_filled(output, dy, dx)
-        if self.intensity_jitter:
+            support = _translate_zero_filled(support, dy, dx)
+        if self.intensity_jitter and torch.rand((), device=output.device) < self.intensity_jitter_probability:
             lower = 1.0 - self.intensity_jitter
             upper = 1.0 + self.intensity_jitter
             scales = torch.empty(
                 (output.shape[0], 1, 1), device=output.device, dtype=output.dtype
             ).uniform_(lower, upper)
             output = output * scales
-        if self.noise_std:
-            foreground = output.ne(0).any(dim=0, keepdim=True)
-            output = output + torch.randn_like(output) * self.noise_std * foreground
+        if self.noise_std and torch.rand((), device=output.device) < self.noise_probability:
+            output = output + torch.randn_like(output) * self.noise_std * support
         return output.clamp_(0, 1)
 
-    def __call__(self, batch: torch.Tensor) -> torch.Tensor:
-        return torch.stack([self._one(image) for image in batch], dim=0)
+    def __call__(self, batch: torch.Tensor, masks: torch.Tensor) -> torch.Tensor:
+        return torch.stack(
+            [self._one(image, mask) for image, mask in zip(batch, masks, strict=True)],
+            dim=0,
+        )
 
 
 def _group_count(channels: int) -> int:
@@ -421,6 +447,13 @@ def train_vicreg(
     translation_px: int,
     intensity_jitter: float,
     noise_std: float,
+    horizontal_flip_probability: float,
+    vertical_flip_probability: float,
+    rotation_probability: float,
+    translation_probability: float,
+    intensity_jitter_probability: float,
+    noise_probability: float,
+    noise_support: str,
 ) -> tuple[VICRegNetwork, pd.DataFrame, torch.device]:
     """Train VICReg and return the model plus epoch-level objective history."""
     if len(dataset) < 2:
@@ -464,6 +497,13 @@ def train_vicreg(
         translation_px=int(translation_px),
         intensity_jitter=float(intensity_jitter),
         noise_std=float(noise_std),
+        horizontal_flip_probability=float(horizontal_flip_probability),
+        vertical_flip_probability=float(vertical_flip_probability),
+        rotation_probability=float(rotation_probability),
+        translation_probability=float(translation_probability),
+        intensity_jitter_probability=float(intensity_jitter_probability),
+        noise_probability=float(noise_probability),
+        noise_support=str(noise_support),
     )
     history: list[dict[str, float | int]] = []
     for epoch in range(int(epochs)):
@@ -475,10 +515,11 @@ def train_vicreg(
             "covariance_loss": 0.0,
         }
         batches = 0
-        for images, _indices in loader:
+        for images, masks, _indices in loader:
             images = images.to(device, non_blocking=True)
-            first_view = augment(images)
-            second_view = augment(images)
+            masks = masks.to(device, non_blocking=True)
+            first_view = augment(images, masks)
+            second_view = augment(images, masks)
             optimizer.zero_grad(set_to_none=True)
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
                 _first_embedding, first_projection = model(first_view)
@@ -539,7 +580,7 @@ def extract_embeddings(
     model.eval()
     embeddings: list[np.ndarray] = []
     row_indices: list[np.ndarray] = []
-    for images, indices in loader:
+    for images, _masks, indices in loader:
         values = model.encoder(images.to(device, non_blocking=True))
         embeddings.append(values.float().cpu().numpy())
         row_indices.append(indices.numpy())
@@ -557,19 +598,20 @@ def save_checkpoint(
     architecture: dict[str, int],
     channel_indices: Sequence[int],
     channel_names: Sequence[str],
-    channel_scales: Sequence[float],
+    mask_index: int,
     identity_fingerprint: str,
     training_fingerprint: str,
     training_config: dict[str, Any],
 ) -> None:
     """Atomically save the trained network and exact image-preprocessing contract."""
     payload = {
-        "format_version": 1,
+        "format_version": 2,
         "model_state_dict": model.state_dict(),
         "architecture": dict(architecture),
         "channel_indices": [int(value) for value in channel_indices],
         "channel_names": [str(value) for value in channel_names],
-        "channel_scales": [float(value) for value in channel_scales],
+        "mask_index": int(mask_index),
+        "input_range": [0.0, 1.0],
         "identity_fingerprint": str(identity_fingerprint),
         "training_fingerprint": str(training_fingerprint),
         "training_config": dict(training_config),
@@ -585,7 +627,7 @@ def load_checkpoint(path: Path, *, device: torch.device | None = None) -> tuple[
     """Load and reconstruct one CellVision VICReg checkpoint."""
     target_device = device or _device()
     payload = torch.load(path, map_location=target_device, weights_only=False)
-    if not isinstance(payload, dict) or payload.get("format_version") != 1:
+    if not isinstance(payload, dict) or payload.get("format_version") not in {1, 2}:
         raise ValueError(f"Unsupported CellVision checkpoint format: {path}")
     architecture = payload["architecture"]
     model = VICRegNetwork(
@@ -633,12 +675,12 @@ __all__ = [
     "H5SCImageDataset",
     "MaskSafeAugment",
     "VICRegNetwork",
-    "estimate_channel_scales",
     "extract_embeddings",
     "load_checkpoint",
     "plot_training_history",
     "save_checkpoint",
     "seed_everything",
     "train_vicreg",
+    "validate_h5sc_unit_range",
     "vicreg_loss",
 ]

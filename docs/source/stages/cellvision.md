@@ -44,6 +44,9 @@ runs.
 - Optional `cellvision.population_obs` plus `cellvision.populations` selection.
 - Optional ordered `cellvision.markers`; all discovered channels are used when
   this is unset.
+- Optional `cellvision.normalization_dict_path` pointing to the same
+  marker-to-value `normalization_dict.json` format produced and reviewed by
+  Nimbus. Relative paths resolve from the project root.
 
 Source AnnData observation names must be unique, and each `(ROI, object ID)` pair
 must be unique and present in the corresponding labelled mask. These are checked
@@ -55,15 +58,17 @@ The source AnnData is read-only. Reusable outputs live below the configured
 `cellvision.asset_folder` (default `scPortrait/CellVision`):
 
 - `extraction/data/single_cells.h5sc`: exact masked cell images used for model
-  training. H5SC mask channels are retained in the file but excluded from the
-  VICReg inputs.
+  training, already normalized to `[0, 1]`. H5SC mask channels are retained in
+  the file but excluded from the VICReg inputs.
+- `normalization_dict.json`: the supplied or computed Nimbus-format channel
+  scales used before scPortrait extraction.
 - `cell_identity.csv`: every requested source observation, its source row,
   ROI/object ID, numeric scPortrait ID, and extraction status.
 - `extraction_metadata.json`: selection/channel contract and identity
   fingerprint used to validate resumable runs.
 - `vicreg_encoder.pt`: model weights, architecture, marker indices/names,
-  fitted channel scales, training settings, Torch version, and identity
-  fingerprint.
+  training settings, Torch version, and identity fingerprint. VICReg does not
+  fit or apply another intensity normalization.
 - `cellvision_embeddings.h5ad`: encoder embeddings with the original AnnData
   observation names as row identities.
 - `cellvision_clustered.h5ad`: RAPIDS PCA, neighbor graph, CellVision UMAP, and
@@ -88,21 +93,29 @@ The active `outputs/<execution_id>_CellVision/` report contains:
   cells absent from CellVision shown in grey;
 - per-cluster galleries whose rows are sampled cells and columns are the exact
   H5SC image channels used by VICReg; when there are at most three channels, an
-  additional RGB composite column is included.
+  additional RGB composite column is included. Every channel uses the fixed
+  display range `[0, 1]`; cells and channels are never individually autoscaled.
 
 ## Important configuration options
 
 - `population_obs`, `populations`, and `markers` define the scientific scope.
 - `image_size=36` defines the fixed scPortrait crop.
-- `scportrait_normalize_output=false` preserves more between-cell intensity
-  information. VICReg then uses a stored positive-pixel per-marker quantile scale
-  while keeping the zero background exactly zero.
+- `mask_gaussian_blur=false` keeps the extraction mask binary by default for
+  1 µm/pixel IMC. Enabling it restores scPortrait's sigma-1 softened mask edge.
+- `normalization_dict_path` reuses reviewed Nimbus channel scales. When it is
+  unset, CellVision follows Nimbus defaults: for each channel, calculate the
+  0.999 quantile of in-mask pixels per ROI, average the ROI values, and floor
+  the result at 3.0. Images are divided by those values, clipped to `[0, 1]`,
+  and stored that way in H5SC. VICReg validates this range and does not rescale.
 - `embedding_dim`, `projector_dim`, `epochs`, `batch_size`, and the three
   `vicreg_*_weight` values control representation learning.
-- Augmentations use flips, 90-degree rotations, small zero-filled translations,
-  per-marker intensity jitter, and foreground-only Gaussian noise. Random crops,
-  hue/saturation operations, channel mixing, and artificial backgrounds are not
-  used because they are inappropriate for tightly cropped multiplex cell images.
+- Augmentation magnitudes and probabilities can be tuned independently for
+  flips, right-angle rotations, zero-filled integer translations, per-marker
+  intensity jitter, and Gaussian noise. Right-angle rotations avoid interpolation
+  of low-resolution IMC pixels. `augmentation_noise_support=channel` preserves
+  each marker's original nonzero support; `segmentation_mask` permits noise only
+  inside the stored cell mask. Random crops, arbitrary-angle interpolation,
+  hue/saturation operations, and channel mixing are not used.
 - `n_pcs` and `n_neighbors` are single RAPIDS values; only
   `leiden_resolutions` is a list.
 - `overwrite=false` validates and reuses complete assets only when the extraction
@@ -151,6 +164,10 @@ discovery, not a validated out-of-sample classifier.
 - Missing or duplicated `(ROI, ObjectNumber)` values stop extraction because
   downstream cell identity would otherwise be ambiguous.
 - Marker labels must resolve consistently in every selected ROI.
+- A supplied normalization dictionary must contain finite positive values for
+  every selected marker; additional unselected Nimbus channels are ignored.
+  Existing pre-change H5SC/model assets must
+  be rebuilt because VICReg now requires extraction-normalized `[0, 1]` inputs.
 - Very small selections are unsuitable for VICReg variance/covariance learning
   even though the hard minimum is two extracted cells.
 - A 36 px crop can truncate unusually large cells; review galleries and change

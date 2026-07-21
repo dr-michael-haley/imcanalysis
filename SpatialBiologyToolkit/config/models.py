@@ -670,19 +670,43 @@ class CellVisionConfig(ConfigModel):
         advice="Keep zero to train strictly on the segmented cell boundary.",
         ge=0,
     )
-    scportrait_normalize_output: bool = config_field(
+    mask_gaussian_blur: bool = config_field(
         False,
-        description="Whether scPortrait applies per-cell percentile normalization during extraction.",
+        description="Apply scPortrait's sigma-1 Gaussian blur to each extracted segmentation mask.",
         stage="cellvision",
         ui_group="scPortrait extraction",
-        advice="False preserves more between-cell intensity information; VICReg input scaling is controlled separately.",
+        advice="Keep false for 1 um/pixel IMC; enable only when softened mask edges are scientifically justified.",
     )
-    scportrait_normalization_range: List[float] = config_field(
-        default_factory=lambda: [0.001, 0.999],
-        description="Lower and upper quantiles used when scPortrait output normalization is enabled.",
+    normalization_dict_path: Optional[str] = config_field(
+        None,
+        description="Optional Nimbus-format normalization_dict.json containing one positive scale per selected marker.",
         stage="cellvision",
-        ui_group="scPortrait extraction",
-        advice="Both values must lie in [0, 1] and the lower value must be smaller.",
+        ui_group="Input normalization",
+        advice="Relative paths resolve from the project root; leave unset to compute the dictionary from all in-mask ROI pixels.",
+    )
+    normalization_quantile: float = config_field(
+        0.999,
+        description="Per-ROI in-mask quantile averaged to compute each channel normalization value.",
+        stage="cellvision",
+        ui_group="Input normalization",
+        advice="Matches the current Nimbus default and is used only when normalization_dict_path is unset.",
+        gt=0.5,
+        le=1.0,
+    )
+    normalization_min_value: float = config_field(
+        3.0,
+        description="Minimum computed normalization value used to avoid scaling background noise.",
+        stage="cellvision",
+        ui_group="Input normalization",
+        advice="Matches the current Nimbus default; supplied dictionary values are preserved after positive-value validation.",
+        gt=0,
+    )
+    normalization_clip: List[float] = config_field(
+        default_factory=lambda: [0.0, 1.0],
+        description="Lower and upper bounds applied after division by the channel normalization value.",
+        stage="cellvision",
+        ui_group="Input normalization",
+        advice="CellVision H5SC training images must remain within [0, 1].",
     )
     overwrite: bool = config_field(
         False,
@@ -783,23 +807,6 @@ class CellVisionConfig(ConfigModel):
         ui_group="VICReg model",
         advice="Disable when diagnosing numerical instability or using unsupported hardware.",
     )
-    normalization_quantile: float = config_field(
-        0.995,
-        description="Positive-pixel per-channel quantile used to scale VICReg inputs to [0, 1].",
-        stage="cellvision",
-        ui_group="VICReg model",
-        advice="Scaling is fitted once and stored in the checkpoint; exact zero background remains zero.",
-        gt=0.5,
-        le=1.0,
-    )
-    normalization_sample_cells: int = config_field(
-        2048,
-        description="Maximum number of H5SC cells sampled to estimate per-channel input scales.",
-        stage="cellvision",
-        ui_group="VICReg model",
-        advice="Increase for very heterogeneous cohorts when I/O permits.",
-        ge=2,
-    )
     vicreg_invariance_weight: float = config_field(
         25.0,
         description="Weight of the VICReg invariance loss between augmented views.",
@@ -832,6 +839,42 @@ class CellVisionConfig(ConfigModel):
         advice="Small translations preserve the complete 36 px cell crop without wraparound.",
         ge=0,
     )
+    augmentation_horizontal_flip_probability: float = config_field(
+        0.5,
+        description="Probability of a horizontal flip for each VICReg view.",
+        stage="cellvision",
+        ui_group="Mask-safe augmentations",
+        advice="Flips are pixel-preserving and do not interpolate low-resolution IMC data.",
+        ge=0,
+        le=1,
+    )
+    augmentation_vertical_flip_probability: float = config_field(
+        0.5,
+        description="Probability of a vertical flip for each VICReg view.",
+        stage="cellvision",
+        ui_group="Mask-safe augmentations",
+        advice="Set to zero to disable this orientation augmentation.",
+        ge=0,
+        le=1,
+    )
+    augmentation_rotation_probability: float = config_field(
+        1.0,
+        description="Probability of applying a random 0/90/180/270-degree rotation.",
+        stage="cellvision",
+        ui_group="Mask-safe augmentations",
+        advice="Only right-angle rotations are used, avoiding interpolation at 1 um/pixel.",
+        ge=0,
+        le=1,
+    )
+    augmentation_translation_probability: float = config_field(
+        1.0,
+        description="Probability of applying a zero-filled integer translation.",
+        stage="cellvision",
+        ui_group="Mask-safe augmentations",
+        advice="Set to zero to disable translations while retaining the configured maximum distance.",
+        ge=0,
+        le=1,
+    )
     augmentation_intensity_jitter: float = config_field(
         0.2,
         description="Maximum independent multiplicative intensity perturbation per marker channel.",
@@ -841,13 +884,38 @@ class CellVisionConfig(ConfigModel):
         ge=0,
         lt=1,
     )
+    augmentation_intensity_jitter_probability: float = config_field(
+        1.0,
+        description="Probability of applying independent multiplicative marker jitter.",
+        stage="cellvision",
+        ui_group="Mask-safe augmentations",
+        advice="Set to zero when marker amplitude should remain unchanged between views.",
+        ge=0,
+        le=1,
+    )
     augmentation_noise_std: float = config_field(
         0.02,
-        description="Standard deviation of Gaussian noise applied only to nonzero cell pixels.",
+        description="Standard deviation of Gaussian noise applied only on the configured spatial support.",
         stage="cellvision",
         ui_group="Mask-safe augmentations",
         advice="Background pixels remain exactly zero in both VICReg views.",
         ge=0,
+    )
+    augmentation_noise_probability: float = config_field(
+        1.0,
+        description="Probability of adding Gaussian noise to one augmented view.",
+        stage="cellvision",
+        ui_group="Mask-safe augmentations",
+        advice="Set to zero to disable pixel noise for low-resolution IMC.",
+        ge=0,
+        le=1,
+    )
+    augmentation_noise_support: Literal["channel", "segmentation_mask"] = config_field(
+        "channel",
+        description="Spatial support on which augmentation noise may be added.",
+        stage="cellvision",
+        ui_group="Mask-safe augmentations",
+        advice="channel preserves each marker's original nonzero support; segmentation_mask permits noise anywhere inside the extracted cell.",
     )
 
     n_pcs: int = config_field(
@@ -934,14 +1002,14 @@ class CellVisionConfig(ConfigModel):
                 if len(set(cleaned)) != len(cleaned):
                     raise ValueError(f"cellvision.{field_name} cannot contain duplicates")
                 setattr(self, field_name, cleaned)
-        if len(self.scportrait_normalization_range) != 2:
-            raise ValueError("cellvision.scportrait_normalization_range must contain two values")
-        lower, upper = (float(value) for value in self.scportrait_normalization_range)
+        if len(self.normalization_clip) != 2:
+            raise ValueError("cellvision.normalization_clip must contain two values")
+        lower, upper = (float(value) for value in self.normalization_clip)
         if not 0 <= lower < upper <= 1:
             raise ValueError(
-                "cellvision.scportrait_normalization_range must satisfy 0 <= lower < upper <= 1"
+                "cellvision.normalization_clip must satisfy 0 <= lower < upper <= 1"
             )
-        self.scportrait_normalization_range = [lower, upper]
+        self.normalization_clip = [lower, upper]
         if self.warmup_epochs > self.epochs:
             raise ValueError("cellvision.warmup_epochs cannot exceed cellvision.epochs")
         if not self.leiden_resolutions:

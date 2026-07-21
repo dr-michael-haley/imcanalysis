@@ -71,16 +71,17 @@ def main() -> None:
     from SpatialBiologyToolkit.cellvision import (
         configuration_fingerprint,
         image_channel_metadata,
+        mask_channel_index,
         read_h5sc_metadata,
         read_json,
     )
     from SpatialBiologyToolkit.cellvision_vicreg import (
         H5SCImageDataset,
-        estimate_channel_scales,
         extract_embeddings,
         plot_training_history,
         save_checkpoint,
         train_vicreg,
+        validate_h5sc_unit_range,
     )
     from SpatialBiologyToolkit.reporting import category_output_path
     from SpatialBiologyToolkit.scripts._cellvision_common import load_runtime, reporter
@@ -95,11 +96,20 @@ def main() -> None:
     fingerprint = str(extraction["identity_fingerprint"])
     h5sc_obs, h5sc_var, image_shape = read_h5sc_metadata(paths.h5sc)
     channel_indices, channel_names = image_channel_metadata(h5sc_var, image_shape)
+    mask_index = mask_channel_index(h5sc_var, image_shape)
     if channel_names != [str(value) for value in extraction["markers"]]:
         raise ValueError(
             "H5SC image-channel metadata does not match extraction metadata: "
             f"{channel_names} != {extraction['markers']}"
         )
+    observed_min, observed_max = validate_h5sc_unit_range(
+        paths.h5sc, channel_indices=channel_indices
+    )
+    logging.info(
+        "Validated stored CellVision H5SC marker range: [%.6g, %.6g].",
+        observed_min,
+        observed_max,
+    )
 
     architecture = {
         "input_channels": len(channel_indices),
@@ -116,14 +126,19 @@ def main() -> None:
         "num_workers": cellvision.num_workers,
         "seed": cellvision.seed,
         "amp": cellvision.amp,
-        "normalization_quantile": cellvision.normalization_quantile,
-        "normalization_sample_cells": cellvision.normalization_sample_cells,
         "vicreg_invariance_weight": cellvision.vicreg_invariance_weight,
         "vicreg_variance_weight": cellvision.vicreg_variance_weight,
         "vicreg_covariance_weight": cellvision.vicreg_covariance_weight,
         "augmentation_translation_px": cellvision.augmentation_translation_px,
+        "augmentation_horizontal_flip_probability": cellvision.augmentation_horizontal_flip_probability,
+        "augmentation_vertical_flip_probability": cellvision.augmentation_vertical_flip_probability,
+        "augmentation_rotation_probability": cellvision.augmentation_rotation_probability,
+        "augmentation_translation_probability": cellvision.augmentation_translation_probability,
         "augmentation_intensity_jitter": cellvision.augmentation_intensity_jitter,
+        "augmentation_intensity_jitter_probability": cellvision.augmentation_intensity_jitter_probability,
         "augmentation_noise_std": cellvision.augmentation_noise_std,
+        "augmentation_noise_probability": cellvision.augmentation_noise_probability,
+        "augmentation_noise_support": cellvision.augmentation_noise_support,
     }
     training_fingerprint = configuration_fingerprint(
         {
@@ -140,6 +155,8 @@ def main() -> None:
     if stage_reporter is not None:
         stage_reporter.add_input("cellvision_h5sc", paths.h5sc, "Identity-annotated H5SC images used for VICReg.")
         stage_reporter.add_input("cellvision_identity", paths.identity, "Source cell identity table.")
+        stage_reporter.add_metric("h5sc_marker_min", observed_min)
+        stage_reporter.add_metric("h5sc_marker_max", observed_max)
 
     if (paths.model.exists() or paths.embeddings.exists()) and not cellvision.overwrite:
         n_cells, n_embeddings = _validate_existing(
@@ -154,17 +171,10 @@ def main() -> None:
             stage_reporter.add_note("Reused existing model and embeddings with a matching identity fingerprint.")
         return
 
-    scales = estimate_channel_scales(
-        paths.h5sc,
-        channel_indices=channel_indices,
-        quantile=cellvision.normalization_quantile,
-        max_cells=cellvision.normalization_sample_cells,
-        seed=cellvision.seed,
-    )
     dataset = H5SCImageDataset(
         paths.h5sc,
         channel_indices=channel_indices,
-        channel_scales=scales.tolist(),
+        mask_index=mask_index,
     )
     try:
         model, history, device = train_vicreg(
@@ -184,8 +194,15 @@ def main() -> None:
             variance_weight=cellvision.vicreg_variance_weight,
             covariance_weight=cellvision.vicreg_covariance_weight,
             translation_px=cellvision.augmentation_translation_px,
+            horizontal_flip_probability=cellvision.augmentation_horizontal_flip_probability,
+            vertical_flip_probability=cellvision.augmentation_vertical_flip_probability,
+            rotation_probability=cellvision.augmentation_rotation_probability,
+            translation_probability=cellvision.augmentation_translation_probability,
             intensity_jitter=cellvision.augmentation_intensity_jitter,
+            intensity_jitter_probability=cellvision.augmentation_intensity_jitter_probability,
             noise_std=cellvision.augmentation_noise_std,
+            noise_probability=cellvision.augmentation_noise_probability,
+            noise_support=cellvision.augmentation_noise_support,
         )
         embeddings, rows = extract_embeddings(
             model,
@@ -203,7 +220,7 @@ def main() -> None:
         architecture=architecture,
         channel_indices=channel_indices,
         channel_names=channel_names,
-        channel_scales=scales.tolist(),
+        mask_index=mask_index,
         identity_fingerprint=fingerprint,
         training_fingerprint=training_fingerprint,
         training_config=training_config,
@@ -219,14 +236,15 @@ def main() -> None:
     embedding_adata = ad.AnnData(X=embeddings, obs=obs, var=var)
     embedding_adata.obsm["X_cellvision"] = embeddings.copy()
     embedding_adata.uns["cellvision"] = {
-        "format_version": 1,
+        "format_version": 2,
         "identity_fingerprint": fingerprint,
         "training_fingerprint": training_fingerprint,
         "source_h5sc": str(paths.h5sc),
         "model_path": str(paths.model),
         "channel_names": channel_names,
         "channel_indices": channel_indices,
-        "channel_scales": scales.astype(float).tolist(),
+        "mask_index": mask_index,
+        "input_range": [0.0, 1.0],
         "architecture": architecture,
         "training_config": training_config,
     }

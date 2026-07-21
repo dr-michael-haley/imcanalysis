@@ -2354,27 +2354,67 @@
           "type": "integer",
           "ui_group": "scPortrait extraction"
         },
-        "scportrait_normalize_output": {
-          "advice": "False preserves more between-cell intensity information; VICReg input scaling is controlled separately.",
+        "mask_gaussian_blur": {
+          "advice": "Keep false for 1 um/pixel IMC; enable only when softened mask edges are scientifically justified.",
           "default": false,
-          "description": "Whether scPortrait applies per-cell percentile normalization during extraction.",
+          "description": "Apply scPortrait's sigma-1 Gaussian blur to each extracted segmentation mask.",
           "level": "advanced",
           "stage": "cellvision",
-          "title": "Scportrait Normalize Output",
+          "title": "Mask Gaussian Blur",
           "type": "boolean",
           "ui_group": "scPortrait extraction"
         },
-        "scportrait_normalization_range": {
-          "advice": "Both values must lie in [0, 1] and the lower value must be smaller.",
-          "description": "Lower and upper quantiles used when scPortrait output normalization is enabled.",
+        "normalization_dict_path": {
+          "advice": "Relative paths resolve from the project root; leave unset to compute the dictionary from all in-mask ROI pixels.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional Nimbus-format normalization_dict.json containing one positive scale per selected marker.",
+          "level": "advanced",
+          "stage": "cellvision",
+          "title": "Normalization Dict Path",
+          "ui_group": "Input normalization"
+        },
+        "normalization_quantile": {
+          "advice": "Matches the current Nimbus default and is used only when normalization_dict_path is unset.",
+          "default": 0.999,
+          "description": "Per-ROI in-mask quantile averaged to compute each channel normalization value.",
+          "exclusiveMinimum": 0.5,
+          "level": "advanced",
+          "maximum": 1.0,
+          "stage": "cellvision",
+          "title": "Normalization Quantile",
+          "type": "number",
+          "ui_group": "Input normalization"
+        },
+        "normalization_min_value": {
+          "advice": "Matches the current Nimbus default; supplied dictionary values are preserved after positive-value validation.",
+          "default": 3.0,
+          "description": "Minimum computed normalization value used to avoid scaling background noise.",
+          "exclusiveMinimum": 0,
+          "level": "advanced",
+          "stage": "cellvision",
+          "title": "Normalization Min Value",
+          "type": "number",
+          "ui_group": "Input normalization"
+        },
+        "normalization_clip": {
+          "advice": "CellVision H5SC training images must remain within [0, 1].",
+          "description": "Lower and upper bounds applied after division by the channel normalization value.",
           "items": {
             "type": "number"
           },
           "level": "advanced",
           "stage": "cellvision",
-          "title": "Scportrait Normalization Range",
+          "title": "Normalization Clip",
           "type": "array",
-          "ui_group": "scPortrait extraction"
+          "ui_group": "Input normalization"
         },
         "overwrite": {
           "advice": "Enable only when inputs, selections, markers, or model settings have deliberately changed.",
@@ -2506,29 +2546,6 @@
           "type": "boolean",
           "ui_group": "VICReg model"
         },
-        "normalization_quantile": {
-          "advice": "Scaling is fitted once and stored in the checkpoint; exact zero background remains zero.",
-          "default": 0.995,
-          "description": "Positive-pixel per-channel quantile used to scale VICReg inputs to [0, 1].",
-          "exclusiveMinimum": 0.5,
-          "level": "advanced",
-          "maximum": 1.0,
-          "stage": "cellvision",
-          "title": "Normalization Quantile",
-          "type": "number",
-          "ui_group": "VICReg model"
-        },
-        "normalization_sample_cells": {
-          "advice": "Increase for very heterogeneous cohorts when I/O permits.",
-          "default": 2048,
-          "description": "Maximum number of H5SC cells sampled to estimate per-channel input scales.",
-          "level": "advanced",
-          "minimum": 2,
-          "stage": "cellvision",
-          "title": "Normalization Sample Cells",
-          "type": "integer",
-          "ui_group": "VICReg model"
-        },
         "vicreg_invariance_weight": {
           "advice": "The default follows the standard VICReg balance.",
           "default": 25.0,
@@ -2573,6 +2590,54 @@
           "type": "integer",
           "ui_group": "Mask-safe augmentations"
         },
+        "augmentation_horizontal_flip_probability": {
+          "advice": "Flips are pixel-preserving and do not interpolate low-resolution IMC data.",
+          "default": 0.5,
+          "description": "Probability of a horizontal flip for each VICReg view.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "cellvision",
+          "title": "Augmentation Horizontal Flip Probability",
+          "type": "number",
+          "ui_group": "Mask-safe augmentations"
+        },
+        "augmentation_vertical_flip_probability": {
+          "advice": "Set to zero to disable this orientation augmentation.",
+          "default": 0.5,
+          "description": "Probability of a vertical flip for each VICReg view.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "cellvision",
+          "title": "Augmentation Vertical Flip Probability",
+          "type": "number",
+          "ui_group": "Mask-safe augmentations"
+        },
+        "augmentation_rotation_probability": {
+          "advice": "Only right-angle rotations are used, avoiding interpolation at 1 um/pixel.",
+          "default": 1.0,
+          "description": "Probability of applying a random 0/90/180/270-degree rotation.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "cellvision",
+          "title": "Augmentation Rotation Probability",
+          "type": "number",
+          "ui_group": "Mask-safe augmentations"
+        },
+        "augmentation_translation_probability": {
+          "advice": "Set to zero to disable translations while retaining the configured maximum distance.",
+          "default": 1.0,
+          "description": "Probability of applying a zero-filled integer translation.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "cellvision",
+          "title": "Augmentation Translation Probability",
+          "type": "number",
+          "ui_group": "Mask-safe augmentations"
+        },
         "augmentation_intensity_jitter": {
           "advice": "No hue, saturation, channel mixing, or artificial background is applied to multiplex IMC images.",
           "default": 0.2,
@@ -2585,15 +2650,53 @@
           "type": "number",
           "ui_group": "Mask-safe augmentations"
         },
+        "augmentation_intensity_jitter_probability": {
+          "advice": "Set to zero when marker amplitude should remain unchanged between views.",
+          "default": 1.0,
+          "description": "Probability of applying independent multiplicative marker jitter.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "cellvision",
+          "title": "Augmentation Intensity Jitter Probability",
+          "type": "number",
+          "ui_group": "Mask-safe augmentations"
+        },
         "augmentation_noise_std": {
           "advice": "Background pixels remain exactly zero in both VICReg views.",
           "default": 0.02,
-          "description": "Standard deviation of Gaussian noise applied only to nonzero cell pixels.",
+          "description": "Standard deviation of Gaussian noise applied only on the configured spatial support.",
           "level": "advanced",
           "minimum": 0,
           "stage": "cellvision",
           "title": "Augmentation Noise Std",
           "type": "number",
+          "ui_group": "Mask-safe augmentations"
+        },
+        "augmentation_noise_probability": {
+          "advice": "Set to zero to disable pixel noise for low-resolution IMC.",
+          "default": 1.0,
+          "description": "Probability of adding Gaussian noise to one augmented view.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "cellvision",
+          "title": "Augmentation Noise Probability",
+          "type": "number",
+          "ui_group": "Mask-safe augmentations"
+        },
+        "augmentation_noise_support": {
+          "advice": "channel preserves each marker's original nonzero support; segmentation_mask permits noise anywhere inside the extracted cell.",
+          "default": "channel",
+          "description": "Spatial support on which augmentation noise may be added.",
+          "enum": [
+            "channel",
+            "segmentation_mask"
+          ],
+          "level": "advanced",
+          "stage": "cellvision",
+          "title": "Augmentation Noise Support",
+          "type": "string",
           "ui_group": "Mask-safe augmentations"
         },
         "n_pcs": {

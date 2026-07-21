@@ -28,9 +28,17 @@
 | `image_size` | `int` | `36` | `basic` | Height and width in pixels of each extracted single-cell image. | The 36 px default is intended to retain even relatively large IMC cells while limiting model size. |
 | `extraction_threads` | `int` | `12` | `advanced` | Worker processes used by scPortrait HDF5 cell extraction. | Do not exceed the CPUs allocated by the CellVision SLURM wrapper. |
 | `mask_expand_px` | `int` | `0` | `advanced` | Optional labelled-mask expansion distance before extracting cell portraits. | Keep zero to train strictly on the segmented cell boundary. |
-| `scportrait_normalize_output` | `bool` | `False` | `advanced` | Whether scPortrait applies per-cell percentile normalization during extraction. | False preserves more between-cell intensity information; VICReg input scaling is controlled separately. |
-| `scportrait_normalization_range` | `List[float]` | `[0.001, 0.999]` | `advanced` | Lower and upper quantiles used when scPortrait output normalization is enabled. | Both values must lie in [0, 1] and the lower value must be smaller. |
+| `mask_gaussian_blur` | `bool` | `False` | `advanced` | Apply scPortrait's sigma-1 Gaussian blur to each extracted segmentation mask. | Keep false for 1 um/pixel IMC; enable only when softened mask edges are scientifically justified. |
 | `overwrite` | `bool` | `False` | `advanced` | Regenerate existing reusable CellVision assets instead of validating and reusing them. | Enable only when inputs, selections, markers, or model settings have deliberately changed. |
+
+## Input normalization
+
+| Field | Type | Default | Level | Description | Advice |
+|---|---|---|---|---|---|
+| `normalization_dict_path` | `Optional[str]` | `null` | `advanced` | Optional Nimbus-format normalization_dict.json containing one positive scale per selected marker. | Relative paths resolve from the project root; leave unset to compute the dictionary from all in-mask ROI pixels. |
+| `normalization_quantile` | `float` | `0.999` | `advanced` | Per-ROI in-mask quantile averaged to compute each channel normalization value. | Matches the current Nimbus default and is used only when normalization_dict_path is unset. |
+| `normalization_min_value` | `float` | `3.0` | `advanced` | Minimum computed normalization value used to avoid scaling background noise. | Matches the current Nimbus default; supplied dictionary values are preserved after positive-value validation. |
+| `normalization_clip` | `List[float]` | `[0.0, 1.0]` | `advanced` | Lower and upper bounds applied after division by the channel normalization value. | CellVision H5SC training images must remain within [0, 1]. |
 
 ## VICReg model
 
@@ -47,8 +55,6 @@
 | `num_workers` | `int` | `4` | `advanced` | PyTorch DataLoader worker processes for H5SC image reads. | Keep below the SLURM CPU allocation and reduce if the HDF5 filesystem is congested. |
 | `seed` | `int` | `0` | `basic` | Random seed used for selection fingerprints, augmentations, training, and galleries. | Keep fixed when comparing marker sets or populations. |
 | `amp` | `bool` | `True` | `advanced` | Use automatic mixed precision for CUDA VICReg training. | Disable when diagnosing numerical instability or using unsupported hardware. |
-| `normalization_quantile` | `float` | `0.995` | `advanced` | Positive-pixel per-channel quantile used to scale VICReg inputs to [0, 1]. | Scaling is fitted once and stored in the checkpoint; exact zero background remains zero. |
-| `normalization_sample_cells` | `int` | `2048` | `advanced` | Maximum number of H5SC cells sampled to estimate per-channel input scales. | Increase for very heterogeneous cohorts when I/O permits. |
 
 ## VICReg loss
 
@@ -63,8 +69,15 @@
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
 | `augmentation_translation_px` | `int` | `2` | `advanced` | Maximum zero-filled integer translation applied to VICReg image views. | Small translations preserve the complete 36 px cell crop without wraparound. |
+| `augmentation_horizontal_flip_probability` | `float` | `0.5` | `advanced` | Probability of a horizontal flip for each VICReg view. | Flips are pixel-preserving and do not interpolate low-resolution IMC data. |
+| `augmentation_vertical_flip_probability` | `float` | `0.5` | `advanced` | Probability of a vertical flip for each VICReg view. | Set to zero to disable this orientation augmentation. |
+| `augmentation_rotation_probability` | `float` | `1.0` | `advanced` | Probability of applying a random 0/90/180/270-degree rotation. | Only right-angle rotations are used, avoiding interpolation at 1 um/pixel. |
+| `augmentation_translation_probability` | `float` | `1.0` | `advanced` | Probability of applying a zero-filled integer translation. | Set to zero to disable translations while retaining the configured maximum distance. |
 | `augmentation_intensity_jitter` | `float` | `0.2` | `advanced` | Maximum independent multiplicative intensity perturbation per marker channel. | No hue, saturation, channel mixing, or artificial background is applied to multiplex IMC images. |
-| `augmentation_noise_std` | `float` | `0.02` | `advanced` | Standard deviation of Gaussian noise applied only to nonzero cell pixels. | Background pixels remain exactly zero in both VICReg views. |
+| `augmentation_intensity_jitter_probability` | `float` | `1.0` | `advanced` | Probability of applying independent multiplicative marker jitter. | Set to zero when marker amplitude should remain unchanged between views. |
+| `augmentation_noise_std` | `float` | `0.02` | `advanced` | Standard deviation of Gaussian noise applied only on the configured spatial support. | Background pixels remain exactly zero in both VICReg views. |
+| `augmentation_noise_probability` | `float` | `1.0` | `advanced` | Probability of adding Gaussian noise to one augmented view. | Set to zero to disable pixel noise for low-resolution IMC. |
+| `augmentation_noise_support` | `Literal['channel', 'segmentation_mask']` | `channel` | `advanced` | Spatial support on which augmentation noise may be added. | channel preserves each marker's original nonzero support; segmentation_mask permits noise anywhere inside the extracted cell. |
 
 ## RAPIDS clustering
 

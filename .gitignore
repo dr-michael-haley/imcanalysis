@@ -128,7 +128,15 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
+# Per-project SBT operational state
+.sbt/
+
 # Other files and directories
 .idea
 .vscode
 .ipynb_checkpoints
+population_qc.md
+new_skill.md
+pydantic_migration.md
+cli_launcher_migration.md
+env_management.md
