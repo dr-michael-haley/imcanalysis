@@ -32,6 +32,7 @@ from SpatialBiologyToolkit.reporting.events import (
 )
 from SpatialBiologyToolkit.reporting.models import StageManifest
 from SpatialBiologyToolkit.reporting.paths import (
+    category_output_path,
     project_asset_path,
     resolve_reporting_context,
 )
@@ -91,12 +92,15 @@ class ReportingTests(unittest.TestCase):
                 self.assertIn(heading, content)
 
     def test_every_python_stage_module_is_registered_for_shared_bootstrap(self):
-        modules = [
-            module
-            for stage in STAGES
-            for module in stage.python_modules
-        ]
-        self.assertEqual(len(modules), len(set(modules)))
+        module_owners: dict[str, list] = {}
+        for stage in STAGES:
+            for module in stage.python_modules:
+                module_owners.setdefault(module, []).append(stage)
+        for module, owners in module_owners.items():
+            if len(owners) > 1:
+                atomic = [owner for owner in owners if len(owner.python_modules) == 1]
+                self.assertEqual(len(atomic), 1, (module, owners))
+        modules = set(module_owners)
         self.assertIn("SpatialBiologyToolkit.scripts.preprocess", modules)
         self.assertIn("SpatialBiologyToolkit.scripts.check_panel_consistency", modules)
         for stage in STAGES:
@@ -143,7 +147,7 @@ class ReportingTests(unittest.TestCase):
             output_dir = Path(environment["SBT_STAGE_OUTPUT_DIR"])
             with patch.dict(os.environ, environment, clear=False):
                 with StageReporter.from_environment() as report:
-                    table = report.context.tables_dir / "summary.csv"
+                    table = category_output_path("table", "summary.csv")
                     table.write_text("metric,value\ncells,10\n", encoding="utf-8")
                     report.add_metric("rois_processed", 2)
 
@@ -166,6 +170,18 @@ class ReportingTests(unittest.TestCase):
             self.assertIn("Focused reporting test.", readme)
             self.assertIn("Technical workflow directory", readme)
             self.assertIn("## How to interpret these outputs", readme)
+
+    def test_report_categories_are_created_only_when_used(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            _context, _run, environment = self._managed_stage(temp_dir)
+            output_dir = Path(environment["SBT_STAGE_OUTPUT_DIR"])
+            with patch.dict(os.environ, environment, clear=False):
+                with StageReporter.from_environment():
+                    empty_nested = category_output_path("figure") / "unused"
+                    empty_nested.mkdir()
+
+            for category in ("figures", "tables", "summaries", "files"):
+                self.assertFalse((output_dir / category).exists(), category)
 
     def test_reporter_records_failure_and_reraises_scientific_exception(self):
         with tempfile.TemporaryDirectory() as temp_dir:

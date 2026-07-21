@@ -72,6 +72,7 @@ def build_run_plan(
             if stage.name not in seen:
                 stages.append(stage)
                 seen.add(stage.name)
+    selected_stage_names = {stage.name for stage in stages}
     assets = resolve_assets(context.config, context.root)
     mapped_assets = asset_map(assets)
     available = {role for role, asset in mapped_assets.items() if asset_is_ready(asset)}
@@ -80,8 +81,9 @@ def build_run_plan(
     warnings: list[str] = []
     if not include_dependencies:
         warnings.append(
-            "Dependency expansion is disabled; only explicitly selected stages "
-            "will run, and their required assets must already exist."
+            "Dependency expansion is disabled; upstream stages not explicitly "
+            "selected will not be added, and their required assets must already "
+            "exist. Dependencies between explicitly selected stages are retained."
         )
     planned: list[PlannedStage] = []
     project_validation = validate_project(context)
@@ -133,7 +135,15 @@ def build_run_plan(
                 name=stage.name,
                 description=stage.description,
                 slurm_script=script,
-                depends_on=stage.depends_on if include_dependencies else [],
+                depends_on=(
+                    stage.depends_on
+                    if include_dependencies
+                    else [
+                        dependency
+                        for dependency in stage.depends_on
+                        if dependency in selected_stage_names
+                    ]
+                ),
                 requires_assets=stage.requires_assets,
                 produces_assets=stage.produces_assets,
                 expected_outputs=stage.expected_outputs,

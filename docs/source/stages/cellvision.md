@@ -7,16 +7,24 @@ It converts selected cells and marker channels into identity-tracked 36 x 36
 scPortrait images, trains a PyTorch VICReg model, extracts one embedding per
 cell, clusters those embeddings with RAPIDS, and builds a comparison report.
 
-The preferred command is:
+Run the four checkpoint stages as separate dependent jobs with:
 
 ```bash
 sbt run cellvision
 ```
 
-The registered `job_cellvision.sh` wrapper executes the complete workflow in one
-GPU allocation. It switches from `scPortrait` for extraction/training, to
-`rapids_singlecell` for clustering, and back to `scPortrait` for plots. This
-avoids queueing a new GPU job at each checkpoint.
+Here `cellvision` is a mode containing `cellvision-extract`,
+`cellvision-embed`, `cellvision-cluster`, and `cellvision-plot`. Each component
+can also be requested directly. To keep the complete workflow in one GPU
+allocation instead, run:
+
+```bash
+sbt run cellvision-full
+```
+
+The `job_cellvision_full.sh` wrapper switches from `scPortrait` for
+extraction/training, to `rapids_singlecell` for clustering, and back to
+`scPortrait` for plots.
 
 ## Why it is performed
 
@@ -81,7 +89,9 @@ renumbered or projected downstream.
 
 ## Human-facing outputs produced
 
-The active `outputs/<execution_id>_CellVision/` report contains:
+The combined run writes to `outputs/<execution_id>_CellVision_Full/`. Separate
+jobs write their own extraction, embedding, clustering, and plotting execution
+reports. Across those reports, CellVision produces:
 
 - the weighted VICReg training objective and its unweighted invariance,
   variance, and covariance components;
@@ -128,18 +138,21 @@ The active `outputs/<execution_id>_CellVision/` report contains:
 
 ## Component scripts and SLURM checkpoints
 
-The combined stage invokes these package modules in order:
+The `cellvision` mode exposes these registered stages and package modules in
+order:
 
-1. `SpatialBiologyToolkit.scripts.cellvision_extract`
-2. `SpatialBiologyToolkit.scripts.cellvision_embed`
-3. `SpatialBiologyToolkit.scripts.cellvision_cluster`
-4. `SpatialBiologyToolkit.scripts.cellvision_plot`
+1. `cellvision-extract` → `SpatialBiologyToolkit.scripts.cellvision_extract`
+2. `cellvision-embed` → `SpatialBiologyToolkit.scripts.cellvision_embed`
+3. `cellvision-cluster` → `SpatialBiologyToolkit.scripts.cellvision_cluster`
+4. `cellvision-plot` → `SpatialBiologyToolkit.scripts.cellvision_plot`
 
 Matching component wrappers are
 `job_cellvision_extract.sh`, `job_cellvision_embed.sh`,
-`job_cellvision_cluster.sh`, and `job_cellvision_plot.sh`. They are useful for
-checkpointed debugging or rerunning one downstream part, but they intentionally
-do not create four additional planner stage identities.
+`job_cellvision_cluster.sh`, and `job_cellvision_plot.sh`. These are independent
+planner stages, so a downstream component automatically includes its upstream
+CellVision dependencies. Use `--no-deps` to rerun only that component after its
+required reusable assets already exist. `cellvision-full` remains the single-job
+alternative.
 
 The extraction adapter is based on the earlier local `scPortrait_to_IMC` helper
 behavior but is now repository-owned, multi-channel, population-aware, and tied

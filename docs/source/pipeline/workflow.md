@@ -43,7 +43,10 @@ former control-plane role.
 - `bint`, `rapids`, and `bbn` are alternative processing routes. Run more than one only when deliberately comparing methods.
 - `remap`, `subcl`, `aiinter`, and `reint` are optional core stages.
 - `cchar`, `starling`, `pairsp`, and `nxsp` are independent analysis branches after processing.
-- `cellvision` is an optional image-representation branch after quantification. Its combined wrapper keeps scPortrait extraction/VICReg, RAPIDS clustering, and plotting in one GPU allocation.
+- `cellvision` is the checkpointed image-representation mode: extraction,
+  VICReg embedding, RAPIDS clustering, and plotting run as separate dependent
+  jobs. Each `cellvision-*` component can also be requested directly.
+- `cellvision-full` performs the same workflow in one GPU allocation.
 - `scport` is an external single-cell portrait branch after denoising and mask generation. Its environment and external converter are not installed by the standard environment setup.
 - `aiinter` needs `OPENAI_API_KEY` when AI interpretation is enabled.
 

@@ -283,10 +283,24 @@ class CellVisionChannelAndConfigTests(unittest.TestCase):
         np.testing.assert_array_equal(displayed, image)
 
     def test_registry_environment_mode_and_asset_role(self):
-        stage = get_stage("cellvision")
-        self.assertEqual(stage.environment_keys, ["scportrait", "rapids"])
-        self.assertEqual(get_mode("cellvision").stages, ["cellvision"])
-        self.assertEqual(len(stage.python_modules), 4)
+        full_stage = get_stage("cellvision-full")
+        self.assertEqual(full_stage.environment_keys, ["scportrait", "rapids"])
+        self.assertEqual(
+            get_mode("cellvision").stages,
+            [
+                "cellvision-extract",
+                "cellvision-embed",
+                "cellvision-cluster",
+                "cellvision-plot",
+            ],
+        )
+        self.assertEqual(len(full_stage.python_modules), 4)
+        self.assertEqual(
+            get_stage("cellvision-extract").environment_keys, ["scportrait"]
+        )
+        self.assertEqual(
+            get_stage("cellvision-cluster").environment_keys, ["rapids"]
+        )
         assets = {
             asset.role: asset for asset in resolve_assets(PipelineConfig(), Path("."))
         }
@@ -301,15 +315,90 @@ class CellVisionChannelAndConfigTests(unittest.TestCase):
             self.assertTrue(plan.ready, plan.errors)
             self.assertEqual(
                 [stage.name for stage in plan.resolved_stages],
-                ["prep", "denoise", "cellpose", "nimbus", "cellvision"],
+                [
+                    "prep",
+                    "denoise",
+                    "cellpose",
+                    "nimbus",
+                    "cellvision-extract",
+                    "cellvision-embed",
+                    "cellvision-cluster",
+                    "cellvision-plot",
+                ],
             )
-            self.assertIn("cellvision_assets", plan.resolved_stages[-1].produces_assets)
-            run = create_run_record(context, plan, command="sbt run cellvision")
-            environment = sbt_environment(context, run, "cellvision")
+            self.assertIn(
+                "cellvision_assets", plan.resolved_stages[-2].produces_assets
+            )
+
+            full_plan = build_run_plan(context, ["cellvision-full"])
+            run = create_run_record(
+                context, full_plan, command="sbt run cellvision-full"
+            )
+            environment = sbt_environment(context, run, "cellvision-full")
 
         self.assertEqual(environment["SBT_CONDA_ENV"], "scPortrait")
         self.assertEqual(environment["SBT_CONDA_ENV_SCPORTRAIT"], "scPortrait")
         self.assertEqual(environment["SBT_CONDA_ENV_RAPIDS"], "rapids_singlecell")
+
+    def test_cluster_component_no_deps_requires_existing_embeddings(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = initialize_project(Path(temp_dir) / "project")
+            (context.root / "IMC_files" / "case.mcd").write_bytes(b"x")
+            assets = {
+                asset.role: asset
+                for asset in resolve_assets(context.config, context.root)
+            }
+            asset_root = assets["cellvision_assets"].path
+            asset_root.mkdir(parents=True)
+            (asset_root / "placeholder.txt").write_text("partial", encoding="utf-8")
+
+            missing = build_run_plan(
+                context, ["cellvision-cluster"], include_dependencies=False
+            )
+            self.assertFalse(missing.ready)
+            self.assertIn(
+                asset_root / "cellvision_embeddings.h5ad",
+                missing.resolved_stages[0].missing_files,
+            )
+
+            (asset_root / "cellvision_embeddings.h5ad").write_bytes(b"placeholder")
+            ready = build_run_plan(
+                context, ["cellvision-cluster"], include_dependencies=False
+            )
+            self.assertTrue(ready.ready, ready.errors)
+            self.assertEqual(
+                [stage.name for stage in ready.resolved_stages],
+                ["cellvision-cluster"],
+            )
+
+    def test_cellvision_mode_no_deps_retains_component_order(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = initialize_project(Path(temp_dir) / "project")
+            assets = {
+                asset.role: asset
+                for asset in resolve_assets(context.config, context.root)
+            }
+            (context.root / "IMC_files" / "case.mcd").write_bytes(b"x")
+            assets["anndata"].path.parent.mkdir(parents=True, exist_ok=True)
+            assets["anndata"].path.write_bytes(b"placeholder")
+            for role in ("denoised_images", "masks"):
+                assets[role].path.mkdir(parents=True, exist_ok=True)
+                (assets[role].path / "placeholder.tif").write_bytes(b"placeholder")
+
+            plan = build_run_plan(
+                context, ["cellvision"], include_dependencies=False
+            )
+
+            self.assertTrue(plan.ready, plan.errors)
+            self.assertEqual(
+                [stage.depends_on for stage in plan.resolved_stages],
+                [
+                    [],
+                    ["cellvision-extract"],
+                    ["cellvision-embed"],
+                    ["cellvision-cluster"],
+                ],
+            )
 
 
 class CellVisionVICRegTests(unittest.TestCase):

@@ -84,6 +84,28 @@ def _started_at_from_environment() -> datetime:
     return _utc_now()
 
 
+def _remove_empty_category_directories(context: ReportingContext) -> None:
+    """Prune unused report category directories, including empty subfolders."""
+    for root in (
+        context.figures_dir,
+        context.tables_dir,
+        context.summaries_dir,
+        context.files_dir,
+    ):
+        if not root.is_dir():
+            continue
+        descendants = sorted(
+            (path for path in root.rglob("*") if path.is_dir()),
+            key=lambda path: len(path.parts),
+            reverse=True,
+        )
+        for directory in (*descendants, root):
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+
+
 class StageReporter:
     """Collect and render one stage's human-facing scientific record."""
 
@@ -152,13 +174,6 @@ class StageReporter:
 
     def __enter__(self) -> "StageReporter":
         self.context.stage_run_dir.mkdir(parents=True, exist_ok=True)
-        for directory in (
-            self.context.figures_dir,
-            self.context.tables_dir,
-            self.context.summaries_dir,
-            self.context.files_dir,
-        ):
-            directory.mkdir(parents=True, exist_ok=True)
         os.environ.setdefault("SBT_STAGE", self.context.stage)
         os.environ.setdefault("SBT_PROJECT_ROOT", str(self.context.project_root))
         os.environ.setdefault("SBT_PROJECT_ID", self.context.project_id)
@@ -345,6 +360,7 @@ class StageReporter:
             self.manifest.generated_files,
             discover_generated_files(self.context.stage_run_dir),
         )
+        _remove_empty_category_directories(self.context)
         self.manifest.parameters.update(extract_stage_parameters(self.context))
         self.manifest.asset_effect = self._asset_effect()
         self.manifest.metrics.setdefault(

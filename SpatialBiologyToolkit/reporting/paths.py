@@ -66,9 +66,12 @@ def infer_stage_from_main_module() -> str | None:
 
     from SpatialBiologyToolkit.pipeline.registry import STAGES
 
-    for stage in STAGES:
-        if module_name in stage.python_modules:
-            return stage.name
+    matches = [stage for stage in STAGES if module_name in stage.python_modules]
+    if matches:
+        # A module may belong both to a checkpoint stage and a composite stage.
+        # Direct ``python -m`` execution should report against the atomic stage;
+        # managed composite jobs always provide SBT_STAGE explicitly.
+        return min(matches, key=lambda stage: len(stage.python_modules)).name
     return None
 
 

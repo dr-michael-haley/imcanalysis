@@ -308,14 +308,7 @@ def prepare_execution_output(
 ) -> StageManifest:
     """Create a truthful pending report only after SLURM accepts the stage."""
     output = execution_output_path(context, execution)
-    for directory in (
-        output,
-        output / "figures",
-        output / "tables",
-        output / "summaries",
-        output / "files",
-    ):
-        directory.mkdir(parents=True, exist_ok=True)
+    output.mkdir(parents=True, exist_ok=True)
     spec = get_stage(execution.stage)
     doc_path = (toolkit_root() / spec.documentation_path).resolve(strict=False)
     try:

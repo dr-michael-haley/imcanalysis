@@ -23,6 +23,16 @@ def load_runtime(
     argv: Sequence[str] | None = None,
 ) -> tuple[PipelineConfig, CellVisionPaths]:
     """Parse a config path, bootstrap reporting, and resolve CellVision assets."""
+    stage_by_component = {
+        "extract": "cellvision-extract",
+        "embed": "cellvision-embed",
+        "cluster": "cellvision-cluster",
+        "plot": "cellvision-plot",
+    }
+    try:
+        component_stage = stage_by_component[component]
+    except KeyError as exc:
+        raise ValueError(f"Unknown CellVision component: {component!r}") from exc
     parser = argparse.ArgumentParser(description=f"Run CellVision {component}.")
     parser.add_argument(
         "--config",
@@ -33,7 +43,7 @@ def load_runtime(
     config_path = Path(arguments.config).expanduser().resolve(strict=False)
     os.environ["SBT_CONFIG"] = str(config_path)
     os.environ.setdefault("SBT_PROJECT_ROOT", str(config_path.parent))
-    bootstrap_stage_reporting("cellvision")
+    bootstrap_stage_reporting(os.environ.get("SBT_STAGE") or component_stage)
     config = load_config(config_path)
     setup_logging(config.logging.model_dump(mode="python"), f"CellVision:{component}")
     paths = resolve_cellvision_paths(project_asset_path(config.cellvision.asset_folder))

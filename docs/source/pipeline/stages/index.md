@@ -14,7 +14,11 @@ for ordering and usage guidance.
 | [`nimbus`](nimbus.md) | Segment/quantify cells with Nimbus and build AnnData outputs | `imc_segmentation` | general, segmentation, nimbus, logging |
 | [`bint`](bint.md) | Batch integration with Harmony and/or BBKNN, followed by UMAP/Leiden post-processing | `imc_cellcharter` | general, batch_integration, logging |
 | [`rapids`](rapids.md) | GPU processing with rapids-singlecell: optional cell filtering, PCA, optional Harmony, neighbors, UMAP, Leiden, optional parameter scan | `rapids_singlecell` | general, rapids, visualization, logging |
-| [`cellvision`](cellvision.md) | Learn identity-tracked CellVision VICReg embeddings, cluster with RAPIDS, and generate comparison/gallery reports in one GPU job | `scPortrait, rapids_singlecell, scPortrait` | general, cellvision, logging |
+| [`cellvision-extract`](cellvision-extract.md) | Extract selected identity-tracked IMC cells into one 36 px H5SC dataset with scPortrait | `scPortrait` | general, cellvision, logging |
+| [`cellvision-embed`](cellvision-embed.md) | Train the PyTorch CellVision VICReg encoder and extract identity-aligned cell embeddings | `scPortrait` | general, cellvision, logging |
+| [`cellvision-cluster`](cellvision-cluster.md) | Run one RAPIDS PCA/neighbors/UMAP graph and configured CellVision Leiden resolutions | `rapids_singlecell` | general, cellvision, logging |
+| [`cellvision-plot`](cellvision-plot.md) | Plot CellVision UMAPs, original-label confusion, source-UMAP projections, and H5SC channel galleries | `scPortrait` | general, cellvision, logging |
+| [`cellvision-full`](cellvision-full.md) | Run CellVision extraction, VICReg embedding, RAPIDS clustering, and plotting in one GPU job | `scPortrait, rapids_singlecell, scPortrait` | general, cellvision, logging |
 | [`bbn`](bbn.md) | Batch correction with BioBatchNet + UMAP/Leiden post-processing | `imc_biobatchnet` | general, biobatchnet, logging |
 | [`subcl`](subcl.md) | Run checkpointed population subclustering (template generation, subclustering QC, optional remap integration) | `imc_segmentation` | general, process, subclustering, logging |
 | [`cchar`](cchar.md) | Identify spatial neighborhoods with CellCharter (TRVAE reduction by default) and save QC summaries | `imc_cellcharter` | general, process, cellcharter, logging |
@@ -44,7 +48,11 @@ vis
 nimbus
 bint
 rapids
-cellvision
+cellvision-extract
+cellvision-embed
+cellvision-cluster
+cellvision-plot
+cellvision-full
 bbn
 subcl
 cchar

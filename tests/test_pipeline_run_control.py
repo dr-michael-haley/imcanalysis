@@ -290,7 +290,7 @@ class RunControlTests(unittest.TestCase):
                 app,
                 [
                     "run",
-                    "cellvision",
+                    "cellvision-full",
                     "--project",
                     str(root),
                     "--no-deps",
@@ -299,9 +299,9 @@ class RunControlTests(unittest.TestCase):
             )
 
             self.assertEqual(result.exit_code, 0, result.stdout)
-            self.assertIn("1. cellvision", result.stdout)
+            self.assertIn("1. cellvision-full", result.stdout)
             self.assertNotIn("2. ", result.stdout)
-            self.assertIn("job_cellvision.sh", result.stdout)
+            self.assertIn("job_cellvision_full.sh", result.stdout)
             self.assertNotIn("--dependency=afterok", result.stdout)
             self.assertEqual(list(runs_dir.iterdir()), [])
 
@@ -313,7 +313,13 @@ class RunControlTests(unittest.TestCase):
             with patch("SpatialBiologyToolkit.cli.main.submit_run") as submit_mock:
                 result = CliRunner().invoke(
                     app,
-                    ["run", "cellvision", "--project", str(root), "--no-deps"],
+                    [
+                        "run",
+                        "cellvision-full",
+                        "--project",
+                        str(root),
+                        "--no-deps",
+                    ],
                 )
 
             self.assertNotEqual(result.exit_code, 0)

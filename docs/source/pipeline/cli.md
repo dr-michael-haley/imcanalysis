@@ -172,13 +172,15 @@ To submit only the explicitly requested stage when its upstream assets already
 exist, disable dependency expansion:
 
 ```bash
-sbt run cellvision --no-deps --dry-run
-sbt run cellvision --no-deps
+sbt run cellvision-cluster --no-deps --dry-run
+sbt run cellvision-cluster --no-deps
 ```
 
 `--no-deps` does not relax input validation. The command fails before submission
 when the selected stage's required assets are absent. Use the dry run first to
-confirm that the plan contains only the intended stage.
+confirm that the plan contains only the intended stage. When a mode or several
+stages are explicitly selected, dependencies between those selected stages are
+retained; only unselected upstream stages are omitted.
 
 Each submitted run creates:
 
@@ -213,10 +215,10 @@ Each stage also writes:
 outputs/<execution_id>_<stage_slug>/
   README.md
   stage_manifest.yaml
-  figures/
-  tables/
-  summaries/
-  files/
+  figures/       # only when the stage creates figures
+  tables/        # only when the stage creates tables
+  summaries/     # only when the stage creates summaries
+  files/         # only when the stage creates attachments
 ```
 
 The stage report links back to the technical run and its logs. Start a project

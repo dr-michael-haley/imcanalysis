@@ -12,11 +12,11 @@ project/
     001_Preprocessing/
       README.md
       stage_manifest.yaml
-      figures/ tables/ summaries/ files/
+      figures/ tables/ summaries/ files/  # only categories actually used
     002_Segmentation/
       README.md
       stage_manifest.yaml
-      figures/ tables/ summaries/ files/
+      figures/ tables/ summaries/ files/  # only categories actually used
   .sbt/
     executions.yaml
     runs/<workflow_run_id>/
@@ -35,6 +35,10 @@ at their configured project-root paths so later stages have one canonical
 source. The numbered folders contain material intended for human interpretation.
 `.sbt/runs/` contains commands, exact configuration, scheduler state, events,
 and SLURM logs.
+
+Report category folders are created lazily. A run that produces no figures,
+tables, summaries, or attachments contains only its report/provenance files;
+unused empty category folders are not added.
 
 ## Numbers mean execution order
 

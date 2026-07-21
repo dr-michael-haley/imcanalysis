@@ -10,11 +10,11 @@
 
 set -e
 
-#@DESC: Learn identity-tracked CellVision VICReg embeddings, cluster with RAPIDS, and generate comparison/gallery reports in one GPU job
+#@DESC: Run CellVision extraction, VICReg embedding, RAPIDS clustering, and plotting in one GPU job
 #@IN:   general.anndata_path, cellvision.input_adata_path override, and configured cellvision population selection
 #@IN:   general.denoised_images_folder/general.masks_folder or cellvision image/mask overrides
 #@OUT:  cellvision.asset_folder with H5SC, identity table, VICReg checkpoint, embeddings, and clustered AnnData
-#@OUT:  outputs/<execution_id>_CellVision/ figures, confusion tables, training diagnostics, projections, and galleries
+#@OUT:  outputs/<execution_id>_CellVision_Full/ training diagnostics, comparisons, projections, and galleries
 #@ENV:  scPortrait
 #@MODULE:  SpatialBiologyToolkit.scripts.cellvision_extract
 #@MODULE:  SpatialBiologyToolkit.scripts.cellvision_embed
@@ -26,7 +26,7 @@ set -e
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
-echo "CellVision combined job is using ${SLURM_GPUS:-0} GPU(s) with ID(s) ${CUDA_VISIBLE_DEVICES:-none} and ${SLURM_NTASKS:-1} CPU core(s)"
+echo "CellVision full job is using ${SLURM_GPUS:-0} GPU(s) with ID(s) ${CUDA_VISIBLE_DEVICES:-none} and ${SLURM_NTASKS:-1} CPU core(s)"
 
 SCPORTRAIT_ENV="${SBT_CONDA_ENV_SCPORTRAIT:-${IMC_ENV_SCPORTRAIT:-scPortrait}}"
 RAPIDS_ENV="${SBT_CONDA_ENV_RAPIDS:-${IMC_ENV_RAPIDS_SINGLECELL:-rapids_singlecell}}"

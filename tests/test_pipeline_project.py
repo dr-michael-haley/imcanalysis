@@ -180,13 +180,13 @@ class ProjectAndPlanningTests(unittest.TestCase):
 
             missing = build_run_plan(
                 context,
-                ["cellvision"],
+                ["cellvision-full"],
                 include_dependencies=False,
             )
             self.assertFalse(missing.ready)
             self.assertEqual(
                 [stage.name for stage in missing.resolved_stages],
-                ["cellvision"],
+                ["cellvision-full"],
             )
             self.assertEqual(missing.resolved_stages[0].depends_on, [])
             self.assertIn("anndata", missing.resolved_stages[0].missing_assets)
@@ -201,13 +201,13 @@ class ProjectAndPlanningTests(unittest.TestCase):
 
             ready = build_run_plan(
                 context,
-                ["cellvision"],
+                ["cellvision-full"],
                 include_dependencies=False,
             )
             self.assertTrue(ready.ready, ready.errors)
             self.assertEqual(
                 [stage.name for stage in ready.resolved_stages],
-                ["cellvision"],
+                ["cellvision-full"],
             )
             self.assertTrue(
                 any("Dependency expansion is disabled" in item for item in ready.warnings)

@@ -42,12 +42,12 @@ The stage mapping is also centralized:
 | `cellposesam` | `cellpose` |
 | `biobatchnet` | `bbn` |
 | `cellcharter` | `bint`, `cchar`, `pairsp`, `nxsp` |
-| `rapids` | `rapids`, `cellvision` |
+| `rapids` | `rapids`, `cellvision-cluster`, `cellvision-full` |
 | `starling` | `starling` |
-| `scportrait` | `scport`, `cellvision` |
+| `scportrait` | `scport`, `cellvision-extract`, `cellvision-embed`, `cellvision-plot`, `cellvision-full` |
 
-`cellpose`, `dnqc`, and `cellvision` intentionally use two environments; their primary
-environment is listed first in the registry mapping.
+`cellpose`, `dnqc`, and `cellvision-full` intentionally use two environments;
+their primary environment is listed first in the registry mapping.
 
 ## Specification roles
 
