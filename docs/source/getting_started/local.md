@@ -56,11 +56,11 @@ conda env create -f Local_envs/sbt_env_macos.yml
 ```
 
 The macOS environment intentionally omits CUDA and Windows runtime packages,
-along with the less portable R, Java/Bio-Formats, OpenCL, Napari/Qt, and optional
-SpatialData I/O/viewer and pip-only analysis extras from the Windows environment
-export. The specification has been solver-verified for Apple Silicon and has no
-architecture-specific pins; Intel macOS is expected to work but has not been
-solver-verified.
+along with the less portable R, Java/Bio-Formats, OpenCL, optional SpatialData
+I/O/viewer integrations, and most pip-only analysis extras from the Windows
+environment export. It includes a tested Apple Silicon combination of Napari,
+PySide6, TensorFlow for macOS, and the TensorFlow Metal plug-in. This combination
+requires macOS 12 or later and is not intended for Intel Macs.
 
 Activate the environment:
 
@@ -76,10 +76,25 @@ conda activate sbt
 
 ## 4) Install the toolkit (editable)
 
-From the repo root (i.e. the `imcanalysis` folder):
+From the repo root (i.e. the `imcanalysis` folder), install the toolkit.
+
+On Windows:
 
 ```bash
 pip install -e .
+```
+
+On macOS, use the `nodl` install option so that the package installer does not
+replace the tested Apple TensorFlow packages with generic TensorFlow:
+
+```bash
+python -m pip install -e ".[nodl]"
+```
+
+Confirm that Qt, TensorFlow, and UMAP import without crashing:
+
+```bash
+python -c "from qtpy import API_NAME; import tensorflow as tf, umap; print(API_NAME, tf.__version__)"
 ```
 
 ---
@@ -132,6 +147,20 @@ If the environment dependencies changed, you may need to recreate the environmen
 ---
 
 ## Troubleshooting
+
+### macOS: `QtBindingsNotFoundError` or a crash while importing UMAP
+
+For an environment created from an older version of `sbt_env_macos.yml`, repair
+the Qt binding and replace generic TensorFlow with the tested Apple packages:
+
+```bash
+conda activate sbt
+python -m pip uninstall -y tensorflow tensorflow-estimator
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install "numpy>=1.26,<2" "PySide6==6.9.1" "tensorflow-macos==2.16.2" "tensorflow-metal==1.2.0"
+```
+
+Restart the Jupyter kernel after changing these packages.
 
 ### Jupyter can’t import SpatialBiologyToolkit
 

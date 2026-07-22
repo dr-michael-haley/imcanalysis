@@ -1,12 +1,13 @@
 # Portable macOS environment for local analysis and notebooks.
 #
 # This is intentionally a hand-maintained specification, not a platform export.
-# Conda chooses native Mac builds; this specification is verified on osx-arm64
-# and contains no architecture-specific package pins.
+# Conda chooses native Mac builds; this specification is verified on Apple
+# Silicon (osx-arm64) and its TensorFlow wheels require macOS 12 or later.
 # GPU/CUDA, Windows toolchain/runtime packages, R/rpy2, Java/Bio-Formats, OpenCL,
-# Napari/Qt, SpatialData I/O/viewer extras, and the less portable pip-only
-# analysis extras from sbt_env.yml are omitted. PyTorch uses the native
-# CPU/Metal build selected by conda-forge; no NVIDIA packages are requested.
+# SpatialData I/O/viewer extras, and the less portable pip-only analysis extras
+# from sbt_env.yml are omitted. PyTorch uses the native CPU/Metal build selected
+# by conda-forge; no NVIDIA packages are requested. The pip packages at the end
+# provide the tested macOS Qt and TensorFlow bindings.
 name: sbt
 channels:
   - conda-forge
@@ -15,14 +16,17 @@ channels:
 dependencies:
   # Toolkit CLI and packaging
   - python=3.12
-  - pip
+  - pip>=24
+  - setuptools>=70
+  - wheel
   - pydantic>=2.4,<3
   - pyyaml>=6
   - typer>=0.12,<1
   - git
 
   # Core scientific and single-cell analysis
-  - numpy>=2.1,<2.3
+  # TensorFlow macOS 2.16 requires NumPy 1.x.
+  - numpy>=1.26,<2
   - pandas>=2.2
   - scipy>=1.14
   - anndata>=0.11,<0.13
@@ -68,3 +72,12 @@ dependencies:
   # General utilities used across the toolkit
   - psutil
   - tqdm
+
+  # Known-working Apple Silicon GUI/deep-learning combination. Keep the exact
+  # versions together: newer generic TensorFlow builds have caused kernel
+  # crashes while importing umap, and Napari requires an explicit Qt binding.
+  - pip:
+      - napari==0.5.5
+      - PySide6==6.9.1
+      - tensorflow-macos==2.16.2
+      - tensorflow-metal==1.2.0
