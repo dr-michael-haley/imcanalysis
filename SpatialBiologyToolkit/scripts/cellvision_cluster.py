@@ -24,6 +24,41 @@ def _atomic_write_h5ad(adata, path: Path) -> None:
     os.replace(temporary, path)
 
 
+def _canonicalize_leiden_columns(
+    adata,
+    *,
+    resolutions,
+    generated_keys,
+) -> list[str]:
+    """Move RAPIDS Leiden outputs into stable, collision-safe CellVision keys."""
+    if len(resolutions) != len(generated_keys):
+        raise RuntimeError(
+            "RAPIDS returned an unexpected number of CellVision Leiden keys: "
+            f"{len(generated_keys)} for {len(resolutions)} resolutions."
+        )
+
+    from SpatialBiologyToolkit.cellvision import leiden_key
+
+    final_keys: list[str] = []
+    for resolution, generated_key in zip(resolutions, generated_keys, strict=True):
+        if generated_key not in adata.obs.columns:
+            raise RuntimeError(
+                "RAPIDS did not create the reported CellVision Leiden key: "
+                f"{generated_key!r}."
+            )
+        final_key = leiden_key(resolution)
+        if generated_key != final_key:
+            if final_key in adata.obs.columns:
+                raise RuntimeError(
+                    "Cannot rename a RAPIDS CellVision Leiden result because the "
+                    f"destination obs key already exists: {final_key!r}."
+                )
+            adata.obs.rename(columns={generated_key: final_key}, inplace=True)
+        adata.obs[final_key] = adata.obs[final_key].astype("category")
+        final_keys.append(final_key)
+    return final_keys
+
+
 def main() -> None:
     import anndata as ad
 
@@ -43,7 +78,8 @@ def main() -> None:
     cellvision = config.cellvision
     if not paths.embeddings.is_file():
         raise FileNotFoundError(
-            f"CellVision embeddings do not exist: {paths.embeddings}. Run cellvision_embed first."
+            f"CellVision embeddings do not exist: {paths.embeddings}. "
+            "Run the cellvision-embed stage first."
         )
     embeddings = ad.read_h5ad(paths.embeddings)
     metadata = embeddings.uns.get("cellvision", {})
@@ -83,13 +119,16 @@ def main() -> None:
         observed_clustering = str(
             existing_metadata.get("clustering", {}).get("configuration_fingerprint", "")
         )
-        leiden_columns = [column for column in clustered.obs.columns if column.startswith("cellvision_leiden_")]
+        expected_leiden = [leiden_key(value) for value in cellvision.leiden_resolutions]
+        leiden_columns = [
+            column for column in expected_leiden if column in clustered.obs.columns
+        ]
         n_cells = int(clustered.n_obs)
         clustered.file.close()
         if (
             observed != fingerprint
             or observed_clustering != clustering_fingerprint
-            or not leiden_columns
+            or len(leiden_columns) != len(expected_leiden)
         ):
             raise ValueError(
                 "Existing CellVision clustered AnnData is incompatible or incomplete. "
@@ -139,20 +178,11 @@ def main() -> None:
             leiden_params={"random_state": cellvision.seed},
             key_prefix="cellvision_leiden",
         )
-        final_leiden: list[str] = []
-        for resolution, generated_key in zip(
-            cellvision.leiden_resolutions, generated_leiden, strict=True
-        ):
-            expected_key = leiden_key(resolution)
-            if generated_key != expected_key:
-                raise RuntimeError(
-                    "RAPIDS returned an unexpected CellVision Leiden key: "
-                    f"{generated_key!r} != {expected_key!r}."
-                )
-            embeddings.obs[generated_key] = embeddings.obs[generated_key].astype(
-                "category"
-            )
-            final_leiden.append(generated_key)
+        final_leiden = _canonicalize_leiden_columns(
+            embeddings,
+            resolutions=cellvision.leiden_resolutions,
+            generated_keys=generated_leiden,
+        )
     finally:
         _move_input_matrix_to_cpu(embeddings, gpu_layer)
         _ensure_cpu_storage(embeddings)

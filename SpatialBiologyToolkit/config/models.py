@@ -118,8 +118,14 @@ class GeneralConfig(ConfigModel):
     masks_folder: str = 'masks'
     celltable_folder: str = 'cell_tables'
     tiff_stacks_folder: str  = 'tiff_stacks'
-    raw_images_folder: str = 'tiffs'
-    denoised_images_folder: str = 'processed'
+    raw_images_folder: str = Field(
+        default='tiffs',
+        description="Folder containing one ROI subdirectory per image and its unstacked raw-channel TIFFs; Denoising QC uses these as the before-denoising comparison images.",
+    )
+    denoised_images_folder: str = Field(
+        default='processed',
+        description="Folder containing the corresponding denoised channel TIFFs organised by ROI; Denoising QC also audits these files against metadata/panel.csv.",
+    )
     slurm_logs_folder: str = 'SLURM_logs'
     case_obs: Optional[str] = config_field(
         None,
@@ -271,9 +277,9 @@ class PreprocessConfig(ConfigModel):
 
 @config_section("rebuild_metadata")
 class RebuildMetadataConfig(ConfigModel):
-    input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
-    output_metadata_folder: Optional[str] = None  # Optional override (None = use general.metadata_folder)
-    include_obs_patterns: Optional[List[str]] = None  # Optional regex allowlist for ROI-invariant obs columns
+    input_adata_path: Optional[str] = Field(default=None, description="Optional source AnnData override; when omitted, metadata are reconstructed from general.anndata_path.")
+    output_metadata_folder: Optional[str] = Field(default=None, description="Optional destination folder override for metadata.csv, dictionary.csv, and panel.csv; defaults to general.metadata_folder.")
+    include_obs_patterns: Optional[List[str]] = Field(default=None, description="Optional regular-expression allowlist applied to observation names before ROI-invariant metadata columns are selected.")
     exclude_obs: List[str] = Field(default_factory=lambda: [
         'ObjectNumber',
         'CellID',
@@ -281,25 +287,25 @@ class RebuildMetadataConfig(ConfigModel):
         'Master_Index',
         'X_loc',
         'Y_loc',
-    ])
+    ], description="Observation names excluded from ROI-level metadata reconstruction in addition to shared ROI, coordinate, master-index, and population columns.")
     exclude_obs_contains: List[str] = Field(default_factory=lambda: [
         'population',
         'leiden',
         'cluster',
         'nhood',
         'neighborhood',
-    ])
-    preserve_existing_import_data: bool = True  # Keep prior metadata.csv import_data values where ROI names match
-    metadata_description_obs: Optional[str] = None  # Optional ROI-invariant obs column used for metadata description
-    include_invariant_obs_in_metadata_csv: bool = True
-    include_invariant_obs_in_dictionary_csv: bool = True
-    panel_channel_name_var: Optional[str] = None  # Optional adata.var column for panel channel_name values
-    panel_channel_label_var: Optional[str] = None  # Optional adata.var column for panel channel_label values
-    panel_use_denoised_default: bool = True
-    panel_use_raw_default: bool = False
-    panel_to_denoise_default: bool = True
-    panel_remove_outliers_default: bool = False
-    preserve_existing_panel_flags: bool = True  # Keep prior panel use_* flags when channel labels match
+    ], description="Case-insensitive name fragments used to exclude cell-population, clustering, and neighbourhood observations from ROI-level metadata.")
+    preserve_existing_import_data: bool = Field(default=True, description="Compatibility setting retained in the schema; the current rebuild implementation does not read it and always sets import_data=true for every reconstructed ROI.")
+    metadata_description_obs: Optional[str] = Field(default=None, description="Optional ROI-invariant observation used for metadata.csv and dictionary.csv descriptions; defaults to an invariant 'description' column and then the ROI name.")
+    include_invariant_obs_in_metadata_csv: bool = Field(default=True, description="Append selected ROI-invariant observations to metadata.csv after its required pipeline columns.")
+    include_invariant_obs_in_dictionary_csv: bool = Field(default=True, description="Append selected ROI-invariant observations to the ROI-indexed dictionary.csv table.")
+    panel_channel_name_var: Optional[str] = Field(default=None, description="Optional adata.var column used for panel.csv channel_name; defaults to var['channel_name'] and then var_names.")
+    panel_channel_label_var: Optional[str] = Field(default=None, description="Optional adata.var column used for cleaned, unique panel.csv channel_label values; defaults to var['channel_label'] and then var_names.")
+    panel_use_denoised_default: bool = Field(default=True, description="Default panel.csv use_denoised flag for channels without a preservable existing setting.")
+    panel_use_raw_default: bool = Field(default=False, description="Default panel.csv use_raw flag for channels without a preservable existing setting.")
+    panel_to_denoise_default: bool = Field(default=True, description="Default panel.csv to_denoise flag for channels without a preservable existing setting.")
+    panel_remove_outliers_default: bool = Field(default=False, description="Default panel.csv remove_outliers flag for channels without a preservable existing setting.")
+    preserve_existing_panel_flags: bool = Field(default=True, description="Preserve parseable use_denoised, to_denoise, use_raw, and remove_outliers values from an existing panel.csv when cleaned channel labels match.")
 
 @config_section("denoising")
 class DenoisingConfig(ConfigModel):
@@ -320,9 +326,9 @@ class DenoisingConfig(ConfigModel):
     channels: List[str] = Field(
         default_factory=list,
         description=(
-            "Channel identifiers to denoise, matched case-insensitively within ROI TIFF "
-            "filenames; an empty list selects panel rows marked to_denoise, or use_denoised "
-            "for older panel files."
+            "Channel identifiers to denoise and display in side-by-side QC, matched "
+            "case-insensitively within ROI TIFF filenames; an empty list selects panel rows "
+            "marked to_denoise, or use_denoised for older panel files."
         ),
     )
     # Parameters for both methods
@@ -527,8 +533,9 @@ class DenoisingConfig(ConfigModel):
     run_QC: bool = Field(
         default=True,
         description=(
-            "Generate per-channel raw-versus-denoised comparison figures after processing; "
-            "the denoised-pixel summary table is produced independently during denoising."
+            "Generate per-channel raw-versus-denoised comparison figures at the end of the "
+            "denoising stage. The standalone Denoising QC stage always makes these figures "
+            "when invoked and does not consult this switch."
         ),
     )
     colourmap: str = Field(
@@ -552,8 +559,8 @@ class DenoisingConfig(ConfigModel):
     qc_num_rois: Optional[int] = Field(
         default=10,
         description=(
-            "Maximum number of randomly sampled ROIs shown per channel in comparison figures; "
-            "use null to include every ROI."
+            "Positive maximum number of randomly sampled ROIs shown per channel in comparison "
+            "figures; sampling currently has no fixed seed and null includes every ROI."
         ),
     )
     skip_already_denoised: bool = Field(
@@ -870,8 +877,14 @@ class SegmentationConfig(ConfigModel):
     marker_normalisation: List[str] = Field(default_factory=lambda: ["q0.999"])
     store_raw_marker_data: bool = False
     remove_channels_list: List[str] = Field(default_factory=lambda: ['DNA1', 'DNA3'])
-    remove_and_store_markers: List[str] = Field(default_factory=list)  # Markers to remove from main AnnData and store separately
-    removed_markers_anndata_path: str = 'anndata_removed.h5ad'  # Path for AnnData containing removed markers
+    remove_and_store_markers: List[str] = Field(
+        default_factory=list,
+        description="Markers copied to a separate AnnData and removed from the main feature matrix before downstream clustering or integration; they can be restored later for interpretation.",
+    )
+    removed_markers_anndata_path: str = Field(
+        default='anndata_removed.h5ad',
+        description="AnnData path used to store excluded marker values and later read them during marker reintegration; keep its cells unchanged and in the original order.",
+    )
     anndata_save_path: str = 'anndata.h5ad'
     create_roi_cell_tables: bool = True
     create_master_cell_table: bool = True
@@ -2199,11 +2212,26 @@ class BasicProcessConfig(BioBatchNetConfig):
 @config_section("visualization")
 class VisualizationConfig(ConfigModel):
     # Input data settings
-    input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
-    population_columns: Optional[List[str]] = None  # Script override for population columns (None = use general.population_obs_all or auto-detect)
-    metadata_columns: Optional[List[str]] = None  # Script override for metadata columns (None = use general.metadata_obs or auto-detect)
-    groupby_obs: Optional[str] = None  # Script override for grouping column (None = use general.groupby_obs)
-    groupby_obs_groups: Optional[List[str]] = None  # Script override for groups (None = use general pairwise/groups settings)
+    input_adata_path: Optional[str] = Field(
+        default=None,
+        description="Optional AnnData input override; when omitted, the stage uses general.anndata_path.",
+    )
+    population_columns: Optional[List[str]] = Field(
+        default=None,
+        description="Observation columns to treat as population annotations. Defaults to general.population_obs_all, then general.population_obs_primary, then name-based auto-detection.",
+    )
+    metadata_columns: Optional[List[str]] = Field(
+        default=None,
+        description="Categorical observation columns to visualise as sample or experimental metadata. Defaults to general.metadata_obs and then dictionary/name-based auto-detection.",
+    )
+    groupby_obs: Optional[str] = Field(
+        default=None,
+        description="Observation defining biological comparison groups for abundance analysis; defaults to general.groupby_obs.",
+    )
+    groupby_obs_groups: Optional[List[str]] = Field(
+        default=None,
+        description="Ordered subset of groupby_obs categories to compare; defaults to the shared general pairwise/group selections.",
+    )
 
     # AI interpretation settings
     enable_ai: bool = Field(
@@ -2220,72 +2248,72 @@ class VisualizationConfig(ConfigModel):
     )
 
     # Visualization module toggles - all default True
-    create_umaps: bool = True  # Create UMAP plots for populations and markers
-    create_matrix_plots: bool = True  # Create MatrixPlot summaries
-    create_tissue_overlays: bool = True  # Create tissue population overlays
-    create_population_analysis: bool = True  # Create population analysis across metadata
-    create_backgating: bool = True  # Create backgating assessment
-    create_color_legends: bool = True  # Generate color legends for categorical plots
+    create_umaps: bool = Field(default=True, description="Create UMAP plots from the existing adata.obsm['X_umap'] coordinates.")
+    create_matrix_plots: bool = Field(default=True, description="Create mean-marker matrix plots grouped by population and, optionally, metadata annotations.")
+    create_tissue_overlays: bool = Field(default=True, description="Project population labels back into each labelled segmentation mask to show their tissue distribution.")
+    create_population_analysis: bool = Field(default=True, description="Create population count, proportion, density, case-summary, and comparison outputs where the required metadata are available.")
+    create_backgating: bool = Field(default=True, description="Create image-based backgating views that return annotated cells to their source channel images for validation.")
+    create_color_legends: bool = Field(default=True, description="Save standalone category-to-colour legends for configured population and metadata columns.")
 
     # Categorical visualization controls
-    include_metadata_umaps: bool = True  # Include metadata columns in UMAP plots
-    include_metadata_matrix_plots: bool = True  # Include metadata columns in MatrixPlots
-    include_marker_umaps: bool = True  # Include marker expression UMAPs
-    umap_plot_individual_highlights: bool = True  # For population columns, create one UMAP per category via utils.plot_umap_highlight_clusters
-    max_categories: int = 50  # Maximum number of unique categories for population/metadata columns
-    umap_marker_colormap: str = 'viridis'  # Colormap for marker expression UMAPs (e.g., 'viridis', 'plasma', 'inferno', 'magma', 'cividis')
-    umap_marker_gallery_default_colorbar_label: str = 'Nimbus-Inference Score'  # Colorbar label for default-layer (adata.X) marker gallery
-    umap_marker_gallery_vmax: Optional[float] = 0.8  # Maximum value for colorbar scaling in UMAP marker gallery
+    include_metadata_umaps: bool = Field(default=True, description="Colour the existing UMAP by configured categorical metadata as well as population labels.")
+    include_metadata_matrix_plots: bool = Field(default=True, description="Summarise mean marker values for groups defined by configured categorical metadata.")
+    include_marker_umaps: bool = Field(default=True, description="Create per-marker UMAPs plus marker galleries for adata.X and every available AnnData layer.")
+    umap_plot_individual_highlights: bool = Field(default=True, description="For each population annotation, save an additional UMAP highlighting every category separately.")
+    max_categories: int = Field(default=50, description="Maximum number of unique values allowed when auto-selecting categorical population or metadata columns.")
+    umap_marker_colormap: str = Field(default='viridis', description="Matplotlib colormap used for continuous marker-expression UMAPs.")
+    umap_marker_gallery_default_colorbar_label: str = Field(default='Nimbus-Inference Score', description="Colour-bar label for the adata.X marker gallery; change this when adata.X contains another measurement scale.")
+    umap_marker_gallery_vmax: Optional[float] = Field(default=0.8, description="Optional common upper colour limit for marker UMAP galleries; use null to scale each gallery automatically.")
 
     # Backgating assessment settings
-    backgating_cells_per_group: int = 50  # Number of cells to sample per population for backgating
-    backgating_radius: int = 15  # Radius in pixels for cell thumbnail extraction
-    backgating_output_folder: str = 'Backgating'  # Output folder for backgating results
-    backgating_use_masks: bool = True  # Whether to use segmentation masks in backgating
-    backgating_mask_folder: str = 'masks'  # Folder containing segmentation masks
-    backgating_pops_list: Optional[Dict[str, Any]] = None  # Optional dict mapping population obs columns to population subsets for backgating; non-dict values are reused for all population obs
-    backgating_max_rois_to_save: Optional[int] = None  # Maximum number of per-population ROIs to save (None = save all; normalization still uses the full ROI set)
+    backgating_cells_per_group: int = Field(default=50, description="Maximum number of example cells sampled for each population's thumbnail gallery.")
+    backgating_radius: int = Field(default=15, description="Half-width in image pixels of the square crop around each backgated cell centroid.")
+    backgating_output_folder: str = Field(default='Backgating', description="Subdirectory under the visualisation output root for image-based population validation outputs.")
+    backgating_use_masks: bool = Field(default=True, description="Use segmentation masks to identify cells and draw cell boundaries in backgating images.")
+    backgating_mask_folder: str = Field(default='masks', description="Mask directory passed to the backgating implementation; it must correspond to the source channel images and cell identifiers.")
+    backgating_pops_list: Optional[Dict[str, Any]] = Field(default=None, description="Optional populations to backgate, supplied per population-observation column or under a 'default' key; null processes all populations.")
+    backgating_max_rois_to_save: Optional[int] = Field(default=None, description="Optional maximum number of randomly selected ROI image sets saved per population; intensity normalisation still uses all eligible ROIs.")
 
     # Backgating intensity and marker settings
-    backgating_minimum: float = 0.2  # Minimum intensity for backgating normalization
-    backgating_max_quantile: str = 'i0.99'  # Maximum quantile method for intensity scaling
-    backgating_number_top_markers: int = 2  # Number of top markers to use for RGB channels
-    backgating_specify_blue: Optional[str] = 'DNA1'  # Marker to use for blue channel
-    backgating_specify_red: Optional[str] = None  # Marker to use for red channel (None = auto-select)
-    backgating_specify_green: Optional[str] = None  # Marker to use for green channel (None = auto-select)
+    backgating_minimum: float = Field(default=0.2, description="Lower display bound used when rescaling source-channel intensities for backgating composites.")
+    backgating_max_quantile: str = Field(default='i0.99', description="Upper intensity-rescaling rule for backgating images; the default uses the 99th percentile.")
+    backgating_number_top_markers: int = Field(default=2, description="Number of automatically selected discriminative markers assigned to RGB channels for each population.")
+    backgating_specify_blue: Optional[str] = Field(default='DNA1', description="Optional fixed blue-channel marker, normally a DNA channel for nuclear context.")
+    backgating_specify_red: Optional[str] = Field(default=None, description="Optional fixed red-channel marker; null uses the first automatically selected population marker.")
+    backgating_specify_green: Optional[str] = Field(default=None, description="Optional fixed green-channel marker; null uses the next automatically selected population marker.")
 
     # Differential expression settings for backgating marker selection
-    backgating_use_differential_expression: bool = True  # Use scanpy DE analysis for marker selection
-    backgating_de_method: str = 'wilcoxon'  # Statistical method ('wilcoxon', 't-test', 'logreg')
-    backgating_min_logfc_threshold: float = 0.2  # Minimum log fold change for quality filtering (0 to disable)
-    backgating_max_pval_adj: float = 0.05  # Used for significance reporting, not filtering
-    backgating_markers_exclude: Optional[List[str]] = Field(default_factory=lambda: ['DNA1', 'DNA3'])  # Markers to exclude from DE analysis
+    backgating_use_differential_expression: bool = Field(default=True, description="Select RGB markers using a one-population-versus-rest Scanpy ranking instead of population mean expression alone.")
+    backgating_de_method: str = Field(default='wilcoxon', description="Scanpy marker-ranking method for backgating: typically 'wilcoxon', 't-test', or 'logreg'.")
+    backgating_min_logfc_threshold: float = Field(default=0.2, description="Preferred minimum log fold change for automatically selected backgating markers; ranking falls back to all markers if too few pass.")
+    backgating_max_pval_adj: float = Field(default=0.05, description="Adjusted-P-value threshold reported during backgating marker selection; it does not itself exclude markers from selection.")
+    backgating_markers_exclude: Optional[List[str]] = Field(default_factory=lambda: ['DNA1', 'DNA3'], description="Markers excluded from automatic backgating marker selection, usually DNA or technical channels.")
 
     # Backgating execution mode control
-    backgating_mode: str = 'full'  # 'full' (compute + run), 'save_markers' (compute only), 'load_markers' (load + run)
+    backgating_mode: str = Field(default='full', description="Backgating workflow mode: 'full' selects markers and makes images, 'save_markers' only writes editable settings, and 'load_markers' makes images from existing settings.")
 
     # Population overlay visualization settings
-    backgating_population_overlay_outline_width: int = 1  # Width of contour outlines in population overlay visualizations
-    backgating_population_overlay_legend_fontsize: int = 24  # Font size for overlay legend labels
-    backgating_population_overlay_crop_size: Optional[List[int]] = Field(default_factory=lambda: [300, 300])  # Crop size [width, height] or None
-    backgating_population_overlay_crop_origin: str = 'intelligent'  # Crop anchor: upper_left/right, lower_left/right, center, intelligent
-    backgating_population_overlay_show_scale_bar: bool = True  # Whether to draw scale bar on overlays
-    backgating_population_overlay_scale_bar_length: int = 50  # Scale bar length in pixels
-    backgating_population_overlay_scale_bar_thickness: int = 3  # Scale bar thickness in pixels
+    backgating_population_overlay_outline_width: int = Field(default=1, description="Contour width in pixels around target cells in backgating population overlays.")
+    backgating_population_overlay_legend_fontsize: int = Field(default=24, description="Font size for marker and population labels on backgating overlays.")
+    backgating_population_overlay_crop_size: Optional[List[int]] = Field(default_factory=lambda: [300, 300], description="Optional overlay crop size as [width, height] pixels; null retains the complete ROI.")
+    backgating_population_overlay_crop_origin: str = Field(default='intelligent', description="Crop placement: a named corner, 'center', or 'intelligent' to favour a region containing target cells.")
+    backgating_population_overlay_show_scale_bar: bool = Field(default=True, description="Draw a scale bar on cropped population overlays.")
+    backgating_population_overlay_scale_bar_length: int = Field(default=50, description="Scale-bar length in image pixels; this is not automatically converted to micrometres.")
+    backgating_population_overlay_scale_bar_thickness: int = Field(default=3, description="Scale-bar line thickness in pixels.")
 
     # MatrixPlot settings
-    matrixplot_vmax: float = 0.5  # Maximum value for non-scaled matrix plots
-    matrixplot_use_row_colors: bool = True  # Use plotting.matrixplot_with_row_colors when available for MatrixPlot generation
+    matrixplot_vmax: float = Field(default=0.5, description="Upper colour limit for unscaled mean-marker matrix plots; tune it to the measurement scale in adata.X.")
+    matrixplot_use_row_colors: bool = Field(default=True, description="Use the toolkit matrix-plot helper to display group colours beside rows, falling back to Scanpy when unavailable.")
 
     # Population abundance plotting (create_population_abundance_analysis)
-    abundance_make_all_populations_plots: bool = True  # Also create combined plots with all populations on one axis (hue=groupby_obs)
-    abundance_all_populations_figsize: List[float] = Field(default_factory=lambda: [4.0, 3.0])  # Base [width, height]; width auto-scales with number of populations
-    abundance_all_populations_width_scale: float = 0.45  # Auto width ~= max(base_width, scale * n_populations)
-    abundance_make_case_stacked_plots: bool = True  # Create case-level stacked proportion plots (all cases + split by groupby_obs)
-    abundance_case_stacked_figsize: List[float] = Field(default_factory=lambda: [6.0, 3.0])  # Base [width, height]; width auto-scales with number of cases
-    abundance_case_stacked_width_scale: float = 0.30  # Auto width ~= max(base_width, scale * n_cases)
-    abundance_order_cases_by_population: Optional[str] = None  # Optional population label to order cases by descending abundance
-    abundance_plot_style: str = 'bar'  # One of: 'bar', 'strip', 'swarm'; strip/swarm show individual points with mean +/- SE overlays
+    abundance_make_all_populations_plots: bool = Field(default=True, description="Create combined abundance plots showing every population on one axis and comparison group as colour.")
+    abundance_all_populations_figsize: List[float] = Field(default_factory=lambda: [4.0, 3.0], description="Minimum [width, height] in inches for combined all-population abundance plots.")
+    abundance_all_populations_width_scale: float = Field(default=0.45, description="Additional plot width in inches per population used when automatically sizing combined abundance plots.")
+    abundance_make_case_stacked_plots: bool = Field(default=True, description="Create stacked case-level composition plots for all cases and separately for each comparison group.")
+    abundance_case_stacked_figsize: List[float] = Field(default_factory=lambda: [6.0, 3.0], description="Minimum [width, height] in inches for case-level stacked composition plots.")
+    abundance_case_stacked_width_scale: float = Field(default=0.30, description="Additional plot width in inches per case used when automatically sizing stacked plots.")
+    abundance_order_cases_by_population: Optional[str] = Field(default=None, description="Optional population label whose descending case abundance determines the order of stacked bars.")
+    abundance_plot_style: str = Field(default='bar', description="Abundance display style: 'bar' shows summaries, while 'strip' or 'swarm' shows individual ROI or case values with mean and standard-error overlays.")
     # Y-axis scale controls for abundance barplots.
     # Accepted values: 'linear', 'log', 'intelligent'
     # Uses same flexible dictionary style as pairwise_spatial.barplot_y_scale.
@@ -2303,17 +2331,17 @@ class VisualizationConfig(ConfigModel):
             'cells_per_mm2_case_average': 'intelligent',
             'default': 'linear',
         },
-    })
+    }, description="Y-axis mode ('linear', 'log', or 'intelligent') specified globally or by abundance metric.")
     abundance_barplot_y_scale_intelligent_params: Dict[str, Any] = Field(default_factory=lambda: {
         'allow_log1p': True,
         'dynamic_range_thresh': 100.0,
         'skew_improve_ratio': 0.7,
         'crush_frac_thresh': 0.7,
-    })
+    }, description="Thresholds controlling when intelligent abundance scaling switches a positive, wide, skewed distribution to a logarithmic axis.")
 
     # General visualization settings
-    save_high_res: bool = True  # Save high-resolution figures (300 DPI)
-    figure_format: str = 'png'  # Default figure format ('png', 'pdf', 'svg')
+    save_high_res: bool = Field(default=True, description="Save most figures at 300 DPI instead of 150 DPI.")
+    figure_format: str = Field(default='png', description="Output figure extension used by the visualisation suite, commonly 'png', 'pdf', or 'svg'.")
 
 
 @config_section("population_embedding_qc")
@@ -3730,68 +3758,125 @@ class NetworkxSpatialConfig(ConfigModel):
 @config_section("remap_obs")
 class RemapObsConfig(ConfigModel):
     # Input/output
-    input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
-    remap_csv_path: str = 'metadata/remap.csv'
-    mode: str = 'apply'  # One of: apply, generate_blank
+    input_adata_path: Optional[str] = Field(default=None, description="Optional AnnData input override; when omitted, the stage uses general.anndata_path and updates that loaded object in apply mode.")
+    remap_csv_path: str = Field(default='metadata/remap.csv', description="Editable CSV mapping table; relative paths are resolved from the working directory.")
+    mode: str = Field(default='apply', description="Use 'generate_blank' to scaffold or refresh an editable mapping table, or 'apply' to add its curated target columns to adata.obs.")
 
     # Mapping behavior
-    source_obs: Optional[str] = None  # In apply mode: defaults to first CSV column header; in generate_blank mode this is required
-    roi_obs: Optional[str] = None  # Optional override (None = use general.roi_obs) for ROI-based helper metrics in generate_blank mode
-    overwrite_existing_obs_columns: bool = False
-    require_complete_mapping: bool = False  # If True, raise if any non-null source values are missing from the remap table
-    set_output_as_categorical: bool = True
-    force_string_mapping: bool = False  # Auto-enabled when source_obs contains 'leiden'
-    ignore_csv_columns_exact: List[str] = Field(default_factory=list)
-    ignore_csv_columns_contains: List[str] = Field(default_factory=lambda: ['notes'])
+    source_obs: Optional[str] = Field(default=None, description="Observation containing the source categories. Required for template generation; in apply mode it can be inferred from the CSV's first column and must match that header when explicitly set.")
+    roi_obs: Optional[str] = Field(default=None, description="ROI observation used for the template evenness helper; defaults to general.roi_obs.")
+    overwrite_existing_obs_columns: bool = Field(default=False, description="Allow target columns from the remap CSV to replace existing adata.obs columns; false protects existing annotations.")
+    require_complete_mapping: bool = Field(default=False, description="Fail apply mode when any cell with a non-null source value lacks a non-null target mapping; otherwise those cells receive missing values.")
+    set_output_as_categorical: bool = Field(default=True, description="Store applied target observations as ordered pandas categoricals using the non-null target-value order in the CSV.")
+    force_string_mapping: bool = Field(default=False, description="Normalise integer-like source keys such as 1, 1.0, and '1' to the same string key; this behaviour is automatically enabled for source names containing 'leiden'.")
+    ignore_csv_columns_exact: List[str] = Field(default_factory=list, description="Additional CSV columns to retain for human guidance but exclude from AnnData observation creation during apply mode.")
+    ignore_csv_columns_contains: List[str] = Field(default_factory=lambda: ['notes'], description="Case-insensitive name fragments identifying human-only CSV columns that should not be applied to adata.obs.")
 
     # Blank-template generation
-    generate_columns: List[str] = Field(default_factory=list)  # Blank target columns to scaffold; empty -> [f'{source_obs}_label']
-    generate_note_columns: List[str] = Field(default_factory=lambda: ['notes'])
-    generate_include_counts: bool = True
-    generate_count_column_name: str = 'n_cells'
-    generate_include_top_markers: bool = True
-    generate_top_markers_n: int = 3
-    generate_top_markers_column_name: str = 'top_markers'
-    generate_top_markers_use_raw: bool = False  # If True and adata.raw exists, use it by default for marker summaries
-    generate_top_markers_layer: Optional[str] = None  # Optional explicit matrix source: 'raw', 'X', or a named adata.layers key
-    generate_top_markers_var_column: Optional[str] = None  # Optional var annotation to use instead of var_names in the marker summary
-    generate_top_markers_separator: str = '; '
-    generate_include_roi_distribution_evenness: bool = True  # 0 = population concentrated in one ROI; 1 = evenly spread over all ROIs
-    generate_roi_distribution_evenness_column_name: str = 'roi_distribution_evenness'
-    generate_preserve_existing_values: bool = True
+    generate_columns: List[str] = Field(default_factory=list, description="Blank target annotation columns added to a generated template; an empty list creates '<source_obs>_label'.")
+    generate_note_columns: List[str] = Field(default_factory=lambda: ['notes'], description="Blank human-curation columns added to the template and ignored during application by the default ignore rule.")
+    generate_include_counts: bool = Field(default=True, description="Include the total number of cells assigned to each source category as a curation aid.")
+    generate_count_column_name: str = Field(default='n_cells', description="Column name for source-category cell counts in a generated template.")
+    generate_include_top_markers: bool = Field(default=True, description="Include markers with the largest group-mean minus rest-mean values for each source category as descriptive naming hints.")
+    generate_top_markers_n: int = Field(default=3, description="Maximum number of marker names listed for each source category in the generated template.")
+    generate_top_markers_column_name: str = Field(default='top_markers', description="Column name for the generated descriptive top-marker hints.")
+    generate_top_markers_use_raw: bool = Field(default=False, description="Use adata.raw.X for marker hints when available and no explicit generate_top_markers_layer is selected.")
+    generate_top_markers_layer: Optional[str] = Field(default=None, description="Explicit matrix used for marker hints: 'X', 'raw', or an AnnData layer name; null uses adata.X unless generate_top_markers_use_raw is enabled.")
+    generate_top_markers_var_column: Optional[str] = Field(default=None, description="Optional adata.var or adata.raw.var column supplying display marker names instead of var_names.")
+    generate_top_markers_separator: str = Field(default='; ', description="Text separator placed between marker names in the generated top-marker cell.")
+    generate_include_roi_distribution_evenness: bool = Field(default=True, description="Include a normalised Shannon-evenness summary of how each source category's cells are distributed across all dataset ROIs.")
+    generate_roi_distribution_evenness_column_name: str = Field(default='roi_distribution_evenness', description="Column name for the generated ROI-distribution evenness helper.")
+    generate_preserve_existing_values: bool = Field(default=True, description="When regenerating an existing template, carry forward edited target, note, and additional non-helper columns matched by normalised source key.")
 
 @config_section("subclustering")
 class SubclusteringConfig(ConfigModel):
     # Input/output
-    input_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
-    output_adata_path: Optional[str] = None  # Optional override (None = use general.anndata_path)
-    output_subdir: str = 'subclustering'
-    mode: Any = 'generate'  # One of: 'all', 'generate', 'apply', or integer/string stage selector 1, 2, 3
+    input_adata_path: Optional[str] = Field(
+        default=None,
+        description="Optional AnnData input override. When omitted, the stage uses general.anndata_path.",
+    )
+    output_adata_path: Optional[str] = Field(
+        default=None,
+        description="Optional AnnData output override. When omitted, the input AnnData is updated in place.",
+    )
+    output_subdir: str = Field(
+        default='subclustering',
+        description="Directory containing the reusable settings, marker-list, remap, and mapping CSV files.",
+    )
+    mode: Any = Field(
+        default='generate',
+        description="Checkpoint selection: 'generate' runs template creation or subclustering, 'apply' applies the curated remap, 'all' runs all available checkpoints, and 1, 2, or 3 selects one checkpoint directly.",
+    )
 
     # Template/remap files
-    settings_filename: str = 'sublustering_settings.csv'  # Intentionally matches existing notebook naming
-    marker_list_filename: str = 'marker_list.csv'
-    remap_filename: str = 'subcluster_to_final_population.csv'
-    master_index_mapping_filename: str = 'master_index_to_final_population.csv'
+    settings_filename: str = Field(
+        default='sublustering_settings.csv',
+        description="Editable per-population settings table. The legacy 'sublustering' spelling is retained for compatibility.",
+    )
+    marker_list_filename: str = Field(
+        default='marker_list.csv',
+        description="Editable marker-selection table whose Boolean columns beginning with 'markers_' define alternative feature panels.",
+    )
+    remap_filename: str = Field(
+        default='subcluster_to_final_population.csv',
+        description="Editable table mapping each generated subcluster to a biologically curated final population label.",
+    )
+    master_index_mapping_filename: str = Field(
+        default='master_index_to_final_population.csv',
+        description="Output audit table linking each cell's stable master index to its final population label.",
+    )
 
     # Subclustering defaults
-    base_label_key: Optional[str] = None  # Optional override (None = use general.population_obs_primary or legacy 'population')
-    default_resolution: float = 0.3
-    default_marker_list: str = 'all'  # Resolved as marker column 'markers_all'
-    use_rep: Optional[str] = 'X_biobatchnet'
+    base_label_key: Optional[str] = Field(
+        default=None,
+        description="Parent-population observation used to define subsets. Defaults to general.population_obs_primary and then the legacy 'population' column.",
+    )
+    default_resolution: float = Field(
+        default=0.3,
+        description="Initial Leiden resolution written to newly generated settings rows; larger values usually produce finer partitions but do not specify an exact number of subclusters.",
+    )
+    default_marker_list: str = Field(
+        default='all',
+        description="Initial marker-list name written to settings rows; for example 'all' selects the marker_list.csv column 'markers_all'.",
+    )
+    use_rep: Optional[str] = Field(
+        default='X_biobatchnet',
+        description="Preferred AnnData representation for computing a missing global QC UMAP. Subcluster neighbour graphs themselves are built from the selected marker values in adata.X.",
+    )
 
     # Plotting and QC
-    compute_umap_if_missing: bool = True
-    umap_dot_size: float = 2.0
-    matrixplot_vmax: float = 0.5
-    save_individual_umaps: bool = True
-    figure_extension: str = '.png'
-    figure_dpi: int = 300
+    compute_umap_if_missing: bool = Field(
+        default=True,
+        description="Compute a global UMAP for diagnostic plots when adata.obsm['X_umap'] is absent.",
+    )
+    umap_dot_size: float = Field(default=2.0, description="Point size used in subclustering UMAP diagnostics.")
+    matrixplot_vmax: float = Field(
+        default=0.5,
+        description="Upper colour limit used for raw-value marker matrix plots; tune it to the scale stored in adata.X.",
+    )
+    save_individual_umaps: bool = Field(
+        default=True,
+        description="Save a separate global UMAP highlighting the cells in every generated subcluster.",
+    )
+    figure_extension: str = Field(
+        default='.png',
+        description="File extension for subclustering diagnostic figures, including the leading dot.",
+    )
+    figure_dpi: int = Field(default=300, description="Resolution in dots per inch for saved diagnostic figures.")
 
     # Final remap integration
-    final_label_key: str = 'population_final'
-    master_index_obs: Optional[str] = None  # Optional override (None = use general.master_index_obs)
-    apply_remap_only_if_modified: bool = True
+    final_label_key: str = Field(
+        default='population_final',
+        description="AnnData observation column receiving the curated final population labels during the apply checkpoint.",
+    )
+    master_index_obs: Optional[str] = Field(
+        default=None,
+        description="Stable cell-identifier observation used in the exported mapping table. Defaults to general.master_index_obs and then 'Master_Index'; observation names are used if neither exists.",
+    )
+    apply_remap_only_if_modified: bool = Field(
+        default=True,
+        description="Skip remap application until at least one final_population value differs from its generated subcluster label, protecting an unreviewed template from being treated as curated annotation.",
+    )
 
 @config_section("logging")
 class LoggingConfig(ConfigModel):

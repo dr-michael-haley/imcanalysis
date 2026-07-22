@@ -98,7 +98,8 @@ def main() -> None:
     cellvision = config.cellvision
     if not paths.h5sc.is_file() or not paths.extraction_metadata.is_file():
         raise FileNotFoundError(
-            "CellVision extraction assets are missing. Run cellvision_extract before embedding."
+            "CellVision extraction assets are missing. Run the cellvision-extract "
+            "stage before cellvision-embed."
         )
     extraction = read_json(paths.extraction_metadata)
     fingerprint = str(extraction["identity_fingerprint"])

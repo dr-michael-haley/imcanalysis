@@ -96,6 +96,47 @@ def _normalize_state(
     return "unknown"
 
 
+def _dependency_cannot_be_satisfied(reason: str) -> bool:
+    normalized = "".join(character for character in reason.upper() if character.isalnum())
+    return "DEPENDENCYNEVERSATISFIED" in normalized
+
+
+def _resolve_blocked_dependencies(
+    stages: list[StageStatus],
+    submitted: SubmittedJobs,
+) -> list[StageStatus]:
+    """Mark pending afterok jobs blocked when their recorded dependency failed."""
+    resolved: list[StageStatus] = []
+    by_job_id: dict[str, StageStatus] = {}
+
+    for job, stage in zip(submitted.jobs, stages):
+        dependency = by_job_id.get(job.dependency_job_id or "")
+        if (
+            stage.status == "pending"
+            and dependency is not None
+            and dependency.status in {"failed", "cancelled", "not_submitted", "blocked"}
+        ):
+            dependency_detail = (
+                f"afterok dependency job {job.dependency_job_id} ended "
+                f"{dependency.status}; this job cannot start"
+            )
+            detail = ", ".join(
+                part for part in (stage.detail, dependency_detail) if part
+            )
+            stage = stage.model_copy(
+                update={
+                    "status": "blocked",
+                    "source": "recorded dependency",
+                    "detail": detail,
+                }
+            )
+        resolved.append(stage)
+        if job.job_id:
+            by_job_id[job.job_id] = stage
+
+    return resolved
+
+
 def _overall_status(stages: list[StageStatus], submitted: SubmittedJobs) -> str:
     states = [stage.status for stage in stages]
     if any(state == "failed" for state in states):
@@ -108,6 +149,8 @@ def _overall_status(stages: list[StageStatus], submitted: SubmittedJobs) -> str:
         return "partial"
     if any(state == "running" for state in states):
         return "running"
+    if any(state == "blocked" for state in states):
+        return "blocked"
     if any(state == "pending" for state in states):
         return "pending"
     if states and all(state == "completed" for state in states):
@@ -179,13 +222,16 @@ def inspect_run_status(
         if job.job_id in queue_states:
             raw_state, job_name, reason = queue_states[job.job_id]
             detail = ", ".join(part for part in (job_name, reason) if part)
+            status = _normalize_state(raw_state)
+            if status == "pending" and _dependency_cannot_be_satisfied(reason):
+                status = "blocked"
             stage_statuses.append(
                 StageStatus(
                     stage=job.stage,
                     execution_id=job.execution_id,
                     technical_run_id=job.technical_run_id,
                     job_id=job.job_id,
-                    status=_normalize_state(raw_state),
+                    status=status,
                     source="squeue",
                     detail=detail or raw_state,
                 )
@@ -226,6 +272,7 @@ def inspect_run_status(
             )
         )
 
+    stage_statuses = _resolve_blocked_dependencies(stage_statuses, submitted)
     report = RunStatus(
         run_id=manifest.run_id,
         workflow_run_id=manifest.workflow_run_id or manifest.run_id,
@@ -247,7 +294,7 @@ def inspect_run_status(
             continue
         if status == "running" and current.started_at is None:
             changes["started_at"] = utc_now()
-        if status in {"completed", "failed", "cancelled"}:
+        if status in {"completed", "failed", "cancelled", "blocked"}:
             changes["completed_at"] = utc_now()
         try:
             update_execution(context, stage.technical_run_id, **changes)

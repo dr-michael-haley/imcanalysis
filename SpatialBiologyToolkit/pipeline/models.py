@@ -301,6 +301,7 @@ class StageStatus(PipelineModel):
         "completed",
         "failed",
         "cancelled",
+        "blocked",
         "unknown",
     ]
     source: str

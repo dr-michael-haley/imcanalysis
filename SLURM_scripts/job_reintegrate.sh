@@ -7,12 +7,12 @@
 #SBATCH --mail-type=ALL
 
 #@DESC: Reintegrate markers previously removed from the processed AnnData
-#@IN:   process.output_adata_path + segmentation.removed_markers_anndata_path
-#@OUT:  process.output_adata_path (updated in place)
+#@IN:   general.anndata_path + segmentation.removed_markers_anndata_path
+#@OUT:  general.anndata_path (updated in place)
 #@OUT:  outputs/<execution_id>_Marker_Reintegration/ stage report
 #@ENV:  imc_segmentation
 #@MODULE:  SpatialBiologyToolkit.scripts.reintegrate_markers
-#@CONFIG: general, segmentation, process, logging
+#@CONFIG: general, segmentation, logging
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 

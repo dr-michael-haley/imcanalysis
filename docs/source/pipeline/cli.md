@@ -257,7 +257,11 @@ sbt report 003
 
 Status combines active `squeue` data with `sacct` history. Missing accounting,
 unknown jobs, and incomplete records are reported as uncertainty rather than
-guessed states. The result is written to `status.yaml`.
+guessed states. A pending `afterok` job is recorded as `blocked` when its
+upstream job has failed or been cancelled, including SLURM's
+`DependencyNeverSatisfied` state. The result is written to `status.yaml` and
+the project execution index, so a subsequent `sbt summary` shows the refreshed
+state.
 
 Logs are resolved from recorded paths and tailed from the end of each file;
 large directory trees are not scanned.

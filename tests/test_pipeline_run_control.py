@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from SpatialBiologyToolkit.cli.main import app
 from SpatialBiologyToolkit.pipeline.assets import resolve_assets
+from SpatialBiologyToolkit.pipeline.executions import execution_summaries
 from SpatialBiologyToolkit.pipeline.logs import resolve_run_logs, tail_text
 from SpatialBiologyToolkit.pipeline.manifests import read_yaml
 from SpatialBiologyToolkit.pipeline.planner import build_run_plan
@@ -202,6 +203,74 @@ class RunControlTests(unittest.TestCase):
                 {stage.stage: stage.status for stage in report.stages},
                 {"debug": "running", "config": "completed"},
             )
+
+    def test_failed_afterok_dependency_marks_pending_stage_blocked(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context, plan = self._project_and_plan(temp_dir, ["debug", "config"])
+            run = create_run_record(context, plan, command="sbt run debug config")
+            submitted = submit_run(
+                context,
+                plan,
+                run,
+                runner=FakeSbatchRunner(["311", "312"]),
+            )
+            self.assertEqual(submitted.jobs[1].dependency_job_id, "311")
+
+            def status_runner(arguments, **_kwargs):
+                if arguments[0] == "squeue":
+                    return subprocess.CompletedProcess(
+                        arguments,
+                        0,
+                        stdout="312|PENDING|config|Dependency\n",
+                        stderr="",
+                    )
+                return subprocess.CompletedProcess(
+                    arguments,
+                    0,
+                    stdout="311|FAILED|debug|1:0\n312|PENDING|config|0:0\n",
+                    stderr="",
+                )
+
+            report = inspect_run_status(context, run.run_dir, runner=status_runner)
+
+            self.assertEqual(report.overall_status, "failed")
+            self.assertEqual(
+                {stage.stage: stage.status for stage in report.stages},
+                {"debug": "failed", "config": "blocked"},
+            )
+            blocked = report.stages[1]
+            self.assertEqual(blocked.source, "recorded dependency")
+            self.assertIn("afterok dependency job 311 ended failed", blocked.detail)
+
+            summaries = execution_summaries(context)
+            self.assertEqual(
+                {summary.stage: summary.status for summary in summaries},
+                {"debug": "failed", "config": "blocked"},
+            )
+            self.assertIsNotNone(summaries[1].completed_at)
+
+            def cancelled_runner(arguments, **_kwargs):
+                if arguments[0] == "squeue":
+                    return subprocess.CompletedProcess(
+                        arguments,
+                        0,
+                        stdout="",
+                        stderr="",
+                    )
+                return subprocess.CompletedProcess(
+                    arguments,
+                    0,
+                    stdout="311|FAILED|debug|1:0\n312|CANCELLED|config|0:15\n",
+                    stderr="",
+                )
+
+            cancelled_report = inspect_run_status(
+                context,
+                run.run_dir,
+                runner=cancelled_runner,
+            )
+            self.assertEqual(cancelled_report.stages[1].status, "cancelled")
+            self.assertEqual(execution_summaries(context)[1].status, "cancelled")
 
     def test_logs_resolve_recorded_paths_and_tail_without_tree_scan(self):
         with tempfile.TemporaryDirectory() as temp_dir:

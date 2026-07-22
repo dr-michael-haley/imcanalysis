@@ -46,7 +46,10 @@ from SpatialBiologyToolkit.pipeline.project import initialize_project
 from SpatialBiologyToolkit.pipeline.registry import get_mode, get_stage
 from SpatialBiologyToolkit.pipeline.runs import create_run_record
 from SpatialBiologyToolkit.pipeline.slurm import sbt_environment
-from SpatialBiologyToolkit.scripts.cellvision_cluster import _atomic_write_h5ad
+from SpatialBiologyToolkit.scripts.cellvision_cluster import (
+    _atomic_write_h5ad,
+    _canonicalize_leiden_columns,
+)
 from SpatialBiologyToolkit.scripts.config_and_utils import read_h5ad_compat
 
 
@@ -595,6 +598,36 @@ class CellVisionVICRegTests(unittest.TestCase):
         self.assertEqual(int(counts.loc["A"].sum()), 2)
         self.assertAlmostEqual(float(normalized.loc["A"].sum()), 1.0)
         self.assertEqual(leiden_key(0.3), "cellvision_leiden_0.3")
+
+    def test_cellvision_leiden_rename_preserves_source_leiden_columns(self):
+        data = ad.AnnData(
+            X=np.ones((2, 1)),
+            obs=pd.DataFrame(
+                {
+                    "leiden": pd.Categorical(["original-a", "original-b"]),
+                    "leiden_1.0": pd.Categorical(["4", "5"]),
+                    "cellvision_leiden_1.0": pd.Categorical(["0", "1"]),
+                },
+                index=["cell-1", "cell-2"],
+            ),
+        )
+
+        keys = _canonicalize_leiden_columns(
+            data,
+            resolutions=[1.0],
+            generated_keys=["cellvision_leiden_1.0"],
+        )
+
+        self.assertEqual(keys, ["cellvision_leiden_1"])
+        self.assertNotIn("cellvision_leiden_1.0", data.obs)
+        self.assertEqual(
+            data.obs["cellvision_leiden_1"].astype(str).tolist(), ["0", "1"]
+        )
+        self.assertEqual(
+            data.obs["leiden"].astype(str).tolist(),
+            ["original-a", "original-b"],
+        )
+        self.assertEqual(data.obs["leiden_1.0"].astype(str).tolist(), ["4", "5"])
 
     def test_namespaced_rapids_leiden_preserves_source_column(self):
         class FakeTools:
