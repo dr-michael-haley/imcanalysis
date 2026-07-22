@@ -92,15 +92,17 @@
   overflow-wrap: anywhere;
 }
 
-/* Keep sidebar fixed, make content pane dynamic */
-.wy-nav-side {
-    width: 320px !important; /* Slightly wider fixed sidebar */
-}
+/* Widen the fixed sidebar only while the theme uses its desktop layout. */
+@media screen and (min-width: 769px) {
+  .wy-nav-side {
+    width: 320px;
+  }
 
-.wy-nav-content-wrap {
-    margin-left: 320px !important; /* Must match .wy-nav-side width */
+  .wy-nav-content-wrap {
+    margin-left: 320px;
+  }
 }
 
 .wy-nav-content {
-    max-width: 100% !important; /* Dynamic middle pane */
+  max-width: 100% !important; /* Dynamic middle pane */
 }
