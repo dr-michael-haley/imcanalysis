@@ -69,7 +69,7 @@ Activate the environment:
 conda activate sbt
 
 # macOS
-conda activate sbt-macos
+conda activate sbt
 ```
 
 ---
