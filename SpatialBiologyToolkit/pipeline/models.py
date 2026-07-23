@@ -183,6 +183,31 @@ class RenumberRecord(PipelineModel):
     new_output_folder: Path
 
 
+class AssetCleanupItem(PipelineModel):
+    role: str
+    path: Path
+    reason: str
+    dependent_stages: list[str] = Field(default_factory=list)
+
+
+class AssetCleanupPlan(PipelineModel):
+    execution_id: int
+    technical_run_id: str
+    stage: str
+    removable: list[AssetCleanupItem] = Field(default_factory=list)
+    retained: list[AssetCleanupItem] = Field(default_factory=list)
+
+
+class AssetCleanupAudit(PipelineModel):
+    offered: bool = False
+    confirmed: bool = False
+    removable: list[AssetCleanupItem] = Field(default_factory=list)
+    retained: list[AssetCleanupItem] = Field(default_factory=list)
+    cleaned_paths: list[Path] = Field(default_factory=list)
+    removed_entries: int = 0
+    errors: list[str] = Field(default_factory=list)
+
+
 class RemovalAudit(PipelineModel):
     schema_version: Literal[1] = 1
     audit_id: str
@@ -198,6 +223,7 @@ class RemovalAudit(PipelineModel):
     confirmation_mode: Literal["interactive", "non_interactive", "system"]
     reason: str | None = None
     renumbered: list[RenumberRecord] = Field(default_factory=list)
+    asset_cleanup: AssetCleanupAudit | None = None
 
 
 class MigrationRecord(PipelineModel):

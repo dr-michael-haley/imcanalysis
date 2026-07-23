@@ -11,6 +11,12 @@ import yaml
 from typer.testing import CliRunner
 
 from SpatialBiologyToolkit.cli.main import app
+from SpatialBiologyToolkit.pipeline.asset_cleanup import plan_asset_cleanup
+from SpatialBiologyToolkit.pipeline.assets import (
+    asset_map,
+    inventory_assets,
+    resolve_assets,
+)
 from SpatialBiologyToolkit.pipeline.executions import (
     EXECUTION_LOCK,
     allocate_executions,
@@ -314,6 +320,133 @@ class ExecutionLayoutTests(unittest.TestCase):
             )
             self.assertEqual(accepted.exit_code, 0, accepted.stdout)
             self.assertIn("were not deleted or restored", accepted.stdout)
+
+    def test_remove_offers_only_created_unused_assets_and_preserves_h5ad(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = self._project(temp_dir)
+            workflow_id = "asset-cleanup-workflow"
+            run_dir = context.runs_dir / workflow_id
+            run_dir.mkdir(parents=True)
+            write_yaml(
+                run_dir / "project_assets.before.yaml",
+                inventory_assets(
+                    project_id=context.project_metadata.project_id,
+                    project_root=context.root,
+                    config=context.config,
+                ),
+            )
+            prep, denoise = allocate_executions(
+                context,
+                ["prep", "denoise"],
+                workflow_run_id=workflow_id,
+            )
+            update_execution(
+                context, prep.technical_run_id, status="completed", asset_effect="created"
+            )
+            update_execution(context, denoise.technical_run_id, status="completed")
+
+            assets = asset_map(resolve_assets(context.config, context.root))
+            tiff_root = assets["tiff_stacks"].path
+            raw_root = assets["raw_images"].path
+            metadata_root = assets["metadata"].path
+            tiff_root.mkdir(parents=True)
+            (tiff_root / "unused.tiff").write_bytes(b"unused")
+            protected = tiff_root / "analysis.h5ad"
+            protected.write_bytes(b"protected")
+            raw_root.mkdir(parents=True)
+            (raw_root / "channel.tiff").write_bytes(b"shared")
+            metadata_root.mkdir(parents=True, exist_ok=True)
+            (metadata_root / "panel.csv").write_text("name\n", encoding="utf-8")
+
+            plan = plan_asset_cleanup(context, resolve_execution(context, "001"))
+            self.assertEqual(
+                [item.role for item in plan.removable],
+                ["tiff_stacks"],
+            )
+            dependent = {
+                item.role: item
+                for item in plan.retained
+                if item.reason == "used by remaining stages"
+            }
+            self.assertEqual(set(dependent), {"raw_images"})
+            self.assertTrue(
+                all(
+                    "002 denoise" in item.dependent_stages[0]
+                    for item in dependent.values()
+                )
+            )
+            self.assertIn(
+                protected,
+                [
+                    item.path
+                    for item in plan.retained
+                    if item.reason == ".h5ad files are always protected"
+                ],
+            )
+
+            result = CliRunner().invoke(
+                app,
+                ["remove", "001", "--project", str(context.root)],
+                input="y\ny\nyes\n",
+            )
+            self.assertEqual(result.exit_code, 0, result.stdout)
+            self.assertIn("Remaining unused assets eligible for removal", result.stdout)
+            self.assertIn(
+                "Assets retained because remaining stages depend on them",
+                result.stdout,
+            )
+            self.assertFalse((tiff_root / "unused.tiff").exists())
+            self.assertTrue(protected.is_file())
+            self.assertTrue((raw_root / "channel.tiff").is_file())
+            self.assertTrue((metadata_root / "panel.csv").is_file())
+            audit_path = next(
+                (context.root / ".sbt" / "audit" / "removals").glob("*.yaml")
+            )
+            cleanup = read_yaml(audit_path)["asset_cleanup"]
+            self.assertTrue(cleanup["confirmed"])
+            self.assertEqual(cleanup["removable"][0]["role"], "tiff_stacks")
+            self.assertGreater(cleanup["removed_entries"], 0)
+
+    def test_remove_keeps_eligible_assets_unless_literal_yes_is_entered(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = self._project(temp_dir)
+            workflow_id = "asset-decline-workflow"
+            run_dir = context.runs_dir / workflow_id
+            run_dir.mkdir(parents=True)
+            write_yaml(
+                run_dir / "project_assets.before.yaml",
+                inventory_assets(
+                    project_id=context.project_metadata.project_id,
+                    project_root=context.root,
+                    config=context.config,
+                ),
+            )
+            record = allocate_executions(
+                context, ["cellpose"], workflow_run_id=workflow_id
+            )[0]
+            update_execution(
+                context,
+                record.technical_run_id,
+                status="completed",
+                asset_effect="created",
+            )
+            masks = asset_map(resolve_assets(context.config, context.root))["masks"].path
+            masks.mkdir(parents=True)
+            created = masks / "mask.tiff"
+            created.write_bytes(b"mask")
+
+            result = CliRunner().invoke(
+                app,
+                ["remove", "001", "--project", str(context.root)],
+                input="y\ny\ny\n",
+            )
+            self.assertEqual(result.exit_code, 0, result.stdout)
+            self.assertTrue(created.is_file())
+            self.assertIn("were not deleted or restored", result.stdout)
+            audit_path = next(
+                (context.root / ".sbt" / "audit" / "removals").glob("*.yaml")
+            )
+            self.assertFalse(read_yaml(audit_path)["asset_cleanup"]["confirmed"])
 
     def _legacy_manifest(
         self,

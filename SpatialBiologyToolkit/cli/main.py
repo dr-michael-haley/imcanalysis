@@ -15,6 +15,11 @@ from pydantic import BaseModel
 from SpatialBiologyToolkit.config import load_config
 from SpatialBiologyToolkit.config.export import write_resolved_config
 from SpatialBiologyToolkit.environments import EnvironmentManager, load_environment_registry
+from SpatialBiologyToolkit.pipeline.asset_cleanup import (
+    apply_asset_cleanup,
+    cleanup_audit,
+    plan_asset_cleanup,
+)
 from SpatialBiologyToolkit.pipeline.assets import (
     count_raw_imc_files,
     resolve_assets,
@@ -1358,12 +1363,20 @@ def remove_command(
     project: Path | None = typer.Option(None, "--project"),
     yes: bool = typer.Option(False, "--yes"),
     accept_asset_risk: bool = typer.Option(False, "--accept-asset-risk"),
+    remove_assets: bool = typer.Option(
+        False,
+        "--remove-assets",
+        help="With --yes, remove eligible unused assets after removing the execution.",
+    ),
     reason: str | None = typer.Option(None, "--reason"),
 ) -> None:
+    if remove_assets and not yes:
+        _fail("--remove-assets requires --yes for non-interactive confirmation.")
     try:
         context = _project(project)
         selected = resolve_execution(context, execution)
         output = execution_output_path(context, selected)
+        asset_plan = plan_asset_cleanup(context, selected)
     except Exception as exc:
         _fail(exc)
     risky = selected.asset_effect != "none"
@@ -1381,6 +1394,41 @@ def remove_command(
         "This removes the human-facing output folder and active workflow entry. "
         "Permanent technical evidence is retained under .sbt/."
     )
+    if asset_plan.removable or asset_plan.retained:
+        typer.echo("")
+        typer.echo("Remaining unused assets eligible for removal:")
+        if asset_plan.removable:
+            for item in asset_plan.removable:
+                typer.echo(f"  [{item.role}] {item.path}")
+        else:
+            typer.echo("  None.")
+
+        dependent = [
+            item
+            for item in asset_plan.retained
+            if item.reason == "used by remaining stages"
+        ]
+        typer.echo("")
+        typer.echo("Assets retained because remaining stages depend on them:")
+        if dependent:
+            for item in dependent:
+                stages = ", ".join(item.dependent_stages)
+                typer.echo(f"  [{item.role}] {item.path}")
+                typer.echo(f"       {stages}")
+        else:
+            typer.echo("  None.")
+
+        protected = [
+            item
+            for item in asset_plan.retained
+            if item.reason != "used by remaining stages"
+        ]
+        if protected:
+            typer.echo("")
+            typer.echo("Other protected assets:")
+            for item in protected:
+                typer.echo(f"  [{item.role}] {item.path}")
+                typer.echo(f"       {item.reason}")
     if not yes and not typer.confirm("Continue?", default=False):
         raise typer.Abort()
     if risky:
@@ -1399,20 +1447,52 @@ def remove_command(
             default=False,
         ):
             raise typer.Abort()
+    remove_assets_now = remove_assets
+    if asset_plan.removable and not yes:
+        typer.echo("")
+        response = typer.prompt(
+            "Type 'yes' to remove the eligible unused assets; "
+            "anything else keeps them",
+            default="",
+            show_default=False,
+        )
+        remove_assets_now = response.strip().lower() == "yes"
     try:
         audit = remove_execution(
             context,
             selected.execution_id,
             reason=reason,
             confirmation_mode="non_interactive" if yes else "interactive",
+            asset_cleanup=cleanup_audit(
+                asset_plan,
+                offered=bool(asset_plan.removable),
+                confirmed=remove_assets_now,
+            ),
         )
+        if remove_assets_now:
+            audit = apply_asset_cleanup(context, audit, asset_plan)
     except Exception as exc:
         _fail(exc)
     typer.echo(
         f"Removed execution {audit.previous_execution.execution_label}; "
         f"renumbered {len(audit.renumbered)} later execution(s)."
     )
-    typer.echo("Reusable project assets were not deleted or restored.")
+    cleanup = audit.asset_cleanup
+    if cleanup and cleanup.confirmed:
+        typer.echo(
+            f"Cleaned {len(cleanup.cleaned_paths)} unused asset path(s) "
+            f"({cleanup.removed_entries} filesystem entries)."
+        )
+        if cleanup.errors:
+            typer.echo("Some asset cleanup operations failed:")
+            for error in cleanup.errors:
+                typer.echo(f"  {error}")
+        if cleanup.retained:
+            typer.echo(
+                f"Retained {len(cleanup.retained)} protected or shared asset path(s)."
+            )
+    else:
+        typer.echo("Reusable project assets were not deleted or restored.")
 
 
 if __name__ == "__main__":

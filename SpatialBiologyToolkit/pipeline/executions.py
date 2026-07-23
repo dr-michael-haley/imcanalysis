@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Iterator, Literal
 
 from .manifests import read_model, utc_now, write_yaml
 from .models import (
+    AssetCleanupAudit,
     AssetEffect,
     ExecutionIndex,
     ExecutionRecord,
@@ -548,6 +549,7 @@ def remove_execution(
     *,
     reason: str | None,
     confirmation_mode: Literal["interactive", "non_interactive"],
+    asset_cleanup: AssetCleanupAudit | None = None,
 ) -> RemovalAudit:
     """Remove one visible execution, compact IDs, and preserve an audit record."""
     with execution_lock(context):
@@ -646,6 +648,7 @@ def remove_execution(
                 confirmation_mode=confirmation_mode,
                 reason=reason,
                 renumbered=mappings,
+                asset_cleanup=asset_cleanup,
             )
             write_yaml(audit_path, audit)
             if staged_removed.is_dir():

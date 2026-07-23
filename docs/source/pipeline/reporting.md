@@ -108,13 +108,19 @@ a project lock prevent rename collisions; manifests, technical references, and
 generated links are rewritten while permanent technical IDs remain unchanged.
 External bookmarks to mutable numbered paths can break after compaction.
 
-Removal does **not** pretend to reverse scientific changes. Reusable assets are
-not deleted or restored. Executions that created or modified assets, or whose
-effect is unknown, require a second warning; non-interactive use requires
-`--yes --accept-asset-risk`. A hidden audit under `.sbt/audit/removals/`
-preserves the old ID and path, technical identity, asset classification,
-reason, and renumbering map. It appears only with
-`sbt summary --include-removed`.
+Removal does **not** pretend to reverse scientific changes. Executions that
+created or modified assets, or whose effect is unknown, require a second
+warning; non-interactive removal requires `--yes --accept-asset-risk`.
+
+When the workflow's pre-run inventory proves that an asset role was newly
+created, `sbt remove` offers unused in-project paths for separate cleanup.
+Assets required or produced by another active execution are listed and retained,
+as are pre-existing or ownership-uncertain paths, external paths, and all
+`.h5ad` files. Interactive deletion requires typing `yes`; non-interactive
+deletion additionally requires `--remove-assets`. A hidden audit under
+`.sbt/audit/removals/` preserves the old ID and path, technical identity, asset
+classification, cleanup decision and result, reason, and renumbering map. It
+appears only with `sbt summary --include-removed`.
 
 ## Existing fixed-number projects
 

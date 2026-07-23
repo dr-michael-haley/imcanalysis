@@ -38,11 +38,15 @@ Direct `python -m` execution does not modify the managed index and writes below
 
 ## Removal and renumbering
 
-Removal deletes only the human-facing execution folder and active index entry.
-It does not restore or delete reusable scientific assets. Risky or unknown
-asset effects require a second explicit confirmation. The immutable technical
-record remains under `.sbt`, and a removal audit is written under
-`.sbt/audit/removals/`.
+Removal always deletes the human-facing execution folder and active index entry.
+It never restores mutable scientific state. Risky or unknown asset effects
+require a second explicit confirmation. Separately, assets proven to have been
+created since the workflow's pre-run inventory may be offered for deletion when
+no remaining execution requires or produces their role. Pre-existing, external,
+and ownership-uncertain paths and all `.h5ad` files are retained. Interactive
+asset cleanup requires the literal word `yes`. The immutable technical record
+remains under `.sbt`, and the removal audit under `.sbt/audit/removals/` records
+the cleanup offer, decision, protected paths, deletions, and any errors.
 
 Remaining active executions are compacted with collision-safe temporary names
 while holding the execution lock. Manifests, active technical references, and

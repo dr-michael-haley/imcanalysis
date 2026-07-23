@@ -268,9 +268,18 @@ large directory trees are not scanned.
 
 Remove a visible execution with `sbt remove 003`. The command confirms the
 identity and output path, warns again for created, modified, or unknown reusable
-asset effects, removes only the human-facing folder and active index entry, and
-renumbers later visible executions. It never claims to restore reusable assets.
-The hidden audit is available only through `sbt summary --include-removed`.
+asset effects, and inventories asset paths created since the workflow's pre-run
+snapshot. It lists unused created assets that are eligible for cleanup, assets
+retained because another active stage requires or produces the same role, and
+other protected paths. Pre-existing assets, paths outside the project, uncertain
+ownership, and every `.h5ad` file are retained. Interactive cleanup requires
+typing the full word `yes`; any other response keeps the assets. For explicit
+non-interactive cleanup, use `--yes --accept-asset-risk --remove-assets`.
+
+The command then removes the human-facing folder and active index entry and
+renumbers later visible executions. Technical evidence and an asset-cleanup
+audit remain under `.sbt/`; removed executions are shown only by
+`sbt summary --include-removed`.
 
 Projects using the former fixed-stage-folder layout require an explicit,
 non-silent upgrade:
