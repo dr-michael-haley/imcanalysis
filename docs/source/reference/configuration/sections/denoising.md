@@ -8,7 +8,7 @@
 |---|---|---|---|---|---|
 | `run_denoising` | `bool` | `True` | `advanced` | Run the configured IMC-Denoise restoration method; panel-driven outlier removal and side-by-side QC are controlled separately. | - |
 | `method` | `str` | `deep_snf` | `advanced` | Restoration method: 'deep_snf' applies DIMR hot-pixel removal followed by self-supervised shot-noise filtering, whereas 'dimr' applies only DIMR. | - |
-| `channels` | `List[str]` | `[]` | `advanced` | Channel identifiers to denoise, matched case-insensitively within ROI TIFF filenames; an empty list selects panel rows marked to_denoise, or use_denoised for older panel files. | - |
+| `channels` | `List[str]` | `[]` | `advanced` | Channel identifiers to denoise and display in side-by-side QC, matched case-insensitively within ROI TIFF filenames; an empty list selects panel rows marked to_denoise, or use_denoised for older panel files. | - |
 | `n_neighbours` | `int` | `4` | `advanced` | Number of locally most distribution-consistent neighbour differences summed by DIMR when classifying a centre pixel as a hot-pixel outlier. | - |
 | `n_iter` | `int` | `3` | `advanced` | Maximum number of iterative DIMR detection-and-median-replacement passes; later passes can remove small adjacent hot-pixel clusters exposed by earlier passes. | - |
 | `window_size` | `int` | `3` | `advanced` | Odd-width local DIMR window, in pixels, used to construct neighbour differences and to median-replace detected outliers. | - |
@@ -37,9 +37,9 @@
 | `scan_parameter` | `Optional[str]` | `truncated_max_rate` | `advanced` | Name of the single DenoisingConfig field varied during a parameter scan, such as truncated_max_rate, train_epochs, or lambda_HF. | - |
 | `scan_values` | `Optional[List[Any]]` | `[0.99, 0.999, 0.99999]` | `advanced` | Ordered values assigned to scan_parameter in separate denoising runs. | - |
 | `verbose_training` | `bool` | `False` | `advanced` | Show TensorFlow/Keras training logs and progress output instead of suppressing routine framework messages. | - |
-| `run_QC` | `bool` | `True` | `advanced` | Generate per-channel raw-versus-denoised comparison figures after processing; the denoised-pixel summary table is produced independently during denoising. | - |
+| `run_QC` | `bool` | `True` | `advanced` | Generate per-channel raw-versus-denoised comparison figures at the end of the denoising stage. The standalone Denoising QC stage always makes these figures when invoked and does not consult this switch. | - |
 | `colourmap` | `str` | `jet` | `advanced` | Matplotlib colour map used only for raw-versus-denoised QC figures; it does not alter TIFF intensities or model inputs. | - |
 | `dpi` | `int` | `100` | `advanced` | Raster resolution, in dots per inch, of denoising comparison figures. | - |
 | `qc_image_dir` | `str` | `denoising` | `advanced` | Subdirectory name below the active QC/report location for side-by-side comparison figures; parameter scans append the parameter and value. | - |
-| `qc_num_rois` | `Optional[int]` | `10` | `advanced` | Maximum number of randomly sampled ROIs shown per channel in comparison figures; use null to include every ROI. | - |
+| `qc_num_rois` | `Optional[int]` | `10` | `advanced` | Positive maximum number of randomly sampled ROIs shown per channel in comparison figures; sampling currently has no fixed seed and null includes every ROI. | - |
 | `skip_already_denoised` | `bool` | `True` | `advanced` | Skip requested channels whose TIFF names are already present in the first existing denoised ROI folder, rather than overwrite those channel outputs. | - |

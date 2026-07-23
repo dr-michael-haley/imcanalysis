@@ -20,10 +20,15 @@ from SpatialBiologyToolkit.cellvision import (
     ROIInput,
     _gallery_image,
     _normalized_uint16_image,
+    aligned_marker_matrix,
+    aligned_obsm_representation,
+    categorical_entropy_explained,
     complete_normalization_dict,
     compute_normalization_dict,
     configuration_fingerprint,
+    continuous_cluster_explained_variance,
     confusion_tables,
+    fuse_connectivity_graphs,
     identity_fingerprint,
     leiden_key,
     relabel_selected_mask,
@@ -48,7 +53,9 @@ from SpatialBiologyToolkit.pipeline.runs import create_run_record
 from SpatialBiologyToolkit.pipeline.slurm import sbt_environment
 from SpatialBiologyToolkit.scripts.cellvision_cluster import (
     _atomic_write_h5ad,
+    _cellvision_umap_params,
     _canonicalize_leiden_columns,
+    _register_fused_neighbors,
 )
 from SpatialBiologyToolkit.scripts.config_and_utils import read_h5ad_compat
 
@@ -260,12 +267,19 @@ class CellVisionChannelAndConfigTests(unittest.TestCase):
         self.assertEqual(config.normalization_quantile, 0.999)
         self.assertEqual(config.normalization_clip, [0.0, 1.0])
         self.assertEqual(config.leiden_resolutions, [0.2, 0.3, 0.5, 0.7, 1.0])
+        self.assertEqual(config.augmentation_intensity_jitter, 0.2)
+        self.assertEqual(config.augmentation_intensity_jitter_probability, 0.0)
+        self.assertTrue(config.fusion_enabled)
+        self.assertEqual(config.fusion_intensity_representation, "X_biobatchnet")
+        self.assertEqual(config.fusion_intensity_weight, 0.5)
         with self.assertRaises(ValidationError):
             CellVisionConfig(populations=["T cell"])
         with self.assertRaises(ValidationError):
             CellVisionConfig(warmup_epochs=31, epochs=30)
         with self.assertRaises(ValidationError):
             CellVisionConfig(normalization_clip=[0, 2])
+        with self.assertRaises(ValidationError):
+            CellVisionConfig(fusion_intensity_weight=1.1)
 
     def test_nimbus_normalization_dict_accepts_string_values_and_exact_channels(self):
         values = validate_normalization_dict(
@@ -470,6 +484,8 @@ class CellVisionChannelAndConfigTests(unittest.TestCase):
                 missing.resolved_stages[0].missing_files,
             )
 
+            assets["anndata"].path.parent.mkdir(parents=True, exist_ok=True)
+            assets["anndata"].path.write_bytes(b"placeholder")
             (asset_root / "cellvision_embeddings.h5ad").write_bytes(b"placeholder")
             ready = build_run_plan(
                 context, ["cellvision-cluster"], include_dependencies=False
@@ -598,6 +614,115 @@ class CellVisionVICRegTests(unittest.TestCase):
         self.assertEqual(int(counts.loc["A"].sum()), 2)
         self.assertAlmostEqual(float(normalized.loc["A"].sum()), 1.0)
         self.assertEqual(leiden_key(0.3), "cellvision_leiden_0.3")
+
+    def test_source_representations_and_markers_align_by_observation_identity(self):
+        source = ad.AnnData(
+            X=np.array([[1, 10], [2, 20], [3, 30]], dtype=np.float32),
+            obs=pd.DataFrame(index=["cell-c", "cell-a", "cell-b"]),
+            var=pd.DataFrame(index=["165Ho_CD11c", "174Yb_MHCII"]),
+        )
+        source.obsm["X_biobatchnet"] = np.array(
+            [[30, 31], [10, 11], [20, 21]], dtype=np.float32
+        )
+
+        representation = aligned_obsm_representation(
+            source, ["cell-a", "cell-b"], "X_biobatchnet"
+        )
+        markers, names = aligned_marker_matrix(
+            source, ["cell-a", "cell-b"], ["CD11c", "MHCII"]
+        )
+
+        np.testing.assert_array_equal(representation, [[10, 11], [20, 21]])
+        np.testing.assert_array_equal(markers, [[2, 20], [3, 30]])
+        self.assertEqual(names, ["165Ho_CD11c", "174Yb_MHCII"])
+
+    def test_graph_fusion_is_symmetric_and_respects_weight_endpoints(self):
+        from scipy import sparse
+
+        morphology = sparse.csr_matrix(
+            [[0, 2, 0], [2, 0, 1], [0, 1, 0]], dtype=np.float32
+        )
+        intensity = sparse.csr_matrix(
+            [[0, 0, 3], [0, 0, 1], [3, 1, 0]], dtype=np.float32
+        )
+
+        morphology_only = fuse_connectivity_graphs(
+            morphology, intensity, intensity_weight=0
+        )
+        intensity_only = fuse_connectivity_graphs(
+            morphology, intensity, intensity_weight=1
+        )
+        joint = fuse_connectivity_graphs(morphology, intensity, intensity_weight=0.5)
+
+        np.testing.assert_allclose(joint.toarray(), joint.T.toarray())
+        np.testing.assert_allclose(
+            joint.toarray(),
+            0.5 * morphology_only.toarray() + 0.5 * intensity_only.toarray(),
+        )
+
+    def test_registered_fusion_graph_and_umap_contract_are_scanpy_compatible(self):
+        from scipy import sparse
+
+        data = ad.AnnData(X=np.ones((3, 1), dtype=np.float32))
+        data.obsp["m_connectivities"] = sparse.csr_matrix(
+            [[0, 1, 1], [1, 0, 1], [1, 1, 0]], dtype=np.float32
+        )
+        data.obsp["i_connectivities"] = sparse.csr_matrix(
+            [[0, 2, 1], [2, 0, 1], [1, 1, 0]], dtype=np.float32
+        )
+        data.uns["m"] = {"connectivities_key": "m_connectivities"}
+        data.uns["i"] = {"connectivities_key": "i_connectivities"}
+
+        key = _register_fused_neighbors(
+            data,
+            morphology_neighbors_key="m",
+            intensity_neighbors_key="i",
+            joint_neighbors_key="cellvision_neighbors",
+            intensity_weight=0.25,
+            n_neighbors=2,
+            representation_key="X_cellvision_pca",
+            n_pcs=2,
+            random_state=17,
+        )
+
+        self.assertEqual(key, "cellvision_neighbors")
+        self.assertEqual(
+            data.uns[key]["connectivities_key"],
+            "cellvision_neighbors_connectivities",
+        )
+        self.assertIn("cellvision_neighbors_connectivities", data.obsp)
+        self.assertEqual(data.uns[key]["params"]["n_neighbors"], 2)
+        self.assertEqual(data.uns[key]["params"]["use_rep"], "X_cellvision_pca")
+        self.assertEqual(
+            _cellvision_umap_params(17),
+            {"init_pos": "random", "random_state": 17},
+        )
+
+    def test_cluster_explanation_qc_handles_continuous_and_categorical_targets(self):
+        labels = ["0", "0", "1", "1"]
+        continuous = continuous_cluster_explained_variance(
+            np.array([[0, 1], [0, 2], [10, 3], [10, 4]], dtype=float),
+            labels,
+            feature_names=["separated", "gradient"],
+            modality="test",
+        )
+        categorical = categorical_entropy_explained(
+            labels,
+            ["ROI-A", "ROI-A", "ROI-B", "ROI-B"],
+        )
+
+        self.assertAlmostEqual(
+            float(
+                continuous.loc[
+                    continuous["feature"].eq("separated"),
+                    "explained_variance_fraction",
+                ].iloc[0]
+            ),
+            1.0,
+        )
+        self.assertAlmostEqual(
+            float(categorical["entropy_explained_fraction"]), 1.0
+        )
 
     def test_cellvision_leiden_rename_preserves_source_leiden_columns(self):
         data = ad.AnnData(

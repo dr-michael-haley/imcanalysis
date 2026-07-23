@@ -295,6 +295,9 @@ def _api_modules(repo_root: Path) -> list[tuple[str, str]]:
         modules.append(
             ("population_embedding_qc", "SpatialBiologyToolkit.population_embedding_qc")
         )
+    agent_population_qc_package = package_dir / "population_qc"
+    if (agent_population_qc_package / "__init__.py").is_file():
+        modules.append(("population_qc", "SpatialBiologyToolkit.population_qc"))
     return modules
 
 

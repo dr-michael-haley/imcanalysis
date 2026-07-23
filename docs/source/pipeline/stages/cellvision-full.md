@@ -11,12 +11,13 @@ Run CellVision extraction, VICReg embedding, RAPIDS clustering, and plotting in 
 ## Inputs
 
 - general.anndata_path, cellvision.input_adata_path override, and configured cellvision population selection
+- configured CellVision source/fusion AnnData containing cellvision.fusion_intensity_representation when fusion is enabled
 - general.denoised_images_folder/general.masks_folder or cellvision image/mask overrides
 
 ## Outputs
 
 - cellvision.asset_folder with H5SC, identity table, VICReg checkpoint, embeddings, and clustered AnnData
-- outputs/<execution_id>_CellVision_Full/ training diagnostics, comparisons, projections, and galleries
+- outputs/<execution_id>_CellVision_Full/ training diagnostics, cluster-explanation QC, comparisons, projections, and galleries
 
 ## Configuration
 

@@ -12,9 +12,10 @@ set -e
 
 #@DESC: Run CellVision extraction, VICReg embedding, RAPIDS clustering, and plotting in one GPU job
 #@IN:   general.anndata_path, cellvision.input_adata_path override, and configured cellvision population selection
+#@IN:   configured CellVision source/fusion AnnData containing cellvision.fusion_intensity_representation when fusion is enabled
 #@IN:   general.denoised_images_folder/general.masks_folder or cellvision image/mask overrides
 #@OUT:  cellvision.asset_folder with H5SC, identity table, VICReg checkpoint, embeddings, and clustered AnnData
-#@OUT:  outputs/<execution_id>_CellVision_Full/ training diagnostics, comparisons, projections, and galleries
+#@OUT:  outputs/<execution_id>_CellVision_Full/ training diagnostics, cluster-explanation QC, comparisons, projections, and galleries
 #@ENV:  scPortrait
 #@MODULE:  SpatialBiologyToolkit.scripts.cellvision_extract
 #@MODULE:  SpatialBiologyToolkit.scripts.cellvision_embed

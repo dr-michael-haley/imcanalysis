@@ -1854,11 +1854,11 @@ class CellVisionConfig(ConfigModel):
         lt=1,
     )
     augmentation_intensity_jitter_probability: float = config_field(
-        1.0,
+        0.0,
         description="Probability of applying independent multiplicative marker jitter.",
         stage="cellvision",
         ui_group="Mask-safe augmentations",
-        advice="Set to zero when marker amplitude should remain unchanged between views.",
+        advice="The zero default preserves marker amplitude between views; increase deliberately to make the encoder less intensity-sensitive.",
         ge=0,
         le=1,
     )
@@ -1905,9 +1905,42 @@ class CellVisionConfig(ConfigModel):
         advice="The runtime value is capped below the number of embedded cells.",
         ge=2,
     )
+    fusion_enabled: bool = config_field(
+        True,
+        description="Fuse the CellVision morphology graph with a local graph rebuilt from a batch-corrected source intensity representation.",
+        level="basic",
+        stage="cellvision",
+        ui_group="RAPIDS clustering",
+        advice="The default requires the configured source AnnData to contain fusion_intensity_representation; disable only for a morphology-only analysis.",
+    )
+    fusion_intensity_adata_path: Optional[str] = config_field(
+        None,
+        description="Optional AnnData supplying the batch-corrected intensity representation used for graph fusion; defaults to cellvision.input_adata_path and then general.anndata_path.",
+        stage="cellvision",
+        ui_group="RAPIDS clustering",
+        advice="Set this when BioBatchNet writes to a separate output_adata_path instead of updating the CellVision source AnnData.",
+    )
+    fusion_intensity_representation: str = config_field(
+        "X_biobatchnet",
+        description="Source AnnData obsm key containing the batch-corrected per-cell intensity embedding used to build the fusion graph.",
+        stage="cellvision",
+        ui_group="RAPIDS clustering",
+        advice="X_biobatchnet is written by the toolkit BioBatchNet stage; latent dimensions are used directly without another PCA.",
+        min_length=1,
+    )
+    fusion_intensity_weight: float = config_field(
+        0.5,
+        description="Weight assigned to the degree-normalized intensity graph; one minus this value weights the CellVision morphology graph.",
+        level="basic",
+        stage="cellvision",
+        ui_group="RAPIDS clustering",
+        advice="Use 0 for the morphology endpoint, 1 for the intensity endpoint, and intermediate values for joint clustering.",
+        ge=0,
+        le=1,
+    )
     leiden_resolutions: List[float] = config_field(
         default_factory=lambda: [0.2, 0.3, 0.5, 0.7, 1.0],
-        description="Leiden resolutions evaluated on the one CellVision neighbor graph.",
+        description="Leiden resolutions evaluated on the default joint CellVision neighbor graph.",
         level="basic",
         stage="cellvision",
         ui_group="RAPIDS clustering",

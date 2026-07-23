@@ -10,8 +10,8 @@
 | `marker_normalisation` | `List[str]` | `['q0.999']` | `advanced` | Configuration value for marker normalisation. | - |
 | `store_raw_marker_data` | `bool` | `False` | `advanced` | Configuration value for store raw marker data. | - |
 | `remove_channels_list` | `List[str]` | `['DNA1', 'DNA3']` | `advanced` | Configuration value for remove channels list. | - |
-| `remove_and_store_markers` | `List[str]` | `[]` | `advanced` | Configuration value for remove and store markers. | - |
-| `removed_markers_anndata_path` | `str` | `anndata_removed.h5ad` | `advanced` | Configuration value for removed markers anndata path. | - |
+| `remove_and_store_markers` | `List[str]` | `[]` | `advanced` | Markers copied to a separate AnnData and removed from the main feature matrix before downstream clustering or integration; they can be restored later for interpretation. | - |
+| `removed_markers_anndata_path` | `str` | `anndata_removed.h5ad` | `advanced` | AnnData path used to store excluded marker values and later read them during marker reintegration; keep its cells unchanged and in the original order. | - |
 | `anndata_save_path` | `str` | `anndata.h5ad` | `advanced` | Configuration value for anndata save path. | - |
 | `create_roi_cell_tables` | `bool` | `True` | `advanced` | Configuration value for create roi cell tables. | - |
 | `create_master_cell_table` | `bool` | `True` | `advanced` | Configuration value for create master cell table. | - |

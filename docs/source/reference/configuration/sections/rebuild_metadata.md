@@ -6,19 +6,19 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `input_adata_path` | `Optional[str]` | `null` | `advanced` | Configuration value for input adata path. | - |
-| `output_metadata_folder` | `Optional[str]` | `null` | `advanced` | Configuration value for output metadata folder. | - |
-| `include_obs_patterns` | `Optional[List[str]]` | `null` | `advanced` | Configuration value for include obs patterns. | - |
-| `exclude_obs` | `List[str]` | `['ObjectNumber', 'CellID', 'cell_id', 'Master_Index', 'X_loc', 'Y_loc']` | `advanced` | Configuration value for exclude obs. | - |
-| `exclude_obs_contains` | `List[str]` | `['population', 'leiden', 'cluster', 'nhood', 'neighborhood']` | `advanced` | Configuration value for exclude obs contains. | - |
-| `preserve_existing_import_data` | `bool` | `True` | `advanced` | Configuration value for preserve existing import data. | - |
-| `metadata_description_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for metadata description obs. | - |
-| `include_invariant_obs_in_metadata_csv` | `bool` | `True` | `advanced` | Configuration value for include invariant obs in metadata csv. | - |
-| `include_invariant_obs_in_dictionary_csv` | `bool` | `True` | `advanced` | Configuration value for include invariant obs in dictionary csv. | - |
-| `panel_channel_name_var` | `Optional[str]` | `null` | `advanced` | Configuration value for panel channel name var. | - |
-| `panel_channel_label_var` | `Optional[str]` | `null` | `advanced` | Configuration value for panel channel label var. | - |
-| `panel_use_denoised_default` | `bool` | `True` | `advanced` | Configuration value for panel use denoised default. | - |
-| `panel_use_raw_default` | `bool` | `False` | `advanced` | Configuration value for panel use raw default. | - |
-| `panel_to_denoise_default` | `bool` | `True` | `advanced` | Configuration value for panel to denoise default. | - |
-| `panel_remove_outliers_default` | `bool` | `False` | `advanced` | Configuration value for panel remove outliers default. | - |
-| `preserve_existing_panel_flags` | `bool` | `True` | `advanced` | Configuration value for preserve existing panel flags. | - |
+| `input_adata_path` | `Optional[str]` | `null` | `advanced` | Optional source AnnData override; when omitted, metadata are reconstructed from general.anndata_path. | - |
+| `output_metadata_folder` | `Optional[str]` | `null` | `advanced` | Optional destination folder override for metadata.csv, dictionary.csv, and panel.csv; defaults to general.metadata_folder. | - |
+| `include_obs_patterns` | `Optional[List[str]]` | `null` | `advanced` | Optional regular-expression allowlist applied to observation names before ROI-invariant metadata columns are selected. | - |
+| `exclude_obs` | `List[str]` | `['ObjectNumber', 'CellID', 'cell_id', 'Master_Index', 'X_loc', 'Y_loc']` | `advanced` | Observation names excluded from ROI-level metadata reconstruction in addition to shared ROI, coordinate, master-index, and population columns. | - |
+| `exclude_obs_contains` | `List[str]` | `['population', 'leiden', 'cluster', 'nhood', 'neighborhood']` | `advanced` | Case-insensitive name fragments used to exclude cell-population, clustering, and neighbourhood observations from ROI-level metadata. | - |
+| `preserve_existing_import_data` | `bool` | `True` | `advanced` | Compatibility setting retained in the schema; the current rebuild implementation does not read it and always sets import_data=true for every reconstructed ROI. | - |
+| `metadata_description_obs` | `Optional[str]` | `null` | `advanced` | Optional ROI-invariant observation used for metadata.csv and dictionary.csv descriptions; defaults to an invariant 'description' column and then the ROI name. | - |
+| `include_invariant_obs_in_metadata_csv` | `bool` | `True` | `advanced` | Append selected ROI-invariant observations to metadata.csv after its required pipeline columns. | - |
+| `include_invariant_obs_in_dictionary_csv` | `bool` | `True` | `advanced` | Append selected ROI-invariant observations to the ROI-indexed dictionary.csv table. | - |
+| `panel_channel_name_var` | `Optional[str]` | `null` | `advanced` | Optional adata.var column used for panel.csv channel_name; defaults to var['channel_name'] and then var_names. | - |
+| `panel_channel_label_var` | `Optional[str]` | `null` | `advanced` | Optional adata.var column used for cleaned, unique panel.csv channel_label values; defaults to var['channel_label'] and then var_names. | - |
+| `panel_use_denoised_default` | `bool` | `True` | `advanced` | Default panel.csv use_denoised flag for channels without a preservable existing setting. | - |
+| `panel_use_raw_default` | `bool` | `False` | `advanced` | Default panel.csv use_raw flag for channels without a preservable existing setting. | - |
+| `panel_to_denoise_default` | `bool` | `True` | `advanced` | Default panel.csv to_denoise flag for channels without a preservable existing setting. | - |
+| `panel_remove_outliers_default` | `bool` | `False` | `advanced` | Default panel.csv remove_outliers flag for channels without a preservable existing setting. | - |
+| `preserve_existing_panel_flags` | `bool` | `True` | `advanced` | Preserve parseable use_denoised, to_denoise, use_raw, and remove_outliers values from an existing panel.csv when cleaned channel labels match. | - |

@@ -3,14 +3,16 @@
 #SBATCH -G 1
 #SBATCH -t 1-0
 #SBATCH -n 12
+#SBATCH --mem=64G
 
 #SBATCH --mail-user=${IMC_EMAIL}
 #SBATCH --mail-type=ALL
 
 set -e
 
-#@DESC: Run one RAPIDS PCA/neighbors/UMAP graph and configured CellVision Leiden resolutions
+#@DESC: Fuse CellVision morphology and BioBatchNet intensity graphs, then run RAPIDS UMAP and Leiden
 #@IN:   cellvision.asset_folder/cellvision_embeddings.h5ad
+#@IN:   cellvision.fusion_intensity_adata_path or CellVision source AnnData with the configured BioBatchNet obsm representation
 #@OUT:  cellvision.asset_folder/cellvision_clustered.h5ad
 #@ENV:  rapids_singlecell
 #@MODULE:  SpatialBiologyToolkit.scripts.cellvision_cluster

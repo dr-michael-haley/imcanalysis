@@ -6,24 +6,24 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `input_adata_path` | `Optional[str]` | `null` | `advanced` | Configuration value for input adata path. | - |
-| `output_adata_path` | `Optional[str]` | `null` | `advanced` | Configuration value for output adata path. | - |
-| `output_subdir` | `str` | `subclustering` | `advanced` | Configuration value for output subdir. | - |
-| `mode` | `Any` | `generate` | `advanced` | Configuration value for mode. | - |
-| `settings_filename` | `str` | `sublustering_settings.csv` | `advanced` | Configuration value for settings filename. | - |
-| `marker_list_filename` | `str` | `marker_list.csv` | `advanced` | Configuration value for marker list filename. | - |
-| `remap_filename` | `str` | `subcluster_to_final_population.csv` | `advanced` | Configuration value for remap filename. | - |
-| `master_index_mapping_filename` | `str` | `master_index_to_final_population.csv` | `advanced` | Configuration value for master index mapping filename. | - |
-| `base_label_key` | `Optional[str]` | `null` | `advanced` | Configuration value for base label key. | - |
-| `default_resolution` | `float` | `0.3` | `advanced` | Configuration value for default resolution. | - |
-| `default_marker_list` | `str` | `all` | `advanced` | Configuration value for default marker list. | - |
-| `use_rep` | `Optional[str]` | `X_biobatchnet` | `advanced` | Configuration value for use rep. | - |
-| `compute_umap_if_missing` | `bool` | `True` | `advanced` | Configuration value for compute umap if missing. | - |
-| `umap_dot_size` | `float` | `2.0` | `advanced` | Configuration value for umap dot size. | - |
-| `matrixplot_vmax` | `float` | `0.5` | `advanced` | Configuration value for matrixplot vmax. | - |
-| `save_individual_umaps` | `bool` | `True` | `advanced` | Configuration value for save individual umaps. | - |
-| `figure_extension` | `str` | `.png` | `advanced` | Configuration value for figure extension. | - |
-| `figure_dpi` | `int` | `300` | `advanced` | Configuration value for figure dpi. | - |
-| `final_label_key` | `str` | `population_final` | `advanced` | Configuration value for final label key. | - |
-| `master_index_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for master index obs. | - |
-| `apply_remap_only_if_modified` | `bool` | `True` | `advanced` | Configuration value for apply remap only if modified. | - |
+| `input_adata_path` | `Optional[str]` | `null` | `advanced` | Optional AnnData input override. When omitted, the stage uses general.anndata_path. | - |
+| `output_adata_path` | `Optional[str]` | `null` | `advanced` | Optional AnnData output override. When omitted, the input AnnData is updated in place. | - |
+| `output_subdir` | `str` | `subclustering` | `advanced` | Directory containing the reusable settings, marker-list, remap, and mapping CSV files. | - |
+| `mode` | `Any` | `generate` | `advanced` | Checkpoint selection: 'generate' runs template creation or subclustering, 'apply' applies the curated remap, 'all' runs all available checkpoints, and 1, 2, or 3 selects one checkpoint directly. | - |
+| `settings_filename` | `str` | `sublustering_settings.csv` | `advanced` | Editable per-population settings table. The legacy 'sublustering' spelling is retained for compatibility. | - |
+| `marker_list_filename` | `str` | `marker_list.csv` | `advanced` | Editable marker-selection table whose Boolean columns beginning with 'markers_' define alternative feature panels. | - |
+| `remap_filename` | `str` | `subcluster_to_final_population.csv` | `advanced` | Editable table mapping each generated subcluster to a biologically curated final population label. | - |
+| `master_index_mapping_filename` | `str` | `master_index_to_final_population.csv` | `advanced` | Output audit table linking each cell's stable master index to its final population label. | - |
+| `base_label_key` | `Optional[str]` | `null` | `advanced` | Parent-population observation used to define subsets. Defaults to general.population_obs_primary and then the legacy 'population' column. | - |
+| `default_resolution` | `float` | `0.3` | `advanced` | Initial Leiden resolution written to newly generated settings rows; larger values usually produce finer partitions but do not specify an exact number of subclusters. | - |
+| `default_marker_list` | `str` | `all` | `advanced` | Initial marker-list name written to settings rows; for example 'all' selects the marker_list.csv column 'markers_all'. | - |
+| `use_rep` | `Optional[str]` | `X_biobatchnet` | `advanced` | Preferred AnnData representation for computing a missing global QC UMAP. Subcluster neighbour graphs themselves are built from the selected marker values in adata.X. | - |
+| `compute_umap_if_missing` | `bool` | `True` | `advanced` | Compute a global UMAP for diagnostic plots when adata.obsm['X_umap'] is absent. | - |
+| `umap_dot_size` | `float` | `2.0` | `advanced` | Point size used in subclustering UMAP diagnostics. | - |
+| `matrixplot_vmax` | `float` | `0.5` | `advanced` | Upper colour limit used for raw-value marker matrix plots; tune it to the scale stored in adata.X. | - |
+| `save_individual_umaps` | `bool` | `True` | `advanced` | Save a separate global UMAP highlighting the cells in every generated subcluster. | - |
+| `figure_extension` | `str` | `.png` | `advanced` | File extension for subclustering diagnostic figures, including the leading dot. | - |
+| `figure_dpi` | `int` | `300` | `advanced` | Resolution in dots per inch for saved diagnostic figures. | - |
+| `final_label_key` | `str` | `population_final` | `advanced` | AnnData observation column receiving the curated final population labels during the apply checkpoint. | - |
+| `master_index_obs` | `Optional[str]` | `null` | `advanced` | Stable cell-identifier observation used in the exported mapping table. Defaults to general.master_index_obs and then 'Master_Index'; observation names are used if neither exists. | - |
+| `apply_remap_only_if_modified` | `bool` | `True` | `advanced` | Skip remap application until at least one final_population value differs from its generated subcluster label, protecting an unreviewed template from being treated as curated annotation. | - |

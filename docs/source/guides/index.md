@@ -9,4 +9,5 @@ config-driven pipeline.
 napari_imc_explorer
 cellpose_qc_active_learning
 spatialdata
+agent_population_qc
 ```

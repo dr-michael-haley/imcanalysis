@@ -10,16 +10,16 @@ Reintegrate markers previously removed from the processed AnnData
 
 ## Inputs
 
-- process.output_adata_path + segmentation.removed_markers_anndata_path
+- general.anndata_path + segmentation.removed_markers_anndata_path
 
 ## Outputs
 
-- process.output_adata_path (updated in place)
+- general.anndata_path (updated in place)
 - outputs/<execution_id>_Marker_Reintegration/ stage report
 
 ## Configuration
 
-- general, segmentation, process, logging
+- general, segmentation, logging
 
 ## Run
 

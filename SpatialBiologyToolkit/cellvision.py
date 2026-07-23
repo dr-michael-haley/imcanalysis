@@ -1086,6 +1086,317 @@ def mask_channel_index(var: pd.DataFrame, image_shape: Sequence[int]) -> int:
     return indices[0]
 
 
+def aligned_observation_positions(
+    source_obs_names: Sequence[Any],
+    target_obs_names: Sequence[Any],
+) -> NDArray[np.int64]:
+    """Return source row positions for identity-aligned target observations."""
+    source = pd.Index(source_obs_names).astype(str)
+    target = pd.Index(target_obs_names).astype(str)
+    if not source.is_unique:
+        raise ValueError("Source AnnData observation IDs must be unique for CellVision alignment.")
+    if not target.is_unique:
+        raise ValueError("CellVision observation IDs must be unique for source alignment.")
+    positions = source.get_indexer(target)
+    if np.any(positions < 0):
+        missing = target[positions < 0].tolist()
+        raise ValueError(
+            "CellVision cells are missing from the configured source AnnData; "
+            f"examples: {missing[:10]}"
+        )
+    return positions.astype(np.int64, copy=False)
+
+
+def aligned_obsm_representation(
+    source: Any,
+    target_obs_names: Sequence[Any],
+    representation_key: str,
+) -> np.ndarray:
+    """Extract a finite, identity-aligned source ``obsm`` representation."""
+    if representation_key not in source.obsm:
+        raise KeyError(
+            f"Source AnnData lacks obsm[{representation_key!r}] required for "
+            "CellVision graph fusion. Run BioBatchNet first, point "
+            "cellvision.fusion_intensity_adata_path at its output, or set "
+            "cellvision.fusion_enabled=false."
+        )
+    positions = aligned_observation_positions(source.obs_names, target_obs_names)
+    values = source.obsm[representation_key][positions]
+    if hasattr(values, "toarray"):
+        values = values.toarray()
+    matrix = np.asarray(values, dtype=np.float32)
+    if matrix.ndim != 2 or matrix.shape[0] != len(positions):
+        raise ValueError(
+            f"Source obsm[{representation_key!r}] has incompatible shape {matrix.shape}."
+        )
+    if matrix.shape[1] < 1 or not np.all(np.isfinite(matrix)):
+        raise ValueError(
+            f"Source obsm[{representation_key!r}] must contain at least one finite feature."
+        )
+    return matrix
+
+
+def resolve_marker_var_names(
+    var_names: Sequence[Any],
+    marker_names: Sequence[Any],
+) -> tuple[list[int], list[str]]:
+    """Resolve CellVision marker aliases to unique source AnnData variables."""
+    available = [str(value).strip() for value in var_names]
+    if any(not value for value in available):
+        raise ValueError("Source AnnData variable names cannot be empty for CellVision QC.")
+    resolved_indices: list[int] = []
+    resolved_names: list[str] = []
+    requested_names: list[str] = []
+    for raw_marker in marker_names:
+        marker = str(raw_marker).strip()
+        if not marker:
+            raise ValueError("CellVision QC marker names cannot be empty.")
+        folded = marker.casefold()
+        exact = [index for index, name in enumerate(available) if name.casefold() == folded]
+        candidates = exact or [
+            index
+            for index, name in enumerate(available)
+            if name.casefold().endswith(folded) or folded.endswith(name.casefold())
+        ]
+        if not candidates:
+            raise KeyError(
+                f"CellVision marker {marker!r} was not found in source AnnData.var_names."
+            )
+        if len(candidates) > 1:
+            matches = [available[index] for index in candidates]
+            raise ValueError(
+                f"CellVision marker {marker!r} ambiguously matches source variables {matches}."
+            )
+        index = candidates[0]
+        if index in resolved_indices:
+            previous = requested_names[resolved_indices.index(index)]
+            raise ValueError(
+                f"CellVision markers {previous!r} and {marker!r} resolve to the same "
+                f"source variable {available[index]!r}."
+            )
+        resolved_indices.append(index)
+        resolved_names.append(available[index])
+        requested_names.append(marker)
+    return resolved_indices, resolved_names
+
+
+def aligned_marker_matrix(
+    source: Any,
+    target_obs_names: Sequence[Any],
+    marker_names: Sequence[Any],
+) -> tuple[np.ndarray, list[str]]:
+    """Return source ``X`` values for CellVision cells and selected markers."""
+    positions = aligned_observation_positions(source.obs_names, target_obs_names)
+    marker_indices, resolved_names = resolve_marker_var_names(source.var_names, marker_names)
+    values = source.X[positions][:, marker_indices]
+    if hasattr(values, "toarray"):
+        values = values.toarray()
+    matrix = np.asarray(values, dtype=np.float64)
+    if matrix.shape != (len(positions), len(marker_indices)):
+        raise ValueError(
+            "Aligned CellVision marker matrix has unexpected shape "
+            f"{matrix.shape}; expected {(len(positions), len(marker_indices))}."
+        )
+    return matrix, resolved_names
+
+
+def fuse_connectivity_graphs(
+    morphology_connectivities: Any,
+    intensity_connectivities: Any,
+    *,
+    intensity_weight: float,
+) -> Any:
+    """Degree-normalize and combine two symmetric cell-connectivity graphs.
+
+    The returned SciPy CSR graph remains symmetric. Feature counts do not enter
+    the weighting because fusion happens after each modality has constructed a
+    cell-by-cell graph.
+    """
+    from scipy import sparse
+
+    weight = float(intensity_weight)
+    if not 0 <= weight <= 1:
+        raise ValueError("CellVision fusion intensity_weight must lie in [0, 1].")
+
+    def normalized(graph: Any, label: str):
+        if hasattr(graph, "get"):
+            graph = graph.get()
+        matrix = sparse.csr_matrix(graph, dtype=np.float64)
+        if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
+            raise ValueError(f"CellVision {label} graph must be square; got {matrix.shape}.")
+        matrix = (matrix + matrix.T) * 0.5
+        matrix.setdiag(0)
+        matrix.eliminate_zeros()
+        if matrix.nnz == 0 or np.any(matrix.data < 0) or not np.all(np.isfinite(matrix.data)):
+            raise ValueError(
+                f"CellVision {label} graph must contain finite, non-negative edges."
+            )
+        degree = np.asarray(matrix.sum(axis=1)).ravel()
+        if np.any(degree <= 0):
+            isolated = np.flatnonzero(degree <= 0)
+            raise ValueError(
+                f"CellVision {label} graph contains {len(isolated)} isolated cells; "
+                f"examples: {isolated[:10].tolist()}."
+            )
+        inverse_sqrt = np.power(degree, -0.5)
+        scaling = sparse.diags(inverse_sqrt)
+        return (scaling @ matrix @ scaling).tocsr()
+
+    morphology = normalized(morphology_connectivities, "morphology")
+    intensity = normalized(intensity_connectivities, "intensity")
+    if morphology.shape != intensity.shape:
+        raise ValueError(
+            "CellVision morphology and intensity graphs must have identical shapes; "
+            f"got {morphology.shape} and {intensity.shape}."
+        )
+    fused = ((1.0 - weight) * morphology + weight * intensity).tocsr()
+    fused = ((fused + fused.T) * 0.5).astype(np.float32)
+    fused.eliminate_zeros()
+    return fused
+
+
+def continuous_cluster_explained_variance(
+    values: Any,
+    cluster_labels: Sequence[Any],
+    *,
+    feature_names: Sequence[Any],
+    modality: str,
+) -> pd.DataFrame:
+    """Calculate per-feature eta-squared explained by categorical clusters."""
+    if hasattr(values, "toarray"):
+        values = values.toarray()
+    matrix = np.asarray(values, dtype=np.float64)
+    if matrix.ndim != 2:
+        raise ValueError(f"CellVision {modality} QC values must be two-dimensional.")
+    names = [str(value) for value in feature_names]
+    if matrix.shape[1] != len(names):
+        raise ValueError(
+            f"CellVision {modality} QC has {matrix.shape[1]} columns but "
+            f"{len(names)} feature names."
+        )
+    labels = pd.Series(cluster_labels, dtype="string")
+    if len(labels) != matrix.shape[0]:
+        raise ValueError(f"CellVision {modality} QC labels and values have different lengths.")
+
+    rows: list[dict[str, Any]] = []
+    label_valid = labels.notna().to_numpy()
+    for index, name in enumerate(names):
+        feature = matrix[:, index]
+        valid = label_valid & np.isfinite(feature)
+        selected = feature[valid]
+        selected_labels = labels[valid].astype(str).to_numpy()
+        total_ss = float(np.square(selected - selected.mean()).sum()) if len(selected) else 0.0
+        between_ss = 0.0
+        if total_ss > 0:
+            overall = float(selected.mean())
+            for category in np.unique(selected_labels):
+                group = selected[selected_labels == category]
+                between_ss += float(len(group) * np.square(group.mean() - overall))
+            explained = min(1.0, max(0.0, between_ss / total_ss))
+        else:
+            explained = np.nan
+        rows.append(
+            {
+                "modality": modality,
+                "feature": name,
+                "n_cells": int(valid.sum()),
+                "total_sum_squares": total_ss,
+                "between_cluster_sum_squares": between_ss,
+                "explained_variance_fraction": explained,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def summarize_continuous_explained_variance(details: pd.DataFrame) -> dict[str, float]:
+    """Summarize feature-wise eta-squared with equal and variance weighting."""
+    finite = details["explained_variance_fraction"].replace([np.inf, -np.inf], np.nan)
+    total_ss = float(details["total_sum_squares"].sum())
+    between_ss = float(details["between_cluster_sum_squares"].sum())
+    return {
+        "mean_feature_explained_fraction": float(finite.mean()) if finite.notna().any() else np.nan,
+        "variance_weighted_explained_fraction": (
+            min(1.0, max(0.0, between_ss / total_ss)) if total_ss > 0 else np.nan
+        ),
+    }
+
+
+def categorical_entropy_explained(
+    cluster_labels: Sequence[Any],
+    target_labels: Sequence[Any],
+) -> dict[str, float | int]:
+    """Return the fraction of target-label entropy explained by clusters."""
+    clusters = pd.Series(cluster_labels, dtype="string")
+    targets = pd.Series(target_labels, dtype="string")
+    if len(clusters) != len(targets):
+        raise ValueError("CellVision categorical QC labels must have equal lengths.")
+    valid = clusters.notna() & targets.notna()
+    table = pd.crosstab(clusters[valid], targets[valid], dropna=False).to_numpy(dtype=float)
+    n_cells = int(table.sum())
+    if n_cells == 0:
+        return {"n_cells": 0, "n_clusters": 0, "n_categories": 0, "entropy_explained_fraction": np.nan}
+    target_probabilities = table.sum(axis=0) / n_cells
+    positive_target = target_probabilities > 0
+    target_entropy = float(
+        -(target_probabilities[positive_target] * np.log(target_probabilities[positive_target])).sum()
+    )
+    cluster_totals = table.sum(axis=1)
+    conditional_entropy = 0.0
+    for row, total in zip(table, cluster_totals, strict=True):
+        probabilities = row / total
+        positive = probabilities > 0
+        conditional_entropy += float(
+            (total / n_cells) * -(probabilities[positive] * np.log(probabilities[positive])).sum()
+        )
+    explained = (
+        min(1.0, max(0.0, (target_entropy - conditional_entropy) / target_entropy))
+        if target_entropy > 0
+        else np.nan
+    )
+    return {
+        "n_cells": n_cells,
+        "n_clusters": int((cluster_totals > 0).sum()),
+        "n_categories": int((table.sum(axis=0) > 0).sum()),
+        "entropy_explained_fraction": explained,
+    }
+
+
+def plot_cellvision_qc_summary(
+    summary: pd.DataFrame,
+    *,
+    output_path: Path,
+    dpi: int,
+) -> Path:
+    """Plot the four automatic CellVision cluster-explanation diagnostics."""
+    import matplotlib.pyplot as plt
+
+    metric_labels = {
+        "marker_intensity_explained_fraction": "Marker intensity",
+        "morphology_explained_fraction": "Morphology proxy",
+        "roi_entropy_explained_fraction": "ROI",
+        "source_population_entropy_explained_fraction": "Source population",
+    }
+    available = [column for column in metric_labels if column in summary.columns]
+    if not available:
+        raise ValueError("CellVision QC summary contains no plottable explanation metrics.")
+    x = np.arange(len(summary), dtype=float)
+    width = 0.8 / len(available)
+    fig, ax = plt.subplots(figsize=(max(8.0, 1.4 * len(summary) + 4), 5.5))
+    for index, column in enumerate(available):
+        offsets = x - 0.4 + width / 2 + index * width
+        ax.bar(offsets, summary[column].to_numpy(dtype=float), width, label=metric_labels[column])
+    ax.set_xticks(x, labels=summary["cluster_key"].astype(str), rotation=30, ha="right")
+    ax.set_ylim(0, 1)
+    ax.set_ylabel("Fraction explained by CellVision clusters")
+    ax.set_title("CellVision cluster explanation QC")
+    ax.legend(frameon=False, ncol=2)
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=int(dpi), bbox_inches="tight")
+    plt.close(fig)
+    return output_path
+
+
 def categorical_palette(categories: Sequence[str]) -> dict[str, Any]:
     """Create a deterministic matplotlib palette for arbitrary category counts."""
     import matplotlib.pyplot as plt
@@ -1297,13 +1608,18 @@ __all__ = [
     "MODEL_FILENAME",
     "ROIInput",
     "TRAINING_HISTORY_FILENAME",
+    "aligned_marker_matrix",
+    "aligned_observation_positions",
+    "aligned_obsm_representation",
     "annotate_h5sc_identity",
     "assemble_scportrait_inputs",
     "categorical_palette",
     "compute_normalization_dict",
     "complete_normalization_dict",
     "configuration_fingerprint",
+    "continuous_cluster_explained_variance",
     "confusion_tables",
+    "categorical_entropy_explained",
     "discover_roi_inputs",
     "identity_fingerprint",
     "image_channel_metadata",
@@ -1313,6 +1629,7 @@ __all__ = [
     "mask_channel_index",
     "open_h5sc_images",
     "plot_categorical_embedding",
+    "plot_cellvision_qc_summary",
     "plot_cell_gallery",
     "plot_confusion_matrix",
     "read_h5sc_metadata",
@@ -1320,10 +1637,13 @@ __all__ = [
     "relabel_selected_mask",
     "resolution_label",
     "resolve_cellvision_paths",
+    "resolve_marker_var_names",
     "resolve_roi_channels",
     "run_scportrait_extraction",
     "safe_slug",
     "select_source_cells",
+    "summarize_continuous_explained_variance",
+    "fuse_connectivity_graphs",
     "validate_normalization_dict",
     "validate_existing_extraction",
     "write_json",

@@ -1,10 +1,11 @@
-"""Cluster CellVision VICReg embeddings with the existing RAPIDS sequence."""
+"""Build morphology/intensity CellVision graphs and cluster them with RAPIDS."""
 
 from __future__ import annotations
 
 import logging
 import os
 from pathlib import Path
+from typing import Any, Callable
 
 
 def _atomic_write_h5ad(adata, path: Path) -> None:
@@ -59,11 +60,79 @@ def _canonicalize_leiden_columns(
     return final_keys
 
 
+def _register_fused_neighbors(
+    adata: Any,
+    *,
+    morphology_neighbors_key: str,
+    intensity_neighbors_key: str,
+    joint_neighbors_key: str,
+    intensity_weight: float,
+    n_neighbors: int,
+    representation_key: str,
+    n_pcs: int | None,
+    random_state: int,
+    to_backend: Callable[[Any], Any] | None = None,
+) -> str:
+    """Fuse named neighbour graphs and register a Scanpy-compatible graph key."""
+    from SpatialBiologyToolkit.cellvision import fuse_connectivity_graphs
+
+    def connectivities(graph_key: str):
+        metadata = adata.uns.get(graph_key)
+        if not isinstance(metadata, dict):
+            raise KeyError(f"CellVision neighbor metadata {graph_key!r} is missing.")
+        matrix_key = metadata.get("connectivities_key")
+        if not matrix_key or matrix_key not in adata.obsp:
+            raise KeyError(
+                f"CellVision neighbor metadata {graph_key!r} does not reference "
+                "an available connectivity matrix."
+            )
+        return adata.obsp[matrix_key]
+
+    fused = fuse_connectivity_graphs(
+        connectivities(morphology_neighbors_key),
+        connectivities(intensity_neighbors_key),
+        intensity_weight=intensity_weight,
+    )
+    connectivity_key = f"{joint_neighbors_key}_connectivities"
+    adata.obsp[connectivity_key] = to_backend(fused) if to_backend is not None else fused
+    adata.uns[joint_neighbors_key] = {
+        "connectivities_key": connectivity_key,
+        "params": {
+            "method": "cellvision_degree_normalized_graph_fusion",
+            "morphology_neighbors_key": morphology_neighbors_key,
+            "intensity_neighbors_key": intensity_neighbors_key,
+            "morphology_weight": float(1.0 - intensity_weight),
+            "intensity_weight": float(intensity_weight),
+            "n_neighbors": int(n_neighbors),
+            "use_rep": representation_key,
+            "n_pcs": n_pcs,
+            "metric": "euclidean",
+            "random_state": int(random_state),
+        },
+    }
+    return joint_neighbors_key
+
+
+def _cellvision_umap_params(seed: int) -> dict[str, Any]:
+    """Return the explicit random UMAP initialization contract."""
+    return {"init_pos": "random", "random_state": int(seed)}
+
+
 def main() -> None:
     import anndata as ad
+    import rapids_singlecell as rsc
 
-    from SpatialBiologyToolkit.cellvision import configuration_fingerprint, leiden_key
-    from SpatialBiologyToolkit.scripts._cellvision_common import load_runtime, reporter
+    from SpatialBiologyToolkit.cellvision import (
+        aligned_obsm_representation,
+        configuration_fingerprint,
+        input_file_manifest,
+        leiden_key,
+    )
+    from SpatialBiologyToolkit.scripts._cellvision_common import (
+        fusion_intensity_path,
+        load_runtime,
+        reporter,
+    )
     from SpatialBiologyToolkit.scripts.basic_process_rapids import (
         _ensure_cpu_storage,
         _move_input_matrix_to_cpu,
@@ -91,15 +160,52 @@ def main() -> None:
     if not embeddings.obs_names.is_unique:
         raise ValueError("CellVision embedding observation IDs must be unique.")
 
+    intensity_source_path: Path | None = None
+    intensity_representation: Any | None = None
+    intensity_manifest: list[dict[str, Any]] = []
+    if cellvision.fusion_enabled:
+        intensity_source_path = fusion_intensity_path(config)
+        if not intensity_source_path.is_file():
+            raise FileNotFoundError(
+                "CellVision fusion intensity AnnData does not exist: "
+                f"{intensity_source_path}. Run BioBatchNet first, configure "
+                "cellvision.fusion_intensity_adata_path, or set "
+                "cellvision.fusion_enabled=false."
+            )
+        source = ad.read_h5ad(intensity_source_path, backed="r")
+        try:
+            intensity_representation = aligned_obsm_representation(
+                source,
+                embeddings.obs_names,
+                cellvision.fusion_intensity_representation,
+            )
+        finally:
+            source.file.close()
+        embeddings.obsm["X_cellvision_intensity"] = intensity_representation
+        intensity_manifest = input_file_manifest([intensity_source_path])
+
     n_pcs = min(int(cellvision.n_pcs), embeddings.n_vars, embeddings.n_obs - 1)
     n_neighbors = min(int(cellvision.n_neighbors), embeddings.n_obs - 1)
     clustering_fingerprint = configuration_fingerprint(
         {
-            "schema_version": 1,
+            "schema_version": 2,
             "identity_fingerprint": fingerprint,
             "training_fingerprint": str(metadata.get("training_fingerprint", "")),
             "n_pcs": n_pcs,
             "n_neighbors": n_neighbors,
+            "fusion_enabled": bool(cellvision.fusion_enabled),
+            "fusion_intensity_source": intensity_manifest,
+            "fusion_intensity_representation": (
+                cellvision.fusion_intensity_representation
+                if cellvision.fusion_enabled
+                else None
+            ),
+            "fusion_intensity_weight": (
+                float(cellvision.fusion_intensity_weight)
+                if cellvision.fusion_enabled
+                else None
+            ),
+            "umap_init_pos": "random",
             "umap_min_dist": float(cellvision.umap_min_dist),
             "leiden_resolutions": [
                 float(value) for value in cellvision.leiden_resolutions
@@ -111,6 +217,12 @@ def main() -> None:
     stage_reporter = reporter()
     if stage_reporter is not None:
         stage_reporter.add_input("cellvision_embeddings", paths.embeddings, "Cell-level VICReg embeddings used for RAPIDS clustering.")
+        if intensity_source_path is not None:
+            stage_reporter.add_input(
+                "cellvision_fusion_intensity_anndata",
+                intensity_source_path,
+                "Source AnnData providing the identity-aligned batch-corrected intensity embedding.",
+            )
 
     if paths.clustered.exists() and not cellvision.overwrite:
         clustered = ad.read_h5ad(paths.clustered, backed="r")
@@ -136,7 +248,7 @@ def main() -> None:
             )
         logging.info("Reusing validated CellVision clustered AnnData at %s", paths.clustered)
         if stage_reporter is not None:
-            stage_reporter.add_asset("cellvision_clustered", paths.clustered, "RAPIDS UMAP and Leiden annotations for VICReg cells.")
+            stage_reporter.add_asset("cellvision_clustered", paths.clustered, "RAPIDS UMAP and Leiden annotations for CellVision cells.")
             stage_reporter.add_metric("clustered_cells", n_cells)
             stage_reporter.add_metric("leiden_resolutions", len(leiden_columns))
             stage_reporter.add_note("Reused an existing clustered AnnData with a matching identity fingerprint.")
@@ -155,20 +267,58 @@ def main() -> None:
             pca_key="X_cellvision_pca",
             pca_params={},
         )
-        graph_key = _run_rapids_neighbors(
-            embeddings,
-            representation_key="X_cellvision_pca",
-            n_neighbors=n_neighbors,
-            n_pcs=n_pcs,
-            neighbors_key="cellvision_neighbors",
-            neighbors_params={},
-        )
+        if cellvision.fusion_enabled:
+            morphology_graph_key = _run_rapids_neighbors(
+                embeddings,
+                representation_key="X_cellvision_pca",
+                n_neighbors=n_neighbors,
+                n_pcs=n_pcs,
+                neighbors_key="cellvision_morphology_neighbors",
+                neighbors_params={},
+            )
+            embeddings.obsm["X_cellvision_intensity"] = rsc.get.X_to_GPU(
+                embeddings.obsm["X_cellvision_intensity"],
+                warning="X_cellvision_intensity",
+            )
+            intensity_graph_key = _run_rapids_neighbors(
+                embeddings,
+                representation_key="X_cellvision_intensity",
+                n_neighbors=n_neighbors,
+                n_pcs=None,
+                neighbors_key="cellvision_intensity_neighbors",
+                neighbors_params={},
+            )
+            graph_key = _register_fused_neighbors(
+                embeddings,
+                morphology_neighbors_key=morphology_graph_key,
+                intensity_neighbors_key=intensity_graph_key,
+                joint_neighbors_key="cellvision_neighbors",
+                intensity_weight=cellvision.fusion_intensity_weight,
+                n_neighbors=n_neighbors,
+                representation_key="X_cellvision_pca",
+                n_pcs=n_pcs,
+                random_state=cellvision.seed,
+                to_backend=lambda value: rsc.get.X_to_GPU(
+                    value, warning="cellvision_neighbors_connectivities"
+                ),
+            )
+        else:
+            morphology_graph_key = _run_rapids_neighbors(
+                embeddings,
+                representation_key="X_cellvision_pca",
+                n_neighbors=n_neighbors,
+                n_pcs=n_pcs,
+                neighbors_key="cellvision_neighbors",
+                neighbors_params={},
+            )
+            intensity_graph_key = None
+            graph_key = morphology_graph_key
         umap_key = _run_rapids_umap(
             embeddings,
             umap_min_dist=cellvision.umap_min_dist,
             neighbors_key=graph_key,
             umap_key="X_cellvision_umap",
-            umap_params={"random_state": cellvision.seed},
+            umap_params=_cellvision_umap_params(cellvision.seed),
         )
         generated_leiden = _run_rapids_leiden(
             embeddings,
@@ -195,7 +345,24 @@ def main() -> None:
             "configuration_fingerprint": clustering_fingerprint,
             "n_pcs": n_pcs,
             "n_neighbors": n_neighbors,
+            "fusion_enabled": bool(cellvision.fusion_enabled),
+            "fusion_intensity_adata_path": (
+                str(intensity_source_path) if intensity_source_path is not None else None
+            ),
+            "fusion_intensity_representation": (
+                cellvision.fusion_intensity_representation
+                if cellvision.fusion_enabled
+                else None
+            ),
+            "fusion_intensity_weight": (
+                float(cellvision.fusion_intensity_weight)
+                if cellvision.fusion_enabled
+                else None
+            ),
+            "morphology_neighbors_key": morphology_graph_key,
+            "intensity_neighbors_key": intensity_graph_key,
             "umap_min_dist": float(cellvision.umap_min_dist),
+            "umap_init_pos": "random",
             "umap_key": umap_key,
             "neighbors_key": graph_key,
             "leiden_keys": final_leiden,
@@ -204,16 +371,25 @@ def main() -> None:
     }
     _atomic_write_h5ad(embeddings, paths.clustered)
     logging.info(
-        "Saved CellVision RAPIDS UMAP and %d Leiden resolutions for %d cells.",
+        "Saved CellVision RAPIDS joint UMAP and %d Leiden resolutions for %d cells.",
         len(final_leiden),
         embeddings.n_obs,
     )
     if stage_reporter is not None:
-        stage_reporter.add_asset("cellvision_clustered", paths.clustered, "RAPIDS PCA, graph, UMAP, and Leiden annotations for VICReg cells.")
+        stage_reporter.add_asset("cellvision_clustered", paths.clustered, "RAPIDS PCA, modality graphs, joint UMAP, and Leiden annotations for CellVision cells.")
         stage_reporter.add_metric("clustered_cells", embeddings.n_obs)
         stage_reporter.add_metric("rapids_n_pcs", n_pcs)
         stage_reporter.add_metric("rapids_n_neighbors", n_neighbors)
         stage_reporter.add_metric("leiden_resolutions", len(final_leiden))
+        stage_reporter.add_metric("fusion_enabled", bool(cellvision.fusion_enabled))
+        if cellvision.fusion_enabled:
+            stage_reporter.add_metric(
+                "fusion_intensity_weight", float(cellvision.fusion_intensity_weight)
+            )
+            stage_reporter.add_note(
+                "CellVision clusters use the degree-normalized fusion of morphology "
+                "and BioBatchNet intensity neighbor graphs."
+            )
 
 
 if __name__ == "__main__":

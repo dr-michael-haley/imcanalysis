@@ -7,6 +7,7 @@ Core Python package for IMC / spatial-omics analysis. The notebooks and SLURM jo
 - `cox_survival.py`: AnnData-driven Cox PH, Ridge Cox, and Coxnet survival analysis with case-level aggregation, validation metrics, and survival plots.
 - `spatial.py` plus `spatialstats/`: spatial statistics, pair-correlation and neighbourhood tools (SpOOx utilities are vendored in `spatialstats/`).
 - `spatialdata.py`: validated, lazy conversion of AnnData + per-ROI image/mask folders into SpatialData, plus structural summaries and focused ROI plotting.
+- `population_qc/`: agent-friendly structural, expression, representation, image-inspection, and reversible in-memory clustering tools for population labelling and QC.
 - `plotting.py`: figure utilities shared by notebooks and scripts.
 - `napari_imc_explorer.py`: interactive Napari viewer for ROI images, masks, overlays, annotations, and population QC.
 - `image_analysis.py`, `denoising.py`, `imc_import_*.py`, `visium.py`: image IO, denoising, and Visium/spatial transcriptomics bridges.
@@ -44,6 +45,7 @@ reference](configuration/index.md) for details.
 - [Tutorial notebooks](../tutorials/index.md) for exploratory analysis.
 - [Napari explorer guide](../guides/napari_imc_explorer.md).
 - [SpatialData conversion guide](../guides/spatialdata.md).
+- [Agent-guided population QC guide](../guides/agent_population_qc.md).
 - [SLURM pipeline](../pipeline/index.md) for reproducible HPC runs.
 - [Python API](api/index.rst) for module-level documentation.
 

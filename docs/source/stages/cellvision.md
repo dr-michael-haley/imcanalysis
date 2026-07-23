@@ -5,7 +5,9 @@
 CellVision learns image-based representations of individual segmented IMC cells.
 It converts selected cells and marker channels into identity-tracked 36 x 36
 scPortrait images, trains a PyTorch VICReg model, extracts one embedding per
-cell, clusters those embeddings with RAPIDS, and builds a comparison report.
+cell, fuses its morphology graph with a local graph rebuilt from the selected
+cells' BioBatchNet embedding, clusters the joint graph with RAPIDS, and builds a
+comparison and explanation-QC report.
 
 Run the four checkpoint stages as separate dependent jobs with:
 
@@ -61,6 +63,11 @@ runs.
   names such as `165Ho_CD11c` by the same suffix rule. Exact keys take priority;
   missing or ambiguous matches fail before extraction. Relative paths resolve
   from the project root.
+- With the default `cellvision.fusion_enabled=true`, the source AnnData must
+  contain `obsm["X_biobatchnet"]`, or the AnnData containing that representation
+  must be supplied with `cellvision.fusion_intensity_adata_path`. CellVision
+  selects the matching rows by observation ID and rebuilds a local intensity
+  graph without recomputing or discarding the BioBatchNet correction.
 
 Source AnnData observation names must be unique, and each `(ROI, object ID)` pair
 must be unique and present in the corresponding labelled mask. These are checked
@@ -85,9 +92,11 @@ The source AnnData is read-only. Reusable outputs live below the configured
   fit or apply another intensity normalization.
 - `cellvision_embeddings.h5ad`: encoder embeddings with the original AnnData
   observation names as row identities.
-- `cellvision_clustered.h5ad`: RAPIDS PCA, neighbor graph, CellVision UMAP, and
-  one namespaced `cellvision_leiden_<resolution>` column per configured
-  resolution.
+- `cellvision_clustered.h5ad`: CellVision PCA, separate morphology and
+  BioBatchNet-intensity graphs, their degree-normalized joint graph, a
+  random-initialized joint UMAP, and one namespaced
+  `cellvision_leiden_<resolution>` column per configured resolution. When fusion
+  is disabled, the stable joint keys contain the morphology-only result.
 
 scPortrait can omit cells it cannot extract. Such cells are retained in
 `cell_identity.csv` as `not_extracted_by_scportrait`; they are not silently
@@ -105,6 +114,11 @@ reports. Across those reports, CellVision produces:
 - the same UMAP colored by `cellvision.population_obs`, when configured;
 - count and original-population-row-normalized confusion tables plus normalized
   confusion plots;
+- an automatic cluster-explanation QC figure and summary table reporting the
+  fraction of selected source-marker intensity variance, CellVision PCA
+  morphology-proxy variance, ROI entropy, and source-population entropy
+  explained by every configured CellVision Leiden resolution;
+- detailed per-marker and per-CellVision-PC explained-variance tables;
 - every CellVision Leiden label projected onto the original AnnData UMAP, with
   cells absent from CellVision shown in grey;
 - per-cluster galleries whose rows are sampled cells and columns are the exact
@@ -141,8 +155,22 @@ reports. Across those reports, CellVision produces:
   each marker's original nonzero support; `segmentation_mask` permits noise only
   inside the stored cell mask. Random crops, arbitrary-angle interpolation,
   hue/saturation operations, and channel mixing are not used.
+- Marker-intensity jitter is disabled by default
+  (`augmentation_intensity_jitter_probability=0`) so the two VICReg views retain
+  marker amplitude. The configured jitter magnitude remains available for an
+  explicitly intensity-invariant experiment.
 - `n_pcs` and `n_neighbors` are single RAPIDS values; only
   `leiden_resolutions` is a list.
+- `fusion_enabled=true` builds the morphology graph from `X_cellvision_pca` and
+  the intensity graph directly from the selected rows of
+  `fusion_intensity_representation` (default `X_biobatchnet`). Both graphs use
+  `n_neighbors`, are symmetrically degree-normalized, and are combined with
+  `fusion_intensity_weight=0.5`; the morphology weight is one minus that value.
+  Graph fusion therefore does not require equal feature counts. Set the weight
+  to 0 or 1 for modality endpoints, or disable fusion for the former
+  morphology-only pipeline behavior. UMAP always uses `init_pos="random"` with
+  the configured seed to avoid the pathological spectral-initialization layouts
+  seen for these graphs.
 - `overwrite=false` validates and reuses complete assets only when the extraction
   input manifest, cell/marker identity, VICReg training contract, and RAPIDS
   clustering contract match. Set it to `true` after deliberately changing those
@@ -183,6 +211,15 @@ corresponding H5SC channel galleries to determine whether the separation reflect
 cellular morphology/localization rather than acquisition artifacts, empty crops,
 ROI effects, or simple global intensity.
 
+Read the cluster-explanation QC as a confounding and interpretation aid, not a
+formal significance test. Continuous fractions are eta-squared values; marker
+intensity gives every selected marker equal weight in the headline mean, while
+the morphology headline is variance-weighted across CellVision PCs. ROI and
+source-population values are the directional fractions of those label entropies
+explained by the learned clusters. The CellVision PCA is a morphology proxy, not
+a guarantee of intensity-free morphology, so residual intensity can contribute
+to both continuous diagnostics.
+
 Compare multiple seeds and, where sample size permits, hold out ROIs or cases.
 The current stage trains on all selected cells and is intended for representation
 discovery, not a validated out-of-sample classifier.
@@ -205,6 +242,11 @@ discovery, not a validated out-of-sample classifier.
 - RAPIDS and model training require working CUDA environments on HPC. Local
   scPortrait extraction and CPU VICReg smoke tests do not establish full GPU
   compatibility.
+- Fusion requires a finite, identity-aligned batch-corrected source embedding.
+  CellVision fails rather than silently substituting raw intensity when the
+  configured representation is missing. If population selection leaves little
+  biological overlap between batches, local graph rebuilding preserves the
+  BioBatchNet coordinates but cannot create missing cross-batch support.
 - The external `scPortrait` and `rapids_singlecell` environments are registered
   but are not locked by this repository. Run `sbt env test scportrait` and
   `sbt env test rapids` after environment changes.

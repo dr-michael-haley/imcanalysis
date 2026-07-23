@@ -32,16 +32,22 @@ def _report_roots() -> tuple[Path, Path]:
 def main() -> None:
     import anndata as ad
     import numpy as np
+    import pandas as pd
 
     from SpatialBiologyToolkit.cellvision import (
+        aligned_marker_matrix,
+        categorical_entropy_explained,
+        continuous_cluster_explained_variance,
         confusion_tables,
         image_channel_metadata,
         leiden_key,
         open_h5sc_images,
         plot_categorical_embedding,
+        plot_cellvision_qc_summary,
         plot_cell_gallery,
         plot_confusion_matrix,
         safe_slug,
+        summarize_continuous_explained_variance,
     )
     from SpatialBiologyToolkit.scripts._cellvision_common import (
         input_paths,
@@ -82,6 +88,21 @@ def main() -> None:
             f"examples: {missing_h5sc[:10]}"
         )
 
+    if "X_cellvision_pca" not in clustered.obsm:
+        images.file.close()
+        raise KeyError("CellVision clustered AnnData lacks obsm['X_cellvision_pca'] for QC.")
+    marker_values, marker_names = aligned_marker_matrix(
+        source,
+        clustered.obs_names,
+        channel_names,
+    )
+    morphology_values = np.asarray(clustered.obsm["X_cellvision_pca"])
+    morphology_names = [f"PC{index + 1}" for index in range(morphology_values.shape[1])]
+    roi_obs = cellvision.roi_obs or config.general.roi_obs
+    if roi_obs not in clustered.obs.columns:
+        images.file.close()
+        raise KeyError(f"CellVision clustered AnnData lacks configured ROI obs {roi_obs!r}.")
+
     figures_root, tables_root = _report_roots()
     stage_reporter = reporter()
     if stage_reporter is not None:
@@ -91,6 +112,9 @@ def main() -> None:
 
     generated_figures = 0
     generated_tables = 0
+    qc_summary_rows: list[dict[str, object]] = []
+    marker_qc_tables = []
+    morphology_qc_tables = []
     rng = np.random.default_rng(cellvision.seed)
     try:
         for resolution in cellvision.leiden_resolutions:
@@ -102,6 +126,64 @@ def main() -> None:
             resolution_dir.mkdir(parents=True, exist_ok=True)
             learned_labels = clustered.obs[cluster_key].astype("string")
             learned_umap = np.asarray(clustered.obsm["X_cellvision_umap"])
+
+            marker_qc = continuous_cluster_explained_variance(
+                marker_values,
+                learned_labels,
+                feature_names=marker_names,
+                modality="marker_intensity",
+            )
+            marker_qc.insert(0, "cluster_key", cluster_key)
+            marker_qc_tables.append(marker_qc)
+            marker_summary = summarize_continuous_explained_variance(marker_qc)
+
+            morphology_qc = continuous_cluster_explained_variance(
+                morphology_values,
+                learned_labels,
+                feature_names=morphology_names,
+                modality="cellvision_pca_morphology_proxy",
+            )
+            morphology_qc.insert(0, "cluster_key", cluster_key)
+            morphology_qc_tables.append(morphology_qc)
+            morphology_summary = summarize_continuous_explained_variance(morphology_qc)
+
+            roi_summary = categorical_entropy_explained(
+                learned_labels,
+                clustered.obs[roi_obs],
+            )
+            population_explained = np.nan
+            if cellvision.population_obs is not None:
+                if cellvision.population_obs not in clustered.obs.columns:
+                    raise KeyError(
+                        "CellVision clustered AnnData lacks configured population obs "
+                        f"{cellvision.population_obs!r}."
+                    )
+                population_explained = categorical_entropy_explained(
+                    learned_labels,
+                    clustered.obs[cellvision.population_obs],
+                )["entropy_explained_fraction"]
+            qc_summary_rows.append(
+                {
+                    "cluster_key": cluster_key,
+                    "n_cells": int(learned_labels.notna().sum()),
+                    "n_clusters": int(learned_labels.nunique(dropna=True)),
+                    "marker_intensity_explained_fraction": marker_summary[
+                        "mean_feature_explained_fraction"
+                    ],
+                    "marker_intensity_variance_weighted_explained_fraction": marker_summary[
+                        "variance_weighted_explained_fraction"
+                    ],
+                    "morphology_explained_fraction": morphology_summary[
+                        "variance_weighted_explained_fraction"
+                    ],
+                    "roi_obs": roi_obs,
+                    "roi_entropy_explained_fraction": roi_summary[
+                        "entropy_explained_fraction"
+                    ],
+                    "source_population_obs": cellvision.population_obs,
+                    "source_population_entropy_explained_fraction": population_explained,
+                }
+            )
 
             learned_path = resolution_dir / "umap_cellvision_leiden.png"
             plot_categorical_embedding(
@@ -197,6 +279,50 @@ def main() -> None:
     finally:
         images.file.close()
 
+    qc_summary = pd.DataFrame(qc_summary_rows)
+    marker_qc_all = pd.concat(marker_qc_tables, ignore_index=True)
+    morphology_qc_all = pd.concat(morphology_qc_tables, ignore_index=True)
+    qc_summary_path = tables_root / "cellvision_cluster_explanation_qc.csv"
+    marker_qc_path = tables_root / "cellvision_marker_intensity_explained_variance.csv"
+    morphology_qc_path = tables_root / "cellvision_morphology_explained_variance.csv"
+    qc_figure_path = figures_root / "cellvision_cluster_explanation_qc.png"
+    qc_summary.to_csv(qc_summary_path, index=False)
+    marker_qc_all.to_csv(marker_qc_path, index=False)
+    morphology_qc_all.to_csv(morphology_qc_path, index=False)
+    plot_cellvision_qc_summary(
+        qc_summary,
+        output_path=qc_figure_path,
+        dpi=cellvision.figure_dpi,
+    )
+    generated_tables += 3
+    generated_figures += 1
+    if stage_reporter is not None:
+        stage_reporter.add_file(
+            "table",
+            qc_summary_path,
+            "Per-resolution marker-intensity, morphology, ROI, and source-population explanation QC.",
+        )
+        stage_reporter.add_file(
+            "table",
+            marker_qc_path,
+            "Per-marker fraction of source AnnData intensity variance explained by CellVision clusters.",
+        )
+        stage_reporter.add_file(
+            "table",
+            morphology_qc_path,
+            "Per-PC fraction of CellVision morphology-proxy variance explained by CellVision clusters.",
+        )
+        stage_reporter.add_file(
+            "figure",
+            qc_figure_path,
+            "Summary of the four CellVision cluster-explanation diagnostics.",
+        )
+        stage_reporter.add_note(
+            "Continuous QC uses eta-squared; categorical ROI/population QC uses the "
+            "fraction of target-label entropy explained by clusters. CellVision PCA is "
+            "reported as a morphology proxy and may retain residual intensity information."
+        )
+
     logging.info(
         "CellVision plotting complete: %d figures and %d tables.",
         generated_figures,
@@ -207,6 +333,7 @@ def main() -> None:
         stage_reporter.add_metric("plot_tables", generated_tables)
         stage_reporter.add_metric("plotted_resolutions", len(cellvision.leiden_resolutions))
         stage_reporter.add_metric("gallery_channels", len(channel_names))
+        stage_reporter.add_metric("cluster_explanation_qc_tables", 3)
 
 
 if __name__ == "__main__":

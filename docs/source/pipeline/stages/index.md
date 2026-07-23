@@ -16,8 +16,8 @@ for ordering and usage guidance.
 | [`rapids`](rapids.md) | GPU processing with rapids-singlecell: optional cell filtering, PCA, optional Harmony, neighbors, UMAP, Leiden, optional parameter scan | `rapids_singlecell` | general, rapids, visualization, logging |
 | [`cellvision-extract`](cellvision-extract.md) | Extract selected identity-tracked IMC cells into one 36 px H5SC dataset with scPortrait | `scPortrait` | general, cellvision, logging |
 | [`cellvision-embed`](cellvision-embed.md) | Train the PyTorch CellVision VICReg encoder and extract identity-aligned cell embeddings | `scPortrait` | general, cellvision, logging |
-| [`cellvision-cluster`](cellvision-cluster.md) | Run one RAPIDS PCA/neighbors/UMAP graph and configured CellVision Leiden resolutions | `rapids_singlecell` | general, cellvision, logging |
-| [`cellvision-plot`](cellvision-plot.md) | Plot CellVision UMAPs, original-label confusion, source-UMAP projections, and H5SC channel galleries | `scPortrait` | general, cellvision, logging |
+| [`cellvision-cluster`](cellvision-cluster.md) | Fuse CellVision morphology and BioBatchNet intensity graphs, then run RAPIDS UMAP and Leiden | `rapids_singlecell` | general, cellvision, logging |
+| [`cellvision-plot`](cellvision-plot.md) | Plot CellVision UMAPs, cluster-explanation QC, original-label confusion, source projections, and H5SC galleries | `scPortrait` | general, cellvision, logging |
 | [`cellvision-full`](cellvision-full.md) | Run CellVision extraction, VICReg embedding, RAPIDS clustering, and plotting in one GPU job | `scPortrait, rapids_singlecell, scPortrait` | general, cellvision, logging |
 | [`bbn`](bbn.md) | Batch correction with BioBatchNet + UMAP/Leiden post-processing | `imc_biobatchnet` | general, biobatchnet, logging |
 | [`subcl`](subcl.md) | Run checkpointed population subclustering (template generation, subclustering QC, optional remap integration) | `imc_segmentation` | general, process, subclustering, logging |
@@ -28,7 +28,7 @@ for ordering and usage guidance.
 | [`denoise`](denoise.md) | Denoise channel TIFFs and compute denoising QC metrics | `imc_denoise` | general, denoising, logging |
 | [`config`](config.md) | Update config.yaml by syncing all default config sections/keys | `imc_segmentation` | all blocks (sync defaults): general, preprocess, denoising, createmasks, segmentation, nimbus, process, visualization, cellcharter, pairwise_spatial, networkx_spatial, remap_obs, subclustering, logging |
 | [`cellpose`](cellpose.md) | DNA preprocessing + CellPose-SAM mask generation | `imc_segmentation, imc_cellposesam` | general, createmasks, logging |
-| [`reint`](reint.md) | Reintegrate markers previously removed from the processed AnnData | `imc_segmentation` | general, segmentation, process, logging |
+| [`reint`](reint.md) | Reintegrate markers previously removed from the processed AnnData | `imc_segmentation` | general, segmentation, logging |
 | [`zipqc`](zipqc.md) | Zip selected sequential execution output directories for download | `-` | none |
 | [`scport`](scport.md) | Generate single-cell portrait outputs via external scPortrait converter | `scPortrait` | none (does not read config.yaml) |
 | [`debug`](debug.md) | Run environment + module import diagnostics for SLURM job scripts | `-` | none |

@@ -17,8 +17,8 @@
 | `masks_folder` | `str` | `masks` | `advanced` | Configuration value for masks folder. | - |
 | `celltable_folder` | `str` | `cell_tables` | `advanced` | Configuration value for celltable folder. | - |
 | `tiff_stacks_folder` | `str` | `tiff_stacks` | `advanced` | Configuration value for tiff stacks folder. | - |
-| `raw_images_folder` | `str` | `tiffs` | `advanced` | Configuration value for raw images folder. | - |
-| `denoised_images_folder` | `str` | `processed` | `advanced` | Configuration value for denoised images folder. | - |
+| `raw_images_folder` | `str` | `tiffs` | `advanced` | Folder containing one ROI subdirectory per image and its unstacked raw-channel TIFFs; Denoising QC uses these as the before-denoising comparison images. | - |
+| `denoised_images_folder` | `str` | `processed` | `advanced` | Folder containing the corresponding denoised channel TIFFs organised by ROI; Denoising QC also audits these files against metadata/panel.csv. | - |
 | `slurm_logs_folder` | `str` | `SLURM_logs` | `advanced` | Configuration value for slurm logs folder. | - |
 
 ## Outputs and provenance

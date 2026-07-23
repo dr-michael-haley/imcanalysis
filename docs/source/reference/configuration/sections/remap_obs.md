@@ -6,28 +6,28 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `input_adata_path` | `Optional[str]` | `null` | `advanced` | Configuration value for input adata path. | - |
-| `remap_csv_path` | `str` | `metadata/remap.csv` | `advanced` | Configuration value for remap csv path. | - |
-| `mode` | `str` | `apply` | `advanced` | Configuration value for mode. | - |
-| `source_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for source obs. | - |
-| `roi_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for roi obs. | - |
-| `overwrite_existing_obs_columns` | `bool` | `False` | `advanced` | Configuration value for overwrite existing obs columns. | - |
-| `require_complete_mapping` | `bool` | `False` | `advanced` | Configuration value for require complete mapping. | - |
-| `set_output_as_categorical` | `bool` | `True` | `advanced` | Configuration value for set output as categorical. | - |
-| `force_string_mapping` | `bool` | `False` | `advanced` | Configuration value for force string mapping. | - |
-| `ignore_csv_columns_exact` | `List[str]` | `[]` | `advanced` | Configuration value for ignore csv columns exact. | - |
-| `ignore_csv_columns_contains` | `List[str]` | `['notes']` | `advanced` | Configuration value for ignore csv columns contains. | - |
-| `generate_columns` | `List[str]` | `[]` | `advanced` | Configuration value for generate columns. | - |
-| `generate_note_columns` | `List[str]` | `['notes']` | `advanced` | Configuration value for generate note columns. | - |
-| `generate_include_counts` | `bool` | `True` | `advanced` | Configuration value for generate include counts. | - |
-| `generate_count_column_name` | `str` | `n_cells` | `advanced` | Configuration value for generate count column name. | - |
-| `generate_include_top_markers` | `bool` | `True` | `advanced` | Configuration value for generate include top markers. | - |
-| `generate_top_markers_n` | `int` | `3` | `advanced` | Configuration value for generate top markers n. | - |
-| `generate_top_markers_column_name` | `str` | `top_markers` | `advanced` | Configuration value for generate top markers column name. | - |
-| `generate_top_markers_use_raw` | `bool` | `False` | `advanced` | Configuration value for generate top markers use raw. | - |
-| `generate_top_markers_layer` | `Optional[str]` | `null` | `advanced` | Configuration value for generate top markers layer. | - |
-| `generate_top_markers_var_column` | `Optional[str]` | `null` | `advanced` | Configuration value for generate top markers var column. | - |
-| `generate_top_markers_separator` | `str` | `; ` | `advanced` | Configuration value for generate top markers separator. | - |
-| `generate_include_roi_distribution_evenness` | `bool` | `True` | `advanced` | Configuration value for generate include roi distribution evenness. | - |
-| `generate_roi_distribution_evenness_column_name` | `str` | `roi_distribution_evenness` | `advanced` | Configuration value for generate roi distribution evenness column name. | - |
-| `generate_preserve_existing_values` | `bool` | `True` | `advanced` | Configuration value for generate preserve existing values. | - |
+| `input_adata_path` | `Optional[str]` | `null` | `advanced` | Optional AnnData input override; when omitted, the stage uses general.anndata_path and updates that loaded object in apply mode. | - |
+| `remap_csv_path` | `str` | `metadata/remap.csv` | `advanced` | Editable CSV mapping table; relative paths are resolved from the working directory. | - |
+| `mode` | `str` | `apply` | `advanced` | Use 'generate_blank' to scaffold or refresh an editable mapping table, or 'apply' to add its curated target columns to adata.obs. | - |
+| `source_obs` | `Optional[str]` | `null` | `advanced` | Observation containing the source categories. Required for template generation; in apply mode it can be inferred from the CSV's first column and must match that header when explicitly set. | - |
+| `roi_obs` | `Optional[str]` | `null` | `advanced` | ROI observation used for the template evenness helper; defaults to general.roi_obs. | - |
+| `overwrite_existing_obs_columns` | `bool` | `False` | `advanced` | Allow target columns from the remap CSV to replace existing adata.obs columns; false protects existing annotations. | - |
+| `require_complete_mapping` | `bool` | `False` | `advanced` | Fail apply mode when any cell with a non-null source value lacks a non-null target mapping; otherwise those cells receive missing values. | - |
+| `set_output_as_categorical` | `bool` | `True` | `advanced` | Store applied target observations as ordered pandas categoricals using the non-null target-value order in the CSV. | - |
+| `force_string_mapping` | `bool` | `False` | `advanced` | Normalise integer-like source keys such as 1, 1.0, and '1' to the same string key; this behaviour is automatically enabled for source names containing 'leiden'. | - |
+| `ignore_csv_columns_exact` | `List[str]` | `[]` | `advanced` | Additional CSV columns to retain for human guidance but exclude from AnnData observation creation during apply mode. | - |
+| `ignore_csv_columns_contains` | `List[str]` | `['notes']` | `advanced` | Case-insensitive name fragments identifying human-only CSV columns that should not be applied to adata.obs. | - |
+| `generate_columns` | `List[str]` | `[]` | `advanced` | Blank target annotation columns added to a generated template; an empty list creates '<source_obs>_label'. | - |
+| `generate_note_columns` | `List[str]` | `['notes']` | `advanced` | Blank human-curation columns added to the template and ignored during application by the default ignore rule. | - |
+| `generate_include_counts` | `bool` | `True` | `advanced` | Include the total number of cells assigned to each source category as a curation aid. | - |
+| `generate_count_column_name` | `str` | `n_cells` | `advanced` | Column name for source-category cell counts in a generated template. | - |
+| `generate_include_top_markers` | `bool` | `True` | `advanced` | Include markers with the largest group-mean minus rest-mean values for each source category as descriptive naming hints. | - |
+| `generate_top_markers_n` | `int` | `3` | `advanced` | Maximum number of marker names listed for each source category in the generated template. | - |
+| `generate_top_markers_column_name` | `str` | `top_markers` | `advanced` | Column name for the generated descriptive top-marker hints. | - |
+| `generate_top_markers_use_raw` | `bool` | `False` | `advanced` | Use adata.raw.X for marker hints when available and no explicit generate_top_markers_layer is selected. | - |
+| `generate_top_markers_layer` | `Optional[str]` | `null` | `advanced` | Explicit matrix used for marker hints: 'X', 'raw', or an AnnData layer name; null uses adata.X unless generate_top_markers_use_raw is enabled. | - |
+| `generate_top_markers_var_column` | `Optional[str]` | `null` | `advanced` | Optional adata.var or adata.raw.var column supplying display marker names instead of var_names. | - |
+| `generate_top_markers_separator` | `str` | `; ` | `advanced` | Text separator placed between marker names in the generated top-marker cell. | - |
+| `generate_include_roi_distribution_evenness` | `bool` | `True` | `advanced` | Include a normalised Shannon-evenness summary of how each source category's cells are distributed across all dataset ROIs. | - |
+| `generate_roi_distribution_evenness_column_name` | `str` | `roi_distribution_evenness` | `advanced` | Column name for the generated ROI-distribution evenness helper. | - |
+| `generate_preserve_existing_values` | `bool` | `True` | `advanced` | When regenerating an existing template, carry forward edited target, note, and additional non-helper columns matched by normalised source key. | - |

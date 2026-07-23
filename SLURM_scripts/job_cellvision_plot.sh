@@ -9,9 +9,9 @@
 
 set -e
 
-#@DESC: Plot CellVision UMAPs, original-label confusion, source-UMAP projections, and H5SC channel galleries
+#@DESC: Plot CellVision UMAPs, cluster-explanation QC, original-label confusion, source projections, and H5SC galleries
 #@IN:   CellVision clustered AnnData, source AnnData, and exact training H5SC images
-#@OUT:  CellVision figures and comparison tables in the active execution report
+#@OUT:  CellVision figures, cluster-explanation QC, and comparison tables in the active execution report
 #@ENV:  scPortrait
 #@MODULE:  SpatialBiologyToolkit.scripts.cellvision_plot
 #@CONFIG: general, cellvision, logging

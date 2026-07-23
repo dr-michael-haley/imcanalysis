@@ -2,7 +2,7 @@
 
 # `cellvision-cluster`
 
-Run one RAPIDS PCA/neighbors/UMAP graph and configured CellVision Leiden resolutions
+Fuse CellVision morphology and BioBatchNet intensity graphs, then run RAPIDS UMAP and Leiden
 
 - Wrapper: [`job_cellvision_cluster.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_cellvision_cluster.sh)
 - Conda environment: `rapids_singlecell`
@@ -11,6 +11,7 @@ Run one RAPIDS PCA/neighbors/UMAP graph and configured CellVision Leiden resolut
 ## Inputs
 
 - cellvision.asset_folder/cellvision_embeddings.h5ad
+- cellvision.fusion_intensity_adata_path or CellVision source AnnData with the configured BioBatchNet obsm representation
 
 ## Outputs
 

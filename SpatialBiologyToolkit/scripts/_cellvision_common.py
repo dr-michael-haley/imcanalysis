@@ -61,9 +61,21 @@ def input_paths(config: PipelineConfig) -> tuple[Path, Path, Path]:
     return adata_path, images_folder, masks_folder
 
 
+def fusion_intensity_path(config: PipelineConfig) -> Path:
+    """Resolve the AnnData supplying the batch-corrected fusion representation."""
+    cellvision = config.cellvision
+    general = config.general
+    configured = (
+        cellvision.fusion_intensity_adata_path
+        or cellvision.input_adata_path
+        or general.anndata_path
+    )
+    return project_asset_path(configured)
+
+
 def reporter():
     """Return the active CellVision reporter when reporting is available."""
     return get_active_reporter()
 
 
-__all__ = ["input_paths", "load_runtime", "reporter"]
+__all__ = ["fusion_intensity_path", "input_paths", "load_runtime", "reporter"]

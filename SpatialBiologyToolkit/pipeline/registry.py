@@ -345,20 +345,20 @@ STAGES: tuple[StageSpec, ...] = (
     _stage(
         "cellvision-cluster",
         "job_cellvision_cluster.sh",
-        "Cluster CellVision embeddings with RAPIDS PCA, neighbors, UMAP, and Leiden.",
+        "Fuse CellVision morphology and BioBatchNet intensity graphs, then run RAPIDS UMAP and Leiden.",
         depends_on=("cellvision-embed",),
         groups=("cellvision",),
-        requires=("cellvision_assets",),
+        requires=("anndata", "cellvision_assets"),
         produces=("cellvision_assets",),
         required_files={
             "cellvision_assets": ["cellvision_embeddings.h5ad"]
         },
-        outputs=("RAPIDS UMAP/Leiden CellVision AnnData",),
+        outputs=("Joint morphology/intensity graph, RAPIDS UMAP/Leiden CellVision AnnData",),
     ),
     _stage(
         "cellvision-plot",
         "job_cellvision_plot.sh",
-        "Generate CellVision embedding comparisons, projections, and cell galleries.",
+        "Generate CellVision embedding comparisons, cluster-explanation QC, projections, and cell galleries.",
         depends_on=("cellvision-cluster",),
         groups=("cellvision",),
         requires=("anndata", "cellvision_assets"),
@@ -369,7 +369,7 @@ STAGES: tuple[StageSpec, ...] = (
                 "cellvision_clustered.h5ad",
             ]
         },
-        outputs=("UMAP, confusion, projection, and cell-gallery report",),
+        outputs=("UMAP, explanation-QC, confusion, projection, and cell-gallery report",),
     ),
     _stage(
         "cellvision-full",

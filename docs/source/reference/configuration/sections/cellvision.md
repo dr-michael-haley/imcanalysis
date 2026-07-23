@@ -74,7 +74,7 @@
 | `augmentation_rotation_probability` | `float` | `1.0` | `advanced` | Probability of applying a random 0/90/180/270-degree rotation. | Only right-angle rotations are used, avoiding interpolation at 1 um/pixel. |
 | `augmentation_translation_probability` | `float` | `1.0` | `advanced` | Probability of applying a zero-filled integer translation. | Set to zero to disable translations while retaining the configured maximum distance. |
 | `augmentation_intensity_jitter` | `float` | `0.2` | `advanced` | Maximum independent multiplicative intensity perturbation per marker channel. | No hue, saturation, channel mixing, or artificial background is applied to multiplex IMC images. |
-| `augmentation_intensity_jitter_probability` | `float` | `1.0` | `advanced` | Probability of applying independent multiplicative marker jitter. | Set to zero when marker amplitude should remain unchanged between views. |
+| `augmentation_intensity_jitter_probability` | `float` | `0.0` | `advanced` | Probability of applying independent multiplicative marker jitter. | The zero default preserves marker amplitude between views; increase deliberately to make the encoder less intensity-sensitive. |
 | `augmentation_noise_std` | `float` | `0.02` | `advanced` | Standard deviation of Gaussian noise applied only on the configured spatial support. | Background pixels remain exactly zero in both VICReg views. |
 | `augmentation_noise_probability` | `float` | `1.0` | `advanced` | Probability of adding Gaussian noise to one augmented view. | Set to zero to disable pixel noise for low-resolution IMC. |
 | `augmentation_noise_support` | `Literal['channel', 'segmentation_mask']` | `channel` | `advanced` | Spatial support on which augmentation noise may be added. | channel preserves each marker's original nonzero support; segmentation_mask permits noise anywhere inside the extracted cell. |
@@ -85,7 +85,11 @@
 |---|---|---|---|---|---|
 | `n_pcs` | `int` | `50` | `basic` | Single PCA component count used before RAPIDS neighbor construction. | The runtime value is capped by the number of cells and embedding dimensions. |
 | `n_neighbors` | `int` | `50` | `basic` | Single neighbor count used for the RAPIDS cell graph. | The runtime value is capped below the number of embedded cells. |
-| `leiden_resolutions` | `List[float]` | `[0.2, 0.3, 0.5, 0.7, 1.0]` | `basic` | Leiden resolutions evaluated on the one CellVision neighbor graph. | Each value creates a namespaced cellvision_leiden_<resolution> annotation and report set. |
+| `fusion_enabled` | `bool` | `True` | `basic` | Fuse the CellVision morphology graph with a local graph rebuilt from a batch-corrected source intensity representation. | The default requires the configured source AnnData to contain fusion_intensity_representation; disable only for a morphology-only analysis. |
+| `fusion_intensity_adata_path` | `Optional[str]` | `null` | `advanced` | Optional AnnData supplying the batch-corrected intensity representation used for graph fusion; defaults to cellvision.input_adata_path and then general.anndata_path. | Set this when BioBatchNet writes to a separate output_adata_path instead of updating the CellVision source AnnData. |
+| `fusion_intensity_representation` | `str` | `X_biobatchnet` | `advanced` | Source AnnData obsm key containing the batch-corrected per-cell intensity embedding used to build the fusion graph. | X_biobatchnet is written by the toolkit BioBatchNet stage; latent dimensions are used directly without another PCA. |
+| `fusion_intensity_weight` | `float` | `0.5` | `basic` | Weight assigned to the degree-normalized intensity graph; one minus this value weights the CellVision morphology graph. | Use 0 for the morphology endpoint, 1 for the intensity endpoint, and intermediate values for joint clustering. |
+| `leiden_resolutions` | `List[float]` | `[0.2, 0.3, 0.5, 0.7, 1.0]` | `basic` | Leiden resolutions evaluated on the default joint CellVision neighbor graph. | Each value creates a namespaced cellvision_leiden_<resolution> annotation and report set. |
 | `umap_min_dist` | `float` | `0.1` | `advanced` | Minimum distance used for the CellVision RAPIDS UMAP. | Use the same value for directly comparable runs. |
 
 ## Plots and galleries

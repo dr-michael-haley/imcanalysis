@@ -6,65 +6,65 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `input_adata_path` | `Optional[str]` | `null` | `advanced` | Configuration value for input adata path. | - |
-| `population_columns` | `Optional[List[str]]` | `null` | `advanced` | Configuration value for population columns. | - |
-| `metadata_columns` | `Optional[List[str]]` | `null` | `advanced` | Configuration value for metadata columns. | - |
-| `groupby_obs` | `Optional[str]` | `null` | `advanced` | Configuration value for groupby obs. | - |
-| `groupby_obs_groups` | `Optional[List[str]]` | `null` | `advanced` | Configuration value for groupby obs groups. | - |
+| `input_adata_path` | `Optional[str]` | `null` | `advanced` | Optional AnnData input override; when omitted, the stage uses general.anndata_path. | - |
+| `population_columns` | `Optional[List[str]]` | `null` | `advanced` | Observation columns to treat as population annotations. Defaults to general.population_obs_all, then general.population_obs_primary, then name-based auto-detection. | - |
+| `metadata_columns` | `Optional[List[str]]` | `null` | `advanced` | Categorical observation columns to visualise as sample or experimental metadata. Defaults to general.metadata_obs and then dictionary/name-based auto-detection. | - |
+| `groupby_obs` | `Optional[str]` | `null` | `advanced` | Observation defining biological comparison groups for abundance analysis; defaults to general.groupby_obs. | - |
+| `groupby_obs_groups` | `Optional[List[str]]` | `null` | `advanced` | Ordered subset of groupby_obs categories to compare; defaults to the shared general pairwise/group selections. | - |
 | `enable_ai` | `bool` | `True` | `advanced` | Send summary statistics for existing Leiden clusters to the configured OpenAI call and add its provisional cluster names as *_AIlabel columns. | - |
 | `tissue` | `str` | `Unknown tissue` | `advanced` | Free-text tissue context included in the AI prompt to help it interpret the marker summaries. | - |
 | `repeat_ai_interpretation` | `bool` | `False` | `advanced` | Run AI interpretation again when any AnnData observation column ending in *_AIlabel already exists. | - |
-| `create_umaps` | `bool` | `True` | `advanced` | Configuration value for create umaps. | - |
-| `create_matrix_plots` | `bool` | `True` | `advanced` | Configuration value for create matrix plots. | - |
-| `create_tissue_overlays` | `bool` | `True` | `advanced` | Configuration value for create tissue overlays. | - |
-| `create_population_analysis` | `bool` | `True` | `advanced` | Configuration value for create population analysis. | - |
-| `create_backgating` | `bool` | `True` | `advanced` | Configuration value for create backgating. | - |
-| `create_color_legends` | `bool` | `True` | `advanced` | Configuration value for create color legends. | - |
-| `include_metadata_umaps` | `bool` | `True` | `advanced` | Configuration value for include metadata umaps. | - |
-| `include_metadata_matrix_plots` | `bool` | `True` | `advanced` | Configuration value for include metadata matrix plots. | - |
-| `include_marker_umaps` | `bool` | `True` | `advanced` | Configuration value for include marker umaps. | - |
-| `umap_plot_individual_highlights` | `bool` | `True` | `advanced` | Configuration value for umap plot individual highlights. | - |
-| `max_categories` | `int` | `50` | `advanced` | Configuration value for max categories. | - |
-| `umap_marker_colormap` | `str` | `viridis` | `advanced` | Configuration value for umap marker colormap. | - |
-| `umap_marker_gallery_default_colorbar_label` | `str` | `Nimbus-Inference Score` | `advanced` | Configuration value for umap marker gallery default colorbar label. | - |
-| `umap_marker_gallery_vmax` | `Optional[float]` | `0.8` | `advanced` | Configuration value for umap marker gallery vmax. | - |
-| `backgating_cells_per_group` | `int` | `50` | `advanced` | Configuration value for backgating cells per group. | - |
-| `backgating_radius` | `int` | `15` | `advanced` | Configuration value for backgating radius. | - |
-| `backgating_output_folder` | `str` | `Backgating` | `advanced` | Configuration value for backgating output folder. | - |
-| `backgating_use_masks` | `bool` | `True` | `advanced` | Configuration value for backgating use masks. | - |
-| `backgating_mask_folder` | `str` | `masks` | `advanced` | Configuration value for backgating mask folder. | - |
-| `backgating_pops_list` | `Optional[Dict[str, Any]]` | `null` | `advanced` | Configuration value for backgating pops list. | - |
-| `backgating_max_rois_to_save` | `Optional[int]` | `null` | `advanced` | Configuration value for backgating max rois to save. | - |
-| `backgating_minimum` | `float` | `0.2` | `advanced` | Configuration value for backgating minimum. | - |
-| `backgating_max_quantile` | `str` | `i0.99` | `advanced` | Configuration value for backgating max quantile. | - |
-| `backgating_number_top_markers` | `int` | `2` | `advanced` | Configuration value for backgating number top markers. | - |
-| `backgating_specify_blue` | `Optional[str]` | `DNA1` | `advanced` | Configuration value for backgating specify blue. | - |
-| `backgating_specify_red` | `Optional[str]` | `null` | `advanced` | Configuration value for backgating specify red. | - |
-| `backgating_specify_green` | `Optional[str]` | `null` | `advanced` | Configuration value for backgating specify green. | - |
-| `backgating_use_differential_expression` | `bool` | `True` | `advanced` | Configuration value for backgating use differential expression. | - |
-| `backgating_de_method` | `str` | `wilcoxon` | `advanced` | Configuration value for backgating de method. | - |
-| `backgating_min_logfc_threshold` | `float` | `0.2` | `advanced` | Configuration value for backgating min logfc threshold. | - |
-| `backgating_max_pval_adj` | `float` | `0.05` | `advanced` | Configuration value for backgating max pval adj. | - |
-| `backgating_markers_exclude` | `Optional[List[str]]` | `['DNA1', 'DNA3']` | `advanced` | Configuration value for backgating markers exclude. | - |
-| `backgating_mode` | `str` | `full` | `advanced` | Configuration value for backgating mode. | - |
-| `backgating_population_overlay_outline_width` | `int` | `1` | `advanced` | Configuration value for backgating population overlay outline width. | - |
-| `backgating_population_overlay_legend_fontsize` | `int` | `24` | `advanced` | Configuration value for backgating population overlay legend fontsize. | - |
-| `backgating_population_overlay_crop_size` | `Optional[List[int]]` | `[300, 300]` | `advanced` | Configuration value for backgating population overlay crop size. | - |
-| `backgating_population_overlay_crop_origin` | `str` | `intelligent` | `advanced` | Configuration value for backgating population overlay crop origin. | - |
-| `backgating_population_overlay_show_scale_bar` | `bool` | `True` | `advanced` | Configuration value for backgating population overlay show scale bar. | - |
-| `backgating_population_overlay_scale_bar_length` | `int` | `50` | `advanced` | Configuration value for backgating population overlay scale bar length. | - |
-| `backgating_population_overlay_scale_bar_thickness` | `int` | `3` | `advanced` | Configuration value for backgating population overlay scale bar thickness. | - |
-| `matrixplot_vmax` | `float` | `0.5` | `advanced` | Configuration value for matrixplot vmax. | - |
-| `matrixplot_use_row_colors` | `bool` | `True` | `advanced` | Configuration value for matrixplot use row colors. | - |
-| `abundance_make_all_populations_plots` | `bool` | `True` | `advanced` | Configuration value for abundance make all populations plots. | - |
-| `abundance_all_populations_figsize` | `List[float]` | `[4.0, 3.0]` | `advanced` | Configuration value for abundance all populations figsize. | - |
-| `abundance_all_populations_width_scale` | `float` | `0.45` | `advanced` | Configuration value for abundance all populations width scale. | - |
-| `abundance_make_case_stacked_plots` | `bool` | `True` | `advanced` | Configuration value for abundance make case stacked plots. | - |
-| `abundance_case_stacked_figsize` | `List[float]` | `[6.0, 3.0]` | `advanced` | Configuration value for abundance case stacked figsize. | - |
-| `abundance_case_stacked_width_scale` | `float` | `0.3` | `advanced` | Configuration value for abundance case stacked width scale. | - |
-| `abundance_order_cases_by_population` | `Optional[str]` | `null` | `advanced` | Configuration value for abundance order cases by population. | - |
-| `abundance_plot_style` | `str` | `bar` | `advanced` | Configuration value for abundance plot style. | - |
-| `abundance_barplot_y_scale` | `Dict[str, Any]` | `{'default': 'linear', 'abundance': {'proportions_roi_level': 'linear', 'proportions_case_average': 'linear', 'cells_per_mm2_roi_level': 'intelligent', 'cells_per_mm2_case_average': 'intelligent', 'default': 'linear'}}` | `advanced` | Configuration value for abundance barplot y scale. | - |
-| `abundance_barplot_y_scale_intelligent_params` | `Dict[str, Any]` | `{'allow_log1p': True, 'dynamic_range_thresh': 100.0, 'skew_improve_ratio': 0.7, 'crush_frac_thresh': 0.7}` | `advanced` | Configuration value for abundance barplot y scale intelligent params. | - |
-| `save_high_res` | `bool` | `True` | `advanced` | Configuration value for save high res. | - |
-| `figure_format` | `str` | `png` | `advanced` | Configuration value for figure format. | - |
+| `create_umaps` | `bool` | `True` | `advanced` | Create UMAP plots from the existing adata.obsm['X_umap'] coordinates. | - |
+| `create_matrix_plots` | `bool` | `True` | `advanced` | Create mean-marker matrix plots grouped by population and, optionally, metadata annotations. | - |
+| `create_tissue_overlays` | `bool` | `True` | `advanced` | Project population labels back into each labelled segmentation mask to show their tissue distribution. | - |
+| `create_population_analysis` | `bool` | `True` | `advanced` | Create population count, proportion, density, case-summary, and comparison outputs where the required metadata are available. | - |
+| `create_backgating` | `bool` | `True` | `advanced` | Create image-based backgating views that return annotated cells to their source channel images for validation. | - |
+| `create_color_legends` | `bool` | `True` | `advanced` | Save standalone category-to-colour legends for configured population and metadata columns. | - |
+| `include_metadata_umaps` | `bool` | `True` | `advanced` | Colour the existing UMAP by configured categorical metadata as well as population labels. | - |
+| `include_metadata_matrix_plots` | `bool` | `True` | `advanced` | Summarise mean marker values for groups defined by configured categorical metadata. | - |
+| `include_marker_umaps` | `bool` | `True` | `advanced` | Create per-marker UMAPs plus marker galleries for adata.X and every available AnnData layer. | - |
+| `umap_plot_individual_highlights` | `bool` | `True` | `advanced` | For each population annotation, save an additional UMAP highlighting every category separately. | - |
+| `max_categories` | `int` | `50` | `advanced` | Maximum number of unique values allowed when auto-selecting categorical population or metadata columns. | - |
+| `umap_marker_colormap` | `str` | `viridis` | `advanced` | Matplotlib colormap used for continuous marker-expression UMAPs. | - |
+| `umap_marker_gallery_default_colorbar_label` | `str` | `Nimbus-Inference Score` | `advanced` | Colour-bar label for the adata.X marker gallery; change this when adata.X contains another measurement scale. | - |
+| `umap_marker_gallery_vmax` | `Optional[float]` | `0.8` | `advanced` | Optional common upper colour limit for marker UMAP galleries; use null to scale each gallery automatically. | - |
+| `backgating_cells_per_group` | `int` | `50` | `advanced` | Maximum number of example cells sampled for each population's thumbnail gallery. | - |
+| `backgating_radius` | `int` | `15` | `advanced` | Half-width in image pixels of the square crop around each backgated cell centroid. | - |
+| `backgating_output_folder` | `str` | `Backgating` | `advanced` | Subdirectory under the visualisation output root for image-based population validation outputs. | - |
+| `backgating_use_masks` | `bool` | `True` | `advanced` | Use segmentation masks to identify cells and draw cell boundaries in backgating images. | - |
+| `backgating_mask_folder` | `str` | `masks` | `advanced` | Mask directory passed to the backgating implementation; it must correspond to the source channel images and cell identifiers. | - |
+| `backgating_pops_list` | `Optional[Dict[str, Any]]` | `null` | `advanced` | Optional populations to backgate, supplied per population-observation column or under a 'default' key; null processes all populations. | - |
+| `backgating_max_rois_to_save` | `Optional[int]` | `null` | `advanced` | Optional maximum number of randomly selected ROI image sets saved per population; intensity normalisation still uses all eligible ROIs. | - |
+| `backgating_minimum` | `float` | `0.2` | `advanced` | Lower display bound used when rescaling source-channel intensities for backgating composites. | - |
+| `backgating_max_quantile` | `str` | `i0.99` | `advanced` | Upper intensity-rescaling rule for backgating images; the default uses the 99th percentile. | - |
+| `backgating_number_top_markers` | `int` | `2` | `advanced` | Number of automatically selected discriminative markers assigned to RGB channels for each population. | - |
+| `backgating_specify_blue` | `Optional[str]` | `DNA1` | `advanced` | Optional fixed blue-channel marker, normally a DNA channel for nuclear context. | - |
+| `backgating_specify_red` | `Optional[str]` | `null` | `advanced` | Optional fixed red-channel marker; null uses the first automatically selected population marker. | - |
+| `backgating_specify_green` | `Optional[str]` | `null` | `advanced` | Optional fixed green-channel marker; null uses the next automatically selected population marker. | - |
+| `backgating_use_differential_expression` | `bool` | `True` | `advanced` | Select RGB markers using a one-population-versus-rest Scanpy ranking instead of population mean expression alone. | - |
+| `backgating_de_method` | `str` | `wilcoxon` | `advanced` | Scanpy marker-ranking method for backgating: typically 'wilcoxon', 't-test', or 'logreg'. | - |
+| `backgating_min_logfc_threshold` | `float` | `0.2` | `advanced` | Preferred minimum log fold change for automatically selected backgating markers; ranking falls back to all markers if too few pass. | - |
+| `backgating_max_pval_adj` | `float` | `0.05` | `advanced` | Adjusted-P-value threshold reported during backgating marker selection; it does not itself exclude markers from selection. | - |
+| `backgating_markers_exclude` | `Optional[List[str]]` | `['DNA1', 'DNA3']` | `advanced` | Markers excluded from automatic backgating marker selection, usually DNA or technical channels. | - |
+| `backgating_mode` | `str` | `full` | `advanced` | Backgating workflow mode: 'full' selects markers and makes images, 'save_markers' only writes editable settings, and 'load_markers' makes images from existing settings. | - |
+| `backgating_population_overlay_outline_width` | `int` | `1` | `advanced` | Contour width in pixels around target cells in backgating population overlays. | - |
+| `backgating_population_overlay_legend_fontsize` | `int` | `24` | `advanced` | Font size for marker and population labels on backgating overlays. | - |
+| `backgating_population_overlay_crop_size` | `Optional[List[int]]` | `[300, 300]` | `advanced` | Optional overlay crop size as [width, height] pixels; null retains the complete ROI. | - |
+| `backgating_population_overlay_crop_origin` | `str` | `intelligent` | `advanced` | Crop placement: a named corner, 'center', or 'intelligent' to favour a region containing target cells. | - |
+| `backgating_population_overlay_show_scale_bar` | `bool` | `True` | `advanced` | Draw a scale bar on cropped population overlays. | - |
+| `backgating_population_overlay_scale_bar_length` | `int` | `50` | `advanced` | Scale-bar length in image pixels; this is not automatically converted to micrometres. | - |
+| `backgating_population_overlay_scale_bar_thickness` | `int` | `3` | `advanced` | Scale-bar line thickness in pixels. | - |
+| `matrixplot_vmax` | `float` | `0.5` | `advanced` | Upper colour limit for unscaled mean-marker matrix plots; tune it to the measurement scale in adata.X. | - |
+| `matrixplot_use_row_colors` | `bool` | `True` | `advanced` | Use the toolkit matrix-plot helper to display group colours beside rows, falling back to Scanpy when unavailable. | - |
+| `abundance_make_all_populations_plots` | `bool` | `True` | `advanced` | Create combined abundance plots showing every population on one axis and comparison group as colour. | - |
+| `abundance_all_populations_figsize` | `List[float]` | `[4.0, 3.0]` | `advanced` | Minimum [width, height] in inches for combined all-population abundance plots. | - |
+| `abundance_all_populations_width_scale` | `float` | `0.45` | `advanced` | Additional plot width in inches per population used when automatically sizing combined abundance plots. | - |
+| `abundance_make_case_stacked_plots` | `bool` | `True` | `advanced` | Create stacked case-level composition plots for all cases and separately for each comparison group. | - |
+| `abundance_case_stacked_figsize` | `List[float]` | `[6.0, 3.0]` | `advanced` | Minimum [width, height] in inches for case-level stacked composition plots. | - |
+| `abundance_case_stacked_width_scale` | `float` | `0.3` | `advanced` | Additional plot width in inches per case used when automatically sizing stacked plots. | - |
+| `abundance_order_cases_by_population` | `Optional[str]` | `null` | `advanced` | Optional population label whose descending case abundance determines the order of stacked bars. | - |
+| `abundance_plot_style` | `str` | `bar` | `advanced` | Abundance display style: 'bar' shows summaries, while 'strip' or 'swarm' shows individual ROI or case values with mean and standard-error overlays. | - |
+| `abundance_barplot_y_scale` | `Dict[str, Any]` | `{'default': 'linear', 'abundance': {'proportions_roi_level': 'linear', 'proportions_case_average': 'linear', 'cells_per_mm2_roi_level': 'intelligent', 'cells_per_mm2_case_average': 'intelligent', 'default': 'linear'}}` | `advanced` | Y-axis mode ('linear', 'log', or 'intelligent') specified globally or by abundance metric. | - |
+| `abundance_barplot_y_scale_intelligent_params` | `Dict[str, Any]` | `{'allow_log1p': True, 'dynamic_range_thresh': 100.0, 'skew_improve_ratio': 0.7, 'crush_frac_thresh': 0.7}` | `advanced` | Thresholds controlling when intelligent abundance scaling switches a positive, wide, skewed distribution to a logarithmic axis. | - |
+| `save_high_res` | `bool` | `True` | `advanced` | Save most figures at 300 DPI instead of 150 DPI. | - |
+| `figure_format` | `str` | `png` | `advanced` | Output figure extension used by the visualisation suite, commonly 'png', 'pdf', or 'svg'. | - |
