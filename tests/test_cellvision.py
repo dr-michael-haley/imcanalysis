@@ -695,6 +695,12 @@ class CellVisionVICRegTests(unittest.TestCase):
             "cellvision_neighbors_distances",
         )
         self.assertIn("cellvision_neighbors_connectivities", data.obsp)
+        self.assertTrue(
+            sparse.isspmatrix_csr(data.obsp["cellvision_neighbors_connectivities"])
+        )
+        self.assertTrue(
+            hasattr(data.obsp["cellvision_neighbors_connectivities"], "nonzero")
+        )
         self.assertNotIn("cellvision_neighbors_distances", data.obsp)
         self.assertEqual(data.uns[key]["params"]["n_neighbors"], 2)
         self.assertEqual(data.uns[key]["params"]["use_rep"], "X_cellvision_pca")

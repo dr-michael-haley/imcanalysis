@@ -12,8 +12,11 @@ import pandas as pd
 import tifffile
 
 from SpatialBiologyToolkit.spatialdata import (
+    AdditionalLabelsSpec,
     create_spatialdata,
+    get_label_annotations,
     get_roi_elements,
+    get_roi_label_elements,
     match_marker_image,
     plan_imc_spatialdata_conversion,
     plot_population_counts,
@@ -66,6 +69,61 @@ def _write_fixture(root: Path, *, include_missing_instance: bool = False) -> ad.
             index=["cell_1", "cell_2"],
         ),
         var=pd.DataFrame(index=["CD3", "CD31"]),
+    )
+
+
+def _write_additional_labels_fixture(
+    root: Path,
+) -> tuple[AdditionalLabelsSpec, AdditionalLabelsSpec]:
+    regions = root / "regions"
+    zones = root / "zones"
+    regions.mkdir()
+    zones.mkdir()
+
+    region_labels = np.array(
+        [
+            [0, 1, 1, 0, 2, 2],
+            [0, 1, 1, 0, 2, 2],
+            [0, 0, 0, 0, 2, 2],
+            [1, 1, 0, 0, 0, 0],
+            [1, 1, 0, 0, 0, 0],
+        ],
+        dtype=np.uint16,
+    )
+    zone_labels = np.array(
+        [
+            [0, 10, 10, 0, 20, 20],
+            [0, 10, 10, 0, 20, 20],
+            [0, 0, 0, 0, 20, 20],
+            [10, 10, 0, 0, 0, 0],
+            [10, 10, 0, 0, 0, 0],
+        ],
+        dtype=np.uint16,
+    )
+    tifffile.imwrite(regions / "ROI 1_regions.tiff", region_labels)
+    tifffile.imwrite(zones / "ROI 1_zones.tif", zone_labels)
+
+    zone_mapping = root / "zone_names.csv"
+    pd.DataFrame(
+        {
+            "ROI": ["ROI 1", "ROI 1"],
+            "label_value": [10, 20],
+            "label_name": ["Inner", "Outer"],
+        }
+    ).to_csv(zone_mapping, index=False)
+    return (
+        AdditionalLabelsSpec(
+            name="tissue_region",
+            folder=regions,
+            suffix="_regions",
+            value_names={0: "Background", 1: "Tumour", 2: "Stroma"},
+        ),
+        AdditionalLabelsSpec(
+            name="analysis_zone",
+            folder=zones,
+            suffix="_zones",
+            value_names=zone_mapping,
+        ),
     )
 
 
@@ -183,6 +241,126 @@ class SpatialDataConversionTests(unittest.TestCase):
             self.assertAlmostEqual(value, 435.0)
             with self.assertRaises(FileExistsError):
                 write_spatialdata(sdata, output)
+
+    def test_create_multiple_named_additional_label_layers(self):
+        import matplotlib.pyplot as plt
+        from spatialdata import read_zarr
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            adata = _write_fixture(root)
+            additional = _write_additional_labels_fixture(root)
+
+            plan = plan_imc_spatialdata_conversion(
+                adata,
+                root / "images",
+                root / "masks",
+                additional_labels=additional,
+            )
+            self.assertEqual(plan.n_additional_label_files, 2)
+            self.assertEqual(
+                [layer.key for layer in plan.additional_labels],
+                ["tissue_region", "analysis_zone"],
+            )
+
+            sdata = create_spatialdata(
+                adata,
+                root / "images",
+                root / "masks",
+                additional_labels=additional,
+                raster_chunks=(2, 3),
+            )
+            self.assertEqual(
+                list(sdata.labels),
+                [
+                    "labels_ROI_1",
+                    "labels_tissue_region_ROI_1",
+                    "labels_analysis_zone_ROI_1",
+                ],
+            )
+            self.assertEqual(
+                list(sdata.tables),
+                ["table", "tissue_region_annotations", "analysis_zone_annotations"],
+            )
+            self.assertEqual(
+                get_roi_label_elements(sdata, "roi 1"),
+                {
+                    "cells": "labels_ROI_1",
+                    "tissue_region": "labels_tissue_region_ROI_1",
+                    "analysis_zone": "labels_analysis_zone_ROI_1",
+                },
+            )
+
+            annotations = get_label_annotations(sdata, "TISSUE_REGION", roi="roi 1")
+            self.assertEqual(annotations["label_value"].tolist(), [1, 2])
+            self.assertEqual(
+                annotations["label_name"].astype(str).tolist(),
+                ["Tumour", "Stroma"],
+            )
+            summary = summarize_spatialdata(sdata)
+            self.assertEqual(summary["labels"], 3)
+            self.assertEqual(
+                set(summary["label_layers"]),
+                {"cells", "tissue_region", "analysis_zone"},
+            )
+
+            ax = plot_spatialdata_roi(
+                sdata,
+                "ROI 1",
+                channel="CD3",
+                label_layer="tissue_region",
+            )
+            self.assertEqual(ax.get_legend().get_title().get_text(), "label_name")
+            self.assertEqual(
+                [text.get_text() for text in ax.get_legend().get_texts()],
+                ["Tumour", "Stroma"],
+            )
+            plt.close(ax.figure)
+
+            restored = read_zarr(
+                write_spatialdata(sdata, root / "additional_labels.zarr")
+            )
+            restored_annotations = get_label_annotations(
+                restored, "analysis_zone", roi="ROI 1"
+            )
+            self.assertEqual(
+                restored_annotations["label_name"].astype(str).tolist(),
+                ["Inner", "Outer"],
+            )
+
+    def test_additional_label_validation_is_strict(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            adata = _write_fixture(root)
+            additional = _write_additional_labels_fixture(root)
+
+            missing_name = AdditionalLabelsSpec(
+                name="incomplete",
+                folder=root / "regions",
+                suffix="_regions",
+                value_names={1: "Tumour"},
+            )
+            with self.assertRaisesRegex(ValueError, "without a name"):
+                plan_imc_spatialdata_conversion(
+                    adata,
+                    root / "images",
+                    root / "masks",
+                    additional_labels=[missing_name],
+                )
+
+            missing_file = AdditionalLabelsSpec(
+                name="wrong_suffix",
+                folder=root / "regions",
+                suffix="_missing",
+                value_names={1: "Tumour", 2: "Stroma"},
+            )
+            with self.assertRaisesRegex(FileNotFoundError, "No TIFF with stem"):
+                plan_imc_spatialdata_conversion(
+                    adata,
+                    root / "images",
+                    root / "masks",
+                    additional_labels=[additional[0], missing_file],
+                )
 
     def test_create_without_images_and_population_plot(self):
         with tempfile.TemporaryDirectory() as temp_dir:

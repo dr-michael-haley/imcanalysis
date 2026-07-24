@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 import unittest
 from unittest.mock import patch
 import sys
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 
 import anndata as ad
@@ -14,6 +17,7 @@ from scipy import sparse
 from SpatialBiologyToolkit.config.models import PopulationEmbeddingQCConfig
 from SpatialBiologyToolkit.population_qc import (
     MarkerExpectations,
+    PopulationQCArtifactWriter,
     apply_population_mapping,
     assess_candidate_clustering,
     assess_clustering,
@@ -23,10 +27,16 @@ from SpatialBiologyToolkit.population_qc import (
     discard_population_qc_columns,
     inspect_population_data,
     plot_clustering_qc,
+    plot_clustering_qc_panels,
     plot_marker_distributions,
+    plot_population_breakdown,
+    plot_population_cell_gallery,
     plot_population_heatmap,
+    plot_population_matrixplot,
     plot_population_representation,
+    plot_population_umap,
     plot_resolution_membership,
+    select_population_cell_panel,
     select_population_cells,
     subcluster_population,
     summarize_population_representation,
@@ -53,7 +63,11 @@ def make_adata() -> ad.AnnData:
             "ROI": np.resize(["R1", "R2", "R3", "R4"], len(populations)),
             "animal": np.resize(["A1", "A1", "A2", "A2"], len(populations)),
             "ObjectNumber": np.arange(1, len(populations) + 1),
-            "leiden_0.3": pd.Categorical(np.where(populations == "T", "0", np.where(populations == "B", "1", "2"))),
+            "leiden_0.3": pd.Categorical(
+                np.where(
+                    populations == "T", "0", np.where(populations == "B", "1", "2")
+                )
+            ),
             "leiden_1.0": pd.Categorical(populations),
             "leiden_1.5": pd.Categorical(
                 np.where(
@@ -108,7 +122,9 @@ class PopulationQCTests(unittest.TestCase):
         )
         self.assertEqual(context.n_cells, 72)
         self.assertEqual(context.case_key, "animal")
-        self.assertEqual(context.population_counts["population"].tolist(), ["T", "B", "Myeloid"])
+        self.assertEqual(
+            context.population_counts["population"].tolist(), ["T", "B", "Myeloid"]
+        )
 
         expression = compare_populations(
             adata,
@@ -135,7 +151,9 @@ class PopulationQCTests(unittest.TestCase):
             "population",
             case_key="animal",
         )
-        self.assertEqual(set(representation.group_summary["group_key"]), {"animal", "ROI"})
+        self.assertEqual(
+            set(representation.group_summary["group_key"]), {"animal", "ROI"}
+        )
         representation_plot = plot_population_representation(
             representation,
             "T",
@@ -157,6 +175,12 @@ class PopulationQCTests(unittest.TestCase):
             ),
         )
         qc_plot = plot_clustering_qc(qc, populations=["T", "B", "Myeloid"])
+        qc_panels = plot_clustering_qc_panels(
+            qc,
+            populations=["T", "B", "Myeloid"],
+            max_metrics_per_panel=4,
+        )
+        self.assertGreaterEqual(len(qc_panels), 2)
         selection = select_population_cells(
             adata,
             "population",
@@ -175,11 +199,13 @@ class PopulationQCTests(unittest.TestCase):
             representation_plot.figure,
             resolution_plot.figure,
             qc_plot.figure,
+            *(panel.figure for panel in qc_panels.values()),
         ):
             plt.close(figure)
 
     def test_candidate_columns_are_in_memory_and_reversible(self):
         adata = make_adata()
+
         def fake_pca(table, n_comps, **_kwargs):
             values = np.asarray(table.X)
             table.obsm["X_pca"] = values[:, :n_comps]
@@ -195,7 +221,9 @@ class PopulationQCTests(unittest.TestCase):
 
         def fake_umap(table, **_kwargs):
             values = np.asarray(table.obsm["X_population_qc"])
-            table.obsm["X_umap"] = np.c_[values[:, 0], values[:, min(1, values.shape[1] - 1)]]
+            table.obsm["X_umap"] = np.c_[
+                values[:, 0], values[:, min(1, values.shape[1] - 1)]
+            ]
 
         def fake_leiden(table, *, resolution, key_added, **_kwargs):
             groups = 2 if resolution < 0.4 else 3
@@ -259,6 +287,274 @@ class PopulationQCTests(unittest.TestCase):
         )
         self.assertEqual(len(removed), 5)
         self.assertFalse(any(column in adata.obs for column in removed))
+
+    def test_staged_plots_cell_panel_and_artifact_exports(self):
+        import matplotlib.pyplot as plt
+
+        adata = make_adata()
+        expectations = MarkerExpectations(
+            positive_markers=("CD3",),
+            supportive_markers=("PD1",),
+            negative_markers=("CD19", "CD68"),
+        )
+        matrix = plot_population_matrixplot(
+            adata,
+            "population",
+            markers=["CD3", "CD19", "CD68"],
+            standardization="marker_robust_zscore",
+            standardization_clip=2.5,
+            max_cells_per_population=12,
+        )
+        self.assertIsInstance(matrix.data, pd.DataFrame)
+        self.assertEqual(
+            list(matrix.data.columns),
+            ["cells", "sampled_cells", "CD3", "CD19", "CD68"],
+        )
+        self.assertLessEqual(float(matrix.display_data.max().max()), 2.5)
+        self.assertGreaterEqual(float(matrix.display_data.min().min()), -2.5)
+
+        global_umap = plot_population_umap(
+            adata,
+            "population",
+            max_cells=30,
+            random_state=9,
+        )
+        focused_umap = plot_population_umap(
+            adata,
+            "population",
+            population="T",
+            competitors=["B"],
+            max_cells=30,
+            random_state=9,
+        )
+        self.assertLessEqual(len(global_umap.data), 30)
+        self.assertEqual(
+            set(focused_umap.data["role"]),
+            {"background", "competitor", "target"},
+        )
+        self.assertTrue(
+            {"obs_name", "population", "umap_1", "umap_2"}.issubset(
+                global_umap.data.columns
+            )
+        )
+
+        representation = summarize_population_representation(
+            adata,
+            "population",
+            group_keys=["animal", "ROI"],
+        )
+        breakdown = plot_population_breakdown(
+            representation,
+            group_key="animal",
+        )
+        self.assertEqual(breakdown.display_data.shape, (2, 3))
+
+        t_positions = np.flatnonzero(
+            adata.obs["population"].astype(str).to_numpy() == "T"
+        )
+        fake_cell_metrics = pd.DataFrame(
+            {
+                "cell_index": adata.obs_names[t_positions].astype(str),
+                "reference_population": "T",
+                "boundary_class": "boundary",
+                "graph_neighbour_purity": np.linspace(0.0, 1.0, len(t_positions)),
+            }
+        )
+        panel = select_population_cell_panel(
+            adata,
+            "population",
+            "T",
+            marker="CD3",
+            expectations=expectations,
+            clustering_qc=SimpleNamespace(cell_metrics=fake_cell_metrics),
+            diversity_keys=["animal", "ROI"],
+            max_per_diversity_group=5,
+            random_state=7,
+        )
+        self.assertEqual(len(panel.cells), 20)
+        self.assertEqual(panel.cells["obs_name"].nunique(), 20)
+        self.assertEqual(
+            set(panel.cells["strategy"]),
+            {"typical", "boundary", "marker_high", "contradictory", "random"},
+        )
+        self.assertTrue({"animal", "ROI"}.issubset(panel.cells.columns))
+
+        gallery_figure, gallery_axes = plt.subplots(4, 5)
+        with patch(
+            "SpatialBiologyToolkit.spatialdata.plot_spatialdata_cells",
+            return_value=(gallery_figure, gallery_axes),
+        ) as gallery_plotter:
+            gallery = plot_population_cell_gallery(
+                SimpleNamespace(images={}, labels={}),
+                panel,
+                channel=("CD3", "CD19", "CD68"),
+                ncols=5,
+                separate_strategies=False,
+                compact_titles=True,
+            )
+        self.assertEqual(set(gallery), {"all"})
+        self.assertEqual(len(gallery["all"].data), 20)
+        self.assertIn("typical #1", gallery_axes.reshape(-1)[0].get_title())
+        self.assertEqual(gallery_plotter.call_args.kwargs["ncols"], 5)
+
+        expression = compare_populations(
+            adata,
+            "population",
+            "T",
+            reference_population="B",
+            expectations=expectations,
+            max_cells_per_group=12,
+        )
+        adata.obs["population_candidate"] = pd.Categorical(
+            adata.obs["population"].astype(str).replace({"T": "T cell"})
+        )
+        with TemporaryDirectory() as directory:
+            writer = PopulationQCArtifactWriter(
+                directory,
+                stage="global",
+            )
+            paths = writer.save_plot_result(
+                matrix,
+                "marker_matrix",
+                source="plot_population_matrixplot",
+            )
+            result_paths = writer.save_result_tables(
+                expression,
+                "population_T_expression",
+            )
+            panel_path = writer.child(
+                stage="population",
+                population="T",
+            ).save_table(panel.cells, "selected_cells")
+            candidate_path = writer.child(
+                stage="candidate",
+                population="candidate_merge",
+            ).save_observation_columns(
+                adata,
+                "population_candidate",
+                source="apply_population_mapping",
+            )
+            spatialdata_candidate_path = writer.child(
+                stage="candidate",
+                population="candidate_merge",
+            ).save_observation_columns(
+                SimpleNamespace(tables={"table": adata}, attrs={}),
+                ["population_candidate"],
+                name="candidate_observation_columns_from_spatialdata",
+                table_name="table",
+                source="apply_population_mapping",
+            )
+            posterior = pd.DataFrame(
+                [
+                    {
+                        "source_population": "T",
+                        "proposed_label": "T cell",
+                        "decision": "retain",
+                        "candidate_key": "",
+                        "structural_confidence": "high",
+                        "identity_confidence": "high",
+                        "panel_resolution": "high",
+                        "replication_image_confidence": "moderate",
+                        "alternatives": "",
+                        "supporting_evidence": "global:all:figure:marker_matrix",
+                        "contradictory_evidence": "",
+                        "next_test": "",
+                    }
+                ]
+            )
+            posterior_path = writer.save_posterior_mapping(posterior)
+            conclusion_path = writer.record_stage_conclusion(
+                stage_id="global-1",
+                hypothesis="The clustering is structurally supported.",
+                conclusion="Synthetic evidence supports the test clustering.",
+                decision="continue",
+                evidence_artifact_ids=["global:all:figure:marker_matrix"],
+                notebook_path="notebooks/10_global_clustering.ipynb",
+                include_in_summary=True,
+                priority=1,
+            )
+            audit_path = writer.save_execution_audit(
+                {
+                    "zarr_write_performed": False,
+                    "source_population_column_preserved": True,
+                    "candidate_columns_created": ["population_candidate"],
+                    "candidate_columns_removed": ["population_candidate"],
+                    "random_seed": 9,
+                }
+            )
+            self.assertTrue(all(path.exists() for path in paths.values()))
+            self.assertTrue(all(path.exists() for path in result_paths.values()))
+            self.assertTrue(panel_path.exists())
+            self.assertTrue(candidate_path.exists())
+            self.assertTrue(spatialdata_candidate_path.exists())
+            self.assertTrue(posterior_path.exists())
+            self.assertTrue(conclusion_path.exists())
+            self.assertTrue(audit_path.exists())
+            candidate_columns = pd.read_csv(
+                candidate_path,
+                dtype=str,
+                keep_default_na=False,
+            )
+            self.assertEqual(
+                list(candidate_columns.columns),
+                ["obs_name", "population_candidate"],
+            )
+            self.assertEqual(len(candidate_columns), adata.n_obs)
+            self.assertTrue(candidate_columns["obs_name"].is_unique)
+            self.assertEqual(
+                candidate_columns["obs_name"].tolist(),
+                adata.obs_names.astype(str).tolist(),
+            )
+            self.assertEqual(
+                candidate_columns["population_candidate"].tolist(),
+                adata.obs["population_candidate"].astype(str).tolist(),
+            )
+            manifest = writer.manifest()
+            self.assertGreaterEqual(len(manifest), 7)
+            self.assertEqual(
+                set(manifest.columns),
+                {
+                    "artifact_id",
+                    "stage",
+                    "population",
+                    "kind",
+                    "name",
+                    "path",
+                    "source",
+                    "created_at",
+                    "sha256",
+                    "metadata_json",
+                },
+            )
+            self.assertTrue(
+                all((Path(directory) / path).exists() for path in manifest["path"])
+            )
+            candidate_record = manifest.loc[
+                manifest["path"] == candidate_path.relative_to(directory).as_posix()
+            ].iloc[0]
+            candidate_metadata = json.loads(candidate_record["metadata_json"])
+            self.assertEqual(
+                candidate_metadata["observation_columns"],
+                ["population_candidate"],
+            )
+            self.assertEqual(candidate_metadata["merge_key"], "obs_name")
+            self.assertTrue(candidate_metadata["merge_key_unique"])
+            self.assertEqual(candidate_metadata["n_observations"], adata.n_obs)
+            spatialdata_record = manifest.loc[
+                manifest["path"]
+                == spatialdata_candidate_path.relative_to(directory).as_posix()
+            ].iloc[0]
+            spatialdata_metadata = json.loads(spatialdata_record["metadata_json"])
+            self.assertEqual(spatialdata_metadata["table_name"], "table")
+
+        for figure in (
+            matrix.figure,
+            global_umap.figure,
+            focused_umap.figure,
+            breakdown.figure,
+            gallery_figure,
+        ):
+            plt.close(figure)
 
 
 if __name__ == "__main__":

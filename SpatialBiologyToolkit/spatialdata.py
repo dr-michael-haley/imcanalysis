@@ -21,6 +21,10 @@ SBT_METADATA_KEY = "spatial_biology_toolkit"
 DEFAULT_TABLE_NAME = "table"
 DEFAULT_REGION_KEY = "_sbt_region"
 DEFAULT_INSTANCE_KEY = "_sbt_instance_id"
+DEFAULT_LABEL_REGION_KEY = "_sbt_label_region"
+DEFAULT_LABEL_INSTANCE_KEY = "_sbt_label_instance_id"
+DEFAULT_LABEL_VALUE_KEY = "label_value"
+DEFAULT_LABEL_NAME_KEY = "label_name"
 
 
 @dataclass(frozen=True)
@@ -30,6 +34,55 @@ class MarkerImageMatch:
     marker: str
     path: Path
     mode: Literal["exact", "substring"]
+
+
+@dataclass(frozen=True)
+class AdditionalLabelsSpec:
+    """Describe one logical layer of ROI-aligned integer label TIFFs.
+
+    Parameters
+    ----------
+    name
+        Stable, human-readable layer name, for example ``"tissue_region"``.
+        It is converted to a safe key for generated SpatialData element names
+        while the original value is retained as the display name.
+    folder
+        Folder containing one TIFF per ROI.  Each filename must have the exact
+        case-insensitive stem ``{ROI}{suffix}``.
+    suffix
+        Required filename suffix between the ROI name and ``.tif[f]``, for
+        example ``"_regions"``.
+    value_names
+        Pixel-value-to-name annotations.  Accepted forms are a global
+        ``{integer: name}`` mapping, a nested ``{ROI: {integer: name}}``
+        mapping, a pandas DataFrame, or a CSV path.  DataFrame/CSV inputs use
+        ``value_key`` and ``name_key`` columns and may optionally contain an
+        ROI column.
+    table_name
+        Optional annotation-table name.  The default is
+        ``"{safe_name}_annotations"``.
+    value_key, name_key
+        Column names used for the numeric pixel value and its semantic name.
+    mapping_roi_key
+        Optional ROI column in a DataFrame/CSV mapping.  When omitted, the
+        converter uses the source ``roi_key`` column if it is present;
+        otherwise the mapping is treated as global.
+
+    Notes
+    -----
+    The TIFF remains an integer SpatialData Labels element.  Semantic names
+    are stored in a linked annotation table so plotting and querying tools can
+    resolve them without replacing every raster pixel with a string.
+    """
+
+    name: str
+    folder: str | Path
+    suffix: str
+    value_names: Any
+    table_name: str | None = None
+    value_key: str = DEFAULT_LABEL_VALUE_KEY
+    name_key: str = DEFAULT_LABEL_NAME_KEY
+    mapping_roi_key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -49,6 +102,35 @@ class ROIConversionPlan:
 
 
 @dataclass(frozen=True)
+class AdditionalLabelsROIPlan:
+    """Validated source TIFF and annotations for one layer in one ROI."""
+
+    roi: str
+    labels_element: str
+    path: Path
+    shape: tuple[int, int]
+    dtype: str
+    value_names: tuple[tuple[int, str], ...]
+    unused_mapping_values: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class AdditionalLabelsPlan:
+    """Validated files and annotation metadata for one logical label layer."""
+
+    name: str
+    key: str
+    suffix: str
+    table_name: str
+    roi_key: str
+    region_key: str
+    instance_key: str
+    value_key: str
+    name_key: str
+    rois: tuple[AdditionalLabelsROIPlan, ...]
+
+
+@dataclass(frozen=True)
 class SpatialDataConversionPlan:
     """A validated, side-effect-free plan for an IMC-to-SpatialData conversion."""
 
@@ -56,6 +138,7 @@ class SpatialDataConversionPlan:
     instance_key: str
     markers: tuple[str, ...]
     rois: tuple[ROIConversionPlan, ...]
+    additional_labels: tuple[AdditionalLabelsPlan, ...] = ()
 
     @property
     def n_rois(self) -> int:
@@ -64,6 +147,10 @@ class SpatialDataConversionPlan:
     @property
     def n_image_files(self) -> int:
         return sum(len(roi.marker_images) for roi in self.rois)
+
+    @property
+    def n_additional_label_files(self) -> int:
+        return sum(len(layer.rois) for layer in self.additional_labels)
 
 
 def _tiff_files(folder: Path) -> list[Path]:
@@ -143,10 +230,277 @@ def _safe_name(value: str) -> str:
     token = re.sub(r"[^0-9A-Za-z_]+", "_", normalized).strip("_")
     token = re.sub(r"_+", "_", token)
     if not token:
-        raise ValueError(f"ROI name {value!r} cannot be converted to a safe name.")
+        raise ValueError(f"Name {value!r} cannot be converted to a safe name.")
     if token[0].isdigit():
         token = f"roi_{token}"
     return token
+
+
+def _normalise_additional_labels_specs(
+    values: (
+        AdditionalLabelsSpec
+        | Mapping[str, Any]
+        | Sequence[AdditionalLabelsSpec | Mapping[str, Any]]
+        | None
+    ),
+) -> tuple[AdditionalLabelsSpec, ...]:
+    if values is None:
+        return ()
+    if isinstance(values, AdditionalLabelsSpec) or isinstance(values, Mapping):
+        candidates: Sequence[AdditionalLabelsSpec | Mapping[str, Any]] = (values,)
+    else:
+        candidates = values
+
+    specs: list[AdditionalLabelsSpec] = []
+    for index, candidate in enumerate(candidates):
+        if isinstance(candidate, AdditionalLabelsSpec):
+            spec = candidate
+        elif isinstance(candidate, Mapping):
+            try:
+                spec = AdditionalLabelsSpec(**dict(candidate))
+            except TypeError as exc:
+                raise TypeError(
+                    f"Invalid additional_labels specification at index {index}: {exc}"
+                ) from exc
+        else:
+            raise TypeError(
+                "additional_labels entries must be AdditionalLabelsSpec objects "
+                f"or mappings, found {type(candidate).__name__} at index {index}."
+            )
+
+        name = str(spec.name).strip()
+        if not name:
+            raise ValueError(
+                f"Additional label layer at index {index} has an empty name."
+            )
+        suffix = str(spec.suffix)
+        if not suffix:
+            raise ValueError(
+                f"Additional label layer {name!r} must define a non-empty suffix."
+            )
+        specs.append(
+            AdditionalLabelsSpec(
+                name=name,
+                folder=Path(spec.folder),
+                suffix=suffix,
+                value_names=spec.value_names,
+                table_name=spec.table_name,
+                value_key=str(spec.value_key).strip(),
+                name_key=str(spec.name_key).strip(),
+                mapping_roi_key=(
+                    None
+                    if spec.mapping_roi_key is None
+                    else str(spec.mapping_roi_key).strip()
+                ),
+            )
+        )
+    return tuple(specs)
+
+
+def _coerce_positive_label_value(value: Any, *, context: str) -> int:
+    import numpy as np
+    import pandas as pd
+
+    if isinstance(value, (bool, np.bool_)) or pd.isna(value):
+        raise ValueError(f"{context} must be a non-negative integer, found {value!r}.")
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{context} must be a non-negative integer, found {value!r}."
+        ) from exc
+    if not np.isfinite(numeric) or numeric != np.floor(numeric) or numeric < 0:
+        raise ValueError(f"{context} must be a non-negative integer, found {value!r}.")
+    return int(numeric)
+
+
+def _coerce_label_name(value: Any, *, context: str) -> str:
+    import pandas as pd
+
+    if pd.isna(value):
+        raise ValueError(f"{context} must not be missing.")
+    name = str(value).strip()
+    if not name:
+        raise ValueError(f"{context} must not be empty.")
+    return name
+
+
+def _resolve_mapping_roi(value: Any, roi_names: Sequence[str], *, context: str) -> str:
+    candidate = str(value)
+    if candidate in roi_names:
+        return candidate
+    matches = [roi for roi in roi_names if roi.casefold() == candidate.casefold()]
+    if len(matches) == 1:
+        return matches[0]
+    raise ValueError(
+        f"{context} references ROI {candidate!r}, which is not present in adata."
+    )
+
+
+def _add_value_name(
+    target: dict[int, str],
+    value: Any,
+    name: Any,
+    *,
+    context: str,
+) -> None:
+    label_value = _coerce_positive_label_value(value, context=f"{context} value")
+    label_name = _coerce_label_name(name, context=f"{context} name")
+    if label_value in target:
+        raise ValueError(
+            f"{context} contains duplicate mapping for pixel value {label_value}."
+        )
+    target[label_value] = label_name
+
+
+def _load_value_name_maps(
+    spec: AdditionalLabelsSpec,
+    *,
+    roi_names: Sequence[str],
+    source_roi_key: str,
+) -> dict[str, dict[int, str]]:
+    """Normalize global or ROI-specific label-name inputs."""
+
+    import pandas as pd
+
+    source = spec.value_names
+    if isinstance(source, (str, Path)):
+        mapping_path = Path(source)
+        if not mapping_path.is_file():
+            raise FileNotFoundError(
+                f"Mapping CSV for additional label layer {spec.name!r} was not found: "
+                f"{mapping_path}"
+            )
+        source = pd.read_csv(mapping_path)
+
+    per_roi: dict[str, dict[int, str]] = {roi: {} for roi in roi_names}
+    if isinstance(source, pd.DataFrame):
+        missing_columns = [
+            key
+            for key in (spec.value_key, spec.name_key)
+            if not key or key not in source.columns
+        ]
+        if missing_columns:
+            raise KeyError(
+                f"Mapping table for additional label layer {spec.name!r} is missing "
+                f"column(s): {missing_columns}"
+            )
+        mapping_roi_key = spec.mapping_roi_key
+        if mapping_roi_key is None and source_roi_key in source.columns:
+            mapping_roi_key = source_roi_key
+        if mapping_roi_key is not None and mapping_roi_key not in source.columns:
+            raise KeyError(
+                f"Mapping ROI column {mapping_roi_key!r} is missing for additional "
+                f"label layer {spec.name!r}."
+            )
+
+        if mapping_roi_key is None:
+            global_map: dict[int, str] = {}
+            for row_index, row in source.iterrows():
+                _add_value_name(
+                    global_map,
+                    row[spec.value_key],
+                    row[spec.name_key],
+                    context=f"Layer {spec.name!r} mapping row {row_index!r}",
+                )
+            per_roi = {roi: dict(global_map) for roi in roi_names}
+        else:
+            for row_index, row in source.iterrows():
+                roi = _resolve_mapping_roi(
+                    row[mapping_roi_key],
+                    roi_names,
+                    context=f"Layer {spec.name!r} mapping row {row_index!r}",
+                )
+                _add_value_name(
+                    per_roi[roi],
+                    row[spec.value_key],
+                    row[spec.name_key],
+                    context=f"Layer {spec.name!r} mapping row {row_index!r}",
+                )
+    elif isinstance(source, Mapping):
+        if not source:
+            raise ValueError(
+                f"Pixel-value mapping for additional label layer {spec.name!r} is empty."
+            )
+        nested_flags = [isinstance(value, Mapping) for value in source.values()]
+        if any(nested_flags) and not all(nested_flags):
+            raise TypeError(
+                f"Mapping for additional label layer {spec.name!r} mixes global "
+                "values with per-ROI mappings."
+            )
+        if all(nested_flags):
+            seen_rois: set[str] = set()
+            for roi_value, mapping in source.items():
+                roi = _resolve_mapping_roi(
+                    roi_value,
+                    roi_names,
+                    context=f"Layer {spec.name!r} mapping",
+                )
+                if roi in seen_rois:
+                    raise ValueError(
+                        f"Layer {spec.name!r} contains duplicate mappings for ROI {roi!r}."
+                    )
+                seen_rois.add(roi)
+                for value, name in mapping.items():
+                    _add_value_name(
+                        per_roi[roi],
+                        value,
+                        name,
+                        context=f"Layer {spec.name!r}, ROI {roi!r}",
+                    )
+            missing_rois = [roi for roi in roi_names if roi not in seen_rois]
+            if missing_rois:
+                raise ValueError(
+                    f"Layer {spec.name!r} has no pixel-value mapping for ROI(s): "
+                    + ", ".join(repr(roi) for roi in missing_rois)
+                )
+        else:
+            global_map = {}
+            for value, name in source.items():
+                _add_value_name(
+                    global_map,
+                    value,
+                    name,
+                    context=f"Layer {spec.name!r}",
+                )
+            per_roi = {roi: dict(global_map) for roi in roi_names}
+    else:
+        raise TypeError(
+            f"value_names for additional label layer {spec.name!r} must be a "
+            "mapping, pandas DataFrame, or CSV path."
+        )
+
+    return per_roi
+
+
+def _match_additional_labels_tiff(
+    folder: Path,
+    *,
+    roi: str,
+    suffix: str,
+    layer_name: str,
+) -> Path:
+    if not folder.is_dir():
+        raise FileNotFoundError(
+            f"Folder for additional label layer {layer_name!r} was not found: {folder}"
+        )
+    expected_stem = f"{roi}{suffix}"
+    matches = [
+        path
+        for path in _tiff_files(folder)
+        if path.stem.casefold() == expected_stem.casefold()
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise ValueError(
+            f"Multiple TIFFs match ROI {roi!r}, suffix {suffix!r}, and layer "
+            f"{layer_name!r} in {folder}: {_format_paths(matches)}"
+        )
+    raise FileNotFoundError(
+        f"No TIFF with stem {expected_stem!r} was found for additional label "
+        f"layer {layer_name!r} in {folder}."
+    )
 
 
 def _unique_casefold_match(
@@ -250,6 +604,12 @@ def plan_imc_spatialdata_conversion(
     roi_key: str = "ROI",
     instance_key: str = "ObjectNumber",
     validate_instance_ids: bool = True,
+    additional_labels: (
+        AdditionalLabelsSpec
+        | Mapping[str, Any]
+        | Sequence[AdditionalLabelsSpec | Mapping[str, Any]]
+        | None
+    ) = None,
 ) -> SpatialDataConversionPlan:
     """Validate inputs and return a side-effect-free conversion plan.
 
@@ -257,6 +617,11 @@ def plan_imc_spatialdata_conversion(
     represent cells filtered out of the AnnData table.  A table instance that
     is absent from its mask is always an error when ``validate_instance_ids``
     is enabled.
+
+    ``additional_labels`` accepts one or several independent logical layers.
+    Every layer is validated across all ROIs, including exact suffix-based
+    filename matching, integer dtype, shape agreement, non-negative values,
+    and complete pixel-value-to-name annotations.
     """
 
     import numpy as np
@@ -280,6 +645,7 @@ def plan_imc_spatialdata_conversion(
     roi_codes, roi_names, instance_values = _validate_obs(
         adata, roi_key=roi_key, instance_key=instance_key
     )
+    additional_specs = _normalise_additional_labels_specs(additional_labels)
     used_names: set[str] = set()
     roi_plans: list[ROIConversionPlan] = []
 
@@ -356,11 +722,169 @@ def plan_imc_spatialdata_conversion(
             )
         )
 
+    additional_plans: list[AdditionalLabelsPlan] = []
+    used_layer_keys: set[str] = set()
+    used_table_names: set[str] = set()
+    for spec in additional_specs:
+        layer_key = _safe_name(spec.name)
+        if layer_key.casefold() == "cells":
+            raise ValueError(
+                f"Additional label layer name {spec.name!r} is reserved for the "
+                "primary cell mask."
+            )
+        folded_key = layer_key.casefold()
+        if folded_key in used_layer_keys:
+            raise ValueError(
+                f"Additional label layer names must be unique after normalization; "
+                f"{spec.name!r} produces duplicate key {layer_key!r}."
+            )
+        used_layer_keys.add(folded_key)
+
+        requested_table_name = (
+            spec.table_name
+            if spec.table_name is not None
+            else f"{layer_key}_annotations"
+        )
+        annotation_table_name = _safe_name(str(requested_table_name))
+        folded_table_name = annotation_table_name.casefold()
+        if folded_table_name in used_table_names:
+            raise ValueError(
+                f"Additional label annotation table names must be unique; "
+                f"{annotation_table_name!r} is duplicated."
+            )
+        used_table_names.add(folded_table_name)
+
+        annotation_columns = (
+            roi_key,
+            DEFAULT_LABEL_REGION_KEY,
+            DEFAULT_LABEL_INSTANCE_KEY,
+            spec.value_key,
+            spec.name_key,
+        )
+        if any(not value for value in annotation_columns):
+            raise ValueError(
+                f"Annotation column names for additional label layer "
+                f"{spec.name!r} must not be empty."
+            )
+        if len(set(annotation_columns)) != len(annotation_columns):
+            raise ValueError(
+                f"Annotation columns for additional label layer {spec.name!r} "
+                f"must be distinct: {annotation_columns}"
+            )
+
+        value_names_by_roi = _load_value_name_maps(
+            spec,
+            roi_names=tuple(str(value) for value in roi_names),
+            source_roi_key=roi_key,
+        )
+        folder = Path(spec.folder)
+        layer_roi_plans: list[AdditionalLabelsROIPlan] = []
+        for roi_plan in roi_plans:
+            labels_element = f"labels_{layer_key}_{_safe_name(roi_plan.roi)}"
+            if labels_element in used_names:
+                raise ValueError(
+                    f"Additional label layer {spec.name!r} and ROI "
+                    f"{roi_plan.roi!r} produce duplicate SpatialData name "
+                    f"{labels_element!r}."
+                )
+            used_names.add(labels_element)
+
+            path = _match_additional_labels_tiff(
+                folder,
+                roi=roi_plan.roi,
+                suffix=spec.suffix,
+                layer_name=spec.name,
+            )
+            shape, dtype = _tiff_metadata(path)
+            if not np.issubdtype(dtype, np.integer):
+                raise TypeError(
+                    f"Additional label TIFF {path} has dtype {dtype}; "
+                    "SpatialData labels require integers."
+                )
+            if shape != roi_plan.shape:
+                raise ValueError(
+                    f"Additional label TIFF {path} has shape {shape}, but the "
+                    f"primary mask for ROI {roi_plan.roi!r} has shape "
+                    f"{roi_plan.shape}."
+                )
+
+            values = np.unique(tifffile.imread(path))
+            if np.any(values < 0):
+                raise ValueError(
+                    f"Additional label TIFF {path} contains negative values; "
+                    "0 must represent background and positive integers must "
+                    "represent named labels."
+                )
+            present_values = tuple(
+                int(value) for value in values.tolist() if int(value) != 0
+            )
+            roi_value_names = value_names_by_roi[roi_plan.roi]
+            missing_values = [
+                value for value in present_values if value not in roi_value_names
+            ]
+            if missing_values:
+                preview = ", ".join(str(value) for value in missing_values[:10])
+                raise ValueError(
+                    f"Additional label layer {spec.name!r}, ROI {roi_plan.roi!r} "
+                    f"has {len(missing_values)} positive pixel value(s) without "
+                    f"a name; first values: {preview}."
+                )
+            unused_values = tuple(
+                sorted(
+                    value
+                    for value in roi_value_names
+                    if value != 0 and value not in present_values
+                )
+            )
+            if unused_values:
+                logging.warning(
+                    "Additional label layer %r, ROI %r has %d mapped value(s) "
+                    "not present in %s.",
+                    spec.name,
+                    roi_plan.roi,
+                    len(unused_values),
+                    path.name,
+                )
+            layer_roi_plans.append(
+                AdditionalLabelsROIPlan(
+                    roi=roi_plan.roi,
+                    labels_element=labels_element,
+                    path=path,
+                    shape=shape,
+                    dtype=str(dtype),
+                    value_names=tuple(
+                        (value, roi_value_names[value]) for value in present_values
+                    ),
+                    unused_mapping_values=unused_values,
+                )
+            )
+
+        if not any(roi.value_names for roi in layer_roi_plans):
+            raise ValueError(
+                f"Additional label layer {spec.name!r} contains no positive "
+                "pixel values across the selected ROIs."
+            )
+        additional_plans.append(
+            AdditionalLabelsPlan(
+                name=spec.name,
+                key=layer_key,
+                suffix=spec.suffix,
+                table_name=annotation_table_name,
+                roi_key=roi_key,
+                region_key=DEFAULT_LABEL_REGION_KEY,
+                instance_key=DEFAULT_LABEL_INSTANCE_KEY,
+                value_key=spec.value_key,
+                name_key=spec.name_key,
+                rois=tuple(layer_roi_plans),
+            )
+        )
+
     return SpatialDataConversionPlan(
         roi_key=roi_key,
         instance_key=instance_key,
         markers=markers,
         rois=tuple(roi_plans),
+        additional_labels=tuple(additional_plans),
     )
 
 
@@ -416,16 +940,110 @@ def _metadata_from_plan(
             },
             "table_instances": roi.table_instances,
             "unannotated_mask_instances": roi.unannotated_mask_instances,
+            "additional_labels": {},
+        }
+    label_layers: dict[str, Any] = {
+        "cells": {
+            "display_name": "Cells",
+            "kind": "instances",
+            "annotation_table": table_name,
+            "region_key": table_region_key,
+            "instance_key": table_instance_key,
+            "elements_by_roi": {roi.roi: roi.labels_element for roi in plan.rois},
+        }
+    }
+    for layer in plan.additional_labels:
+        elements_by_roi: dict[str, str] = {}
+        files_by_roi: dict[str, str] = {}
+        unused_by_roi: dict[str, list[int]] = {}
+        for roi in layer.rois:
+            elements_by_roi[roi.roi] = roi.labels_element
+            files_by_roi[roi.roi] = roi.path.name
+            if roi.unused_mapping_values:
+                unused_by_roi[roi.roi] = list(roi.unused_mapping_values)
+            rois[roi.roi]["additional_labels"][layer.key] = roi.labels_element
+        label_layers[layer.key] = {
+            "display_name": layer.name,
+            "kind": "categorical",
+            "suffix": layer.suffix,
+            "annotation_table": layer.table_name,
+            "roi_key": layer.roi_key,
+            "region_key": layer.region_key,
+            "instance_key": layer.instance_key,
+            "value_key": layer.value_key,
+            "name_key": layer.name_key,
+            "elements_by_roi": elements_by_roi,
+            "files_by_roi": files_by_roi,
+            "unused_mapping_values_by_roi": unused_by_roi,
         }
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "roi_key": plan.roi_key,
         "source_instance_key": plan.instance_key,
         "table_name": table_name,
         "table_region_key": table_region_key,
         "table_instance_key": table_instance_key,
         "rois": rois,
+        "label_layers": label_layers,
     }
+
+
+def _create_additional_labels_table(layer: AdditionalLabelsPlan) -> Any:
+    import anndata as ad
+    import numpy as np
+    import pandas as pd
+    from spatialdata.models import TableModel
+
+    records: list[dict[str, Any]] = []
+    obs_names: list[str] = []
+    for roi in layer.rois:
+        for value, name in roi.value_names:
+            records.append(
+                {
+                    layer.roi_key: roi.roi,
+                    layer.region_key: roi.labels_element,
+                    layer.instance_key: value,
+                    layer.value_key: value,
+                    layer.name_key: name,
+                }
+            )
+            obs_names.append(f"{layer.key}:{_safe_name(roi.roi)}:{value}")
+
+    obs = pd.DataFrame.from_records(records, index=obs_names)
+    region_categories = [roi.labels_element for roi in layer.rois]
+    roi_categories = [roi.roi for roi in layer.rois]
+    obs[layer.region_key] = pd.Categorical(
+        obs[layer.region_key], categories=region_categories
+    )
+    obs[layer.roi_key] = pd.Categorical(obs[layer.roi_key], categories=roi_categories)
+    obs[layer.instance_key] = obs[layer.instance_key].to_numpy(dtype=np.int64)
+    obs[layer.value_key] = obs[layer.value_key].to_numpy(dtype=np.int64)
+    name_categories = list(dict.fromkeys(obs[layer.name_key].astype(str)))
+    obs[layer.name_key] = pd.Categorical(
+        obs[layer.name_key].astype(str), categories=name_categories
+    )
+
+    annotation = ad.AnnData(
+        X=np.empty((len(obs), 0), dtype=np.float32),
+        obs=obs,
+    )
+    table = TableModel.parse(
+        annotation,
+        region=region_categories,
+        region_key=layer.region_key,
+        instance_key=layer.instance_key,
+        overwrite_metadata=True,
+    )
+    table.uns[SBT_METADATA_KEY] = {
+        "schema_version": 1,
+        "kind": "label_annotations",
+        "label_layer": layer.key,
+        "display_name": layer.name,
+        "roi_key": layer.roi_key,
+        "value_key": layer.value_key,
+        "name_key": layer.name_key,
+    }
+    return table
 
 
 def create_spatialdata(
@@ -441,6 +1059,12 @@ def create_spatialdata(
     validate_instance_ids: bool = True,
     raster_chunks: int | tuple[int, int] = (512, 512),
     scale_factors: Sequence[int] | None = None,
+    additional_labels: (
+        AdditionalLabelsSpec
+        | Mapping[str, Any]
+        | Sequence[AdditionalLabelsSpec | Mapping[str, Any]]
+        | None
+    ) = None,
 ) -> Any:
     """Create a lazy SpatialData object from an IMC AnnData and TIFF folders.
 
@@ -464,6 +1088,11 @@ def create_spatialdata(
     scale_factors:
         Optional relative downsampling factors used to create multiscale
         images and labels.
+    additional_labels:
+        One or several :class:`AdditionalLabelsSpec` objects (or equivalent
+        mappings).  Each specification adds one named, ROI-aligned integer
+        Labels layer and one linked annotation table containing the semantic
+        name for every positive pixel value.
 
     Notes
     -----
@@ -489,7 +1118,35 @@ def create_spatialdata(
         roi_key=roi_key,
         instance_key=instance_key,
         validate_instance_ids=validate_instance_ids,
+        additional_labels=additional_labels,
     )
+
+    table_names = [table_name, *(layer.table_name for layer in plan.additional_labels)]
+    folded_table_names = [name.casefold() for name in table_names]
+    if len(set(folded_table_names)) != len(folded_table_names):
+        raise ValueError(
+            "The primary table and additional label annotation tables must have "
+            f"unique names: {table_names}"
+        )
+    spatial_element_names = {
+        name.casefold()
+        for roi in plan.rois
+        for name in (roi.image_element, roi.labels_element)
+        if name is not None
+    }
+    spatial_element_names.update(
+        roi.labels_element.casefold()
+        for layer in plan.additional_labels
+        for roi in layer.rois
+    )
+    collisions = [
+        name for name in table_names if name.casefold() in spatial_element_names
+    ]
+    if collisions:
+        raise ValueError(
+            "SpatialData table names collide with generated spatial elements: "
+            + ", ".join(repr(name) for name in collisions)
+        )
 
     region_by_roi = {roi.roi: roi.labels_element for roi in plan.rois}
     source_rois = adata.obs[roi_key].astype(str)
@@ -514,6 +1171,7 @@ def create_spatialdata(
 
     images: dict[str, Any] = {}
     labels: dict[str, Any] = {}
+    coordinate_system_by_roi = {roi.roi: roi.coordinate_system for roi in plan.rois}
     for roi in plan.rois:
         transformations = {roi.coordinate_system: Identity()}
         mask = _lazy_tiff(
@@ -550,6 +1208,24 @@ def create_spatialdata(
                 scale_factors=scale_factors,
             )
 
+    tables: dict[str, Any] = {table_name: table}
+    for layer in plan.additional_labels:
+        for roi in layer.rois:
+            transformations = {coordinate_system_by_roi[roi.roi]: Identity()}
+            raster = _lazy_tiff(
+                roi.path,
+                shape=roi.shape,
+                dtype=roi.dtype,
+                chunks=chunks,
+            )
+            labels[roi.labels_element] = Labels2DModel.parse(
+                raster,
+                dims=("y", "x"),
+                transformations=transformations,
+                scale_factors=scale_factors,
+            )
+        tables[layer.table_name] = _create_additional_labels_table(layer)
+
     metadata = _metadata_from_plan(
         plan,
         table_name=table_name,
@@ -557,15 +1233,17 @@ def create_spatialdata(
         table_instance_key=table_instance_key,
     )
     logging.info(
-        "Created lazy SpatialData with %d ROIs, %d marker images, and %d cells.",
+        "Created lazy SpatialData with %d ROIs, %d marker images, %d additional "
+        "label TIFFs, and %d cells.",
         plan.n_rois,
         plan.n_image_files,
+        plan.n_additional_label_files,
         int(adata.n_obs),
     )
     return SpatialData(
         images=images,
         labels=labels,
-        tables={table_name: table},
+        tables=tables,
         attrs={SBT_METADATA_KEY: metadata},
     )
 
@@ -667,22 +1345,143 @@ def _toolkit_metadata(sdata: Any) -> Mapping[str, Any]:
     return metadata
 
 
-def get_roi_elements(sdata: Any, roi: str) -> dict[str, str | None]:
-    """Return image, labels, and coordinate-system names for one source ROI."""
-
+def _resolve_metadata_roi(
+    sdata: Any,
+    roi: str,
+) -> tuple[str, Mapping[str, Any]]:
     rois = _toolkit_metadata(sdata).get("rois", {})
     if roi in rois:
-        selected = rois[roi]
+        selected_roi = str(roi)
     else:
         matches = [key for key in rois if str(key).casefold() == str(roi).casefold()]
         if len(matches) != 1:
             raise KeyError(f"ROI {roi!r} is not present in this SpatialData object.")
-        selected = rois[matches[0]]
+        selected_roi = str(matches[0])
+    selected = rois[selected_roi]
+    if not isinstance(selected, Mapping):
+        raise TypeError(f"Metadata for ROI {selected_roi!r} is not a mapping.")
+    return selected_roi, selected
+
+
+def _resolve_label_layer_metadata(
+    sdata: Any,
+    label_layer: str,
+) -> tuple[str, Mapping[str, Any]]:
+    metadata = _toolkit_metadata(sdata)
+    layers = metadata.get("label_layers", {})
+    if not isinstance(layers, Mapping) or not layers:
+        if str(label_layer).casefold() == "cells":
+            return (
+                "cells",
+                {
+                    "display_name": "Cells",
+                    "kind": "instances",
+                    "annotation_table": metadata.get("table_name", DEFAULT_TABLE_NAME),
+                    "region_key": metadata.get("table_region_key", DEFAULT_REGION_KEY),
+                    "instance_key": metadata.get(
+                        "table_instance_key", DEFAULT_INSTANCE_KEY
+                    ),
+                },
+            )
+        raise KeyError(
+            f"Label layer {label_layer!r} is not present; this SpatialData object "
+            "predates named additional label layers."
+        )
+
+    requested = str(label_layer).casefold()
+    matches = [
+        (str(key), value)
+        for key, value in layers.items()
+        if str(key).casefold() == requested
+        or (
+            isinstance(value, Mapping)
+            and str(value.get("display_name", "")).casefold() == requested
+        )
+    ]
+    if len(matches) != 1:
+        available = ", ".join(str(key) for key in layers)
+        raise KeyError(
+            f"Label layer {label_layer!r} was not found. Available layers: {available}"
+        )
+    key, value = matches[0]
+    if not isinstance(value, Mapping):
+        raise TypeError(f"Metadata for label layer {key!r} is not a mapping.")
+    return key, value
+
+
+def get_roi_elements(sdata: Any, roi: str) -> dict[str, str | None]:
+    """Return image, labels, and coordinate-system names for one source ROI."""
+
+    _selected_roi, selected = _resolve_metadata_roi(sdata, roi)
     return {
         "image": selected.get("image"),
         "labels": selected["labels"],
         "coordinate_system": selected["coordinate_system"],
     }
+
+
+def get_roi_label_elements(sdata: Any, roi: str) -> dict[str, str]:
+    """Return all named Labels elements for one source ROI.
+
+    The primary cell mask is always returned under ``"cells"``.  Additional
+    entries use the stable normalized layer keys created from
+    :class:`AdditionalLabelsSpec.name`.
+    """
+
+    _selected_roi, selected = _resolve_metadata_roi(sdata, roi)
+    result = {"cells": str(selected["labels"])}
+    additional = selected.get("additional_labels", {})
+    if isinstance(additional, Mapping):
+        result.update({str(key): str(value) for key, value in additional.items()})
+    return result
+
+
+def get_label_annotations(
+    sdata: Any,
+    label_layer: str,
+    *,
+    roi: str | None = None,
+) -> Any:
+    """Return the human-readable annotation rows for an additional label layer.
+
+    Parameters
+    ----------
+    sdata
+        SpatialData created by :func:`create_spatialdata`.
+    label_layer
+        Stable layer key or original display name.
+    roi
+        Optional ROI restriction, matched case-insensitively.
+
+    Returns
+    -------
+    pandas.DataFrame
+        A copy of the annotation table ``obs`` containing ROI, numeric value,
+        semantic name, and the formal SpatialData region/instance columns.
+    """
+
+    key, layer = _resolve_label_layer_metadata(sdata, label_layer)
+    if key == "cells":
+        raise ValueError(
+            "The primary cell layer is annotated by the cell table rather than "
+            "a pixel-value-to-name table."
+        )
+    table_name = str(layer["annotation_table"])
+    if table_name not in sdata.tables:
+        raise KeyError(
+            f"Annotation table {table_name!r} for label layer {key!r} was not found."
+        )
+    frame = sdata.tables[table_name].obs.copy()
+    if roi is not None:
+        selected_roi, _selected = _resolve_metadata_roi(sdata, roi)
+        roi_key = str(layer.get("roi_key", _toolkit_metadata(sdata)["roi_key"]))
+        if roi_key not in frame.columns:
+            raise KeyError(
+                f"ROI column {roi_key!r} is missing from annotation table "
+                f"{table_name!r}."
+            )
+        frame = frame.loc[frame[roi_key].astype(str) == selected_roi].copy()
+    return frame
 
 
 def summarize_spatialdata(
@@ -729,6 +1528,18 @@ def summarize_spatialdata(
             )
         ),
     }
+    label_layers = metadata.get("label_layers", {})
+    if isinstance(label_layers, Mapping):
+        summary["label_layers"] = {
+            str(key): {
+                "display_name": str(value.get("display_name", key)),
+                "kind": str(value.get("kind", "unknown")),
+                "annotation_table": value.get("annotation_table"),
+                "elements": len(value.get("elements_by_roi", {})),
+            }
+            for key, value in label_layers.items()
+            if isinstance(value, Mapping)
+        }
     if population_key is not None:
         summary["population_key"] = population_key
         summary["population_counts"] = _counts(population_key)
@@ -768,6 +1579,7 @@ def plot_spatialdata_roi(
     channel: str | Sequence[str] | None = None,
     color: str | None = None,
     table_name: str | None = None,
+    label_layer: str = "cells",
     image_cmap: str = "gray",
     fill_alpha: float = 0.35,
     contour_px: int | None = 1,
@@ -775,12 +1587,14 @@ def plot_spatialdata_roi(
     figsize: tuple[float, float] = (8.0, 8.0),
     title: str | None = None,
 ) -> Any:
-    """Plot marker intensity and/or table annotations for a single ROI.
+    """Plot marker intensity and/or named Labels annotations for one ROI.
 
     This focused Matplotlib renderer intentionally reads only the requested ROI
     and channels.  It is independent of the optional ``spatialdata-plot``
     accessor, which makes it useful when exploring stores across SpatialData
-    and spatialdata-plot release combinations.
+    and spatialdata-plot release combinations.  ``label_layer`` defaults to
+    the primary cell mask.  For an additional categorical layer, ``color``
+    defaults to that layer's semantic name column.
     """
 
     import matplotlib.pyplot as plt
@@ -790,6 +1604,16 @@ def plot_spatialdata_roi(
     from matplotlib.patches import Patch
 
     elements = get_roi_elements(sdata, roi)
+    layer_key, layer_metadata = _resolve_label_layer_metadata(sdata, label_layer)
+    roi_label_elements = get_roi_label_elements(sdata, roi)
+    if layer_key not in roi_label_elements:
+        raise KeyError(
+            f"Label layer {layer_key!r} has no Labels element for ROI {roi!r}."
+        )
+    labels_element = roi_label_elements[layer_key]
+    selected_color = color
+    if selected_color is None and layer_key != "cells":
+        selected_color = str(layer_metadata["name_key"])
     if ax is None:
         _figure, ax = plt.subplots(figsize=figsize)
 
@@ -824,29 +1648,35 @@ def plot_spatialdata_roi(
                 rgb[..., index] = plane
             ax.imshow(rgb, interpolation="nearest")
 
-    labels = _compute_raster(sdata.labels[elements["labels"]]).squeeze()
+    labels = _compute_raster(sdata.labels[labels_element]).squeeze()
     if labels.ndim != 2:
         raise ValueError(
-            f"Labels element {elements['labels']!r} is not 2D after loading: {labels.shape}."
+            f"Labels element {labels_element!r} is not 2D after loading: "
+            f"{labels.shape}."
         )
 
-    if color is not None:
+    if selected_color is not None:
         metadata = _toolkit_metadata(sdata)
-        selected_table = table_name or str(
-            metadata.get("table_name", DEFAULT_TABLE_NAME)
-        )
+        if layer_key == "cells":
+            selected_table = table_name or str(
+                metadata.get("table_name", DEFAULT_TABLE_NAME)
+            )
+            region_key = str(metadata.get("table_region_key", DEFAULT_REGION_KEY))
+            instance_key = str(metadata.get("table_instance_key", DEFAULT_INSTANCE_KEY))
+        else:
+            selected_table = table_name or str(layer_metadata["annotation_table"])
+            region_key = str(layer_metadata["region_key"])
+            instance_key = str(layer_metadata["instance_key"])
         if selected_table not in sdata.tables:
             raise KeyError(f"SpatialData table {selected_table!r} was not found.")
         table = sdata.tables[selected_table]
-        if color not in table.obs.columns:
+        if selected_color not in table.obs.columns:
             raise KeyError(
-                f"Column {color!r} is missing from table {selected_table!r}."
+                f"Column {selected_color!r} is missing from table {selected_table!r}."
             )
-        region_key = str(metadata.get("table_region_key", DEFAULT_REGION_KEY))
-        instance_key = str(metadata.get("table_instance_key", DEFAULT_INSTANCE_KEY))
-        region_rows = table.obs[region_key].astype(str) == str(elements["labels"])
-        annotation = table.obs.loc[region_rows, [instance_key, color]].copy()
-        annotation = annotation.dropna(subset=[instance_key, color])
+        region_rows = table.obs[region_key].astype(str) == str(labels_element)
+        annotation = table.obs.loc[region_rows, [instance_key, selected_color]].copy()
+        annotation = annotation.dropna(subset=[instance_key, selected_color])
         instance_ids = annotation[instance_key].to_numpy(dtype=np.int64)
         max_label = int(labels.max(initial=0))
         valid = (instance_ids >= 0) & (instance_ids <= max_label)
@@ -854,7 +1684,7 @@ def plot_spatialdata_roi(
         instance_ids = instance_ids[valid]
 
         rgba_lookup = np.zeros((max_label + 1, 4), dtype=float)
-        values = annotation[color]
+        values = annotation[selected_color]
         if isinstance(
             values.dtype, pd.CategoricalDtype
         ) or not pd.api.types.is_numeric_dtype(values):
@@ -874,7 +1704,7 @@ def plot_spatialdata_roi(
             if handles:
                 ax.legend(
                     handles=handles,
-                    title=color,
+                    title=selected_color,
                     bbox_to_anchor=(1.02, 1),
                     loc="upper left",
                     borderaxespad=0,
@@ -890,7 +1720,9 @@ def plot_spatialdata_roi(
             cmap = plt.get_cmap("viridis")
             rgba_lookup[instance_ids] = cmap(norm(numeric))
             plt.colorbar(
-                plt.cm.ScalarMappable(norm=norm, cmap=cmap), ax=ax, label=color
+                plt.cm.ScalarMappable(norm=norm, cmap=cmap),
+                ax=ax,
+                label=selected_color,
             )
         rgba_lookup[:, 3] *= fill_alpha
         ax.imshow(rgba_lookup[labels.astype(np.int64)], interpolation="nearest")
@@ -1416,14 +2248,23 @@ def plot_population_counts(
 
 __all__ = [
     "DEFAULT_INSTANCE_KEY",
+    "DEFAULT_LABEL_INSTANCE_KEY",
+    "DEFAULT_LABEL_NAME_KEY",
+    "DEFAULT_LABEL_REGION_KEY",
+    "DEFAULT_LABEL_VALUE_KEY",
     "DEFAULT_REGION_KEY",
     "DEFAULT_TABLE_NAME",
+    "AdditionalLabelsPlan",
+    "AdditionalLabelsROIPlan",
+    "AdditionalLabelsSpec",
     "MarkerImageMatch",
     "ROIConversionPlan",
     "SBT_METADATA_KEY",
     "SpatialDataConversionPlan",
     "create_spatialdata",
+    "get_label_annotations",
     "get_roi_elements",
+    "get_roi_label_elements",
     "match_marker_image",
     "plan_imc_spatialdata_conversion",
     "plot_population_counts",

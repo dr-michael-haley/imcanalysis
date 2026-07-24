@@ -6,6 +6,12 @@ Candidate clustering and annotation functions may add reversible observation
 columns in memory; no function writes SpatialData or AnnData to disk.
 """
 
+from .artifacts import (
+    MANIFEST_COLUMNS,
+    POSTERIOR_MAPPING_COLUMNS,
+    STAGE_CONCLUSION_COLUMNS,
+    PopulationQCArtifactWriter,
+)
 from .clustering import (
     apply_population_mapping,
     assess_candidate_clustering,
@@ -31,15 +37,23 @@ from .models import (
 )
 from .plotting import (
     plot_clustering_qc,
+    plot_clustering_qc_panels,
     plot_marker_distributions,
+    plot_population_breakdown,
     plot_population_cell_gallery,
     plot_population_heatmap,
+    plot_population_matrixplot,
     plot_population_representation,
+    plot_population_umap,
     plot_resolution_membership,
     plot_resolution_stability,
 )
 from .resolution import compare_resolutions
-from .selection import VALID_STRATEGIES, select_population_cells
+from .selection import (
+    VALID_STRATEGIES,
+    select_population_cell_panel,
+    select_population_cells,
+)
 
 
 __all__ = [
@@ -47,12 +61,16 @@ __all__ = [
     "InMemoryClusteringResult",
     "MarkerExpectation",
     "MarkerExpectations",
+    "MANIFEST_COLUMNS",
+    "POSTERIOR_MAPPING_COLUMNS",
     "PlotResult",
+    "PopulationQCArtifactWriter",
     "PopulationDataContext",
     "PopulationExpressionResult",
     "PopulationRepresentationResult",
     "ResolutionComparisonResult",
     "SubclusteringResult",
+    "STAGE_CONCLUSION_COLUMNS",
     "VALID_STRATEGIES",
     "apply_population_mapping",
     "assess_candidate_clustering",
@@ -63,13 +81,18 @@ __all__ = [
     "discard_population_qc_columns",
     "inspect_population_data",
     "plot_clustering_qc",
+    "plot_clustering_qc_panels",
     "plot_marker_distributions",
+    "plot_population_breakdown",
     "plot_population_cell_gallery",
     "plot_population_heatmap",
+    "plot_population_matrixplot",
     "plot_population_representation",
+    "plot_population_umap",
     "plot_resolution_membership",
     "plot_resolution_stability",
     "profile_population",
+    "select_population_cell_panel",
     "select_population_cells",
     "subcluster_population",
     "summarize_population_representation",

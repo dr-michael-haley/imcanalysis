@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 
 def _atomic_write_h5ad(adata, path: Path) -> None:
@@ -71,7 +71,6 @@ def _register_fused_neighbors(
     representation_key: str,
     n_pcs: int | None,
     random_state: int,
-    to_backend: Callable[[Any], Any] | None = None,
 ) -> str:
     """Fuse named neighbour graphs and register a Scanpy-compatible graph key."""
     from SpatialBiologyToolkit.cellvision import fuse_connectivity_graphs
@@ -95,7 +94,11 @@ def _register_fused_neighbors(
     )
     connectivity_key = f"{joint_neighbors_key}_connectivities"
     distance_key = f"{joint_neighbors_key}_distances"
-    adata.obsp[connectivity_key] = to_backend(fused) if to_backend is not None else fused
+    # RAPIDS neighbors stores connectivity graphs as host-side SciPy CSR
+    # matrices before UMAP and Leiden. Keep the fused graph in that same
+    # representation: converting it with X_to_GPU produces a CuPy CSR matrix
+    # whose implementation lacks the ``nonzero`` method used by Leiden.
+    adata.obsp[connectivity_key] = fused
     adata.uns[joint_neighbors_key] = {
         "connectivities_key": connectivity_key,
         # Graph fusion produces an affinity graph, not a meaningful metric
@@ -306,9 +309,6 @@ def main() -> None:
                 representation_key="X_cellvision_pca",
                 n_pcs=n_pcs,
                 random_state=cellvision.seed,
-                to_backend=lambda value: rsc.get.X_to_GPU(
-                    value, warning="cellvision_neighbors_connectivities"
-                ),
             )
         else:
             morphology_graph_key = _run_rapids_neighbors(

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, is_dataclass
+from collections.abc import Sequence
+from dataclasses import fields, is_dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 import json
@@ -12,6 +13,7 @@ from typing import Any, Mapping
 
 import pandas as pd
 
+from ._utils import resolve_table
 from .models import PlotResult
 
 
@@ -26,6 +28,32 @@ MANIFEST_COLUMNS = (
     "created_at",
     "sha256",
     "metadata_json",
+)
+STAGE_CONCLUSION_COLUMNS = (
+    "stage_id",
+    "stage_type",
+    "population",
+    "hypothesis",
+    "conclusion",
+    "decision",
+    "evidence_artifact_ids",
+    "notebook_path",
+    "include_in_summary",
+    "priority",
+)
+POSTERIOR_MAPPING_COLUMNS = (
+    "source_population",
+    "proposed_label",
+    "decision",
+    "candidate_key",
+    "structural_confidence",
+    "identity_confidence",
+    "panel_resolution",
+    "replication_image_confidence",
+    "alternatives",
+    "supporting_evidence",
+    "contradictory_evidence",
+    "next_test",
 )
 
 
@@ -116,9 +144,67 @@ class PopulationQCArtifactWriter:
             kind="table",
             name=name,
             source=source,
-            metadata={"rows": len(frame), "columns": list(map(str, frame.columns)), **dict(metadata or {})},
+            metadata={
+                "rows": len(frame),
+                "columns": list(map(str, frame.columns)),
+                **dict(metadata or {}),
+            },
         )
         return path
+
+    def save_observation_columns(
+        self,
+        data: Any,
+        columns: str | Sequence[str],
+        name: str = "candidate_observation_columns",
+        *,
+        table_name: str | None = None,
+        category: str = "tables",
+        source: str = "candidate observation columns",
+    ) -> Path:
+        """Save proposed ``obs`` columns in a directly joinable CSV.
+
+        The CSV always starts with the unique AnnData observation name under
+        the explicit ``obs_name`` merge key. The remaining columns retain the
+        exact requested names, order, and values. Supplying a SpatialData
+        object exports its resolved table; supplying an AnnData object exports
+        that table or candidate subset without modifying either object.
+        """
+
+        selected = [columns] if isinstance(columns, str) else list(columns)
+        selected = list(dict.fromkeys(map(str, selected)))
+        if not selected:
+            raise ValueError("At least one observation column is required")
+        if "obs_name" in selected:
+            raise ValueError("obs_name is reserved for the observation-index merge key")
+
+        resolved_table_name, adata = resolve_table(data, table_name)
+        missing = [column for column in selected if column not in adata.obs]
+        if missing:
+            raise KeyError(f"Observation columns are missing from the table: {missing}")
+        if not adata.obs_names.is_unique:
+            raise ValueError(
+                "adata.obs_names must be unique to export joinable observation columns"
+            )
+
+        frame = adata.obs.loc[:, selected].copy()
+        frame.insert(0, "obs_name", adata.obs_names.astype(str).to_numpy())
+        return self.save_table(
+            frame,
+            name,
+            category=category,
+            index=False,
+            source=source,
+            metadata={
+                "artifact_role": "candidate_observation_columns",
+                "merge_key": "obs_name",
+                "merge_key_unique": True,
+                "observation_columns": selected,
+                "n_observations": int(adata.n_obs),
+                "table_name": resolved_table_name,
+                "dtypes": {column: str(adata.obs[column].dtype) for column in selected},
+            },
+        )
 
     def save_figure(
         self,
@@ -165,7 +251,8 @@ class PopulationQCArtifactWriter:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_name(f".{path.stem}.tmp{path.suffix}")
         temporary.write_text(
-            json.dumps(value, indent=2, ensure_ascii=False, default=_json_default) + "\n",
+            json.dumps(value, indent=2, ensure_ascii=False, default=_json_default)
+            + "\n",
             encoding="utf-8",
         )
         temporary.replace(path)
@@ -233,7 +320,9 @@ class PopulationQCArtifactWriter:
         """Save every dataframe field on a typed QC result without truncation."""
 
         if is_dataclass(result):
-            values = asdict(result)
+            values = {
+                field.name: getattr(result, field.name) for field in fields(result)
+            }
         elif hasattr(result, "__dict__"):
             values = vars(result)
         else:
@@ -249,7 +338,12 @@ class PopulationQCArtifactWriter:
                     index=True,
                     source=source or type(result).__name__,
                 )
-            elif key in {"parameters", "warnings"}:
+            elif key in {"adata", "figure", "axes"}:
+                continue
+            elif isinstance(
+                value,
+                (str, int, float, bool, type(None), dict, list, tuple),
+            ):
                 metadata[key] = value
         if metadata:
             paths["metadata"] = self.save_json(
@@ -259,6 +353,118 @@ class PopulationQCArtifactWriter:
                 source=source or type(result).__name__,
             )
         return paths
+
+    def record_stage_conclusion(
+        self,
+        *,
+        stage_id: str,
+        hypothesis: str,
+        conclusion: str,
+        decision: str,
+        evidence_artifact_ids: list[str] | tuple[str, ...] | str,
+        notebook_path: str | Path,
+        include_in_summary: bool = False,
+        priority: int = 999,
+    ) -> Path:
+        """Create or replace one compact Evaluate record by stable stage ID."""
+
+        allowed_decisions = {"retain", "merge", "split", "unresolved", "continue"}
+        normalized_decision = str(decision).strip().lower()
+        if normalized_decision not in allowed_decisions:
+            raise ValueError(f"decision must be one of {sorted(allowed_decisions)}")
+        if isinstance(evidence_artifact_ids, str):
+            evidence = evidence_artifact_ids
+        else:
+            evidence = ";".join(map(str, evidence_artifact_ids))
+        path = self.output_root / "manifests" / "stage_conclusions.csv"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+        else:
+            frame = pd.DataFrame(columns=STAGE_CONCLUSION_COLUMNS)
+        for column in STAGE_CONCLUSION_COLUMNS:
+            if column not in frame:
+                frame[column] = ""
+        stable_id = _clean_token(stage_id)
+        frame = frame.loc[frame["stage_id"] != stable_id]
+        record = {
+            "stage_id": stable_id,
+            "stage_type": self.stage,
+            "population": "" if self.population is None else self.population,
+            "hypothesis": str(hypothesis),
+            "conclusion": str(conclusion),
+            "decision": normalized_decision,
+            "evidence_artifact_ids": evidence,
+            "notebook_path": str(notebook_path),
+            "include_in_summary": bool(include_in_summary),
+            "priority": int(priority),
+        }
+        frame = pd.concat([frame, pd.DataFrame([record])], ignore_index=True)
+        frame["_priority"] = pd.to_numeric(frame["priority"], errors="coerce").fillna(
+            999
+        )
+        frame = (
+            frame.sort_values(["_priority", "stage_id"], kind="stable")
+            .drop(columns="_priority")
+            .loc[:, STAGE_CONCLUSION_COLUMNS]
+        )
+        temporary = path.with_name(f".{path.stem}.tmp{path.suffix}")
+        frame.to_csv(temporary, index=False, encoding="utf-8")
+        temporary.replace(path)
+        return path
+
+    def save_posterior_mapping(self, frame: pd.DataFrame) -> Path:
+        """Save the canonical unabridged posterior mapping table."""
+
+        if not isinstance(frame, pd.DataFrame):
+            raise TypeError("frame must be a pandas DataFrame")
+        missing = [
+            column for column in POSTERIOR_MAPPING_COLUMNS if column not in frame
+        ]
+        if missing:
+            raise ValueError(f"Posterior mapping columns are missing: {missing}")
+        path = self.output_root / "tables" / "posterior_mapping.csv"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.stem}.tmp{path.suffix}")
+        frame.loc[:, POSTERIOR_MAPPING_COLUMNS].to_csv(
+            temporary,
+            index=False,
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+        self._register(
+            path,
+            kind="table",
+            name="posterior_mapping",
+            source="posterior assessment",
+            metadata={"rows": len(frame), "columns": list(POSTERIOR_MAPPING_COLUMNS)},
+        )
+        return path
+
+    def save_execution_audit(self, audit: Mapping[str, Any]) -> Path:
+        """Save the final safety/provenance audit after enforcing key claims."""
+
+        if audit.get("zarr_write_performed") is not False:
+            raise ValueError("audit must set zarr_write_performed to false")
+        if audit.get("source_population_column_preserved") is not True:
+            raise ValueError(
+                "audit must set source_population_column_preserved to true"
+            )
+        path = self.output_root / "manifests" / "execution_audit.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(f".{path.stem}.tmp{path.suffix}")
+        temporary.write_text(
+            json.dumps(
+                dict(audit),
+                indent=2,
+                ensure_ascii=False,
+                default=_json_default,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        temporary.replace(path)
+        return path
 
     def manifest(self) -> pd.DataFrame:
         """Return the current manifest in canonical column order."""
@@ -342,4 +548,9 @@ class PopulationQCArtifactWriter:
         temporary.replace(self.manifest_path)
 
 
-__all__ = ["MANIFEST_COLUMNS", "PopulationQCArtifactWriter"]
+__all__ = [
+    "MANIFEST_COLUMNS",
+    "POSTERIOR_MAPPING_COLUMNS",
+    "STAGE_CONCLUSION_COLUMNS",
+    "PopulationQCArtifactWriter",
+]
