@@ -690,7 +690,12 @@ class CellVisionVICRegTests(unittest.TestCase):
             data.uns[key]["connectivities_key"],
             "cellvision_neighbors_connectivities",
         )
+        self.assertEqual(
+            data.uns[key]["distances_key"],
+            "cellvision_neighbors_distances",
+        )
         self.assertIn("cellvision_neighbors_connectivities", data.obsp)
+        self.assertNotIn("cellvision_neighbors_distances", data.obsp)
         self.assertEqual(data.uns[key]["params"]["n_neighbors"], 2)
         self.assertEqual(data.uns[key]["params"]["use_rep"], "X_cellvision_pca")
         self.assertEqual(

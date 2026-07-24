@@ -94,9 +94,17 @@ def _register_fused_neighbors(
         intensity_weight=intensity_weight,
     )
     connectivity_key = f"{joint_neighbors_key}_connectivities"
+    distance_key = f"{joint_neighbors_key}_distances"
     adata.obsp[connectivity_key] = to_backend(fused) if to_backend is not None else fused
     adata.uns[joint_neighbors_key] = {
         "connectivities_key": connectivity_key,
+        # Graph fusion produces an affinity graph, not a meaningful metric
+        # distance graph.  Scanpy's NeighborsView nevertheless requires the
+        # metadata key to exist for named neighbour graphs.  Leaving the
+        # corresponding obsp entry absent accurately advertises that distances
+        # are unavailable while allowing connectivity consumers such as UMAP
+        # and Leiden to use the fused graph.
+        "distances_key": distance_key,
         "params": {
             "method": "cellvision_degree_normalized_graph_fusion",
             "morphology_neighbors_key": morphology_neighbors_key,

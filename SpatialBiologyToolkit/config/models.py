@@ -1836,7 +1836,7 @@ class CellVisionConfig(ConfigModel):
         le=1,
     )
     augmentation_translation_probability: float = config_field(
-        1.0,
+        0.0,
         description="Probability of applying a zero-filled integer translation.",
         stage="cellvision",
         ui_group="Mask-safe augmentations",
