@@ -22,6 +22,7 @@ typer>=0.12,<1
 # Plotting and spatial tools
 matplotlib
 seaborn
+imageio
 tifffile
 shapely
 networkx

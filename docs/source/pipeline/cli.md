@@ -21,6 +21,30 @@ sbt --help
 The editable install supplies `sbt` without installing the full scientific
 dependency stack into the launcher environment.
 
+## Compact a legacy configuration
+
+Migrate a verbose legacy YAML file to the current compact style:
+
+```bash
+sbt config compact config.yaml
+```
+
+This validates the source against the current typed model and writes
+`config.compact.yaml` beside it. Only canonical settings whose complete field
+values differ from current defaults are retained. Deprecated aliases are
+converted to their current names. Unrecognized legacy keys are preserved and
+reported so migration does not silently discard them.
+
+Choose another output path explicitly, or replace an existing output:
+
+```bash
+sbt config compact config.yaml --output config.new.yaml
+sbt config compact config.yaml --output config.new.yaml --force
+```
+
+The source file is never overwritten, even with `--force`. YAML comments and
+formatting are not retained in the generated file.
+
 Manage the fixed scientific environments through `sbt env`, not an independent
 installer implementation:
 

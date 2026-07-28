@@ -39,8 +39,8 @@ def load_config_data(data: Mapping[str, Any] | None = None) -> PipelineConfig:
     return PipelineConfig.model_validate(raw_data)
 
 
-def load_config(path: str | Path) -> PipelineConfig:
-    """Load and validate a YAML config file without modifying the input file."""
+def read_config_mapping(path: str | Path) -> dict[str, Any]:
+    """Read a YAML config file as a mapping without validating or modifying it."""
     config_path = Path(path)
     if not config_path.is_file():
         raise FileNotFoundError(f"Configuration file not found: {config_path}")
@@ -57,7 +57,12 @@ def load_config(path: str | Path) -> PipelineConfig:
         raise ValueError(
             f"Configuration file {config_path} must contain a YAML mapping at its root."
         )
-    return load_config_data(loaded)
+    return dict(loaded)
+
+
+def load_config(path: str | Path) -> PipelineConfig:
+    """Load and validate a YAML config file without modifying the input file."""
+    return load_config_data(read_config_mapping(path))
 
 
 def config_to_dict(config: PipelineConfig) -> dict[str, Any]:
@@ -65,4 +70,9 @@ def config_to_dict(config: PipelineConfig) -> dict[str, Any]:
     return config.model_dump(mode="python")
 
 
-__all__ = ["config_to_dict", "load_config", "load_config_data"]
+__all__ = [
+    "config_to_dict",
+    "load_config",
+    "load_config_data",
+    "read_config_mapping",
+]

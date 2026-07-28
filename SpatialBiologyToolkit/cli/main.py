@@ -12,7 +12,7 @@ import typer
 import yaml  # type: ignore[import-untyped]
 from pydantic import BaseModel
 
-from SpatialBiologyToolkit.config import load_config
+from SpatialBiologyToolkit.config import load_config, write_compact_config
 from SpatialBiologyToolkit.config.export import write_resolved_config
 from SpatialBiologyToolkit.environments import EnvironmentManager, load_environment_registry
 from SpatialBiologyToolkit.pipeline.asset_cleanup import (
@@ -102,7 +102,7 @@ app = typer.Typer(
     no_args_is_help=False,
     pretty_exceptions_show_locals=False,
 )
-config_app = typer.Typer(help="Validate and export typed pipeline configuration.")
+config_app = typer.Typer(help="Validate, compact, and export typed pipeline configuration.")
 project_app = typer.Typer(help="Initialize, adopt, validate, and inspect SBT projects.")
 stages_app = typer.Typer(help="List and explain registered pipeline stages.")
 modes_app = typer.Typer(help="List and explain named workflow modes.")
@@ -298,6 +298,45 @@ def config_resolved(
     except Exception as exc:
         _fail(exc)
     typer.echo(f"Wrote resolved configuration: {destination}")
+
+
+@config_app.command("compact")
+def config_compact(
+    config: Path | None = typer.Argument(
+        None,
+        help="Verbose config YAML path. Defaults to the current project's config.",
+    ),
+    output: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="New compact YAML path. Defaults to <source>.compact.yaml.",
+    ),
+    project: Path | None = typer.Option(None, "--project"),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite an existing output file; the source config is never overwritten.",
+    ),
+) -> None:
+    """Migrate verbose legacy YAML to canonical non-default settings."""
+    try:
+        if config is None:
+            context = _project(project)
+            config = context.config_path
+        destination, unknown_keys = write_compact_config(
+            config,
+            output,
+            force=force,
+        )
+    except Exception as exc:
+        _fail(exc)
+    typer.echo(f"Wrote compact configuration: {destination}")
+    if unknown_keys:
+        typer.echo(
+            "Preserved unrecognized legacy keys: " + ", ".join(unknown_keys),
+            err=True,
+        )
 
 
 @project_app.command("init")

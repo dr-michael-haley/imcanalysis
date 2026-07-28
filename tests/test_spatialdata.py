@@ -3,23 +3,29 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 import anndata as ad
+import imageio.v3 as iio
 import matplotlib
 import numpy as np
 import pandas as pd
 import tifffile
 
 from SpatialBiologyToolkit.spatialdata import (
-    AdditionalLabelsSpec,
+    CellMasks,
+    HistologyImages,
+    IMCAnnData,
+    IMCImages,
+    MaxFuseSCRNASeq,
+    RegionLabels,
+    SpatialDataSpec,
+    add_modality,
     create_spatialdata,
     get_label_annotations,
     get_roi_elements,
     get_roi_label_elements,
-    match_marker_image,
-    plan_imc_spatialdata_conversion,
-    plot_population_counts,
+    get_roi_modalities,
+    plan_spatialdata,
     plot_spatialdata_cells,
     plot_spatialdata_roi,
     summarize_spatialdata,
@@ -30,21 +36,19 @@ from SpatialBiologyToolkit.spatialdata import (
 matplotlib.use("Agg")
 
 
-def _write_fixture(root: Path, *, include_missing_instance: bool = False) -> ad.AnnData:
-    images = root / "images" / "ROI 1"
+def _write_project(root: Path) -> tuple[ad.AnnData, ad.AnnData]:
     masks = root / "masks"
-    images.mkdir(parents=True)
-    masks.mkdir()
+    immune = root / "immune"
+    ecm = root / "ecm"
+    histology = root / "histology"
+    regions = root / "regions"
+    for folder in (masks, histology, regions):
+        folder.mkdir(parents=True)
+    for roi in ("ROI 1", "ROI 2"):
+        (immune / roi).mkdir(parents=True)
+        (ecm / roi).mkdir(parents=True)
 
-    tifffile.imwrite(
-        images / "141Pr_CD3.tiff",
-        np.arange(30, dtype=np.float32).reshape(5, 6),
-    )
-    tifffile.imwrite(
-        images / "CD31.tiff",
-        np.full((5, 6), 2, dtype=np.uint16),
-    )
-    mask = np.array(
+    mask_one = np.array(
         [
             [0, 1, 1, 0, 0, 0],
             [0, 1, 1, 0, 2, 2],
@@ -54,455 +58,359 @@ def _write_fixture(root: Path, *, include_missing_instance: bool = False) -> ad.
         ],
         dtype=np.uint16,
     )
-    tifffile.imwrite(masks / "ROI 1.tiff", mask)
-
-    second_instance = 4 if include_missing_instance else 2
-    return ad.AnnData(
-        X=np.array([[1, 2], [3, 4]], dtype=np.float32),
-        obs=pd.DataFrame(
-            {
-                "ROI": ["ROI 1", "ROI 1"],
-                "ObjectNumber": [1, second_instance],
-                "animal": ["mouse_a", "mouse_a"],
-                "leiden_1.0": pd.Categorical(["0", "1"]),
-            },
-            index=["cell_1", "cell_2"],
-        ),
-        var=pd.DataFrame(index=["CD3", "CD31"]),
-    )
-
-
-def _write_additional_labels_fixture(
-    root: Path,
-) -> tuple[AdditionalLabelsSpec, AdditionalLabelsSpec]:
-    regions = root / "regions"
-    zones = root / "zones"
-    regions.mkdir()
-    zones.mkdir()
-
-    region_labels = np.array(
+    mask_two = np.array(
         [
-            [0, 1, 1, 0, 2, 2],
+            [0, 1, 1, 0, 0, 0],
             [0, 1, 1, 0, 2, 2],
             [0, 0, 0, 0, 2, 2],
-            [1, 1, 0, 0, 0, 0],
-            [1, 1, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0],
         ],
         dtype=np.uint16,
     )
-    zone_labels = np.array(
-        [
-            [0, 10, 10, 0, 20, 20],
-            [0, 10, 10, 0, 20, 20],
-            [0, 0, 0, 0, 20, 20],
-            [10, 10, 0, 0, 0, 0],
-            [10, 10, 0, 0, 0, 0],
-        ],
-        dtype=np.uint16,
-    )
-    tifffile.imwrite(regions / "ROI 1_regions.tiff", region_labels)
-    tifffile.imwrite(zones / "ROI 1_zones.tif", zone_labels)
+    for index, (roi, mask) in enumerate(
+        (("ROI 1", mask_one), ("ROI 2", mask_two)), start=1
+    ):
+        tifffile.imwrite(masks / f"{roi}.tiff", mask)
+        tifffile.imwrite(
+            immune / roi / f"14{index}Pr_CD3.tiff",
+            np.arange(30, dtype=np.float32).reshape(5, 6) + index,
+        )
+        tifffile.imwrite(
+            immune / roi / "CD31.tiff",
+            np.full((5, 6), index + 1, dtype=np.uint16),
+        )
+        tifffile.imwrite(
+            ecm / roi / "panel_Collagen.tiff",
+            np.full((5, 6), index + 3, dtype=np.uint16),
+        )
+        iio.imwrite(
+            histology / f"{roi}.png",
+            np.full((5, 6, 3), 20 * index, dtype=np.uint8),
+        )
+        region_values = np.where(mask > 0, 1, 0).astype(np.uint8)
+        region_values[:, 4:] = np.where(mask[:, 4:] > 0, 2, 0)
+        tifffile.imwrite(regions / f"{roi}_regions.tiff", region_values)
 
-    zone_mapping = root / "zone_names.csv"
-    pd.DataFrame(
+    obs = pd.DataFrame(
         {
-            "ROI": ["ROI 1", "ROI 1"],
-            "label_value": [10, 20],
-            "label_name": ["Inner", "Outer"],
-        }
-    ).to_csv(zone_mapping, index=False)
-    return (
-        AdditionalLabelsSpec(
-            name="tissue_region",
-            folder=regions,
-            suffix="_regions",
-            value_names={0: "Background", 1: "Tumour", 2: "Stroma"},
+            "ROI": ["ROI 1", "ROI 1", "ROI 2", "ROI 2"],
+            "ObjectNumber": [1, 2, 1, 2],
+            "X_loc": [1, 4, 1, 4],
+            "Y_loc": [1, 1, 1, 1],
+            "animal": ["a", "a", "b", "b"],
+            "leiden_1.0": pd.Categorical(["0", "1", "0", "1"]),
+        },
+        index=["cell_1", "cell_2", "cell_3", "cell_4"],
+    )
+    imc = ad.AnnData(
+        X=np.array([[1, 2], [3, 4], [5, 6], [7, 8]], dtype=np.float32),
+        obs=obs,
+        var=pd.DataFrame(index=["CD3", "CD31"]),
+    )
+    maxfuse = ad.AnnData(
+        X=np.array([[10, 0, 1], [0, 4, 2]], dtype=np.float32),
+        obs=pd.DataFrame(
+            {"atlas_cell": ["reference_a", "reference_b"]},
+            index=["cell_1", "cell_4"],
         ),
-        AdditionalLabelsSpec(
-            name="analysis_zone",
-            folder=zones,
-            suffix="_zones",
-            value_names=zone_mapping,
-        ),
+        var=pd.DataFrame(index=["G1", "G2", "G3"]),
+    )
+    return imc, maxfuse
+
+
+def _complete_spec(root: Path, imc: ad.AnnData, maxfuse: ad.AnnData) -> SpatialDataSpec:
+    return SpatialDataSpec(
+        modalities=[
+            CellMasks(name="cells", folder=root / "masks"),
+            IMCImages(
+                name="immune_images",
+                panel_name="Immune panel",
+                folder=root / "immune",
+            ),
+            IMCAnnData(
+                name="immune_cells",
+                panel_name="Immune panel",
+                adata=imc,
+                images="immune_images",
+                masks="cells",
+            ),
+            IMCImages(
+                name="ecm_images",
+                panel_name="Extracellular panel",
+                folder=root / "ecm",
+                channels=["Collagen"],
+                reference="cells",
+            ),
+            HistologyImages(
+                name="he",
+                folder=root / "histology",
+                reference="cells",
+            ),
+            RegionLabels(
+                name="tissue_regions",
+                folder=root / "regions",
+                suffix="_regions",
+                value_names={1: "Tissue", 2: "Edge"},
+                reference="cells",
+            ),
+            MaxFuseSCRNASeq(
+                name="atlas",
+                adata=maxfuse,
+                imc_table="immune_cells",
+            ),
+        ],
+        raster_chunks=(2, 3),
     )
 
 
-class SpatialDataConversionTests(unittest.TestCase):
-    def test_marker_matching_prefers_exact_then_unique_bounded_substring(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            folder = Path(temp_dir) / "images"
-            folder.mkdir()
-            tifffile.imwrite(
-                folder / "141Pr_CD3.tiff", np.zeros((2, 2), dtype=np.uint8)
-            )
-            tifffile.imwrite(folder / "CD31.tiff", np.zeros((2, 2), dtype=np.uint8))
-
-            fallback = match_marker_image(folder, "CD3")
-            self.assertEqual(fallback.path.name, "141Pr_CD3.tiff")
-            self.assertEqual(fallback.mode, "substring")
-
-            tifffile.imwrite(folder / "CD3.tif", np.zeros((2, 2), dtype=np.uint8))
-            exact = match_marker_image(folder, "CD3")
-            self.assertEqual(exact.path.name, "CD3.tif")
-            self.assertEqual(exact.mode, "exact")
-
-    def test_marker_matching_rejects_ambiguous_fallback(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            folder = Path(temp_dir) / "images"
-            folder.mkdir()
-            for name in ("141Pr_CD3.tiff", "panel-CD3-extra.tiff"):
-                tifffile.imwrite(folder / name, np.zeros((2, 2), dtype=np.uint8))
-            with self.assertRaisesRegex(
-                ValueError, "Multiple TIFFs contain the bounded marker"
-            ):
-                match_marker_image(folder, "CD3")
-
-    def test_plan_allows_mask_only_instances_but_rejects_missing_table_instances(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            adata = _write_fixture(root)
-            plan = plan_imc_spatialdata_conversion(
-                adata, root / "images", root / "masks"
-            )
-            self.assertEqual(plan.n_rois, 1)
-            self.assertEqual(plan.n_image_files, 2)
-            self.assertEqual(plan.rois[0].unannotated_mask_instances, 1)
-
-            missing_root = root / "missing"
-            missing_adata = _write_fixture(missing_root, include_missing_instance=True)
-            with self.assertRaisesRegex(ValueError, "absent from mask"):
-                plan_imc_spatialdata_conversion(
-                    missing_adata,
-                    missing_root / "images",
-                    missing_root / "masks",
-                )
-
-    def test_create_summarize_and_zarr_roundtrip(self):
-        from spatialdata import read_zarr
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            adata = _write_fixture(root)
-            sdata = create_spatialdata(
-                adata,
-                root / "images",
-                root / "masks",
-                raster_chunks=(2, 3),
-            )
-
-            self.assertEqual(list(sdata.images), ["image_ROI_1"])
-            self.assertEqual(list(sdata.labels), ["labels_ROI_1"])
-            self.assertEqual(
-                list(sdata.images["image_ROI_1"].coords["c"].values),
-                ["CD3", "CD31"],
-            )
-            self.assertEqual(adata.obs["ROI"].tolist(), ["ROI 1", "ROI 1"])
-            self.assertEqual(
-                adata.obs["_sbt_region"].tolist(),
-                ["labels_ROI_1", "labels_ROI_1"],
-            )
-
-            summary = summarize_spatialdata(
-                sdata, population_key="leiden_1.0", case_key="animal"
-            )
-            self.assertEqual(summary["cells"], 2)
-            self.assertEqual(summary["markers"], 2)
-            self.assertEqual(summary["unannotated_mask_instances"], 1)
-            self.assertEqual(summary["population_counts"], {"0": 1, "1": 1})
-            self.assertEqual(summary["cells_per_case"], {"mouse_a": 2})
-
-            original_replace = Path.replace
-            replace_attempts = {"failures": 0}
-
-            def fail_first_zarr_metadata_replace(source, target):
-                if (
-                    source.name.endswith(".partial")
-                    and replace_attempts["failures"] == 0
-                ):
-                    replace_attempts["failures"] += 1
-                    raise PermissionError("simulated transient Windows lock")
-                return original_replace(source, target)
-
-            with patch.object(Path, "replace", fail_first_zarr_metadata_replace):
-                output = write_spatialdata(sdata, root / "example.zarr")
-            self.assertEqual(replace_attempts["failures"], 1)
-            restored = read_zarr(output)
-            self.assertEqual(
-                get_roi_elements(restored, "roi 1"),
-                {
-                    "image": "image_ROI_1",
-                    "labels": "labels_ROI_1",
-                    "coordinate_system": "roi_ROI_1",
-                },
-            )
-            value = float(
-                restored.images["image_ROI_1"].sel(c="CD3").data.compute().sum()
-            )
-            self.assertAlmostEqual(value, 435.0)
-            with self.assertRaises(FileExistsError):
-                write_spatialdata(sdata, output)
-
-    def test_create_multiple_named_additional_label_layers(self):
+class SpatialDataConstructionTests(unittest.TestCase):
+    def test_plan_build_interrogate_plot_and_roundtrip_all_modalities(self):
         import matplotlib.pyplot as plt
         from spatialdata import read_zarr
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            adata = _write_fixture(root)
-            additional = _write_additional_labels_fixture(root)
+            imc, maxfuse = _write_project(root)
+            original_columns = list(imc.obs.columns)
+            spec = _complete_spec(root, imc, maxfuse)
 
-            plan = plan_imc_spatialdata_conversion(
-                adata,
-                root / "images",
-                root / "masks",
-                additional_labels=additional,
-            )
-            self.assertEqual(plan.n_additional_label_files, 2)
-            self.assertEqual(
-                [layer.key for layer in plan.additional_labels],
-                ["tissue_region", "analysis_zone"],
-            )
+            plan = plan_spatialdata(spec)
+            self.assertTrue(plan.ok, plan.report.to_frame())
+            self.assertEqual(plan.summary()["modalities"], 7)
+            self.assertEqual(plan.summary()["images"], 6)
+            self.assertEqual(plan.summary()["labels"], 4)
+            self.assertEqual(plan.summary()["tables"], 3)
 
-            sdata = create_spatialdata(
-                adata,
-                root / "images",
-                root / "masks",
-                additional_labels=additional,
-                raster_chunks=(2, 3),
-            )
-            self.assertEqual(
-                list(sdata.labels),
-                [
-                    "labels_ROI_1",
-                    "labels_tissue_region_ROI_1",
-                    "labels_analysis_zone_ROI_1",
-                ],
-            )
+            sdata = create_spatialdata(spec, plan=plan)
+            self.assertEqual(list(imc.obs.columns), original_columns)
+            self.assertEqual(len(sdata.images), 6)
+            self.assertEqual(len(sdata.labels), 4)
+            self.assertEqual(len(sdata.points), 2)
             self.assertEqual(
                 list(sdata.tables),
-                ["table", "tissue_region_annotations", "analysis_zone_annotations"],
+                ["table_immune_cells", "table_tissue_regions", "table_atlas"],
             )
+            self.assertEqual(sdata.tables["table_atlas"].n_obs, 2)
             self.assertEqual(
-                get_roi_label_elements(sdata, "roi 1"),
-                {
-                    "cells": "labels_ROI_1",
-                    "tissue_region": "labels_tissue_region_ROI_1",
-                    "analysis_zone": "labels_analysis_zone_ROI_1",
-                },
+                sdata.tables["table_atlas"].obs_names.tolist(),
+                ["cell_1", "cell_4"],
             )
 
-            annotations = get_label_annotations(sdata, "TISSUE_REGION", roi="roi 1")
-            self.assertEqual(annotations["label_value"].tolist(), [1, 2])
+            modalities = get_roi_modalities(sdata, "roi 1")
+            self.assertEqual(
+                set(modalities["images"]),
+                {"immune_images", "ecm_images", "he"},
+            )
+            self.assertEqual(
+                get_roi_elements(
+                    sdata, "ROI 1", image_modality="ecm_images"
+                )["image"],
+                "image_ecm_images_ROI_1",
+            )
+            self.assertEqual(
+                get_roi_label_elements(sdata, "ROI 1"),
+                {
+                    "cells": "labels_cells_ROI_1",
+                    "tissue_regions": "labels_tissue_regions_ROI_1",
+                },
+            )
+            annotations = get_label_annotations(
+                sdata, "tissue_regions", roi="ROI 1"
+            )
             self.assertEqual(
                 annotations["label_name"].astype(str).tolist(),
-                ["Tumour", "Stroma"],
+                ["Tissue", "Edge"],
             )
-            summary = summarize_spatialdata(sdata)
-            self.assertEqual(summary["labels"], 3)
-            self.assertEqual(
-                set(summary["label_layers"]),
-                {"cells", "tissue_region", "analysis_zone"},
+
+            summary = summarize_spatialdata(
+                sdata,
+                population_key="leiden_1.0",
+                case_key="animal",
             )
+            self.assertEqual(summary["cells"], 4)
+            self.assertEqual(summary["rois"], 2)
+            self.assertEqual(summary["unannotated_mask_instances"], 1)
 
             ax = plot_spatialdata_roi(
                 sdata,
                 "ROI 1",
-                channel="CD3",
-                label_layer="tissue_region",
+                channel="Collagen",
+                image_modality="ecm_images",
+                label_layer="tissue_regions",
             )
             self.assertEqual(ax.get_legend().get_title().get_text(), "label_name")
-            self.assertEqual(
-                [text.get_text() for text in ax.get_legend().get_texts()],
-                ["Tumour", "Stroma"],
-            )
             plt.close(ax.figure)
 
-            restored = read_zarr(
-                write_spatialdata(sdata, root / "additional_labels.zarr")
-            )
-            restored_annotations = get_label_annotations(
-                restored, "analysis_zone", roi="ROI 1"
-            )
-            self.assertEqual(
-                restored_annotations["label_name"].astype(str).tolist(),
-                ["Inner", "Outer"],
-            )
-
-    def test_additional_label_validation_is_strict(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            adata = _write_fixture(root)
-            additional = _write_additional_labels_fixture(root)
-
-            missing_name = AdditionalLabelsSpec(
-                name="incomplete",
-                folder=root / "regions",
-                suffix="_regions",
-                value_names={1: "Tumour"},
-            )
-            with self.assertRaisesRegex(ValueError, "without a name"):
-                plan_imc_spatialdata_conversion(
-                    adata,
-                    root / "images",
-                    root / "masks",
-                    additional_labels=[missing_name],
-                )
-
-            missing_file = AdditionalLabelsSpec(
-                name="wrong_suffix",
-                folder=root / "regions",
-                suffix="_missing",
-                value_names={1: "Tumour", 2: "Stroma"},
-            )
-            with self.assertRaisesRegex(FileNotFoundError, "No TIFF with stem"):
-                plan_imc_spatialdata_conversion(
-                    adata,
-                    root / "images",
-                    root / "masks",
-                    additional_labels=[additional[0], missing_file],
-                )
-
-    def test_create_without_images_and_population_plot(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            adata = _write_fixture(root)
-            sdata = create_spatialdata(adata, None, root / "masks")
-            self.assertFalse(sdata.images)
-            self.assertEqual(list(sdata.labels), ["labels_ROI_1"])
-
-            ax = plot_population_counts(sdata, "leiden_1.0")
-            self.assertEqual(ax.get_xlabel(), "Cells")
-            self.assertEqual(ax.get_ylabel(), "leiden_1.0")
-
-            roi_ax = plot_spatialdata_roi(sdata, "ROI 1", color="leiden_1.0")
-            self.assertEqual(roi_ax.get_title(), "ROI 1")
-
-    def test_cell_gallery_by_obs_name_and_roi_local_instance(self):
-        import matplotlib.pyplot as plt
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            adata = _write_fixture(root)
-            sdata = create_spatialdata(
-                adata,
-                root / "images",
-                root / "masks",
-                raster_chunks=(2, 3),
-            )
-
             figure, axes = plot_spatialdata_cells(
                 sdata,
                 ["cell_1", "cell_2"],
-                channel=["CD3", "CD31"],
-                color="leiden_1.0",
-                crop_size=(4, 4),
-                ncols=2,
-            )
-            self.assertEqual(len(axes), 2)
-            self.assertIn("cell_1", axes[0].get_title())
-            self.assertIn("ObjectNumber=1", axes[0].get_title())
-            self.assertEqual(len(figure.legends), 1)
-            plt.close(figure)
-
-            figure, axes = plot_spatialdata_cells(
-                sdata,
-                2,
-                cell_key="ObjectNumber",
-                roi="roi 1",
                 channel="CD3",
-                crop_size=3,
-            )
-            self.assertEqual(len(axes), 1)
-            self.assertIn("cell_2", axes[0].get_title())
-            plt.close(figure)
-
-            figure, axes = plot_spatialdata_cells(
-                sdata,
-                ["cell_1", "cell_2"],
-                color="ObjectNumber",
-                crop_size=4,
-            )
-            self.assertEqual(len(axes), 2)
-            self.assertEqual(len(figure.axes), 3)  # Two cells plus one colorbar.
-            plt.close(figure)
-
-            with self.assertRaisesRegex(KeyError, "not present"):
-                plot_spatialdata_cells(sdata, "missing_cell")
-
-            sdata.tables["table"].obs["duplicate_id"] = "duplicate"
-            with self.assertRaisesRegex(ValueError, "2 table rows"):
-                plot_spatialdata_cells(
-                    sdata,
-                    "duplicate",
-                    cell_key="duplicate_id",
-                )
-
-    def test_cell_gallery_without_images_and_validation(self):
-        import matplotlib.pyplot as plt
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            adata = _write_fixture(root)
-            sdata = create_spatialdata(adata, None, root / "masks")
-
-            figure, axes = plot_spatialdata_cells(
-                sdata,
-                "cell_1",
-                crop_size=4,
+                crop_size=(5, 6),
+                outline_target_only=True,
+                mask_outside_target=True,
                 show_ax_titles=False,
             )
-            self.assertEqual(len(axes), 1)
-            self.assertGreaterEqual(len(axes[0].images), 2)
+            self.assertEqual(len(axes), 2)
             self.assertEqual(axes[0].get_title(), "")
             plt.close(figure)
 
-            with self.assertRaisesRegex(ValueError, "no image element"):
-                plot_spatialdata_cells(sdata, "cell_1", channel="CD3")
-            with self.assertRaisesRegex(ValueError, "At least one cell"):
-                plot_spatialdata_cells(sdata, [])
+            output = write_spatialdata(sdata, root / "multimodal.zarr")
+            restored = read_zarr(output)
+            self.assertEqual(
+                restored.attrs["spatial_biology_toolkit"]["schema_version"], 3
+            )
+            self.assertEqual(len(restored.images), 6)
+            self.assertEqual(restored.tables["table_atlas"].n_vars, 3)
 
-    def test_cell_gallery_can_isolate_target_pixels_and_outline(self):
-        import matplotlib.pyplot as plt
-        from skimage.segmentation import find_boundaries
-
+    def test_multiple_quantified_panels_require_explicit_relationships(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
-            adata = _write_fixture(root)
-            sdata = create_spatialdata(
-                adata,
-                root / "images",
-                root / "masks",
-                raster_chunks=(2, 3),
+            imc, _maxfuse = _write_project(root)
+            ecm_table = ad.AnnData(
+                X=np.ones((4, 1), dtype=np.float32),
+                obs=imc.obs.copy(),
+                var=pd.DataFrame(index=["Collagen"]),
+            )
+            spec = SpatialDataSpec(
+                [
+                    CellMasks("cells", root / "masks"),
+                    IMCImages(
+                        "immune_images", "Immune", root / "immune"
+                    ),
+                    IMCImages(
+                        "ecm_images",
+                        "ECM",
+                        root / "ecm",
+                        reference="cells",
+                    ),
+                    IMCAnnData(
+                        "immune_cells",
+                        "Immune",
+                        imc,
+                        "immune_images",
+                        "cells",
+                    ),
+                    IMCAnnData(
+                        "ecm_cells",
+                        "ECM",
+                        ecm_table,
+                        "ecm_images",
+                        "cells",
+                    ),
+                ]
+            )
+            plan = plan_spatialdata(spec)
+            plan.raise_for_errors()
+            sdata = create_spatialdata(plan)
+            self.assertEqual(
+                set(sdata.tables), {"table_immune_cells", "table_ecm_cells"}
+            )
+            self.assertEqual(
+                list(sdata.images["image_ecm_images_ROI_1"].coords["c"].values),
+                ["Collagen"],
             )
 
-            figure, axes = plot_spatialdata_cells(
+    def test_validation_report_collects_cross_modality_errors(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            imc, _maxfuse = _write_project(root)
+            bad = imc.copy()
+            bad.obs.loc["cell_1", "ObjectNumber"] = 99
+            spec = SpatialDataSpec(
+                [
+                    CellMasks("cells", root / "masks"),
+                    IMCImages("images", "Panel", root / "immune"),
+                    IMCAnnData(
+                        "table", "Panel", bad, "images", "cells"
+                    ),
+                ]
+            )
+            plan = plan_spatialdata(spec)
+            self.assertFalse(plan.ok)
+            self.assertIn("absent from mask", plan.report.errors[0].message)
+            with self.assertRaisesRegex(ValueError, "SpatialData planning found"):
+                create_spatialdata(plan)
+
+    def test_maxfuse_must_be_a_subset_of_linked_imc_index(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            imc, maxfuse = _write_project(root)
+            maxfuse.obs_names = ["cell_1", "not_an_imc_cell"]
+            spec = _complete_spec(root, imc, maxfuse)
+            plan = plan_spatialdata(spec)
+            self.assertFalse(plan.ok)
+            self.assertTrue(
+                any("absent from linked IMC" in item.message for item in plan.report.errors)
+            )
+
+    def test_add_modality_is_transactional_and_optionally_inplace(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            imc, maxfuse = _write_project(root)
+            base_spec = SpatialDataSpec(
+                [
+                    CellMasks("cells", root / "masks"),
+                    IMCImages("images", "Panel", root / "immune"),
+                    IMCAnnData(
+                        "cells_table", "Panel", imc, "images", "cells"
+                    ),
+                ]
+            )
+            sdata = create_spatialdata(base_spec)
+
+            updated = add_modality(
                 sdata,
-                "cell_1",
-                channel="CD3",
-                crop_size=(5, 6),
-                fill_alpha=0.0,
-                outline_target_only=True,
-                mask_outside_target=True,
+                HistologyImages("he", root / "histology", "cells"),
             )
+            self.assertNotIn("image_he_ROI_1", sdata.images)
+            self.assertIn("image_he_ROI_1", updated.images)
 
-            labels = tifffile.imread(root / "masks" / "ROI 1.tiff")
-            target_mask = labels == 1
-            rgba_layers = [
-                np.asarray(image.get_array())
-                for image in axes[0].images
-                if image.get_array().ndim == 3 and image.get_array().shape[-1] == 4
-            ]
-            self.assertEqual(len(rgba_layers), 3)
-            outside_mask, _target_fill, boundaries = rgba_layers
-            np.testing.assert_array_equal(
-                outside_mask[..., 3],
-                (~target_mask).astype(float),
+            with_atlas = add_modality(
+                sdata,
+                MaxFuseSCRNASeq("atlas", maxfuse, "cells_table"),
             )
-            np.testing.assert_array_equal(
-                boundaries[..., 3] > 0,
-                find_boundaries(target_mask, mode="inner"),
+            self.assertNotIn("table_atlas", sdata.tables)
+            self.assertEqual(with_atlas.tables["table_atlas"].n_obs, 2)
+
+            result = add_modality(
+                sdata,
+                RegionLabels(
+                    "regions",
+                    root / "regions",
+                    "_regions",
+                    {1: "Tissue", 2: "Edge"},
+                    "cells",
+                ),
+                inplace=True,
             )
-            plt.close(figure)
+            self.assertIs(result, sdata)
+            self.assertIn("labels_regions_ROI_1", sdata.labels)
+            self.assertIn("table_regions", sdata.tables)
+
+    def test_histology_matching_rejects_ambiguous_extensions(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            imc, _maxfuse = _write_project(root)
+            iio.imwrite(
+                root / "histology" / "ROI 1.jpg",
+                np.zeros((5, 6, 3), dtype=np.uint8),
+            )
+            spec = SpatialDataSpec(
+                [
+                    CellMasks("cells", root / "masks"),
+                    IMCImages("images", "Panel", root / "immune"),
+                    IMCAnnData(
+                        "cells_table", "Panel", imc, "images", "cells"
+                    ),
+                    HistologyImages("he", root / "histology", "cells"),
+                ]
+            )
+            plan = plan_spatialdata(spec)
+            self.assertFalse(plan.ok)
+            self.assertTrue(
+                any("Multiple files match ROI" in item.message for item in plan.report.errors)
+            )
 
 
 if __name__ == "__main__":

@@ -1,6 +1,11 @@
 """Typed configuration API for imcanalysis."""
 
-from .load import config_to_dict, load_config, load_config_data
+from .load import config_to_dict, load_config, load_config_data, read_config_mapping
+from .migration import (
+    compact_config_data,
+    default_compact_config_path,
+    write_compact_config,
+)
 from .documentation import (
     ConfigFieldDoc,
     generate_markdown_for_model,
@@ -62,10 +67,14 @@ __all__ = [
     "VisualizationConfig",
     "config_field",
     "config_section",
+    "compact_config_data",
     "config_to_dict",
+    "default_compact_config_path",
     "generate_markdown_for_model",
     "iter_config_docs",
     "load_config",
     "load_config_data",
+    "read_config_mapping",
+    "write_compact_config",
     "write_config_docs",
 ]

@@ -12,6 +12,7 @@ The explorer is started by calling `napari_imc_explorer(...)`. The main inputs a
 - `masks_folder`: a folder containing one segmentation mask per ROI. Each file is expected to be named after the ROI, for example `ROI_001.tiff`.
 - `image_folders`: one or more folders containing ROI subfolders. Inside each ROI subfolder, the channel images for that ROI are stored as TIFF files.
 - `extra_images`: optional folders that contain one image per ROI directly in the folder, such as H&E snapshots, thumbnails, or other reference images.
+- `normalization_dict`: an optional Nimbus-format channel-to-maximum mapping, such as the contents of `normalization_dict.json`.
 - `annotations_folder`: where manual annotation sets are stored and where new annotation files are written.
 - `roi_obs`: the column in `adata.obs` that tells the explorer which ROI each cell belongs to.
 - `cell_id_in_mask_obs`: the column in `adata.obs` that stores the object IDs used inside the mask image.
@@ -19,13 +20,19 @@ The explorer is started by calling `napari_imc_explorer(...)`. The main inputs a
 A minimal example looks like this:
 
 ```python
+import json
+
 from SpatialBiologyToolkit.napari_imc_explorer import napari_imc_explorer
+
+with open("Nimbus/normalization_dict.json", encoding="utf-8") as handle:
+    normalization_dict = json.load(handle)
 
 viewer, handles = napari_imc_explorer(
     adata=adata,
     masks_folder="Masks",
     image_folders=["Images"],
     extra_images=["Extra_images"],   # optional
+    normalization_dict=normalization_dict,  # optional
     annotations_folder="Annotations",
     roi_obs="ROI",
     cell_id_in_mask_obs="ObjectNumber",
@@ -96,7 +103,9 @@ This panel is for loading a chosen subset of marker images rather than every cha
 
 - Lets you choose individual channels from the available logical image names.
 - Applies a minimum pixel threshold before display.
-- Normalises each image to a chosen quantile so channels are easier to compare visually.
+- If a channel is present in `normalization_dict`, divides it by that Nimbus maximum and clips the result to the range 0 to 1.
+- If no dictionary is supplied, or a channel is absent from it, normalises that image to the chosen quantile as before.
+- When a non-empty normalization dictionary is supplied, shows lower and upper Nimbus display-contrast sliders from 0 to 1. Their values set the Napari contrast limits for subsequently added raw marker layers while leaving their normalized data unchanged. The controls remain ordered so the lower bound stays below the upper bound.
 - Loads images as false-colour additive layers in Napari.
 
 This is usually the main panel for looking at selected markers on top of masks or other overlays.

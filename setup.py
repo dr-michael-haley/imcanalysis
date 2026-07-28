@@ -35,6 +35,7 @@ setup(
 
         "matplotlib",
         "seaborn",
+        "imageio",
         "tifffile",
         "shapely",
         "networkx",

@@ -37,6 +37,14 @@ from qtpy.QtWidgets import (
 from napari.utils.colormaps import Colormap  # For colormap reconstruction
 from napari.utils import DirectLabelColormap
 
+from SpatialBiologyToolkit._napari_imc_normalization import (
+    find_normalization_value,
+    normalize_imc_image,
+    normalized_contrast_limits,
+    prepare_normalization_dict,
+)
+
+
 def napari_imc_explorer(
     masks_folder: str = 'Masks',
     image_folders: list = ['Images'],
@@ -50,6 +58,7 @@ def napari_imc_explorer(
     initial_roi_count: int = 10,
     randomize_initial_rois: bool = False,
     initial_roi_random_seed: int = 0,
+    normalization_dict: dict = None,
 ) -> napari.Viewer:
     """
     Start an interactive Napari viewer for exploring IMC data.
@@ -80,6 +89,10 @@ def napari_imc_explorer(
         If True, randomly choose/order the Population QC ROI shortcut list instead of ordering by abundance.
     initial_roi_random_seed : int
         Seed used when `randomize_initial_rois=True`.
+    normalization_dict : dict, optional
+        Nimbus-format mapping of channel names to maximum normalization values.
+        Matching raw images are divided by their channel value and clipped to
+        0 to 1. Images absent from the mapping retain quantile normalization.
 
     Returns
     -------
@@ -89,6 +102,8 @@ def napari_imc_explorer(
     # Ensure image_folders is a list
     if not isinstance(image_folders, list):
         image_folders = [image_folders]
+
+    normalization_values = prepare_normalization_dict(normalization_dict)
 
     if extra_images is None:
         extra_images = []
@@ -430,14 +445,15 @@ def napari_imc_explorer(
 
     def _load_imc_image(file, quantile=0.999, colormap=None, recolour_image=False, minimum_pixel_counts=0.1, layer_name=None):
         """
-        Load a single IMC image, including removing some background and normalising to a percentile.
+        Load an IMC image using Nimbus or fallback quantile normalization.
 
         Parameters
         ----------
         file : str or Path
             Path to the image file.
         quantile : float
-            Quantile for normalizing image intensity.
+            Quantile for normalizing image intensity when the channel is absent
+            from `normalization_dict`.
         colormap : vispy.color.Colormap
             Colormap to use for displaying the image.
         recolour_image : bool
@@ -451,18 +467,33 @@ def napari_imc_explorer(
         """
         # Load the image
         image = sk.io.imread(file)
-        # Set pixels below minimum_pixel_counts to zero
-        image = np.where(image > minimum_pixel_counts, image, 0)
-        # Normalize image intensity to the specified quantile
-        max_quant = np.quantile(image, quantile)
-        if max_quant < 5:
-            max_quant = 3
-        image = image / max_quant
-        image = np.clip(image, 0, 1)
         # Get image name from file name
         image_name = layer_name or os.path.splitext(os.path.basename(file))[0]
-        # Add image to the viewer
-        viewer.add_image(image, name=image_name, blending='additive', colormap=colormap)
+        normalization_value = find_normalization_value(
+            normalization_values,
+            image_name,
+        )
+        image = normalize_imc_image(
+            image,
+            quantile=quantile,
+            minimum_pixel_counts=minimum_pixel_counts,
+            normalization_value=normalization_value,
+        )
+        # Add image to the viewer. With Nimbus normalization, keep the Napari
+        # contrast slider on the normalized 0-to-1 scale and set both handles
+        # without altering the layer data.
+        image_layer = viewer.add_image(
+            image,
+            name=image_name,
+            blending='additive',
+            colormap=colormap,
+        )
+        if normalization_values:
+            image_layer.contrast_limits_range = (0.0, 1.0)
+            image_layer.contrast_limits = normalized_contrast_limits(
+                normalization_lower_contrast_limit_select.value,
+                normalization_contrast_limit_select.value,
+            )
 
     def _add_roi_images_raw(roi_name, quantile=0.999, colour_map=['r', 'g', 'b', 'c', 'm', 'y'], minimum_pixel_counts=0.1, recolour_image=False):
         """
@@ -1016,6 +1047,51 @@ def napari_imc_explorer(
     quant_select = widgets.FloatSpinBox(min=0, max=1, value=0.999, step=0.001)
     minimum_pixel_counts_select_label = widgets.Label(value='Minimum pixel value:')
     minimum_pixel_counts_select = widgets.FloatText(value=0.1, min=0)
+    normalization_lower_contrast_limit_label = widgets.Label(
+        value='Nimbus lower display contrast limit for new images:'
+    )
+    normalization_lower_contrast_limit_select = widgets.FloatSlider(
+        min=0,
+        max=1,
+        value=0,
+        step=0.01,
+    )
+    normalization_contrast_limit_label = widgets.Label(
+        value='Nimbus upper display contrast limit for new images:'
+    )
+    normalization_contrast_limit_select = widgets.FloatSlider(
+        min=0,
+        max=1,
+        value=1,
+        step=0.01,
+    )
+
+    def _keep_normalization_contrast_limits_ordered_from_lower(value):
+        value = float(value)
+        upper_value = float(normalization_contrast_limit_select.value)
+        if value < upper_value:
+            return
+        if value >= 1:
+            normalization_lower_contrast_limit_select.value = 0.99
+        else:
+            normalization_contrast_limit_select.value = min(1.0, value + 0.01)
+
+    def _keep_normalization_contrast_limits_ordered_from_upper(value):
+        value = float(value)
+        lower_value = float(normalization_lower_contrast_limit_select.value)
+        if value > lower_value:
+            return
+        if value <= 0:
+            normalization_contrast_limit_select.value = 0.01
+        else:
+            normalization_lower_contrast_limit_select.value = max(0.0, value - 0.01)
+
+    normalization_lower_contrast_limit_select.changed.connect(
+        _keep_normalization_contrast_limits_ordered_from_lower
+    )
+    normalization_contrast_limit_select.changed.connect(
+        _keep_normalization_contrast_limits_ordered_from_upper
+    )
 
     def _normalise_panel_text(value):
         if value is None:
@@ -2380,6 +2456,21 @@ def napari_imc_explorer(
 
         return panel_widget
 
+    raw_image_panel_items = [
+        _image_selector,
+        quant_select_label,
+        quant_select,
+        minimum_pixel_counts_select_label,
+        minimum_pixel_counts_select,
+    ]
+    if normalization_values:
+        raw_image_panel_items.extend([
+            normalization_lower_contrast_limit_label,
+            normalization_lower_contrast_limit_select,
+            normalization_contrast_limit_label,
+            normalization_contrast_limit_select,
+        ])
+
     dock_panels = {
         'Controls': build_dock_panel([
             add_roi_label,
@@ -2391,13 +2482,7 @@ def napari_imc_explorer(
             add_masks_button,
         ]),
         'Population QC': population_qc_widget,
-        'Add raw images': build_dock_panel([
-            _image_selector,
-            quant_select_label,
-            quant_select,
-            minimum_pixel_counts_select_label,
-            minimum_pixel_counts_select,
-        ]),
+        'Add raw images': build_dock_panel(raw_image_panel_items),
         'Add extra images': build_dock_panel([
             _extra_image_selector,
         ]),
@@ -2737,6 +2822,13 @@ def napari_imc_explorer(
         extra_image_select_widget=extra_image_select_widget,
         obs_select_widget=obs_select_widget,
         quant_select_widget=quant_select_widget,
+        normalization_lower_contrast_limit_widget=(
+            normalization_lower_contrast_limit_select
+        ),
+        normalization_upper_contrast_limit_widget=(
+            normalization_contrast_limit_select
+        ),
+        normalization_contrast_limit_widget=normalization_contrast_limit_select,
         all_roi_list=list(all_roi_list),
         initial_roi_selector_choices=_get_roi_selector_choices,
         get_selected_roi=lambda: roi_selector.value,

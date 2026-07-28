@@ -48,7 +48,7 @@ class LightweightCliTests(unittest.TestCase):
             "report": "Display the human-facing report",
             "summary": "List project executions",
             "remove": "Remove a visible execution safely",
-            "config": "Validate and export typed pipeline configuration",
+            "config": "Validate, compact, and export typed pipeline configuration",
             "project": "Initialize, adopt, validate, and inspect SBT projects",
             "stages": "List and explain registered pipeline stages",
             "modes": "List and explain named workflow modes",
