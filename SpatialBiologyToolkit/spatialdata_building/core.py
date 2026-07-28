@@ -246,6 +246,63 @@ def _ordered_strings(values: Any) -> tuple[str, ...]:
     return tuple(dict.fromkeys(str(value) for value in values))
 
 
+def _canonical_reference_rois(
+    values: Sequence[str],
+    *,
+    reference_rois: Sequence[str],
+    modality_kind: str,
+) -> tuple[str, ...]:
+    """Resolve requested ROI spelling against a reference modality."""
+
+    lookup: dict[str, str] = {}
+    for roi in reference_rois:
+        folded = str(roi).casefold()
+        if folded in lookup:
+            raise ValueError(
+                f"Reference ROI names are not unique case-insensitively: "
+                f"{lookup[folded]!r}, {roi!r}."
+            )
+        lookup[folded] = str(roi)
+    requested = tuple(str(value) for value in values)
+    if not requested:
+        raise ValueError(f"{modality_kind} ROIs must not be empty.")
+    if len({value.casefold() for value in requested}) != len(requested):
+        raise ValueError(
+            f"{modality_kind} ROI names must be unique case-insensitively."
+        )
+    unknown = [value for value in requested if value.casefold() not in lookup]
+    if unknown:
+        raise ValueError(
+            f"{modality_kind} contains ROI(s) absent from the reference: "
+            + ", ".join(repr(value) for value in unknown[:10])
+        )
+    return tuple(lookup[value.casefold()] for value in requested)
+
+
+def _report_partial_coverage(
+    context: _PlanningContext,
+    *,
+    modality: str,
+    included: Sequence[str],
+    reference_rois: Sequence[str],
+) -> None:
+    included_keys = {str(value).casefold() for value in included}
+    missing = [
+        str(value)
+        for value in reference_rois
+        if str(value).casefold() not in included_keys
+    ]
+    if not missing:
+        return
+    context.issue(
+        "warning",
+        "partial_roi_coverage",
+        f"Included {len(included)} of {len(reference_rois)} reference ROIs; "
+        f"{len(missing)} are unavailable. First missing: {missing[:10]}",
+        modality=modality,
+    )
+
+
 def _coerce_integer_series(values: Any, *, context: str) -> Any:
     import numpy as np
     import pandas as pd
@@ -782,6 +839,9 @@ def _plan_imc_images(source: IMCImages, context: _PlanningContext) -> PlannedMod
     reference_name = _reference_for_images(source, context)
     reference = context.get(reference_name) if reference_name else None
     linked_rois = _ordered_strings(roi for table in linked for roi in table.rois)
+    root = Path(source.folder)
+    if not root.is_dir():
+        raise FileNotFoundError(f"IMCImages folder not found: {root}")
     if source.rois is not None:
         rois = tuple(str(value) for value in source.rois)
     elif linked_rois:
@@ -792,15 +852,37 @@ def _plan_imc_images(source: IMCImages, context: _PlanningContext) -> PlannedMod
         raise ValueError(
             "Standalone IMCImages requires rois or a reference modality."
         )
-    if reference is not None and set(rois) != set(reference.rois):
-        raise ValueError(
-            f"IMCImages ROIs {rois} do not match reference {reference.name!r} "
-            f"ROIs {reference.rois}."
+    if reference is not None:
+        rois = _canonical_reference_rois(
+            rois,
+            reference_rois=reference.rois,
+            modality_kind="IMCImages",
         )
-
-    root = Path(source.folder)
-    if not root.is_dir():
-        raise FileNotFoundError(f"IMCImages folder not found: {root}")
+    if linked_rois and {
+        value.casefold() for value in rois
+    } != {value.casefold() for value in linked_rois}:
+        raise ValueError(
+            "IMCImages linked to IMCAnnData must cover every quantified table ROI."
+        )
+    if (
+        source.allow_partial
+        and source.rois is None
+        and not linked_rois
+        and reference is not None
+    ):
+        directories = [path for path in root.iterdir() if path.is_dir()]
+        available = {path.name.casefold() for path in directories}
+        rois = tuple(roi for roi in reference.rois if roi.casefold() in available)
+        if not rois:
+            raise FileNotFoundError(
+                f"No ROI directories in {root} match reference {reference.name!r}."
+            )
+        _report_partial_coverage(
+            context,
+            modality=source.name,
+            included=rois,
+            reference_rois=reference.rois,
+        )
     elements: list[RasterElementPlan] = []
     extra_files: dict[str, tuple[str, ...]] = {}
     for roi in rois:
@@ -905,23 +987,44 @@ def _plan_histology(source: HistologyImages, context: _PlanningContext) -> Plann
     from spatialdata.transformations import Identity
 
     reference = context.get(source.reference)
-    rois = (
+    requested = (
         tuple(str(value) for value in source.rois)
         if source.rois is not None
-        else reference.rois
+        else tuple(reference.rois)
     )
-    if set(rois) != set(reference.rois):
-        raise ValueError(
-            f"Histology ROIs do not match reference {reference.name!r}."
+    requested = _canonical_reference_rois(
+        requested,
+        reference_rois=reference.rois,
+        modality_kind="HistologyImages",
+    )
+    resolved: list[tuple[str, Path]] = []
+    for roi in requested:
+        try:
+            path = _match_roi_file(
+                source.folder,
+                roi,
+                suffix=source.suffix,
+                extensions=source.extensions,
+            )
+        except FileNotFoundError:
+            if source.allow_partial and source.rois is None:
+                continue
+            raise
+        resolved.append((roi, path))
+    if not resolved:
+        raise FileNotFoundError(
+            f"No histology files match reference {reference.name!r}."
+        )
+    rois = tuple(roi for roi, _path in resolved)
+    if source.allow_partial and source.rois is None:
+        _report_partial_coverage(
+            context,
+            modality=source.name,
+            included=rois,
+            reference_rois=reference.rois,
         )
     elements: list[RasterElementPlan] = []
-    for roi in rois:
-        path = _match_roi_file(
-            source.folder,
-            roi,
-            suffix=source.suffix,
-            extensions=source.extensions,
-        )
+    for roi, path in resolved:
         shape, n_channels, dtype = _histology_metadata(path)
         output_channels = 3 if source.drop_alpha and n_channels == 4 else n_channels
         explicit = None if source.transformations is None else source.transformations.get(roi)
@@ -968,14 +1071,41 @@ def _plan_region_labels(source: RegionLabels, context: _PlanningContext) -> Plan
     from spatialdata.transformations import Identity
 
     reference = context.get(source.reference)
-    rois = (
+    requested = (
         tuple(str(value) for value in source.rois)
         if source.rois is not None
-        else reference.rois
+        else tuple(reference.rois)
     )
-    if set(rois) != set(reference.rois):
-        raise ValueError(
-            f"RegionLabels ROIs do not match reference {reference.name!r}."
+    requested = _canonical_reference_rois(
+        requested,
+        reference_rois=reference.rois,
+        modality_kind="RegionLabels",
+    )
+    resolved: list[tuple[str, Path]] = []
+    for roi in requested:
+        try:
+            path = _match_roi_file(
+                source.folder,
+                roi,
+                suffix=source.suffix,
+                extensions=source.extensions,
+            )
+        except FileNotFoundError:
+            if source.allow_partial and source.rois is None:
+                continue
+            raise
+        resolved.append((roi, path))
+    if not resolved:
+        raise FileNotFoundError(
+            f"No region-label files match reference {reference.name!r}."
+        )
+    rois = tuple(roi for roi, _path in resolved)
+    if source.allow_partial and source.rois is None:
+        _report_partial_coverage(
+            context,
+            modality=source.name,
+            included=rois,
+            reference_rois=reference.rois,
         )
     mappings = _normalise_value_name_maps(
         source.value_names,
@@ -987,13 +1117,7 @@ def _plan_region_labels(source: RegionLabels, context: _PlanningContext) -> Plan
     elements: list[RasterElementPlan] = []
     present_by_roi: dict[str, tuple[int, ...]] = {}
     names_by_roi: dict[str, dict[int, str]] = {}
-    for roi in rois:
-        path = _match_roi_file(
-            source.folder,
-            roi,
-            suffix=source.suffix,
-            extensions=source.extensions,
-        )
+    for roi, path in resolved:
         shape, dtype = _tiff_metadata(path)
         if not np.issubdtype(dtype, np.integer):
             raise TypeError(f"Region label raster {path} must have integer dtype.")

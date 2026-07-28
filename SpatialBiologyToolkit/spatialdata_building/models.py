@@ -69,6 +69,11 @@ class IMCImages:
     mask is inferred as the reference.  Identity alignment requires matching
     raster shapes; otherwise provide one SpatialData transformation per ROI
     in ``transformations``.
+
+    Set ``allow_partial=True`` for an unquantified panel that is available for
+    only a subset of the reference ROIs.  When ``rois`` is omitted, planning
+    discovers the matching ROI directories and records one coverage warning.
+    Quantified panels linked to ``IMCAnnData`` must still cover every table ROI.
     """
 
     name: str
@@ -77,6 +82,7 @@ class IMCImages:
     channels: Sequence[str] | None = None
     rois: Sequence[str] | None = None
     reference: str | None = None
+    allow_partial: bool = False
     extensions: Sequence[str] = (".tif", ".tiff")
     match_mode: Literal["exact", "exact_or_unique_substring"] = (
         "exact_or_unique_substring"
@@ -121,13 +127,17 @@ class HistologyImages:
 
     TIFF, PNG, and JPEG are supported by default.  Matching is exact and
     case-insensitive using ``{ROI}{suffix}{extension}``; extension
-    autodetection never resolves ambiguity silently.
+    autodetection never resolves ambiguity silently.  Set
+    ``allow_partial=True`` to discover and include the subset of reference
+    ROIs that have histology files; missing coverage is reported as one
+    planner warning.
     """
 
     name: str
     folder: PathLike
     reference: str
     rois: Sequence[str] | None = None
+    allow_partial: bool = False
     suffix: str = ""
     extensions: Sequence[str] = (".tif", ".tiff", ".png", ".jpg", ".jpeg")
     drop_alpha: bool = False
@@ -145,7 +155,8 @@ class RegionLabels:
     ``value_names`` accepts a global ``{value: name}`` mapping, a nested
     ``{ROI: {value: name}}`` mapping, a DataFrame, or a CSV path.  DataFrames
     and CSV files use ``value_key`` and ``name_key`` and may optionally
-    contain ``mapping_roi_key``.
+    contain ``mapping_roi_key``.  Set ``allow_partial=True`` to discover and
+    include the subset of reference ROIs that have label rasters.
     """
 
     name: str
@@ -154,6 +165,7 @@ class RegionLabels:
     value_names: Any
     reference: str
     rois: Sequence[str] | None = None
+    allow_partial: bool = False
     extensions: Sequence[str] = (".tif", ".tiff")
     table_name: str | None = None
     value_key: str = "label_value"

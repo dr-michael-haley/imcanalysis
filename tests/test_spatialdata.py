@@ -412,6 +412,76 @@ class SpatialDataConstructionTests(unittest.TestCase):
                 any("Multiple files match ROI" in item.message for item in plan.report.errors)
             )
 
+    def test_partial_reference_modalities_are_discovered_and_reported(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            imc, _maxfuse = _write_project(root)
+            partial_histology = root / "partial_histology"
+            partial_regions = root / "partial_regions"
+            partial_ecm = root / "partial_ecm"
+            partial_histology.mkdir()
+            partial_regions.mkdir()
+            (partial_ecm / "ROI 1").mkdir(parents=True)
+            iio.imwrite(
+                partial_histology / "ROI 1.png",
+                np.ones((5, 6, 3), dtype=np.uint8),
+            )
+            tifffile.imwrite(
+                partial_regions / "ROI 1_regions.tiff",
+                np.where(
+                    tifffile.imread(root / "masks" / "ROI 1.tiff") > 0,
+                    1,
+                    0,
+                ).astype(np.uint8),
+            )
+            tifffile.imwrite(
+                partial_ecm / "ROI 1" / "Collagen.tiff",
+                np.ones((5, 6), dtype=np.uint16),
+            )
+            spec = SpatialDataSpec(
+                [
+                    CellMasks("cells", root / "masks"),
+                    IMCImages("images", "Panel", root / "immune"),
+                    IMCAnnData(
+                        "cells_table", "Panel", imc, "images", "cells"
+                    ),
+                    IMCImages(
+                        "partial_ecm",
+                        "ECM",
+                        partial_ecm,
+                        channels=["Collagen"],
+                        reference="cells",
+                        allow_partial=True,
+                    ),
+                    HistologyImages(
+                        "partial_he",
+                        partial_histology,
+                        "cells",
+                        allow_partial=True,
+                    ),
+                    RegionLabels(
+                        "partial_regions",
+                        partial_regions,
+                        "_regions",
+                        {1: "Tissue"},
+                        "cells",
+                        allow_partial=True,
+                    ),
+                ]
+            )
+            plan = plan_spatialdata(spec)
+            self.assertTrue(plan.ok, plan.report.to_frame())
+            self.assertEqual(plan.modality("partial_ecm").rois, ("ROI 1",))
+            self.assertEqual(plan.modality("partial_he").rois, ("ROI 1",))
+            self.assertEqual(plan.modality("partial_regions").rois, ("ROI 1",))
+            self.assertEqual(
+                sum(
+                    issue.code == "partial_roi_coverage"
+                    for issue in plan.report.warnings
+                ),
+                3,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -212,6 +212,27 @@ A panel linked to `IMCAnnData` inherits the AnnData variable order. Explicit
 `channels=` must contain exactly the same feature set. A standalone panel must
 provide `channels=` itself.
 
+Aligned modalities do not have to cover every reference ROI. For a standalone
+IMC panel, histology collection, or region-label layer with incomplete
+coverage, set `allow_partial=True` and leave `rois=None`:
+
+```python
+IMCImages(
+    name="matrix_images",
+    panel_name="Matrix panel",
+    folder="matrix_images_aligned",
+    channels=["CollagenIV", "Fibronectin", "TNC"],
+    reference="cells",
+    allow_partial=True,
+)
+```
+
+Planning discovers the matching reference ROIs and emits one
+`partial_roi_coverage` warning with included and missing counts. Explicit
+`rois=` may also select a reference subset. Unknown ROI names, ambiguous
+files, and missing files within an explicit selection remain errors. An image
+panel quantified by `IMCAnnData` must always cover every ROI in that table.
+
 ## Coordinate systems and aligned modalities
 
 `CellMasks` creates an independent ROI-local coordinate system per ROI.
