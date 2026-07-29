@@ -3,6 +3,7 @@ numpy
 pandas
 scipy
 anndata
+pyarrow>=15
 dask[array]
 scanpy
 bbknn

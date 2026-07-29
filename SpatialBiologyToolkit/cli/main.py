@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 from enum import Enum
 from pathlib import Path
@@ -107,11 +108,43 @@ project_app = typer.Typer(help="Initialize, adopt, validate, and inspect SBT pro
 stages_app = typer.Typer(help="List and explain registered pipeline stages.")
 modes_app = typer.Typer(help="List and explain named workflow modes.")
 env_app = typer.Typer(help="Validate, compare, capture, and synchronize fixed Conda environments.")
+gui_app = typer.Typer(help="Launch optional interactive desktop applications in subprocesses.")
 app.add_typer(config_app, name="config")
 app.add_typer(project_app, name="project")
 app.add_typer(stages_app, name="stages")
 app.add_typer(modes_app, name="modes")
 app.add_typer(env_app, name="env")
+app.add_typer(gui_app, name="gui")
+
+
+@gui_app.command("napari")
+def gui_napari_command(
+    project: Path | None = typer.Option(
+        None, "--project", help="Optional SBT project root used to resolve config defaults."
+    ),
+    experiment: Path | None = typer.Option(
+        None, "--experiment", help="Existing napari_sbt experiment folder or manifest."
+    ),
+    anndata: Path | None = typer.Option(None, "--anndata"),
+    masks: Path | None = typer.Option(None, "--masks"),
+    images: list[Path] | None = typer.Option(None, "--images"),
+) -> None:
+    """Launch cohort-first IMC exploration and classification without loading Qt here."""
+
+    command = [sys.executable, "-m", "SpatialBiologyToolkit.napari_sbt"]
+    if project is not None:
+        command.extend(["--project", str(project)])
+    if experiment is not None:
+        command.extend(["--experiment", str(experiment)])
+    if anndata is not None:
+        command.extend(["--anndata", str(anndata)])
+    if masks is not None:
+        command.extend(["--masks", str(masks)])
+    for folder in images or []:
+        command.extend(["--images", str(folder)])
+    completed = subprocess.run(command, check=False)
+    if completed.returncode:
+        raise typer.Exit(completed.returncode)
 
 
 def _fail(exc: Exception | str, *, code: int = 2) -> NoReturn:

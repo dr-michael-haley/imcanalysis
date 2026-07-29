@@ -52,6 +52,7 @@ class LightweightCliTests(unittest.TestCase):
             "project": "Initialize, adopt, validate, and inspect SBT projects",
             "stages": "List and explain registered pipeline stages",
             "modes": "List and explain named workflow modes",
+            "gui": "Launch optional interactive desktop applications",
         }
         for command, explanation in expected.items():
             self.assertIn(command, result.stdout)

@@ -30,6 +30,7 @@ dependencies:
   - pandas>=2.2
   - scipy>=1.14
   - anndata>=0.11,<0.13
+  - pyarrow>=15
   - scanpy>=1.10,<1.12
   - scikit-learn>=1.5
   - scikit-image>=0.24

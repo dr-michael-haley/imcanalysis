@@ -167,6 +167,15 @@ def resolve_assets(
             count_limit=count_limit,
         )
     )
+    assets.append(
+        inspect_asset(
+            role="napari_sbt_experiments",
+            path=resolve_project_path(root, config.napari_sbt.experiment_folder),
+            kind="directory",
+            lifecycle="human_output",
+            count_limit=count_limit,
+        )
+    )
     return assets
 
 

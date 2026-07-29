@@ -35,4 +35,5 @@ configuration_maintenance
 output_archive
 slurm_log_migration
 environment_diagnostics
+cell_features
 ```

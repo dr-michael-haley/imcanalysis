@@ -45,6 +45,7 @@ for ordering and usage guidance.
 | [`cox`](cox.md) | Combine case-level features from one or more AnnData obs sources and compare Cox models | `hyperstac` | general, cox, logging |
 | [`hyperstac-stability`](hyperstac-stability.md) | Cross-reference HyPERSTAC Leiden marker environments, perturbation sensitivity, and Cox effects | `hyperstac` | general, hyperstac, cox, logging |
 | [`hyperstac-full`](hyperstac-full.md) | Run HyPERSTAC preprocessing, representation, sensitivity, visualisation, Cox, and stability in one GPU job | `hyperstac` | general, hyperstac, cox, logging |
+| [`cellfeat`](cellfeat.md) | Build resumable cohort-only IMC cell features using full-segmentation context | `imc_segmentation` | general, napari_sbt, logging |
 
 ```{toctree}
 :maxdepth: 1
@@ -86,4 +87,5 @@ hyperstac-visualise
 cox
 hyperstac-stability
 hyperstac-full
+cellfeat
 ```

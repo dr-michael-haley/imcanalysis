@@ -1,5 +1,10 @@
 # `napari_imc_explorer` guide
 
+> This legacy explorer remains available for existing analyses. New integrated
+> exploration and classification experiments should use
+> [`napari_sbt`](napari_sbt.md); see the
+> [migration guide](napari_sbt_migration.md).
+
 `napari_imc_explorer` is an interactive Napari-based viewer for exploring IMC data at ROI level. It combines raw marker images, segmentation masks, cell-level metadata from `AnnData`, optional extra whole-ROI images, manual region annotation tools, and a population-focused QC view in one interface.
 
 This guide is intended to explain what the explorer can do and how its parts fit together. It is not a click-by-click tutorial.

@@ -16,6 +16,7 @@ setup(
         "tqdm",
 
         "anndata",
+        "pyarrow>=15",
         "dask[array]",
         "scanpy",
         "bbknn",
@@ -76,6 +77,7 @@ setup(
     entry_points={
         "console_scripts": [
             "sbt=SpatialBiologyToolkit.cli.main:app",
+            "napari-sbt=SpatialBiologyToolkit.napari_sbt.__main__:main",
         ],
     },
 

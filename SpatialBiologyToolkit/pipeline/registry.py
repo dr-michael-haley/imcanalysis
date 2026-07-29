@@ -178,6 +178,12 @@ STAGE_PRESENTATION: dict[str, tuple[str, int, str, str]] = {
         "HyPERSTAC_Full",
         "hyperstac.md",
     ),
+    "cellfeat": (
+        "Cohort Cell Features",
+        37,
+        "Cohort_Cell_Features",
+        "cell_features.md",
+    ),
 }
 
 STAGE_MODULES: dict[str, tuple[str, ...]] = {
@@ -243,6 +249,7 @@ STAGE_MODULES: dict[str, tuple[str, ...]] = {
     "hyperstac-full": (
         "SpatialBiologyToolkit.scripts.hyperstac_full",
     ),
+    "cellfeat": ("SpatialBiologyToolkit.scripts.cell_features",),
 }
 
 STAGE_CONFIG_SECTIONS: dict[str, tuple[str, ...]] = {
@@ -282,6 +289,7 @@ STAGE_CONFIG_SECTIONS: dict[str, tuple[str, ...]] = {
     "cox": ("general", "cox"),
     "hyperstac-stability": ("general", "hyperstac", "cox"),
     "hyperstac-full": ("general", "hyperstac", "cox"),
+    "cellfeat": ("general", "napari_sbt"),
 }
 
 
@@ -755,6 +763,22 @@ STAGES: tuple[StageSpec, ...] = (
         notes=(
             "The Cox component remains independently runnable as sbt run cox.",
             "The full job requires usable survival metadata for its Cox and stability components.",
+        ),
+    ),
+    _stage(
+        "cellfeat",
+        "job_cell_features.sh",
+        "Build identity-aligned cohort-only IMC cell features with full-mask spatial context.",
+        requires=("napari_sbt_experiments", "masks"),
+        produces=("napari_sbt_experiments", "human_outputs"),
+        outputs=(
+            "Cohort-only Parquet feature table and feature dictionary",
+            "Per-source coverage, failed-ROI, timing, and provenance reports",
+            "Resumable per-ROI Parquet fragments",
+        ),
+        notes=(
+            "No fixed upstream dependency is imposed because experiments may use existing masks, AnnData, or imported features from several workflow branches.",
+            "The frozen cohort and full original masks define cell eligibility and scientific spatial context respectively.",
         ),
     ),
 )

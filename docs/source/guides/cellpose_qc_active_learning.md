@@ -1,5 +1,10 @@
 # CellPose active-learning QC viewer
 
+> This legacy interface remains available for existing analyses. New
+> experiments should use [`napari_sbt`](napari_sbt.md) with **All cells** and
+> the Segmentation QC template; see the
+> [migration guide](napari_sbt_migration.md).
+
 `napari_cellpose_qc_active_learning` is a Napari tool for object-level QC of CellPose-SAM IMC segmentation masks. It does not recalculate morphology, intensity, or CellPose features. It consumes the per-object feature table and feature dictionary produced by `SpatialBiologyToolkit/scripts/cellpose_sam.py`.
 
 ## Required inputs

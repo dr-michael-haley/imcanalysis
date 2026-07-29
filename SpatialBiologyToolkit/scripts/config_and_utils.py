@@ -22,6 +22,7 @@ from SpatialBiologyToolkit.config.models import (  # noqa: F401 - legacy re-expo
     DenoisingConfig,
     GeneralConfig,
     LoggingConfig,
+    NapariSBTConfig,
     NetworkxSpatialConfig,
     NimbusConfig,
     PairwiseSpatialConfig,

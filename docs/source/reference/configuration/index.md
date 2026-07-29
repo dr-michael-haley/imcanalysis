@@ -35,5 +35,6 @@ sections/pairwise_spatial
 sections/networkx_spatial
 sections/remap_obs
 sections/subclustering
+sections/napari_sbt
 sections/logging
 ```

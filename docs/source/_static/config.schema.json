@@ -5725,6 +5725,61 @@
       "title": "LoggingConfig",
       "type": "object"
     },
+    "NapariSBTConfig": {
+      "description": "Project defaults for cohort-first Napari experiments and cell features.",
+      "properties": {
+        "experiment_folder": {
+          "advice": "Keep this folder under the project root so managed and local runs agree.",
+          "default": "napari_sbt",
+          "description": "Project-relative folder containing versioned napari_sbt experiment manifests, frozen cohorts, labels, models, and reusable feature assets.",
+          "level": "basic",
+          "stage": "cellfeat",
+          "title": "Experiment Folder",
+          "type": "string",
+          "ui_group": "Experiment assets"
+        },
+        "active_experiment": {
+          "advice": "Create and confirm an experiment in the Napari Setup tab before cellfeat.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Active experiment directory or experiment.yaml path. Relative values are resolved first below napari_sbt.experiment_folder.",
+          "level": "basic",
+          "stage": "cellfeat",
+          "title": "Active Experiment",
+          "ui_group": "Experiment selection"
+        },
+        "worker_count": {
+          "advice": "Each worker loads one full ROI mask plus one selected image at a time.",
+          "default": 8,
+          "description": "Maximum local or managed ROI feature-extraction worker processes.",
+          "level": "basic",
+          "minimum": 1,
+          "stage": "cellfeat",
+          "title": "Worker Count",
+          "type": "integer",
+          "ui_group": "Feature execution"
+        },
+        "annotated_adata_path": {
+          "advice": "Use a different path from general.anndata_path; source AnnData is not overwritten.",
+          "default": "napari_sbt_annotated.h5ad",
+          "description": "Default project-relative destination for an atomic annotated AnnData copy exported by napari_sbt.",
+          "level": "basic",
+          "stage": "napari_sbt",
+          "title": "Annotated Adata Path",
+          "type": "string",
+          "ui_group": "Classification export"
+        }
+      },
+      "title": "NapariSBTConfig",
+      "type": "object"
+    },
     "NetworkxSpatialConfig": {
       "properties": {
         "input_adata_path": {
@@ -10561,6 +10616,14 @@
       "$ref": "#/$defs/SubclusteringConfig",
       "advice": "",
       "description": "Configuration value for subclustering.",
+      "level": "advanced",
+      "stage": "pipeline",
+      "ui_group": "Pipeline"
+    },
+    "napari_sbt": {
+      "$ref": "#/$defs/NapariSBTConfig",
+      "advice": "",
+      "description": "Configuration value for napari sbt.",
       "level": "advanced",
       "stage": "pipeline",
       "ui_group": "Pipeline"

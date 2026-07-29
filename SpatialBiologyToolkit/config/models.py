@@ -4851,6 +4851,55 @@ class SubclusteringConfig(ConfigModel):
         description="Skip remap application until at least one final_population value differs from its generated subcluster label, protecting an unreviewed template from being treated as curated annotation.",
     )
 
+
+@config_section("napari_sbt")
+class NapariSBTConfig(ConfigModel):
+    """Project defaults for cohort-first Napari experiments and cell features."""
+
+    experiment_folder: str = config_field(
+        "napari_sbt",
+        description=(
+            "Project-relative folder containing versioned napari_sbt experiment "
+            "manifests, frozen cohorts, labels, models, and reusable feature assets."
+        ),
+        level="basic",
+        stage="cellfeat",
+        ui_group="Experiment assets",
+        advice="Keep this folder under the project root so managed and local runs agree.",
+    )
+    active_experiment: Optional[str] = config_field(
+        None,
+        description=(
+            "Active experiment directory or experiment.yaml path. Relative values "
+            "are resolved first below napari_sbt.experiment_folder."
+        ),
+        level="basic",
+        stage="cellfeat",
+        ui_group="Experiment selection",
+        advice="Create and confirm an experiment in the Napari Setup tab before cellfeat.",
+    )
+    worker_count: int = config_field(
+        8,
+        description="Maximum local or managed ROI feature-extraction worker processes.",
+        level="basic",
+        stage="cellfeat",
+        ui_group="Feature execution",
+        advice="Each worker loads one full ROI mask plus one selected image at a time.",
+        ge=1,
+    )
+    annotated_adata_path: str = config_field(
+        "napari_sbt_annotated.h5ad",
+        description=(
+            "Default project-relative destination for an atomic annotated AnnData "
+            "copy exported by napari_sbt."
+        ),
+        level="basic",
+        stage="napari_sbt",
+        ui_group="Classification export",
+        advice="Use a different path from general.anndata_path; source AnnData is not overwritten.",
+    )
+
+
 @config_section("logging")
 class LoggingConfig(ConfigModel):
     log_file: str = 'pipeline.log'
@@ -4886,6 +4935,7 @@ class PipelineConfig(ConfigModel):
     networkx_spatial: NetworkxSpatialConfig = Field(default_factory=NetworkxSpatialConfig)
     remap_obs: RemapObsConfig = Field(default_factory=RemapObsConfig)
     subclustering: SubclusteringConfig = Field(default_factory=SubclusteringConfig)
+    napari_sbt: NapariSBTConfig = Field(default_factory=NapariSBTConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
 
 
@@ -4912,6 +4962,7 @@ DEFAULT_CONFIG_CLASSES = {
     "networkx_spatial": NetworkxSpatialConfig,
     "remap_obs": RemapObsConfig,
     "subclustering": SubclusteringConfig,
+    "napari_sbt": NapariSBTConfig,
     "logging": LoggingConfig,
 }
 
@@ -4930,6 +4981,7 @@ __all__ = [
     "GeneralConfig",
     "HyperstacConfig",
     "LoggingConfig",
+    "NapariSBTConfig",
     "NetworkxSpatialConfig",
     "NimbusConfig",
     "PairwiseSpatialConfig",

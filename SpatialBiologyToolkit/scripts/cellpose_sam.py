@@ -45,6 +45,10 @@ from .config_and_utils import (
     cleanstring,
     filter_config_for_dataclass
 )
+from SpatialBiologyToolkit.napari_sbt.features import (
+    DISTRIBUTION_FEATURE_DESCRIPTIONS as _DISTRIBUTION_FEATURE_DESCRIPTIONS,
+    REGION_IMAGE_FEATURE_DESCRIPTIONS as _REGION_IMAGE_FEATURE_DESCRIPTIONS,
+)
 
 
 def load_cellpose_model(model_name: str, use_gpu: bool = True):
@@ -414,56 +418,10 @@ def _calculate_cellpose_flow_errors(
 
 
 def _add_distribution_features(row: dict[str, Any], values: np.ndarray, prefix: str) -> None:
-    """Add common distribution summaries for one per-cell pixel vector."""
-    values = _finite_values(values)
-    row[f"{prefix}_pixel_count"] = int(values.size)
+    """Add shared distribution summaries with legacy underscore column names."""
+    from SpatialBiologyToolkit.napari_sbt.features import add_distribution_features
 
-    for suffix in (
-        "mean",
-        "median",
-        "std",
-        "min",
-        "max",
-        "sum",
-        "q05",
-        "q10",
-        "q25",
-        "q75",
-        "q90",
-        "q95",
-        "iqr",
-        "range",
-        "cv",
-    ):
-        row[f"{prefix}_{suffix}"] = np.nan
-
-    if values.size == 0:
-        return
-
-    q05, q10, q25, q50, q75, q90, q95 = np.quantile(
-        values,
-        [0.05, 0.10, 0.25, 0.50, 0.75, 0.90, 0.95],
-    )
-    mean_value = float(np.mean(values))
-    std_value = float(np.std(values))
-    min_value = float(np.min(values))
-    max_value = float(np.max(values))
-
-    row[f"{prefix}_mean"] = mean_value
-    row[f"{prefix}_median"] = float(q50)
-    row[f"{prefix}_std"] = std_value
-    row[f"{prefix}_min"] = min_value
-    row[f"{prefix}_max"] = max_value
-    row[f"{prefix}_sum"] = float(np.sum(values))
-    row[f"{prefix}_q05"] = float(q05)
-    row[f"{prefix}_q10"] = float(q10)
-    row[f"{prefix}_q25"] = float(q25)
-    row[f"{prefix}_q75"] = float(q75)
-    row[f"{prefix}_q90"] = float(q90)
-    row[f"{prefix}_q95"] = float(q95)
-    row[f"{prefix}_iqr"] = float(q75 - q25)
-    row[f"{prefix}_range"] = float(max_value - min_value)
-    row[f"{prefix}_cv"] = _safe_ratio(std_value, abs(mean_value))
+    add_distribution_features(row, values, prefix, separator="_")
 
 
 def _expanded_bbox_slice(
@@ -912,43 +870,6 @@ def build_cellpose_cell_metrics(
     ]
     remaining_cols = [col for col in df.columns if col not in leading_cols]
     return df.loc[:, leading_cols + remaining_cols]
-
-
-_DISTRIBUTION_FEATURE_DESCRIPTIONS = {
-    "pixel_count": "Number of finite pixels contributing to this feature set for the object.",
-    "mean": "Mean pixel value inside the object mask.",
-    "median": "Median pixel value inside the object mask.",
-    "std": "Standard deviation of pixel values inside the object mask.",
-    "min": "Minimum pixel value inside the object mask.",
-    "max": "Maximum pixel value inside the object mask.",
-    "sum": "Sum of pixel values inside the object mask.",
-    "q05": "5th percentile pixel value inside the object mask.",
-    "q10": "10th percentile pixel value inside the object mask.",
-    "q25": "25th percentile pixel value inside the object mask.",
-    "q75": "75th percentile pixel value inside the object mask.",
-    "q90": "90th percentile pixel value inside the object mask.",
-    "q95": "95th percentile pixel value inside the object mask.",
-    "iqr": "Interquartile range of pixel values inside the object mask.",
-    "range": "Maximum minus minimum pixel value inside the object mask.",
-    "cv": "Coefficient of variation of pixel values inside the object mask.",
-}
-
-
-_REGION_IMAGE_FEATURE_DESCRIPTIONS = {
-    "core_mean": "Mean value in the one-pixel-eroded object core.",
-    "border_mean": "Mean value on the one-pixel object border.",
-    "core_to_border_ratio": "Ratio of core mean to border mean; useful for central enrichment versus edge signal.",
-    "weighted_x": "X coordinate of the intensity-weighted centroid for this image-derived feature set.",
-    "weighted_y": "Y coordinate of the intensity-weighted centroid for this image-derived feature set.",
-    "weighted_centroid_offset_px": "Distance between the mask geometric centroid and the intensity-weighted centroid in pixels.",
-    "weighted_centroid_offset_fraction_radius": "Intensity-weighted centroid offset divided by the equivalent object radius.",
-    "local_bg_pixel_count": "Number of finite local-background pixels in the ring around the object.",
-    "local_bg_mean": "Mean value in the local background ring around the object.",
-    "local_bg_std": "Standard deviation in the local background ring around the object.",
-    "foreground_to_bg_ratio": "Object mean divided by local background mean.",
-    "foreground_bg_contrast": "Object mean minus local background mean.",
-    "foreground_bg_contrast_z": "Object-background contrast divided by local background standard deviation.",
-}
 
 
 _IMAGE_FEATURE_PREFIXES = {
