@@ -54,6 +54,13 @@ from .selection import (
     select_population_cell_panel,
     select_population_cells,
 )
+from .stored import (
+    StoredPopulationQCError,
+    focused_population_summary,
+    has_stored_population_qc,
+    list_stored_population_qc,
+    load_stored_population_qc,
+)
 
 
 __all__ = [
@@ -71,6 +78,7 @@ __all__ = [
     "ResolutionComparisonResult",
     "SubclusteringResult",
     "STAGE_CONCLUSION_COLUMNS",
+    "StoredPopulationQCError",
     "VALID_STRATEGIES",
     "apply_population_mapping",
     "assess_candidate_clustering",
@@ -80,6 +88,10 @@ __all__ = [
     "create_leiden_sweep",
     "discard_population_qc_columns",
     "inspect_population_data",
+    "focused_population_summary",
+    "has_stored_population_qc",
+    "list_stored_population_qc",
+    "load_stored_population_qc",
     "plot_clustering_qc",
     "plot_clustering_qc_panels",
     "plot_marker_distributions",

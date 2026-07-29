@@ -7,6 +7,7 @@ from typing import Any
 import pandas as pd
 
 from SpatialBiologyToolkit.population_embedding_qc.inspection import detect_sweep_columns
+from SpatialBiologyToolkit.population_embedding_qc.storage import list_stored_population_qc
 
 from ._utils import infer_case_key, resolve_roi_key, resolve_table, shape_tuple
 from .models import MarkerExpectations, PopulationDataContext
@@ -102,6 +103,18 @@ def inspect_population_data(
             1, int(population_counts["cells"].sum())
         )
     is_spatialdata = hasattr(data, "tables")
+    stored_qc = list_stored_population_qc(adata)
+    if population_key is not None and not stored_qc.empty:
+        matching = stored_qc.loc[
+            stored_qc["reference_column"].astype(str).eq(str(population_key))
+        ]
+        if not matching.empty and not matching["compatible"].astype(bool).any():
+            reasons = "; ".join(
+                dict.fromkeys(matching["compatibility_message"].astype(str))
+            )
+            warnings.append(
+                f"Stored population QC for {population_key!r} is incompatible: {reasons}"
+            )
     return PopulationDataContext(
         table_name=selected_table,
         population_key=population_key,
@@ -118,6 +131,7 @@ def inspect_population_data(
         pairwise_matrices={key: shape_tuple(value) for key, value in adata.obsp.items()},
         image_elements=len(data.images) if is_spatialdata else 0,
         label_elements=len(data.labels) if is_spatialdata else 0,
+        stored_population_qc=stored_qc,
         warnings=tuple(warnings),
     )
 

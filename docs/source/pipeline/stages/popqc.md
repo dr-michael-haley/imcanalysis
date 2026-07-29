@@ -16,7 +16,7 @@ Assess population support from existing graph, UMAP, PCA, and precomputed cluste
 ## Outputs
 
 - outputs/<execution_id>_Population_Embedding_QC/{figures,tables,summaries,files}/
-- population_embedding_qc.annotated_adata_path only when write_annotated_h5ad is enabled
+- population_embedding_qc.annotated_adata_path with reusable versioned .uns results only when write_annotated_h5ad is enabled
 
 ## Configuration
 

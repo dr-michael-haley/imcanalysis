@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 
 from SpatialBiologyToolkit.population_embedding_qc.inspection import detect_sweep_columns
+from SpatialBiologyToolkit.population_embedding_qc.storage import (
+    StoredPopulationQCError,
+    load_stored_population_qc,
+)
 from SpatialBiologyToolkit.population_embedding_qc.sweep_metrics import calculate_sweep_metrics
 
 from ._utils import ordered_labels, resolve_table
@@ -22,6 +26,7 @@ def compare_resolutions(
     sweep_columns: Sequence[str] | None = None,
     sweep_regex: str = r"^leiden_(?P<resolution>\d+(?:\.\d+)?)$",
     persistence_threshold: float = 0.60,
+    reuse: Literal["auto", "require", "never"] = "auto",
 ) -> ResolutionComparisonResult:
     """Compare population membership across a precomputed resolution sweep.
 
@@ -31,6 +36,10 @@ def compare_resolutions(
 
     Agent guidance
     --------------
+    Use ``reuse="require"`` for an existing global assessment so missing cached
+    evidence raises rather than scanning the full annotation table again.
+    Stored best matches are sufficient to apply a different persistence
+    threshold without recomputing graph, embedding, or contingency evidence.
     Use after structural QC suggests a merge or split. A likely split repeatedly
     maps into multiple sizeable higher-resolution children; confirm that those
     children have distinct marker profiles and appear across cases. A likely merge
@@ -40,6 +49,8 @@ def compare_resolutions(
 
     if not 0 <= persistence_threshold <= 1:
         raise ValueError("persistence_threshold must be between 0 and 1")
+    if reuse not in {"auto", "require", "never"}:
+        raise ValueError("reuse must be 'auto', 'require', or 'never'")
     _, adata = resolve_table(data, table_name)
     if reference_column not in adata.obs:
         raise KeyError(f"Reference column {reference_column!r} is missing from the table")
@@ -50,6 +61,70 @@ def compare_resolutions(
     )
     if len(sweep) < 2:
         raise ValueError("At least two numerically identified clustering columns are required")
+    if reuse != "never":
+        try:
+            stored = load_stored_population_qc(
+                adata,
+                population_key=reference_column,
+                strict=True,
+            )
+            stored_columns = list(map(str, stored.run_summary.get("sweep_columns", [])))
+            requested_columns = [column for column, _ in sweep]
+            mismatches: list[str] = []
+            if stored_columns != requested_columns:
+                mismatches.append(
+                    f"stored sweep columns are {stored_columns}, not {requested_columns}"
+                )
+            if stored.sweep_reference_membership.empty:
+                mismatches.append("stored result has no reference membership table")
+            if mismatches:
+                raise StoredPopulationQCError("; ".join(mismatches))
+            stability = stored.sweep_reference_cluster_metrics.copy()
+            reference_matches = (
+                stored.sweep_best_matches.loc[
+                    stored.sweep_best_matches["direction"]
+                    .astype(str)
+                    .eq("reference_to_sweep")
+                ]
+                if "direction" in stored.sweep_best_matches
+                else pd.DataFrame()
+            )
+            if not reference_matches.empty:
+                grouped = reference_matches.groupby("source_cluster", observed=True)[
+                    "jaccard"
+                ]
+                persistence = grouped.apply(
+                    lambda values: float(
+                        (pd.to_numeric(values, errors="coerce") >= persistence_threshold).mean()
+                    )
+                )
+                supported = grouped.apply(
+                    lambda values: int(
+                        (pd.to_numeric(values, errors="coerce") >= persistence_threshold).sum()
+                    )
+                )
+                stability["sweep_persistence_fraction"] = persistence.reindex(
+                    stability.index.astype(str)
+                ).to_numpy()
+                stability["sweep_supported_resolutions"] = supported.reindex(
+                    stability.index.astype(str), fill_value=0
+                ).to_numpy()
+            return ResolutionComparisonResult(
+                reference_column=reference_column,
+                sweep_columns=stored.detected_sweep_columns.copy(),
+                cluster_stability=(
+                    stability.reset_index()
+                    .rename(columns={"cluster": "population"})
+                ),
+                membership=stored.sweep_reference_membership.copy(),
+                transition_edges=stored.sweep_transition_edges.copy(),
+                best_matches=stored.sweep_best_matches.copy(),
+                global_metrics=stored.sweep_global_metrics.copy(),
+                warnings=tuple([*warnings, *stored.warnings]),
+            )
+        except StoredPopulationQCError:
+            if reuse == "require":
+                raise
     cluster_order = ordered_labels(adata.obs[reference_column])
     metrics = calculate_sweep_metrics(
         adata.obs,

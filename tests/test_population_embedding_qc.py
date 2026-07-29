@@ -23,6 +23,11 @@ from SpatialBiologyToolkit.population_embedding_qc.inspection import (
 from SpatialBiologyToolkit.population_embedding_qc.models import DEFAULT_METRICS
 from SpatialBiologyToolkit.population_embedding_qc.outputs import annotated_copy
 from SpatialBiologyToolkit.population_embedding_qc.plotting import plot_concern_heatmap
+from SpatialBiologyToolkit.population_embedding_qc.storage import (
+    StoredPopulationQCError,
+    list_stored_population_qc,
+    load_stored_population_qc,
+)
 from SpatialBiologyToolkit.population_embedding_qc.scoring import (
     normalize_concern,
     score_cluster_metrics,
@@ -251,6 +256,68 @@ class PopulationIntegrationTests(unittest.TestCase):
         self.assertIn("population_embedding_qc", annotated.uns)
         self.assertNotIn("embedding_qc_umap_purity", adata.obs)
 
+    def test_annotated_h5ad_round_trip_restores_complete_result(self):
+        adata = make_adata(pca=False)
+        settings = PopulationEmbeddingQCConfig(
+            min_cluster_size=3,
+            umap_k=3,
+            density_grid_size=16,
+        )
+        result = run_population_embedding_qc(adata, config=settings)
+        annotated = annotated_copy(adata, result)
+        stored = annotated.uns["population_embedding_qc"]
+        self.assertEqual(stored["schema_version"], 1)
+        self.assertNotIn(None, stored)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "population_qc.h5ad"
+            annotated.write_h5ad(path)
+            restored_adata = ad.read_h5ad(path)
+        inventory = list_stored_population_qc(restored_adata)
+        self.assertEqual(inventory["compatible"].tolist(), [True])
+        restored = load_stored_population_qc(
+            restored_adata,
+            population_key="population",
+        )
+        pd.testing.assert_frame_equal(
+            restored.cluster_summary,
+            result.cluster_summary,
+            check_dtype=False,
+        )
+        pd.testing.assert_frame_equal(
+            restored.sweep_reference_membership,
+            result.sweep_reference_membership,
+            check_dtype=False,
+        )
+        self.assertEqual(
+            set(restored.cell_metrics),
+            {
+                "cell_index",
+                "reference_population",
+                "graph_neighbour_purity",
+                "umap_neighbour_purity",
+                "umap_graph_neighbourhood_preservation",
+                "boundary_class",
+            },
+        )
+        restored_adata.obs.loc[restored_adata.obs_names[0], "population"] = "B"
+        with self.assertRaisesRegex(StoredPopulationQCError, "labels.*changed"):
+            load_stored_population_qc(
+                restored_adata,
+                population_key="population",
+            )
+
+    def test_legacy_summary_is_discoverable_but_not_reusable(self):
+        adata = make_adata()
+        adata.uns["population_embedding_qc"] = {
+            "reference_column": "population",
+            "n_cells": adata.n_obs,
+        }
+        inventory = list_stored_population_qc(adata)
+        self.assertEqual(inventory["run_id"].tolist(), ["legacy_summary"])
+        self.assertEqual(inventory["compatible"].tolist(), [False])
+        with self.assertRaisesRegex(StoredPopulationQCError, "legacy"):
+            load_stored_population_qc(adata, population_key="population")
+
     def test_config_registry_and_required_tables(self):
         stage = get_stage("popqc")
         self.assertEqual(stage.environment_keys, ["cellcharter"])
@@ -271,6 +338,7 @@ class PopulationIntegrationTests(unittest.TestCase):
                 "pairwise_graph_connectivity.tsv",
                 "pairwise_umap_density_overlap.tsv",
                 "metric_definitions.tsv",
+                "sweep_reference_membership.tsv",
             ):
                 self.assertTrue((Path(temp_dir) / "Tables" / filename).is_file(), filename)
             self.assertTrue((Path(temp_dir) / "Report" / "analysis_report.md").is_file())

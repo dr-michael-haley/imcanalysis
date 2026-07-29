@@ -142,6 +142,7 @@ class PopulationEmbeddingQCResult:
     sweep_transition_edges: pd.DataFrame = field(default_factory=pd.DataFrame)
     sweep_best_matches: pd.DataFrame = field(default_factory=pd.DataFrame)
     sweep_reference_cluster_metrics: pd.DataFrame = field(default_factory=pd.DataFrame)
+    sweep_reference_membership: pd.DataFrame = field(default_factory=pd.DataFrame)
     sweep_global_metrics: pd.DataFrame = field(default_factory=pd.DataFrame)
     sweep_pairwise_jaccard: dict[str, pd.DataFrame] = field(default_factory=dict)
     per_cluster_text: dict[str, str] = field(default_factory=dict)

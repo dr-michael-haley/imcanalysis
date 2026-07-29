@@ -21,13 +21,24 @@ Missing PCA or graph evidence is reported and skipped rather than reconstructed.
 
 ## Reusable assets produced or modified
 
-The input AnnData is never modified in place. By default, no reusable asset is created or changed. If `write_annotated_h5ad` is enabled, a separate copy is written to `annotated_adata_path` with namespaced `embedding_qc_*` observation columns and `adata.uns["population_embedding_qc"]`. Existing files and keys are not overwritten silently.
+The input AnnData is never modified in place. By default, no reusable asset is created or changed. If `write_annotated_h5ad` is enabled, a separate copy is written to `annotated_adata_path`. It contains the established focused `embedding_qc_*` observation columns used for core/boundary cell selection plus a versioned, complete population-level result under `adata.uns["population_embedding_qc"]`. Existing files and observation columns are not overwritten silently.
+
+The stored result includes raw cluster metrics, concern scores, threshold flags, competitors, pairwise matrices, resolution-sweep evidence, metric definitions, warnings, configuration, sampling, and a compact Agent summary. Large secondary per-cell diagnostics are not added to `.obs`; request the optional Parquet output when they are needed. Storage uses strict JSON strings and null-free compatibility metadata so files remain readable by the older AnnData versions used across toolkit environments.
+
+Load cached results without recalculation:
+
+```python
+from SpatialBiologyToolkit.population_qc import load_stored_population_qc
+
+qc = load_stored_population_qc(adata, "population")
+display(qc.cluster_summary)
+```
 
 ## Human-facing outputs produced
 
 Managed runs write through the active execution report categories:
 
-- `tables/`: raw cluster metrics, concern scores, raw threshold flags, cluster summary, competitors, graph connectivity, UMAP density overlap, metric definitions, and sweep tables.
+- `tables/`: raw cluster metrics, concern scores, raw threshold flags, cluster summary, competitors, graph connectivity, UMAP density overlap, metric definitions, and sweep tables including directly reusable reference membership.
 - `figures/`: compact and detailed concern heatmaps, cluster overview, UMAP panels, boundary plot, competitor/density/component/silhouette summaries, and sweep transition/stability figures.
 - `summaries/analysis_report.md`: deterministic interpretation and limitations.
 - `files/`: metric configuration and structured run summary/provenance.

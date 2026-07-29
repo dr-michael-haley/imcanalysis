@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 import re
-from typing import Any
+from typing import Any, Literal
 import warnings
 
 import numpy as np
@@ -13,6 +13,8 @@ import pandas as pd
 from SpatialBiologyToolkit.config.models import PopulationEmbeddingQCConfig
 from SpatialBiologyToolkit.population_embedding_qc import (
     PopulationEmbeddingQCResult,
+    StoredPopulationQCError,
+    load_stored_population_qc,
     run_population_embedding_qc,
 )
 
@@ -49,6 +51,7 @@ def assess_clustering(
     pca_key: str | None = None,
     connectivities_key: str | None = None,
     config: PopulationEmbeddingQCConfig | None = None,
+    reuse: Literal["auto", "require", "never"] = "auto",
 ) -> PopulationEmbeddingQCResult:
     """Assess structural support for an existing or newly created clustering.
 
@@ -60,6 +63,10 @@ def assess_clustering(
     Agent guidance
     --------------
     Use once for the global clustering and after each serious candidate split.
+    ``reuse="auto"`` returns compatible cached AnnData results when present;
+    use ``reuse="require"`` in Agent workflows so a missing or stale cache
+    raises instead of launching an expensive calculation. Use ``reuse="never"``
+    only for an explicitly requested recalculation.
     Start with graph and PCA/local-feature evidence; use UMAP as supporting visual
     evidence because its geometry is distorted. High concern identifies clusters
     needing investigation, not biologically invalid clusters. Cache this result
@@ -67,10 +74,12 @@ def assess_clustering(
     and image evidence.
     """
 
+    if reuse not in {"auto", "require", "never"}:
+        raise ValueError("reuse must be 'auto', 'require', or 'never'")
     _, adata = resolve_table(data, table_name)
     selected_roi = resolve_roi_key(data, adata, roi_key)
     selected_case = infer_case_key(adata, case_key)
-    selected_pca = pca_key or (
+    selected_pca_argument = pca_key or (
         "X_population_qc" if "X_population_qc" in adata.obsm else "X_pca"
     )
     settings = config or PopulationEmbeddingQCConfig(
@@ -86,16 +95,86 @@ def assess_clustering(
             updates["sample_obs"] = selected_case
         if updates:
             settings = config.model_copy(update=updates)
+    effective_mode = settings.mode if mode == "auto" else mode
+    effective_sweep_columns = (
+        list(sweep_columns)
+        if sweep_columns is not None
+        else settings.sweep_columns
+    )
+    effective_sweep_regex = (
+        settings.sweep_regex
+        if sweep_regex == r"^leiden_(?P<resolution>\d+(?:\.\d+)?)$"
+        else sweep_regex
+    )
+    effective_reference_resolution = (
+        reference_resolution
+        if reference_resolution is not None
+        else settings.reference_resolution
+    )
+    effective_umap = settings.umap_key if umap_key == "X_umap" else umap_key
+    effective_pca = (
+        settings.pca_key
+        if selected_pca_argument == "X_pca"
+        else selected_pca_argument
+    )
+    effective_connectivities = (
+        connectivities_key
+        if connectivities_key is not None
+        else settings.connectivities_key
+    )
+    settings = settings.model_copy(
+        update={
+            "population_obs": population_key,
+            "mode": effective_mode,
+            "sweep_columns": effective_sweep_columns,
+            "sweep_regex": effective_sweep_regex,
+            "reference_resolution": effective_reference_resolution,
+            "umap_key": effective_umap,
+            "pca_key": effective_pca,
+            "connectivities_key": effective_connectivities,
+        }
+    )
+    if reuse != "never":
+        try:
+            stored = load_stored_population_qc(
+                adata,
+                population_key=population_key,
+                config=settings if config is not None else None,
+                strict=True,
+            )
+            requested_mismatches: list[str] = []
+            if str(stored.run_summary.get("umap_key")) != str(effective_umap):
+                requested_mismatches.append(
+                    f"stored UMAP key is {stored.run_summary.get('umap_key')!r}"
+                )
+            stored_pca = stored.run_summary.get("pca_key")
+            if effective_pca in adata.obsm and str(stored_pca) != str(effective_pca):
+                requested_mismatches.append(f"stored PCA key is {stored_pca!r}")
+            if (
+                effective_connectivities is not None
+                and str(stored.run_summary.get("connectivities_key"))
+                != str(effective_connectivities)
+            ):
+                requested_mismatches.append(
+                    "stored connectivity key is "
+                    f"{stored.run_summary.get('connectivities_key')!r}"
+                )
+            if requested_mismatches:
+                raise StoredPopulationQCError("; ".join(requested_mismatches))
+            return stored
+        except StoredPopulationQCError:
+            if reuse == "require":
+                raise
     return run_population_embedding_qc(
         adata,
         population_obs=population_key,
-        mode=mode,
-        sweep_columns=list(sweep_columns) if sweep_columns is not None else None,
-        sweep_regex=sweep_regex,
-        reference_resolution=reference_resolution,
-        umap_key=umap_key,
-        pca_key=selected_pca,
-        connectivities_key=connectivities_key,
+        mode=effective_mode,
+        sweep_columns=effective_sweep_columns,
+        sweep_regex=effective_sweep_regex,
+        reference_resolution=effective_reference_resolution,
+        umap_key=effective_umap,
+        pca_key=effective_pca,
+        connectivities_key=effective_connectivities,
         config=settings,
     )
 
@@ -157,6 +236,7 @@ def assess_candidate_clustering(
         sweep_regex=sweep_regex,
         pca_key="X_population_qc",
         config=config,
+        reuse="never",
     )
 
 

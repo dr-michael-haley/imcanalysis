@@ -12,7 +12,7 @@
 #@IN:   population_embedding_qc.input_adata_path (fallback: general.anndata_path)
 #@IN:   Existing UMAP, optional PCA/connectivities, and population or precomputed Leiden obs columns
 #@OUT:  outputs/<execution_id>_Population_Embedding_QC/{figures,tables,summaries,files}/
-#@OUT:  population_embedding_qc.annotated_adata_path only when write_annotated_h5ad is enabled
+#@OUT:  population_embedding_qc.annotated_adata_path with reusable versioned .uns results only when write_annotated_h5ad is enabled
 #@ENV:  imc_cellcharter
 #@MODULE:  SpatialBiologyToolkit.scripts.population_embedding_qc
 #@CONFIG: general, population_embedding_qc, logging

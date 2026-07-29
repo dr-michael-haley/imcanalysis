@@ -141,6 +141,7 @@ class PopulationDataContext:
     pairwise_matrices: dict[str, tuple[int, ...]]
     image_elements: int
     label_elements: int
+    stored_population_qc: pd.DataFrame = field(default_factory=pd.DataFrame)
     warnings: tuple[str, ...] = ()
 
     def to_agent_summary(self) -> dict[str, Any]:
@@ -161,6 +162,9 @@ class PopulationDataContext:
             "pairwise_matrices": self.pairwise_matrices,
             "image_elements": self.image_elements,
             "label_elements": self.label_elements,
+            "stored_population_qc": self.stored_population_qc.to_dict(
+                orient="records"
+            ),
             "warnings": list(self.warnings),
         }
 

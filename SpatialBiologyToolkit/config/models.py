@@ -2570,14 +2570,14 @@ class PopulationEmbeddingQCConfig(ConfigModel):
     )
     write_annotated_h5ad: bool = config_field(
         False,
-        description="Write a separate annotated AnnData copy; the input is never modified in place.",
+        description="Write a separate AnnData copy with focused cell annotations and reusable versioned population-level QC results; the input is never modified in place.",
         level="basic",
         stage="population_embedding_qc",
         ui_group="Outputs",
     )
     annotated_adata_path: str = config_field(
         "population_embedding_qc.h5ad",
-        description="Configured project asset path for the optional annotated AnnData copy.",
+        description="Configured project asset path for the optional AnnData copy containing reusable population QC results.",
         stage="population_embedding_qc",
         ui_group="Outputs",
     )

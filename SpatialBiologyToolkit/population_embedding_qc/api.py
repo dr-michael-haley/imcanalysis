@@ -87,6 +87,18 @@ def run_population_embedding_qc(
     umap_key = _choose(umap_key, "X_umap", settings.umap_key)
     pca_key = _choose(pca_key, "X_pca", settings.pca_key)
     connectivities_key = connectivities_key if connectivities_key is not None else settings.connectivities_key
+    settings = settings.model_copy(
+        update={
+            "population_obs": population_obs,
+            "mode": mode,
+            "sweep_columns": sweep_columns,
+            "sweep_regex": sweep_regex,
+            "reference_resolution": reference_resolution,
+            "umap_key": umap_key,
+            "pca_key": pca_key,
+            "connectivities_key": connectivities_key,
+        }
+    )
 
     inspection = inspect_anndata(
         adata,
@@ -99,6 +111,9 @@ def run_population_embedding_qc(
         pca_key=pca_key,
         pca_dimensions=settings.pca_dimensions,
         connectivities_key=connectivities_key,
+    )
+    settings = settings.model_copy(
+        update={"population_obs": inspection.reference_column}
     )
     LOGGER.info(
         "Population QC reference=%s clusters=%d cells=%d excluded=%d sweep_columns=%d",
@@ -310,6 +325,7 @@ def run_population_embedding_qc(
         sweep_transition_edges=sweep_result.transition_edges,
         sweep_best_matches=sweep_result.best_matches,
         sweep_reference_cluster_metrics=sweep_result.reference_metrics,
+        sweep_reference_membership=sweep_result.reference_membership,
         sweep_global_metrics=sweep_result.global_metrics,
         sweep_pairwise_jaccard=sweep_result.jaccard_matrices,
         per_cluster_text=per_cluster_text,

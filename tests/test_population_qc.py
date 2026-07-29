@@ -15,6 +15,7 @@ import pandas as pd
 from scipy import sparse
 
 from SpatialBiologyToolkit.config.models import PopulationEmbeddingQCConfig
+from SpatialBiologyToolkit.population_embedding_qc.outputs import annotated_copy
 from SpatialBiologyToolkit.population_qc import (
     MarkerExpectations,
     PopulationQCArtifactWriter,
@@ -104,6 +105,45 @@ def make_adata() -> ad.AnnData:
 
 
 class PopulationQCTests(unittest.TestCase):
+    def test_stored_structural_qc_is_reused_without_recalculation(self):
+        adata = make_adata()
+        settings = PopulationEmbeddingQCConfig(
+            roi_obs="ROI",
+            sample_obs="animal",
+            min_cluster_size=3,
+            umap_k=3,
+            density_grid_size=16,
+            silhouette_max_cells=100,
+        )
+        calculated = assess_clustering(
+            adata,
+            "population",
+            config=settings,
+            reuse="never",
+        )
+        annotated = annotated_copy(adata, calculated)
+        context = inspect_population_data(annotated, "population", case_key="animal")
+        self.assertEqual(context.stored_population_qc["compatible"].tolist(), [True])
+        with patch(
+            "SpatialBiologyToolkit.population_qc.clustering.run_population_embedding_qc",
+            side_effect=AssertionError("structural QC was unexpectedly recalculated"),
+        ):
+            restored = assess_clustering(
+                annotated,
+                "population",
+                config=settings,
+                reuse="require",
+            )
+        self.assertTrue(restored.run_summary["loaded_from_anndata_uns"])
+        resolutions = compare_resolutions(
+            annotated,
+            "population",
+            persistence_threshold=0.60,
+            reuse="require",
+        )
+        self.assertFalse(resolutions.membership.empty)
+        self.assertIn("sweep_persistence_fraction", resolutions.cluster_stability)
+
     def test_evidence_tables_and_focused_plots(self):
         import matplotlib.pyplot as plt
 

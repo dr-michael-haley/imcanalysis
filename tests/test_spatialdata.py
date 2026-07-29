@@ -482,6 +482,57 @@ class SpatialDataConstructionTests(unittest.TestCase):
                 3,
             )
 
+    def test_invalid_anndata_attribute_names_are_planned_and_sanitized(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            imc, _maxfuse = _write_project(root)
+            imc.obs["Prediction Accuracy"] = [0.9, 0.8, 0.7, 0.6]
+            imc.obs["*Background*"] = [1, 2, 3, 4]
+            imc.uns["leiden,cluster_colors"] = ["#000000", "#ffffff"]
+            original_obs_columns = list(imc.obs.columns)
+            original_uns_keys = list(imc.uns)
+            spec = SpatialDataSpec(
+                [
+                    CellMasks("cells", root / "masks"),
+                    IMCImages("images", "Panel", root / "immune"),
+                    IMCAnnData("cells_table", "Panel", imc, "images", "cells"),
+                ]
+            )
+
+            plan = plan_spatialdata(spec)
+            self.assertTrue(plan.ok, plan.report.to_frame())
+            warnings = [
+                issue
+                for issue in plan.report.warnings
+                if issue.code == "table_names_will_be_sanitized"
+            ]
+            self.assertEqual(len(warnings), 1)
+            self.assertIn("3 AnnData attribute name(s)", warnings[0].message)
+
+            sdata = create_spatialdata(plan)
+            table = sdata.tables["table_cells_table"]
+            self.assertIn("Prediction_Accuracy", table.obs.columns)
+            self.assertIn("_Background_", table.obs.columns)
+            self.assertIn("leiden_cluster_colors", table.uns)
+            changes = table.uns["spatial_biology_toolkit"]["table_name_sanitization"]
+            self.assertEqual(
+                {
+                    (item["attribute"], item["original"], item["sanitized"])
+                    for item in changes
+                },
+                {
+                    ("obs", "Prediction Accuracy", "Prediction_Accuracy"),
+                    ("obs", "*Background*", "_Background_"),
+                    (
+                        "uns",
+                        "leiden,cluster_colors",
+                        "leiden_cluster_colors",
+                    ),
+                },
+            )
+            self.assertEqual(list(imc.obs.columns), original_obs_columns)
+            self.assertEqual(list(imc.uns), original_uns_keys)
+
 
 if __name__ == "__main__":
     unittest.main()

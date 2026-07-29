@@ -74,5 +74,5 @@
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
 | `write_per_cell_metrics` | `bool` | `False` | `advanced` | Write namespaced per-cell QC values as Parquet when a Parquet engine is available. | - |
-| `write_annotated_h5ad` | `bool` | `False` | `basic` | Write a separate annotated AnnData copy; the input is never modified in place. | - |
-| `annotated_adata_path` | `str` | `population_embedding_qc.h5ad` | `advanced` | Configured project asset path for the optional annotated AnnData copy. | - |
+| `write_annotated_h5ad` | `bool` | `False` | `basic` | Write a separate AnnData copy with focused cell annotations and reusable versioned population-level QC results; the input is never modified in place. | - |
+| `annotated_adata_path` | `str` | `population_embedding_qc.h5ad` | `advanced` | Configured project asset path for the optional AnnData copy containing reusable population QC results. | - |

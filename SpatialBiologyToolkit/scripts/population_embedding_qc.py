@@ -103,9 +103,16 @@ def run_pipeline() -> int:
             active.add_file(category, path)
     if settings.write_annotated_h5ad:
         target = project_asset_path(settings.annotated_adata_path)
-        _atomic_annotated_write(annotated_copy(adata, result), target)
+        _atomic_annotated_write(
+            annotated_copy(adata, result),
+            target,
+        )
         if active:
-            active.add_asset("population_qc_anndata", target, "Separate AnnData copy with namespaced population embedding QC annotations")
+            active.add_asset(
+                "population_qc_anndata",
+                target,
+                "Separate AnnData copy with focused cell annotations and reusable versioned population QC results",
+            )
     logging.info("Population embedding QC completed with %d files", len(paths))
     return 0
 

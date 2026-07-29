@@ -17,6 +17,7 @@ class SweepMetricResult:
     reference_metrics: pd.DataFrame
     transition_edges: pd.DataFrame
     best_matches: pd.DataFrame
+    reference_membership: pd.DataFrame
     global_metrics: pd.DataFrame
     jaccard_matrices: dict[str, pd.DataFrame]
 
@@ -93,11 +94,13 @@ def calculate_sweep_metrics(
             reference_metrics=pd.DataFrame(index=pd.Index(cluster_order, name="cluster")),
             transition_edges=pd.DataFrame(),
             best_matches=pd.DataFrame(),
+            reference_membership=pd.DataFrame(),
             global_metrics=pd.DataFrame(),
             jaccard_matrices={},
         )
     transitions: list[dict[str, object]] = []
     best_records: list[dict[str, object]] = []
+    membership_records: list[dict[str, object]] = []
     global_records: list[dict[str, object]] = []
     jaccard_matrices: dict[str, pd.DataFrame] = {}
     for (left_column, left_resolution), (right_column, right_resolution) in zip(sweep, sweep[1:]):
@@ -191,6 +194,28 @@ def calculate_sweep_metrics(
     for sweep_column, resolution in sweep:
         contingency = _contingency(reference, obs[sweep_column])
         jaccard = _jaccard(contingency)
+        reference_sizes = contingency.sum(axis=1)
+        target_sizes = contingency.sum(axis=0)
+        for cluster in contingency.index:
+            for target_cluster, shared_value in contingency.loc[cluster].items():
+                shared = int(shared_value)
+                if not shared:
+                    continue
+                reference_size = int(reference_sizes.loc[cluster])
+                target_size = int(target_sizes.loc[target_cluster])
+                union = reference_size + target_size - shared
+                membership_records.append(
+                    {
+                        "population": str(cluster),
+                        "sweep_column": sweep_column,
+                        "resolution": float(resolution),
+                        "target_cluster": str(target_cluster),
+                        "shared_cells": shared,
+                        "reference_fraction": shared / max(1, reference_size),
+                        "target_fraction": shared / max(1, target_size),
+                        "jaccard": shared / max(1, union),
+                    }
+                )
         for cluster in cluster_order:
             if cluster not in contingency.index:
                 continue
@@ -283,6 +308,7 @@ def calculate_sweep_metrics(
         reference_metrics=pd.DataFrame(records).set_index("cluster"),
         transition_edges=pd.DataFrame(transitions),
         best_matches=pd.DataFrame(best_records),
+        reference_membership=pd.DataFrame(membership_records),
         global_metrics=pd.DataFrame(global_records),
         jaccard_matrices=jaccard_matrices,
     )

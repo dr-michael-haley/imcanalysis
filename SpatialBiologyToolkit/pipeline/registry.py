@@ -570,7 +570,7 @@ STAGES: tuple[StageSpec, ...] = (
         outputs=(
             "Raw structural QC metrics, concern scores, and threshold flags",
             "Population QC figures and deterministic interpretation report",
-            "Optional separately annotated AnnData asset",
+            "Optional AnnData asset with focused cell annotations and reusable versioned QC results",
         ),
         notes=(
             "This stage never recalculates Leiden, PCA, UMAP, or the Scanpy neighbour graph.",

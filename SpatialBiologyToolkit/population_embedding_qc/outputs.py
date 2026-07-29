@@ -183,6 +183,7 @@ def write_result_outputs(
         paths.append(_write_frame(result.sweep_transition_edges, layout.tables / "sweep_transition_edges.tsv", index=False))
         paths.append(_write_frame(result.sweep_best_matches, layout.tables / "sweep_best_matches.tsv", index=False))
         paths.append(_write_frame(result.sweep_reference_cluster_metrics, layout.tables / "sweep_reference_cluster_metrics.tsv"))
+        paths.append(_write_frame(result.sweep_reference_membership, layout.tables / "sweep_reference_membership.tsv", index=False))
         paths.append(_write_frame(result.sweep_global_metrics, layout.tables / "sweep_global_metrics.tsv", index=False))
         jaccard_dir = layout.tables / "sweep_pairwise_jaccard"
         for key, frame in result.sweep_pairwise_jaccard.items():
@@ -207,30 +208,19 @@ def write_result_outputs(
     return paths
 
 
-def annotated_copy(adata: Any, result: PopulationEmbeddingQCResult) -> Any:
-    """Return a separately allocated AnnData with namespaced QC annotations."""
+def annotated_copy(
+    adata: Any,
+    result: PopulationEmbeddingQCResult,
+) -> Any:
+    """Return a copy with focused cell annotations and complete cached results."""
+    from .storage import attach_focused_obs, store_population_embedding_qc
+
     output = adata.copy()
-    columns = {
-        "graph_neighbour_purity": "embedding_qc_graph_purity",
-        "umap_neighbour_purity": "embedding_qc_umap_purity",
-        "umap_graph_neighbourhood_preservation": "embedding_qc_umap_graph_preservation",
-        "boundary_class": "embedding_qc_boundary_class",
-    }
-    for source, target in columns.items():
-        if source not in result.cell_metrics:
-            continue
-        if target in output.obs:
-            raise ValueError(f"Refusing to overwrite existing AnnData observation column {target!r}")
-        if source == "boundary_class":
-            values = pd.Series(pd.NA, index=output.obs_names, dtype="string")
-        else:
-            values = pd.Series(np.nan, index=output.obs_names, dtype=float)
-        positions = result.cell_metrics.index.to_numpy(dtype=int)
-        values.iloc[positions] = result.cell_metrics[source].to_numpy()
-        output.obs[target] = values.to_numpy()
-    if "population_embedding_qc" in output.uns:
-        raise ValueError("Refusing to overwrite existing AnnData .uns['population_embedding_qc']")
-    output.uns["population_embedding_qc"] = json.loads(json.dumps(result.run_summary, cls=_JSONEncoder))
+    attach_focused_obs(output, result)
+    effective_config = PopulationEmbeddingQCConfig.model_validate(
+        result.run_summary.get("configuration", {})
+    )
+    store_population_embedding_qc(output, result, config=effective_config)
     return output
 
 

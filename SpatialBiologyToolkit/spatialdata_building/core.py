@@ -242,6 +242,89 @@ def _prepare_table_adata(source: Any, *, copy_adata: bool) -> Any:
     return source
 
 
+def _table_name_changes(adata: Any) -> tuple[dict[str, str], ...]:
+    """Predict the exact key changes made by SpatialData's table sanitizer."""
+
+    from spatialdata import sanitize_name
+
+    changes: list[dict[str, str]] = []
+    for attribute in ("obs", "var", "obsm", "obsp", "varm", "varp", "uns", "layers"):
+        used: set[str] = set()
+        for raw_name in getattr(adata, attribute).keys():
+            original = str(raw_name)
+            candidate = sanitize_name(
+                original,
+                is_dataframe_column=attribute in {"obs", "var"},
+            )
+            base = candidate
+            counter = 1
+            while candidate.casefold() in used:
+                candidate = f"{base}_{counter}"
+                counter += 1
+            used.add(candidate.casefold())
+            if candidate != original:
+                changes.append(
+                    {
+                        "attribute": attribute,
+                        "original": original,
+                        "sanitized": candidate,
+                    }
+                )
+    return tuple(changes)
+
+
+def _sanitize_table_for_spatialdata(adata: Any, *, modality: str) -> None:
+    """Sanitize AnnData attribute keys and retain an auditable rename record."""
+
+    from spatialdata import sanitize_table
+
+    changes = _table_name_changes(adata)
+    if not changes:
+        return
+    sanitize_table(adata, inplace=True)
+    existing_key = next(
+        (
+            str(key)
+            for key in adata.uns
+            if str(key).casefold() == SBT_METADATA_KEY.casefold()
+        ),
+        None,
+    )
+    if existing_key is not None and existing_key != SBT_METADATA_KEY:
+        adata.uns[SBT_METADATA_KEY] = adata.uns.pop(existing_key)
+    raw_metadata = adata.uns.get(SBT_METADATA_KEY, {})
+    metadata = dict(raw_metadata) if isinstance(raw_metadata, Mapping) else {}
+    metadata["table_name_sanitization"] = [dict(change) for change in changes]
+    adata.uns[SBT_METADATA_KEY] = metadata
+    logging.info(
+        "Sanitized %d AnnData attribute name(s) for SpatialData modality %r.",
+        len(changes),
+        modality,
+    )
+
+
+def _report_table_name_changes(
+    adata: Any,
+    *,
+    context: _PlanningContext,
+    modality: str,
+) -> tuple[dict[str, str], ...]:
+    changes = _table_name_changes(adata)
+    if changes:
+        examples = [
+            f"{change['attribute']}/{change['original']} -> {change['sanitized']}"
+            for change in changes[:10]
+        ]
+        context.issue(
+            "warning",
+            "table_names_will_be_sanitized",
+            f"SpatialData requires {len(changes)} AnnData attribute name(s) to "
+            f"be sanitized during construction. First changes: {examples}",
+            modality=modality,
+        )
+    return changes
+
+
 def _ordered_strings(values: Any) -> tuple[str, ...]:
     return tuple(dict.fromkeys(str(value) for value in values))
 
@@ -626,6 +709,11 @@ def _inspect_imc_table(source: IMCAnnData, context: _PlanningContext) -> _Contex
         y = pd.to_numeric(adata.obs[source.y_key], errors="raise").to_numpy()
         if not np.all(np.isfinite(x)) or not np.all(np.isfinite(y)):
             raise ValueError("Centroid columns must contain finite coordinates.")
+        table_name_changes = _report_table_name_changes(
+            adata,
+            context=context,
+            modality=source.name,
+        )
         roi_values = adata.obs[source.roi_key].astype(str).to_numpy()
         for roi in rois:
             selected = roi_values == roi
@@ -646,6 +734,7 @@ def _inspect_imc_table(source: IMCAnnData, context: _PlanningContext) -> _Contex
             "check_centroids_in_mask": bool(source.check_centroids_in_mask),
             "copy_adata": bool(source.copy_adata),
             "n_obs": int(adata.n_obs),
+            "table_name_changes": table_name_changes,
             "_obs_names": tuple(str(value) for value in adata.obs_names),
             "_instances": instances,
             "_roi_values": roi_values,
@@ -1287,6 +1376,11 @@ def _plan_maxfuse(source: MaxFuseSCRNASeq, context: _PlanningContext) -> Planned
             )
         if not source_obs:
             raise ValueError("MaxFuse AnnData contains no matched cells.")
+        table_name_changes = _report_table_name_changes(
+            adata,
+            context=context,
+            modality=source.name,
+        )
         matched_fraction = len(source_obs) / len(target_obs) if target_obs else 0.0
         table_name = source.table_name or f"table_{_safe_name(source.name)}"
         context.reserve(table_name, source.name)
@@ -1303,6 +1397,7 @@ def _plan_maxfuse(source: MaxFuseSCRNASeq, context: _PlanningContext) -> Planned
                 "matched_cells": len(source_obs),
                 "linked_imc_cells": len(target_obs),
                 "matched_fraction": matched_fraction,
+                "table_name_changes": table_name_changes,
                 "_obs_names": source_obs,
             },
         )
@@ -1602,14 +1697,6 @@ def _build_imc_table(
     adata.obsm["spatial"] = adata.obs[[source.x_key, source.y_key]].to_numpy(
         dtype=np.float64
     )
-    assert item.table_name is not None
-    bundle.tables[item.table_name] = TableModel.parse(
-        adata,
-        region=[mask_elements[roi] for roi in masks.rois],
-        region_key=TABLE_REGION_KEY,
-        instance_key=TABLE_INSTANCE_KEY,
-        overwrite_metadata=True,
-    )
     for roi, point_name in item.details["point_elements_by_roi"].items():
         selected = roi_values == roi
         data = pd.DataFrame(
@@ -1641,6 +1728,15 @@ def _build_imc_table(
             coordinates={"x": "x", "y": "y"},
             transformations=transformations,
         )
+    _sanitize_table_for_spatialdata(adata, modality=source.name)
+    assert item.table_name is not None
+    bundle.tables[item.table_name] = TableModel.parse(
+        adata,
+        region=[mask_elements[roi] for roi in masks.rois],
+        region_key=TABLE_REGION_KEY,
+        instance_key=TABLE_INSTANCE_KEY,
+        overwrite_metadata=True,
+    )
 
 
 def _build_region_table(item: PlannedModality, bundle: _ElementBundle) -> None:
@@ -1678,6 +1774,7 @@ def _build_region_table(item: PlannedModality, bundle: _ElementBundle) -> None:
         X=np.empty((len(obs), 0), dtype=np.float32),
         obs=obs,
     )
+    _sanitize_table_for_spatialdata(annotation, modality=source.name)
     assert item.table_name is not None
     bundle.tables[item.table_name] = TableModel.parse(
         annotation,
@@ -1715,6 +1812,7 @@ def _build_maxfuse(
         categories=list(target.obs[TABLE_REGION_KEY].cat.categories),
     )
     adata.obs[TABLE_INSTANCE_KEY] = linked[TABLE_INSTANCE_KEY].to_numpy()
+    _sanitize_table_for_spatialdata(adata, modality=source.name)
     assert item.table_name is not None
     regions = list(adata.obs[TABLE_REGION_KEY].cat.categories)
     bundle.tables[item.table_name] = TableModel.parse(
@@ -1724,13 +1822,17 @@ def _build_maxfuse(
         instance_key=TABLE_INSTANCE_KEY,
         overwrite_metadata=True,
     )
-    bundle.tables[item.table_name].uns[SBT_METADATA_KEY] = {
-        "schema_version": 1,
-        "kind": "maxfuse_scrnaseq",
-        "linked_imc_modality": source.imc_table,
-        "linked_imc_table": target_plan.table_name,
-        "matched_fraction": item.details["matched_fraction"],
-    }
+    table_metadata = dict(bundle.tables[item.table_name].uns.get(SBT_METADATA_KEY, {}))
+    table_metadata.update(
+        {
+            "schema_version": 1,
+            "kind": "maxfuse_scrnaseq",
+            "linked_imc_modality": source.imc_table,
+            "linked_imc_table": target_plan.table_name,
+            "matched_fraction": item.details["matched_fraction"],
+        }
+    )
+    bundle.tables[item.table_name].uns[SBT_METADATA_KEY] = table_metadata
 
 
 def _build_bundle(plan: SpatialDataPlan) -> _ElementBundle:

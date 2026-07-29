@@ -18,8 +18,9 @@ from spatialdata import read_zarr
 from SpatialBiologyToolkit.population_qc import (
     MarkerExpectations,
     PopulationQCArtifactWriter,
-    assess_clustering,
     inspect_population_data,
+    list_stored_population_qc,
+    load_stored_population_qc,
     plot_clustering_qc_panels,
     plot_marker_distributions,
     plot_population_breakdown,
@@ -34,7 +35,8 @@ population_key = "leiden_1.0"
 
 context = inspect_population_data(sdata, population_key)
 display(context.population_counts.head())
-structural_qc = assess_clustering(sdata, population_key)
+display(list_stored_population_qc(sdata))
+structural_qc = load_stored_population_qc(sdata, population_key)
 structural_panels = plot_clustering_qc_panels(structural_qc)
 
 global_umap = plot_population_umap(
@@ -83,6 +85,12 @@ identity hypothesis. Representation summaries show whether apparent evidence
 is reproduced across animals/cases and ROIs rather than being dominated by one
 image. A marker difference, structural score, or image gallery should not be
 used alone to assign a label.
+
+`load_stored_population_qc()` validates that the cached result still matches
+the observation identities/order, source labels, representations, graph, and
+sweep columns. It never recalculates. If no compatible result is available,
+run the managed `popqc` pipeline deliberately or request user direction rather
+than launching the expensive analysis from an Agent notebook.
 
 ## Inspect deliberately selected cells
 

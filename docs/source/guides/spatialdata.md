@@ -167,6 +167,27 @@ The planner checks:
 Mask instances absent from all linked cell tables are permitted and reported
 as unannotated instances. This supports cells removed during filtering.
 
+### AnnData name sanitization
+
+SpatialData permits only alphanumeric characters, underscores, dots, and
+hyphens in AnnData attribute names. During planning, the toolkit checks keys
+across `obs`, `var`, `obsm`, `obsp`, `varm`, `varp`, `uns`, and `layers`.
+Required changes are reported as one `table_names_will_be_sanitized` warning
+per table, including representative `original -> sanitized` names.
+
+Construction applies SpatialData's official `sanitize_table()` function
+before `TableModel.parse()`. The exact changes are retained in:
+
+```python
+sdata.tables["table_immune_cells"].uns[
+    "spatial_biology_toolkit"
+]["table_name_sanitization"]
+```
+
+With the default `copy_adata=True`, the supplied AnnData is unchanged. With
+`copy_adata=False` and an in-memory AnnData, construction intentionally
+sanitizes that same object along with adding SpatialData table metadata.
+
 For stricter coordinate QC, set:
 
 ```python
