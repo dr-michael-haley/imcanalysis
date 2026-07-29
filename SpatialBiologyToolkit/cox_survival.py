@@ -2275,3 +2275,267 @@ def run_cox_survival_analysis(
         cv_metrics=cv_metrics,
         cv_predictions=cv_predictions,
     )
+
+
+@dataclass(frozen=True)
+class CoxFeatureSource:
+    """In-memory observation source used by multi-source Cox preparation."""
+
+    name: str
+    obs: pd.DataFrame
+    population_obs: tuple[str, ...] = ()
+    continuous_obs: tuple[str, ...] = ()
+    case_obs: str | None = None
+    roi_obs: str | None = "ROI"
+    case_aggregation: str = "weighted"
+    normalization: str = "fraction"
+    include_population_counts: bool = False
+
+
+def prepare_clinical_metadata(
+    clinical: pd.DataFrame,
+    *,
+    case_col: str,
+    duration_col: str,
+    event_col: str | None,
+    roi_col: str | None = "ROI",
+    covariate_cols: Sequence[str] = (),
+    censored_case_ids: Sequence[str] = (),
+    assume_all_events: bool = False,
+) -> pd.DataFrame:
+    """Validate and normalize case/ROI survival metadata without aggregating features."""
+
+    required = [case_col, duration_col, *covariate_cols]
+    if roi_col:
+        required.append(roi_col)
+    if event_col:
+        required.append(event_col)
+    missing = [column for column in _ordered_unique(required) if column not in clinical]
+    if missing:
+        raise ValueError(f"Clinical metadata is missing required columns: {missing}")
+    if event_col is None and not censored_case_ids and not assume_all_events:
+        raise ValueError(
+            "Clinical metadata needs event_col, censored_case_ids, or assume_all_events=True."
+        )
+
+    result = clinical[_ordered_unique(required)].copy()
+    result[duration_col] = pd.to_numeric(result[duration_col], errors="coerce")
+    if roi_col:
+        result[roi_col] = result[roi_col].astype("string")
+    if event_col:
+        result["_cox_event"] = result[event_col].map(normalize_event_value)
+    else:
+        censored = {str(value) for value in censored_case_ids}
+        result["_cox_event"] = (~result[case_col].astype(str).isin(censored)).astype(float)
+    result["_cox_case"] = result[case_col].astype("string")
+    result["_cox_duration"] = result[duration_col]
+    result = result.dropna(subset=["_cox_case", "_cox_duration", "_cox_event"])
+    result = result[result["_cox_duration"] > 0].copy()
+    result["_cox_case"] = result["_cox_case"].astype(str)
+    result["_cox_event"] = result["_cox_event"].astype(bool)
+    if result.empty:
+        raise ValueError("No cases with positive duration and valid event status remain.")
+    return result
+
+
+def _case_outcomes(
+    clinical: pd.DataFrame,
+    *,
+    metadata_conflict: str,
+) -> pd.DataFrame:
+    outcomes = collapse_case_metadata(
+        clinical,
+        "_cox_case",
+        ["_cox_duration", "_cox_event"],
+        conflict=metadata_conflict,
+    )
+    outcomes.index = outcomes.index.astype(str)
+    outcomes["_cox_duration"] = pd.to_numeric(outcomes["_cox_duration"], errors="coerce")
+    outcomes["_cox_event"] = outcomes["_cox_event"].map(normalize_event_value)
+    return outcomes
+
+
+def _attach_source_outcomes(
+    source: CoxFeatureSource,
+    clinical: pd.DataFrame,
+    *,
+    clinical_roi_col: str | None,
+    metadata_conflict: str,
+) -> pd.DataFrame:
+    obs = source.obs.copy()
+    if source.case_obs:
+        if source.case_obs not in obs:
+            raise ValueError(
+                f"Cox source {source.name!r} is missing configured case_obs "
+                f"{source.case_obs!r}."
+            )
+        obs["_cox_case"] = obs[source.case_obs].astype("string")
+    else:
+        if not source.roi_obs or source.roi_obs not in obs:
+            raise ValueError(
+                f"Cox source {source.name!r} has no usable case_obs and is missing roi_obs "
+                f"{source.roi_obs!r} for clinical mapping."
+            )
+        if not clinical_roi_col or clinical_roi_col not in clinical:
+            raise ValueError(
+                f"Cox source {source.name!r} needs ROI mapping, but clinical roi_col is unavailable."
+            )
+        roi_map = collapse_case_metadata(
+            clinical,
+            clinical_roi_col,
+            "_cox_case",
+            conflict=metadata_conflict,
+        ).rename_axis(source.roi_obs)
+        roi_map.index = roi_map.index.astype(str)
+        obs[source.roi_obs] = obs[source.roi_obs].astype(str)
+        obs = obs.join(roi_map, on=source.roi_obs, how="left")
+
+    outcomes = _case_outcomes(clinical, metadata_conflict=metadata_conflict)
+    obs["_cox_case"] = obs["_cox_case"].astype("string")
+    obs = obs.join(outcomes, on="_cox_case", how="left")
+    missing_case_rows = int(obs["_cox_duration"].isna().sum())
+    if missing_case_rows == len(obs):
+        raise ValueError(
+            f"Cox source {source.name!r} did not map any observations to clinical outcomes."
+        )
+    return obs.dropna(subset=["_cox_case", "_cox_duration", "_cox_event"])
+
+
+def build_multi_source_case_table(
+    sources: Sequence[CoxFeatureSource],
+    clinical: pd.DataFrame,
+    *,
+    clinical_case_col: str,
+    clinical_duration_col: str,
+    clinical_event_col: str | None,
+    clinical_roi_col: str | None = "ROI",
+    covariate_cols: Sequence[str] = (),
+    censored_case_ids: Sequence[str] = (),
+    assume_all_events: bool = False,
+    metadata_conflict: str = "mode",
+    min_observations_per_case: int = 1,
+    min_rois_per_case: int = 1,
+    min_feature_prevalence: float = 0.0,
+) -> pd.DataFrame:
+    """Combine case-level features from multiple AnnData observation sources.
+
+    Sources may carry a case identifier directly or may be mapped to cases
+    through their ROI column and the clinical table. Feature names are prefixed
+    by source name, preventing collisions when population abundances from
+    several analyses are joined.
+    """
+
+    if not sources:
+        raise ValueError("At least one Cox feature source is required.")
+    source_names = [source.name for source in sources]
+    if len(source_names) != len(set(source_names)):
+        raise ValueError("Cox feature source names must be unique.")
+
+    needs_roi_mapping = any(source.case_obs is None for source in sources)
+    clinical_prepared = prepare_clinical_metadata(
+        clinical,
+        case_col=clinical_case_col,
+        duration_col=clinical_duration_col,
+        event_col=clinical_event_col,
+        roi_col=clinical_roi_col if needs_roi_mapping else None,
+        covariate_cols=covariate_cols,
+        censored_case_ids=censored_case_ids,
+        assume_all_events=assume_all_events,
+    )
+    source_tables: list[pd.DataFrame] = []
+    source_feature_map: dict[str, list[str]] = {}
+    for source in sources:
+        mapped = _attach_source_outcomes(
+            source,
+            clinical_prepared,
+            clinical_roi_col=clinical_roi_col,
+            metadata_conflict=metadata_conflict,
+        )
+        mapped.index = mapped.index.astype(str)
+        source_roi = source.roi_obs if source.roi_obs in mapped else None
+        table = build_case_level_table(
+            ad.AnnData(obs=mapped),
+            population_obs=list(source.population_obs),
+            continuous_obs=list(source.continuous_obs),
+            duration_obs="_cox_duration",
+            event_obs="_cox_event",
+            case_obs="_cox_case",
+            roi_obs=source_roi,
+            case_aggregation=source.case_aggregation,
+            normalization=source.normalization,
+            include_population_counts=source.include_population_counts,
+            metadata_conflict=metadata_conflict,
+            min_cells_per_case=min_observations_per_case,
+            min_rois_per_case=min_rois_per_case,
+            min_feature_prevalence=min_feature_prevalence,
+        )
+        original_features = get_feature_columns(table)
+        rename = {column: f"{_safe_name(source.name)}__{column}" for column in original_features}
+        table = table.rename(columns=rename)
+        source_feature_map[source.name] = [rename[column] for column in original_features]
+        table = table.rename(
+            columns={
+                "n_cells": f"n_observations__{_safe_name(source.name)}",
+                "n_rois": f"n_rois__{_safe_name(source.name)}",
+            }
+        )
+        source_tables.append(table)
+
+    combined = source_tables[0].copy()
+    for source, table in zip(sources[1:], source_tables[1:]):
+        comparison = combined[["duration", "event"]].join(
+            table[["duration", "event"]],
+            how="inner",
+            lsuffix="_left",
+            rsuffix="_right",
+        )
+        duration_match = np.isclose(
+            comparison["duration_left"].astype(float),
+            comparison["duration_right"].astype(float),
+            equal_nan=False,
+        )
+        event_match = (
+            comparison["event_left"].astype(bool)
+            == comparison["event_right"].astype(bool)
+        ).to_numpy()
+        if not bool(np.all(duration_match & event_match)):
+            raise ValueError(
+                f"Survival outcomes disagree after joining Cox source {source.name!r}."
+            )
+        feature_columns = [
+            column for column in table if column not in {"duration", "event"}
+        ]
+        combined = combined.join(table[feature_columns], how="inner")
+
+    covariates = encode_case_covariates(
+        clinical_prepared,
+        "_cox_case",
+        list(covariate_cols),
+        conflict=metadata_conflict,
+        one_hot=True,
+        drop_first=True,
+    )
+    covariates = covariates.rename(
+        columns={column: f"clinical__{_safe_name(column)}" for column in covariates}
+    )
+    combined = combined.join(covariates, how="left")
+    clinical_features = list(covariates.columns)
+    image_features = [
+        feature
+        for features in source_feature_map.values()
+        for feature in features
+        if feature in combined
+    ]
+    usable_clinical = [
+        column
+        for column in clinical_features
+        if column in combined
+        and pd.to_numeric(combined[column], errors="coerce").notna().all()
+        and combined[column].nunique(dropna=True) > 1
+    ]
+    combined = combined.drop(columns=set(clinical_features) - set(usable_clinical))
+    combined.attrs["image_features"] = image_features
+    combined.attrs["clinical_features"] = usable_clinical
+    combined.attrs["source_features"] = source_feature_map
+    combined.attrs["feature_columns"] = [*image_features, *usable_clinical]
+    return combined

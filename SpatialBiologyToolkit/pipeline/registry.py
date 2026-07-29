@@ -136,6 +136,48 @@ STAGE_PRESENTATION: dict[str, tuple[str, int, str, str]] = {
         "Population_Embedding_QC",
         "population_embedding_qc.md",
     ),
+    "hyperstac-preprocess": (
+        "HyPERSTAC Image Preprocessing",
+        30,
+        "HyPERSTAC_Preprocessing",
+        "hyperstac.md",
+    ),
+    "hyperstac-model": (
+        "HyPERSTAC Representation",
+        31,
+        "HyPERSTAC_Representation",
+        "hyperstac.md",
+    ),
+    "hyperstac-permutation": (
+        "HyPERSTAC Permutation Sensitivity",
+        32,
+        "HyPERSTAC_Permutation",
+        "hyperstac.md",
+    ),
+    "hyperstac-visualise": (
+        "HyPERSTAC Visualisation",
+        33,
+        "HyPERSTAC_Visualisation",
+        "hyperstac.md",
+    ),
+    "cox": (
+        "Cox Survival Analysis",
+        34,
+        "Cox_Survival",
+        "cox_survival.md",
+    ),
+    "hyperstac-stability": (
+        "HyPERSTAC Leiden Stability",
+        35,
+        "HyPERSTAC_Leiden_Stability",
+        "hyperstac.md",
+    ),
+    "hyperstac-full": (
+        "HyPERSTAC Full",
+        36,
+        "HyPERSTAC_Full",
+        "hyperstac.md",
+    ),
 }
 
 STAGE_MODULES: dict[str, tuple[str, ...]] = {
@@ -184,6 +226,23 @@ STAGE_MODULES: dict[str, tuple[str, ...]] = {
     "slogs": ("SpatialBiologyToolkit.scripts.slurmlogs",),
     "rebuildmeta": ("SpatialBiologyToolkit.scripts.rebuild_metadata",),
     "popqc": ("SpatialBiologyToolkit.scripts.population_embedding_qc",),
+    "hyperstac-preprocess": (
+        "SpatialBiologyToolkit.scripts.hyperstac_preprocess",
+    ),
+    "hyperstac-model": ("SpatialBiologyToolkit.scripts.hyperstac_model",),
+    "hyperstac-permutation": (
+        "SpatialBiologyToolkit.scripts.hyperstac_permutation",
+    ),
+    "hyperstac-visualise": (
+        "SpatialBiologyToolkit.scripts.hyperstac_visualise",
+    ),
+    "cox": ("SpatialBiologyToolkit.scripts.cox_survival",),
+    "hyperstac-stability": (
+        "SpatialBiologyToolkit.scripts.hyperstac_stability",
+    ),
+    "hyperstac-full": (
+        "SpatialBiologyToolkit.scripts.hyperstac_full",
+    ),
 }
 
 STAGE_CONFIG_SECTIONS: dict[str, tuple[str, ...]] = {
@@ -216,6 +275,13 @@ STAGE_CONFIG_SECTIONS: dict[str, tuple[str, ...]] = {
     "slogs": ("general",),
     "rebuildmeta": ("general", "rebuild_metadata"),
     "popqc": ("general", "population_embedding_qc"),
+    "hyperstac-preprocess": ("general", "hyperstac"),
+    "hyperstac-model": ("general", "hyperstac"),
+    "hyperstac-permutation": ("general", "hyperstac"),
+    "hyperstac-visualise": ("general", "hyperstac"),
+    "cox": ("general", "cox"),
+    "hyperstac-stability": ("general", "hyperstac", "cox"),
+    "hyperstac-full": ("general", "hyperstac", "cox"),
 }
 
 
@@ -577,6 +643,120 @@ STAGES: tuple[StageSpec, ...] = (
             "No fixed integration-stage dependency is imposed because curated and multiple integration routes are supported.",
         ),
     ),
+    _stage(
+        "hyperstac-preprocess",
+        "job_hyperstac_preprocess.sh",
+        "Background-correct and robustly scale ROI/channel TIFF images for HyPERSTAC.",
+        groups=("hyperstac",),
+        requires=("hyperstac_input_images",),
+        produces=("hyperstac_assets", "human_outputs"),
+        outputs=("Normalized ROI/channel TIFF assets", "normalization QC tables"),
+    ),
+    _stage(
+        "hyperstac-model",
+        "job_hyperstac_model.sh",
+        "Tile normalized images, train VICReg, and extract patch representations.",
+        depends_on=("hyperstac-preprocess",),
+        groups=("hyperstac",),
+        requires=("hyperstac_assets",),
+        produces=("hyperstac_assets", "human_outputs"),
+        outputs=(
+            "Patch arrays and spatial metadata",
+            "trained encoder/projector weights",
+            "representation and patch-metric AnnData assets",
+        ),
+    ),
+    _stage(
+        "hyperstac-permutation",
+        "job_hyperstac_permutation.sh",
+        "Measure patch-embedding sensitivity to channel zeroing and pixel shuffling.",
+        depends_on=("hyperstac-model",),
+        groups=("hyperstac",),
+        requires=("hyperstac_assets",),
+        produces=("hyperstac_assets", "human_outputs"),
+        required_files={
+            "hyperstac_assets": [
+                "imc_hyperstac_representations.h5ad",
+                "patch_metadata.csv",
+                "model/encoder.weights.h5",
+            ]
+        },
+        outputs=("Permutation sensitivity AnnData", "condition and patch sensitivity tables"),
+    ),
+    _stage(
+        "hyperstac-visualise",
+        "job_hyperstac_visualise.sh",
+        "Run clustering scans and create HyPERSTAC embedding, marker, spatial, and gallery reports.",
+        depends_on=("hyperstac-model",),
+        groups=("hyperstac",),
+        requires=("hyperstac_assets",),
+        produces=("hyperstac_assets", "human_outputs"),
+        required_files={
+            "hyperstac_assets": [
+                "imc_hyperstac_representations.h5ad",
+                "imc_hyperstac_patch_metrics.h5ad",
+            ]
+        },
+        outputs=(
+            "Leiden/UMAP parameter-scan state",
+            "marker heatmaps and patch galleries",
+            "optional spatial maps and perturbation overlays",
+        ),
+        notes=(
+            "Use --no-deps to regenerate reports from already validated HyPERSTAC assets.",
+        ),
+    ),
+    _stage(
+        "cox",
+        "job_cox_survival.sh",
+        "Combine case-level features from one or more AnnData obs tables and compare Cox models.",
+        groups=("survival",),
+        produces=("human_outputs",),
+        outputs=(
+            "Audited combined case-level feature table",
+            "Cox PH, Ridge Cox, and CoxNet model/validation comparisons",
+            "image-only, clinical-only, and combined feature-set reports",
+        ),
+        notes=(
+            "Feature AnnData and clinical metadata paths are configured in cox.feature_sources and the cox clinical fields.",
+            "With no explicit feature sources, the stage can infer general.population_obs_primary and existing HyPERSTAC representations.",
+        ),
+    ),
+    _stage(
+        "hyperstac-stability",
+        "job_hyperstac_stability.sh",
+        "Cross-reference Leiden marker environments, perturbation sensitivity, and Cox directions.",
+        depends_on=("hyperstac-visualise", "cox"),
+        groups=("hyperstac",),
+        requires=("hyperstac_assets",),
+        produces=("human_outputs",),
+        outputs=(
+            "Cross-Leiden environment and marker stability tables",
+            "survival/perturbation concordance figures",
+            "per-clustering HTML reports",
+        ),
+        notes=(
+            "Use --no-deps to rebuild stability from existing managed HyPERSTAC visualisation and Cox executions.",
+        ),
+    ),
+    _stage(
+        "hyperstac-full",
+        "job_hyperstac_full.sh",
+        "Run HyPERSTAC preprocessing, representation, perturbation, visualisation, Cox, and stability in one GPU job.",
+        groups=("hyperstac-full",),
+        requires=("hyperstac_input_images",),
+        produces=("hyperstac_assets", "human_outputs"),
+        outputs=(
+            "Complete reusable HyPERSTAC asset tree",
+            "clustering and perturbation visualisation report",
+            "multi-model Cox report",
+            "cross-Leiden stability report",
+        ),
+        notes=(
+            "The Cox component remains independently runnable as sbt run cox.",
+            "The full job requires usable survival metadata for its Cox and stability components.",
+        ),
+    ),
 )
 
 STAGE_REGISTRY = {stage.name: stage for stage in STAGES}
@@ -621,6 +801,18 @@ MODES: tuple[ModeSpec, ...] = (
         name="visualisation",
         description="Standard project visualisation and QC stage.",
         stages=["vis"],
+    ),
+    ModeSpec(
+        name="hyperstac",
+        description="Checkpointed HyPERSTAC image representation, sensitivity, visualisation, Cox, and stability workflow.",
+        stages=[
+            "hyperstac-preprocess",
+            "hyperstac-model",
+            "hyperstac-permutation",
+            "hyperstac-visualise",
+            "cox",
+            "hyperstac-stability",
+        ],
     ),
     ModeSpec(
         name="full",

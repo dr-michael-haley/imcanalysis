@@ -295,6 +295,12 @@ SpatialData Labels elements remain integer rasters. Region names are stored in
 a linked table because raster pixels cannot directly contain categorical
 strings.
 
+An ROI raster containing only background is retained as a Labels element and
+reported with an `empty_region_labels` warning. It is omitted only from the
+linked annotation table's region list because there are no positive values to
+annotate; `get_label_annotations(..., roi=...)` returns an empty DataFrame for
+that ROI.
+
 `value_names` can be:
 
 - a global `{integer: name}` mapping;

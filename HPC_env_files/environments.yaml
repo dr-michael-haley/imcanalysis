@@ -78,6 +78,19 @@ environments:
     notes:
       - External environment; CellVision uses the repository implementation and does not require the old converter checkout.
 
+  hyperstac:
+    conda_name: hyperstac-imc
+    specification_directory: HPC_env_files/hyperstac-imc
+    managed: false
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, anndata, scanpy, tensorflow"]
+      - [python, -c, "import lifelines, sksurv, tifffile, seaborn"]
+    notes:
+      - External GPU environment adapted from the local HyPERSTAC IMC environment.
+      - The intent specification is committed, but no platform lock was generated without explicit environment-mutation/lock authority.
+
 stage_environments:
   prep: [segmentation]
   vis: [segmentation]
@@ -106,3 +119,10 @@ stage_environments:
   slogs: [segmentation]
   rebuildmeta: [segmentation]
   popqc: [cellcharter]
+  hyperstac-preprocess: [hyperstac]
+  hyperstac-model: [hyperstac]
+  hyperstac-permutation: [hyperstac]
+  hyperstac-visualise: [hyperstac]
+  cox: [hyperstac]
+  hyperstac-stability: [hyperstac]
+  hyperstac-full: [hyperstac]

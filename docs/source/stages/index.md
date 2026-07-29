@@ -23,6 +23,8 @@ starling
 ai_interpretation
 visualisation
 population_embedding_qc
+hyperstac
+cox_survival
 pairwise_spatial
 networkx_spatial
 marker_reintegration

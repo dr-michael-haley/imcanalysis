@@ -10,6 +10,7 @@ This reference is split by module so the site navigation stays compact.
 .. toctree::
    :maxdepth: 1
 
+   _napari_imc_normalization
    backgating
    cellvision
    cellvision_vicreg
@@ -33,6 +34,7 @@ This reference is split by module so the site navigation stays compact.
    config_documentation
    config_export
    config_load
+   config_migration
    config_models
    config_schema
    reporting_inventory

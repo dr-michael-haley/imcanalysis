@@ -1748,6 +1748,11 @@ def _build_region_table(item: PlannedModality, bundle: _ElementBundle) -> None:
     source = item.source
     assert isinstance(source, RegionLabels)
     elements = _element_by_roi(item)
+    annotated_elements = [
+        elements[roi].element_name
+        for roi in item.rois
+        if item.details["value_names_by_roi"][roi]
+    ]
     records: list[dict[str, Any]] = []
     obs_names: list[str] = []
     for roi in item.rois:
@@ -1765,7 +1770,7 @@ def _build_region_table(item: PlannedModality, bundle: _ElementBundle) -> None:
     obs = pd.DataFrame.from_records(records, index=obs_names)
     obs[TABLE_REGION_KEY] = pd.Categorical(
         obs[TABLE_REGION_KEY],
-        categories=[element.element_name for element in item.elements],
+        categories=annotated_elements,
     )
     obs[TABLE_INSTANCE_KEY] = obs[TABLE_INSTANCE_KEY].to_numpy(dtype=np.int64)
     obs[source.value_key] = obs[source.value_key].to_numpy(dtype=np.int64)
@@ -1778,7 +1783,7 @@ def _build_region_table(item: PlannedModality, bundle: _ElementBundle) -> None:
     assert item.table_name is not None
     bundle.tables[item.table_name] = TableModel.parse(
         annotation,
-        region=[element.element_name for element in item.elements],
+        region=annotated_elements,
         region_key=TABLE_REGION_KEY,
         instance_key=TABLE_INSTANCE_KEY,
         overwrite_metadata=True,

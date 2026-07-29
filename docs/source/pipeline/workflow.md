@@ -47,6 +47,12 @@ former control-plane role.
   VICReg embedding, RAPIDS clustering, and plotting run as separate dependent
   jobs. Each `cellvision-*` component can also be requested directly.
 - `cellvision-full` performs the same workflow in one GPU allocation.
+- `hyperstac` is the checkpointed patch-representation mode: image
+  preprocessing, VICReg modelling, perturbation sensitivity, visualisation,
+  general Cox analysis, and cross-Leiden stability run as dependent jobs.
+- `hyperstac-full` performs the complete HyPERSTAC route in one GPU allocation.
+- `cox` is independently runnable for case-level features from any configured
+  AnnData observation sources; it is not restricted to HyPERSTAC.
 - `scport` is an external single-cell portrait branch after denoising and mask generation. Its environment and external converter are not installed by the standard environment setup.
 - `aiinter` needs `OPENAI_API_KEY` when AI interpretation is enabled.
 

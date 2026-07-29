@@ -136,6 +136,28 @@ def resolve_assets(
     )
     assets.append(
         inspect_asset(
+            role="hyperstac_input_images",
+            path=resolve_project_path(
+                root,
+                config.hyperstac.input_images_folder
+                or config.general.denoised_images_folder,
+            ),
+            kind="directory",
+            lifecycle="required_input",
+            count_limit=count_limit,
+        )
+    )
+    assets.append(
+        inspect_asset(
+            role="hyperstac_assets",
+            path=resolve_project_path(root, config.hyperstac.asset_folder),
+            kind="directory",
+            lifecycle="generated_output",
+            count_limit=count_limit,
+        )
+    )
+    assets.append(
+        inspect_asset(
             role="population_qc_anndata",
             path=resolve_project_path(
                 root, config.population_embedding_qc.annotated_adata_path

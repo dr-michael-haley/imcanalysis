@@ -2025,6 +2025,946 @@ class CellVisionConfig(ConfigModel):
         return self
 
 
+@config_section("hyperstac")
+class HyperstacConfig(ConfigModel):
+    """HyPERSTAC image preprocessing, representation, and report settings."""
+
+    asset_folder: str = config_field(
+        "hyperstac",
+        description="Project-relative folder for reusable HyPERSTAC images, patches, models, and AnnData assets.",
+        level="basic",
+        stage="hyperstac",
+        ui_group="Reusable assets",
+        advice="Keep this outside general.outputs_folder because downstream stages reuse these files.",
+    )
+    input_images_folder: Optional[str] = config_field(
+        None,
+        description="Optional ROI/channel TIFF folder; null uses general.denoised_images_folder.",
+        level="basic",
+        stage="hyperstac",
+        ui_group="Reusable assets",
+        advice="Each ROI must be a subfolder containing consistently named channel TIFF files.",
+    )
+    channels: List[str] = config_field(
+        default_factory=list,
+        description="Ordered channel names; an empty list infers and validates the common alphabetical channel set.",
+        level="basic",
+        stage="hyperstac",
+        ui_group="Images",
+        advice="The former GBM-specific marker list is intentionally not a package default.",
+    )
+    preprocess_images: bool = config_field(
+        True,
+        description="Create normalized channel TIFF assets before modelling.",
+        level="basic",
+        stage="hyperstac",
+        ui_group="Images",
+    )
+    background_subtraction: bool = config_field(
+        True,
+        description="Subtract a fixed or percentile background estimate before scaling.",
+        stage="hyperstac",
+        ui_group="Image normalization",
+    )
+    background_method: Literal["fixed", "percentile"] = config_field(
+        "fixed",
+        description="Background estimator used for every ROI/channel image.",
+        stage="hyperstac",
+        ui_group="Image normalization",
+    )
+    background_fixed_value: float = config_field(
+        0.5,
+        description="Fixed background value subtracted when background_method is fixed.",
+        stage="hyperstac",
+        ui_group="Image normalization",
+        ge=0,
+    )
+    background_percentile: float = config_field(
+        20.0,
+        description="Per-image percentile used when background_method is percentile.",
+        stage="hyperstac",
+        ui_group="Image normalization",
+        ge=0,
+        le=100,
+    )
+    presence_mask: bool = config_field(
+        False,
+        description="Restrict scale estimation to pixels passing a per-image presence threshold.",
+        stage="hyperstac",
+        ui_group="Image normalization",
+        advice="Disabled by default to preserve the tested IMC adaptation.",
+    )
+    presence_percentile: float = config_field(
+        95.0,
+        description="Percentile used to derive a channel-presence score.",
+        stage="hyperstac",
+        ui_group="Image normalization",
+        ge=0,
+        le=100,
+    )
+    presence_threshold: float = config_field(
+        1.0,
+        description="Minimum presence score when presence masking is enabled.",
+        stage="hyperstac",
+        ui_group="Image normalization",
+        ge=0,
+    )
+    scale_percentile: float = config_field(
+        99.5,
+        description="Robust per-channel percentile mapped to one after background correction.",
+        stage="hyperstac",
+        ui_group="Image normalization",
+        gt=0,
+        le=100,
+    )
+    scale_present_only: bool = config_field(
+        False,
+        description="Estimate scale only from presence-positive pixels.",
+        stage="hyperstac",
+        ui_group="Image normalization",
+    )
+    scale_sample_pixels: int = config_field(
+        0,
+        description="Maximum pixels sampled per ROI/channel for scale estimation; zero uses all pixels.",
+        stage="hyperstac",
+        ui_group="Image normalization",
+        ge=0,
+    )
+    tiff_compression: Optional[str] = config_field(
+        None,
+        description="Optional tifffile compression codec for normalized TIFF assets.",
+        stage="hyperstac",
+        ui_group="Image normalization",
+    )
+    preprocess_overwrite: bool = config_field(
+        True,
+        description="Replace existing normalized TIFF outputs after validating the target path.",
+        stage="hyperstac",
+        ui_group="Image normalization",
+    )
+    patch_size: int = config_field(
+        100,
+        description="Square patch size in pixels.",
+        level="basic",
+        stage="hyperstac",
+        ui_group="Patches",
+        advice="At 1 um/pixel this represents a 100 um tissue window; the preprint used 224 px mIF tiles.",
+        gt=0,
+    )
+    stride: Optional[int] = config_field(
+        None,
+        description="Patch stride in pixels; null uses patch_size for non-overlapping patches.",
+        stage="hyperstac",
+        ui_group="Patches",
+        gt=0,
+    )
+    pixel_size_um: float = config_field(
+        1.0,
+        description="Micrometres represented by one source-image pixel.",
+        level="basic",
+        stage="hyperstac",
+        ui_group="Patches",
+        gt=0,
+    )
+    mask_channel: Optional[str] = config_field(
+        None,
+        description="Optional marker channel used for a direct tissue/background patch filter.",
+        stage="hyperstac",
+        ui_group="Patches",
+    )
+    mask_threshold: float = config_field(
+        0.05,
+        description="Mask-channel value above which a pixel is treated as tissue.",
+        stage="hyperstac",
+        ui_group="Patches",
+        ge=0,
+    )
+    min_mask_fraction: float = config_field(
+        0.05,
+        description="Minimum mask-positive pixel fraction required for a patch.",
+        stage="hyperstac",
+        ui_group="Patches",
+        ge=0,
+        le=1,
+    )
+    min_patch_signal: float = config_field(
+        0.0,
+        description="Minimum whole-patch mean signal; zero disables this filter.",
+        stage="hyperstac",
+        ui_group="Patches",
+        ge=0,
+    )
+    subpatch_size: int = config_field(
+        10,
+        description="Square local subpatch size used by the channel-independent tissue filter.",
+        stage="hyperstac",
+        ui_group="Patches",
+        gt=0,
+    )
+    subpatch_signal_threshold: float = config_field(
+        0.01,
+        description="Mean all-channel signal required for a local subpatch to count as tissue.",
+        stage="hyperstac",
+        ui_group="Patches",
+        ge=0,
+    )
+    min_tissue_subpatch_fraction: float = config_field(
+        0.5,
+        description="Minimum fraction of tissue-positive local subpatches required to retain a patch.",
+        stage="hyperstac",
+        ui_group="Patches",
+        ge=0,
+        le=1,
+    )
+    reuse_patches: bool = config_field(
+        False,
+        description="Reuse an existing validated patch set instead of re-tiling.",
+        stage="hyperstac",
+        ui_group="Patches",
+    )
+    overwrite: bool = config_field(
+        True,
+        description="Replace existing HyPERSTAC model assets for a deliberate rerun.",
+        stage="hyperstac",
+        ui_group="Reusable assets",
+    )
+    encoder: Literal["resnet50", "small-cnn"] = config_field(
+        "resnet50",
+        description="Image encoder architecture.",
+        level="basic",
+        stage="hyperstac",
+        ui_group="VICReg training",
+    )
+    encoder_weights: Optional[str] = config_field(
+        None,
+        description="Optional existing encoder weights; when set, VICReg training is skipped.",
+        stage="hyperstac",
+        ui_group="VICReg training",
+    )
+    epochs: int = config_field(
+        50,
+        description="VICReg training epochs for the tested IMC adaptation.",
+        level="basic",
+        stage="hyperstac",
+        ui_group="VICReg training",
+        advice="The published mIF protocol used 100 epochs; increase after dataset-specific convergence review.",
+        gt=0,
+    )
+    batch_size: int = config_field(
+        64,
+        description="VICReg training batch size.",
+        stage="hyperstac",
+        ui_group="VICReg training",
+        advice="The preprint used 256 on an 80 GB H100; 64 is the safer portable IMC default.",
+        gt=1,
+    )
+    representation_batch_size: Optional[int] = config_field(
+        None,
+        description="Optional embedding-extraction batch size; null reuses batch_size.",
+        stage="hyperstac",
+        ui_group="VICReg training",
+        gt=0,
+    )
+    learning_rate: float = config_field(
+        1e-4,
+        description="Adam learning rate for VICReg training.",
+        stage="hyperstac",
+        ui_group="VICReg training",
+        gt=0,
+    )
+    projector_output_size: int = config_field(
+        2048,
+        description="Width of each VICReg projection-head layer.",
+        stage="hyperstac",
+        ui_group="VICReg training",
+        gt=0,
+    )
+    max_patches: Optional[int] = config_field(
+        None,
+        description="Optional random cap on training/embedding patches for controlled smoke runs.",
+        stage="hyperstac",
+        ui_group="VICReg training",
+        gt=1,
+    )
+    permutation_channels: List[str] = config_field(
+        default_factory=list,
+        description="Channels perturbed in sensitivity analysis; empty means all channels.",
+        stage="hyperstac",
+        ui_group="Permutation sensitivity",
+    )
+    permutation_shuffle_repeats: int = config_field(
+        10,
+        description="Independent pixel-shuffle repeats per perturbation.",
+        stage="hyperstac",
+        ui_group="Permutation sensitivity",
+        gt=0,
+    )
+    permutation_batch_size: int = config_field(
+        128,
+        description="Encoder inference batch size for permutation sensitivity.",
+        stage="hyperstac",
+        ui_group="Permutation sensitivity",
+        gt=0,
+    )
+    permutation_shuffle_pixels: Literal["all", "nonzero"] = config_field(
+        "all",
+        description="Shuffle all pixels or only non-zero pixels.",
+        stage="hyperstac",
+        ui_group="Permutation sensitivity",
+    )
+    permutation_include_all_channels: bool = config_field(
+        True,
+        description="Include all-channel zero and shuffle perturbations.",
+        stage="hyperstac",
+        ui_group="Permutation sensitivity",
+    )
+    permutation_recompute_original: bool = config_field(
+        False,
+        description="Recompute original patch embeddings instead of reading representation AnnData.",
+        stage="hyperstac",
+        ui_group="Permutation sensitivity",
+    )
+    permutation_write_wide_csv: bool = config_field(
+        True,
+        description="Write optional wide compressed matrices alongside the reusable perturbation AnnData.",
+        stage="hyperstac",
+        ui_group="Permutation sensitivity",
+    )
+    run_cluster_scan: bool = config_field(
+        True,
+        description="Run the configured Scanpy graph/UMAP/Leiden parameter grid before visualisation.",
+        level="basic",
+        stage="hyperstac",
+        ui_group="Clustering",
+    )
+    leiden_resolutions: List[float] = config_field(
+        default_factory=lambda: [0.2, 0.25, 0.3, 0.35],
+        description="Leiden resolution values used in the clustering grid.",
+        stage="hyperstac",
+        ui_group="Clustering",
+        min_length=1,
+    )
+    n_neighbors: List[int] = config_field(
+        default_factory=lambda: [15, 30, 100],
+        description="Neighbour counts used in the clustering grid.",
+        stage="hyperstac",
+        ui_group="Clustering",
+        min_length=1,
+    )
+    n_pcs: List[int] = config_field(
+        default_factory=lambda: [0, 10, 20, 50],
+        description="PCA dimensions used in the clustering grid; zero uses the complete embedding.",
+        stage="hyperstac",
+        ui_group="Clustering",
+        min_length=1,
+    )
+    umap_min_dist: float = config_field(
+        0.1,
+        description="Scanpy UMAP minimum distance for every clustering grid graph.",
+        stage="hyperstac",
+        ui_group="Clustering",
+        ge=0,
+    )
+    write_clustered_adata: bool = config_field(
+        True,
+        description="Persist clustering columns in the reusable representation AnnData.",
+        stage="hyperstac",
+        ui_group="Clustering",
+    )
+    replace_existing_cluster_scan: bool = config_field(
+        True,
+        description="Replace existing clustering-grid columns matching cluster_col_search.",
+        stage="hyperstac",
+        ui_group="Clustering",
+    )
+    cluster_col: str = config_field(
+        "leiden",
+        description="Exact clustering column used when cluster_col_search is empty.",
+        stage="hyperstac",
+        ui_group="Visualisation",
+    )
+    cluster_col_search: str = config_field(
+        "leiden",
+        description="Substring selecting all clustering columns to visualise and assess.",
+        level="basic",
+        stage="hyperstac",
+        ui_group="Visualisation",
+    )
+    max_umap_channels: int = config_field(
+        0,
+        description="Maximum marker-intensity UMAPs; zero means all channels.",
+        stage="hyperstac",
+        ui_group="Visualisation",
+        ge=0,
+    )
+    max_permutation_umaps: int = config_field(
+        30,
+        description="Maximum permutation-score UMAPs; zero disables these plots.",
+        stage="hyperstac",
+        ui_group="Visualisation",
+        ge=0,
+    )
+    max_roi_maps: int = config_field(
+        0,
+        description="Maximum ROI spatial cluster maps; zero means all ROIs.",
+        stage="hyperstac",
+        ui_group="Visualisation",
+        ge=0,
+    )
+    write_spatial_cluster_maps: bool = config_field(
+        False,
+        description="Write ROI back-gated cluster figures and TIFF label masks.",
+        stage="hyperstac",
+        ui_group="Visualisation",
+        advice="Disabled by default because whole-cohort TIFF masks can be large.",
+    )
+    patches_per_cluster: int = config_field(
+        20,
+        description="Patch examples included in each cluster gallery.",
+        stage="hyperstac",
+        ui_group="Visualisation",
+        gt=0,
+    )
+    gallery_top_markers: int = config_field(
+        4,
+        description="Top markers selected for each patch gallery.",
+        stage="hyperstac",
+        ui_group="Visualisation",
+        gt=0,
+    )
+    gallery_columns: int = config_field(
+        4,
+        description="Number of gallery columns.",
+        stage="hyperstac",
+        ui_group="Visualisation",
+        gt=0,
+    )
+    split_channel_gallery: bool = config_field(
+        True,
+        description="Show an RGB composite plus separate marker channels for selected patches.",
+        stage="hyperstac",
+        ui_group="Visualisation",
+    )
+    gallery_auto_contrast: bool = config_field(
+        False,
+        description="Use per-patch automatic contrast instead of a fixed intensity scale.",
+        stage="hyperstac",
+        ui_group="Visualisation",
+    )
+    gallery_vmax: float = config_field(
+        1.0,
+        description="Fixed gallery intensity maximum when automatic contrast is disabled.",
+        stage="hyperstac",
+        ui_group="Visualisation",
+        gt=0,
+    )
+    gallery_contrast_percentile: float = config_field(
+        99.5,
+        description="Percentile used when automatic gallery contrast is enabled.",
+        stage="hyperstac",
+        ui_group="Visualisation",
+        gt=0,
+        le=100,
+    )
+    gallery_marker_source: Literal["auto", "permutation", "intensity"] = config_field(
+        "auto",
+        description="Evidence source used to select cluster-gallery markers.",
+        stage="hyperstac",
+        ui_group="Visualisation",
+    )
+    gallery_permutation_type: Literal["zero_channel", "shuffle_channel"] = config_field(
+        "zero_channel",
+        description="Permutation score used for gallery marker selection.",
+        stage="hyperstac",
+        ui_group="Visualisation",
+    )
+    differential_expression_method: Literal["wilcoxon", "t-test", "logreg"] = config_field(
+        "wilcoxon",
+        description="Scanpy differential-expression method used for cluster marker ranking.",
+        stage="hyperstac",
+        ui_group="Visualisation",
+    )
+    stability_top_markers: int = config_field(
+        5,
+        description="Top intensity markers retained per cluster in the cross-Leiden report.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+        gt=0,
+    )
+    stability_max_heatmap_markers: int = config_field(
+        50,
+        description="Maximum markers displayed in stability heatmaps.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+        gt=0,
+    )
+    stability_max_signature_markers: int = config_field(
+        40,
+        description="Maximum markers used to match recurrent environments.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+        gt=0,
+    )
+    stability_environment_distance_threshold: float = config_field(
+        0.45,
+        description="Signature distance threshold for grouping clusters into recurrent environments.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+        ge=0,
+    )
+    stability_marker_enrichment_min_z: float = config_field(
+        0.0,
+        description="Minimum marker enrichment z-score used in environment signatures.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+    )
+    stability_effect_threshold: float = config_field(
+        1e-8,
+        description="Absolute Cox coefficient threshold treated as a non-zero effect.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+        ge=0,
+    )
+    stability_permutation_type: Literal["zero_channel", "shuffle_channel"] = config_field(
+        "zero_channel",
+        description="Permutation condition cross-referenced with marker-survival effects.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+    )
+    stability_max_report_items: int = config_field(
+        20,
+        description="Maximum rows displayed in each stability report summary.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+        gt=0,
+    )
+    stability_figure_format: Literal["png", "pdf", "svg"] = config_field(
+        "png",
+        description="Figure format for cross-Leiden stability plots.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+    )
+    stability_figure_dpi: int = config_field(
+        220,
+        description="Raster resolution for cross-Leiden stability plots.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+        gt=0,
+    )
+    stability_cluster_bubble_metric: Literal[
+        "case_prevalence",
+        "mean_case_frequency",
+        "n_clusters_in_cell",
+    ] = config_field(
+        "case_prevalence",
+        description="Metric represented by cluster-level bubble area.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+    )
+    stability_cluster_bubble_size_min: float = config_field(
+        35.0,
+        description="Minimum cluster-level bubble area.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+        ge=0,
+    )
+    stability_cluster_bubble_size_scale: float = config_field(
+        650.0,
+        description="Scale factor applied to the cluster-level bubble metric.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+        ge=0,
+    )
+    stability_cluster_bubble_log_scale: bool = config_field(
+        False,
+        description="Log-transform the cluster-level bubble metric before sizing.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+    )
+    stability_environment_bubble_metric: Literal[
+        "n_clusters",
+        "n_resolutions",
+        "resolution_support_fraction",
+        "mean_case_prevalence",
+    ] = config_field(
+        "n_resolutions",
+        description="Metric represented by recurrent-environment bubble area.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+    )
+    stability_environment_bubble_size_min: float = config_field(
+        35.0,
+        description="Minimum recurrent-environment bubble area.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+        ge=0,
+    )
+    stability_environment_bubble_size_scale: float = config_field(
+        10.0,
+        description="Scale factor applied to the recurrent-environment bubble metric.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+        ge=0,
+    )
+    stability_environment_bubble_log_scale: bool = config_field(
+        False,
+        description="Log-transform the environment bubble metric before sizing.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+    )
+    stability_environment_color_metric: Literal[
+        "median_coxnet_coefficient",
+        "mean_abs_coxnet_coefficient",
+        "coxnet_sign_consistency",
+        "median_ridge_cox_coefficient",
+        "mean_abs_ridge_cox_coefficient",
+        "ridge_cox_sign_consistency",
+        "median_image_only_ridge_cox_coefficient",
+        "mean_abs_image_only_ridge_cox_coefficient",
+        "resolution_support_fraction",
+    ] = config_field(
+        "median_coxnet_coefficient",
+        description="Metric represented by recurrent-environment bubble colour.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+    )
+    stability_environment_color_quantile: float = config_field(
+        0.95,
+        description="Robust quantile used to scale environment colour limits.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+        gt=0,
+        le=1,
+    )
+    stability_per_clustering_html: bool = config_field(
+        True,
+        description="Write one linked HTML interpretation page per clustering setting.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+    )
+    seed: int = config_field(
+        1,
+        description="Deterministic seed for preprocessing samples, patch selection, clustering, and perturbations.",
+        stage="hyperstac",
+        ui_group="Reproducibility",
+    )
+
+    @model_validator(mode="after")
+    def validate_hyperstac_geometry(self) -> "HyperstacConfig":
+        if self.subpatch_size > self.patch_size:
+            raise ValueError("hyperstac.subpatch_size must not exceed hyperstac.patch_size")
+        if self.stride is not None and self.stride <= 0:
+            raise ValueError("hyperstac.stride must be positive when set")
+        return self
+
+
+class CoxFeatureSourceConfig(ConfigModel):
+    """One AnnData observation table contributing case-level Cox features."""
+
+    name: str = Field(description="Unique short source label used as a feature prefix.")
+    adata_path: str = Field(description="AnnData file containing the source observations.")
+    population_obs: List[str] = Field(
+        default_factory=list,
+        description="Categorical observation columns aggregated to case-level fractions.",
+    )
+    population_obs_search: Optional[str] = Field(
+        default=None,
+        description="Optional substring selecting alternative population columns for a model sweep.",
+    )
+    continuous_obs: List[str] = Field(
+        default_factory=list,
+        description="Numeric observation columns aggregated to case level.",
+    )
+    case_obs: Optional[str] = Field(
+        default=None,
+        description="Source case identifier; null maps cases from clinical metadata through ROI.",
+    )
+    roi_obs: Optional[str] = Field(
+        default="ROI",
+        description="Source ROI identifier used for aggregation or clinical mapping.",
+    )
+    case_aggregation: Literal["weighted", "roi_mean"] = "weighted"
+    normalization: Literal["fraction", "count"] = "fraction"
+    include_population_counts: bool = False
+
+    @model_validator(mode="after")
+    def validate_feature_definition(self) -> "CoxFeatureSourceConfig":
+        if not self.name.strip():
+            raise ValueError("Cox feature source names must not be blank")
+        if not self.population_obs and not self.population_obs_search and not self.continuous_obs:
+            raise ValueError(
+                f"Cox feature source {self.name!r} needs population_obs, "
+                "population_obs_search, or continuous_obs"
+            )
+        return self
+
+
+@config_section("cox")
+class CoxConfig(ConfigModel):
+    """General multi-source case-level Cox survival analysis settings."""
+
+    feature_sources: List[CoxFeatureSourceConfig] = config_field(
+        default_factory=list,
+        description="AnnData observation sources combined into one case-level feature matrix.",
+        level="basic",
+        stage="cox",
+        ui_group="Feature sources",
+        advice="Use distinct names such as nimbus and hyperstac; one source may sweep matching Leiden columns.",
+    )
+    clinical_adata_path: Optional[str] = config_field(
+        None,
+        description="Optional AnnData whose obs supplies case/ROI outcomes and clinical covariates.",
+        level="basic",
+        stage="cox",
+        ui_group="Clinical metadata",
+    )
+    clinical_csv_path: Optional[str] = config_field(
+        None,
+        description="Optional CSV supplying case/ROI outcomes and clinical covariates.",
+        level="basic",
+        stage="cox",
+        ui_group="Clinical metadata",
+        advice="Configure exactly one clinical source unless every feature AnnData already contains outcomes.",
+    )
+    case_col: str = config_field(
+        "Case",
+        description="Case identifier in clinical metadata.",
+        level="basic",
+        stage="cox",
+        ui_group="Clinical metadata",
+    )
+    roi_col: Optional[str] = config_field(
+        "ROI",
+        description="ROI identifier used to map feature observations to cases.",
+        level="basic",
+        stage="cox",
+        ui_group="Clinical metadata",
+    )
+    duration_col: str = config_field(
+        "duration",
+        description="Positive survival or follow-up duration column.",
+        level="basic",
+        stage="cox",
+        ui_group="Clinical metadata",
+    )
+    event_col: Optional[str] = config_field(
+        "event",
+        description="Event indicator column; null requires assume_all_events or censored_case_ids.",
+        level="basic",
+        stage="cox",
+        ui_group="Clinical metadata",
+    )
+    covariate_cols: List[str] = config_field(
+        default_factory=list,
+        description="Clinical covariates encoded and compared with image-derived feature sets.",
+        level="basic",
+        stage="cox",
+        ui_group="Clinical metadata",
+        advice="Configure fields such as age and sex to enable clinical-only and combined comparisons.",
+    )
+    censored_case_ids: List[str] = config_field(
+        default_factory=list,
+        description="Cases forced to event=0 when a usable event column is unavailable.",
+        stage="cox",
+        ui_group="Clinical metadata",
+    )
+    assume_all_events: bool = config_field(
+        False,
+        description="Treat every case as an observed event when no event column is supplied.",
+        stage="cox",
+        ui_group="Clinical metadata",
+        advice="Enable only when censoring is genuinely absent.",
+    )
+    metadata_conflict: Literal["error", "first", "mode"] = config_field(
+        "mode",
+        description="Resolution policy for repeated non-null case metadata values.",
+        stage="cox",
+        ui_group="Clinical metadata",
+    )
+    min_observations_per_case: int = config_field(
+        1,
+        description="Minimum source observations required per case.",
+        stage="cox",
+        ui_group="Feature filtering",
+        gt=0,
+    )
+    min_rois_per_case: int = config_field(
+        1,
+        description="Minimum represented ROIs required per case.",
+        stage="cox",
+        ui_group="Feature filtering",
+        gt=0,
+    )
+    min_feature_prevalence: float = config_field(
+        0.0,
+        description="Minimum fraction of cases with a non-zero feature value.",
+        stage="cox",
+        ui_group="Feature filtering",
+        ge=0,
+        le=1,
+    )
+    feature_selection_top_n: int = config_field(
+        25,
+        description="Top univariate image features retained for multivariable models.",
+        level="basic",
+        stage="cox",
+        ui_group="Feature filtering",
+        gt=0,
+    )
+    coxph_max_features: int = config_field(
+        20,
+        description="Maximum selected features in the conventional Cox PH model.",
+        stage="cox",
+        ui_group="Models",
+        gt=0,
+    )
+    ridge_max_features: int = config_field(
+        30,
+        description="Maximum selected image features in Ridge Cox.",
+        stage="cox",
+        ui_group="Models",
+        gt=0,
+    )
+    models: List[Literal["coxph", "ridge", "coxnet"]] = config_field(
+        default_factory=lambda: ["coxph", "ridge", "coxnet"],
+        description="Cox model families fitted and compared.",
+        level="basic",
+        stage="cox",
+        ui_group="Models",
+        min_length=1,
+    )
+    feature_sets: List[Literal["image", "clinical", "clinical_image"]] = config_field(
+        default_factory=lambda: ["image", "clinical", "clinical_image"],
+        description="Image/clinical feature combinations compared with held-out validation.",
+        level="basic",
+        stage="cox",
+        ui_group="Models",
+        min_length=1,
+    )
+    standardize: bool = config_field(
+        True,
+        description="Standardize numeric features within every fit and training fold.",
+        stage="cox",
+        ui_group="Models",
+    )
+    coxph_penalizer: float = config_field(
+        0.1,
+        description="L2 penalizer for conventional lifelines Cox PH.",
+        stage="cox",
+        ui_group="Models",
+        ge=0,
+    )
+    ridge_alphas: List[float] = config_field(
+        default_factory=lambda: [0.01, 0.03, 0.1, 0.3, 1.0, 3.0, 10.0, 30.0, 100.0],
+        description="Candidate Ridge Cox alpha values evaluated by cross-validation.",
+        stage="cox",
+        ui_group="Models",
+        min_length=1,
+    )
+    ridge_fixed_alpha: float = config_field(
+        1.0,
+        description="Ridge alpha used for feature-set comparisons when alpha scanning is not requested.",
+        stage="cox",
+        ui_group="Models",
+        ge=0,
+    )
+    coxnet_l1_ratio: float = config_field(
+        1.0,
+        description="Elastic-net mixing parameter; one gives the interpretable lasso path used in the notebook.",
+        stage="cox",
+        ui_group="Models",
+        gt=0,
+        le=1,
+    )
+    coxnet_n_alphas: int = config_field(
+        200,
+        description="Number of CoxNet regularization values.",
+        stage="cox",
+        ui_group="Models",
+        gt=0,
+    )
+    coxnet_alpha_min_ratio: float = config_field(
+        0.001,
+        description="Minimum-to-maximum CoxNet alpha ratio.",
+        stage="cox",
+        ui_group="Models",
+        gt=0,
+        lt=1,
+    )
+    coxnet_max_iter: int = config_field(
+        100000,
+        description="Maximum CoxNet solver iterations.",
+        stage="cox",
+        ui_group="Models",
+        gt=0,
+    )
+    coxnet_tolerance: float = config_field(
+        1e-7,
+        description="CoxNet convergence tolerance.",
+        stage="cox",
+        ui_group="Models",
+        gt=0,
+    )
+    validation_folds: int = config_field(
+        5,
+        description="Case-level cross-validation folds.",
+        level="basic",
+        stage="cox",
+        ui_group="Validation",
+        ge=2,
+    )
+    validation_repeats: int = config_field(
+        10,
+        description="Repeated case-level cross-validation rounds.",
+        level="basic",
+        stage="cox",
+        ui_group="Validation",
+        gt=0,
+    )
+    risk_group_quantiles: List[float] = config_field(
+        default_factory=lambda: [0.0, 0.33, 0.67, 1.0],
+        description="Quantile boundaries used for fitted and held-out risk groups.",
+        stage="cox",
+        ui_group="Validation",
+        min_length=2,
+    )
+    correlation_method: Literal["pearson", "spearman", "kendall"] = config_field(
+        "spearman",
+        description="Case-level feature-correlation method.",
+        stage="cox",
+        ui_group="Diagnostics",
+    )
+    correlation_max_plot_features: int = config_field(
+        60,
+        description="Maximum features displayed in the correlation heatmap.",
+        stage="cox",
+        ui_group="Diagnostics",
+        gt=1,
+    )
+    seed: int = config_field(
+        1,
+        description="Deterministic seed for case-level folds and model selection.",
+        stage="cox",
+        ui_group="Validation",
+    )
+
+    @model_validator(mode="after")
+    def validate_cox_config(self) -> "CoxConfig":
+        source_names = [source.name for source in self.feature_sources]
+        if len(source_names) != len(set(source_names)):
+            raise ValueError("cox.feature_sources names must be unique")
+        if self.clinical_adata_path and self.clinical_csv_path:
+            raise ValueError("Configure only one of cox.clinical_adata_path and cox.clinical_csv_path")
+        quantiles = self.risk_group_quantiles
+        if quantiles[0] != 0 or quantiles[-1] != 1:
+            raise ValueError("cox.risk_group_quantiles must start with 0 and end with 1")
+        if any(left >= right for left, right in zip(quantiles, quantiles[1:])):
+            raise ValueError("cox.risk_group_quantiles must be strictly increasing")
+        if any(alpha < 0 for alpha in self.ridge_alphas):
+            raise ValueError("cox.ridge_alphas must contain non-negative values")
+        return self
+
+
 @config_section("biobatchnet")
 class BioBatchNetConfig(ConfigModel):
     # Input/output
@@ -2569,7 +3509,7 @@ class PopulationEmbeddingQCConfig(ConfigModel):
         ui_group="Outputs",
     )
     write_annotated_h5ad: bool = config_field(
-        False,
+        True,
         description="Write a separate AnnData copy with focused cell annotations and reusable versioned population-level QC results; the input is never modified in place.",
         level="basic",
         stage="population_embedding_qc",
@@ -3934,6 +4874,8 @@ class PipelineConfig(ConfigModel):
     batch_integration: BatchIntegrationConfig = Field(default_factory=BatchIntegrationConfig)
     rapids: RapidsProcessConfig = Field(default_factory=RapidsProcessConfig)
     cellvision: CellVisionConfig = Field(default_factory=CellVisionConfig)
+    hyperstac: HyperstacConfig = Field(default_factory=HyperstacConfig)
+    cox: CoxConfig = Field(default_factory=CoxConfig)
     biobatchnet: BioBatchNetConfig = Field(default_factory=BioBatchNetConfig)
     process: BasicProcessConfig = Field(default_factory=BasicProcessConfig)
     visualization: VisualizationConfig = Field(default_factory=VisualizationConfig)
@@ -3958,6 +4900,8 @@ DEFAULT_CONFIG_CLASSES = {
     "batch_integration": BatchIntegrationConfig,
     "rapids": RapidsProcessConfig,
     "cellvision": CellVisionConfig,
+    "hyperstac": HyperstacConfig,
+    "cox": CoxConfig,
     "biobatchnet": BioBatchNetConfig,
     "process": BasicProcessConfig,
     "visualization": VisualizationConfig,
@@ -3978,10 +4922,13 @@ __all__ = [
     "BioBatchNetConfig",
     "CellCharterConfig",
     "ConfigModel",
+    "CoxConfig",
+    "CoxFeatureSourceConfig",
     "CreateMasksConfig",
     "DEFAULT_CONFIG_CLASSES",
     "DenoisingConfig",
     "GeneralConfig",
+    "HyperstacConfig",
     "LoggingConfig",
     "NetworkxSpatialConfig",
     "NimbusConfig",

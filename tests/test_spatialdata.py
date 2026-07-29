@@ -533,6 +533,49 @@ class SpatialDataConstructionTests(unittest.TestCase):
             self.assertEqual(list(imc.obs.columns), original_obs_columns)
             self.assertEqual(list(imc.uns), original_uns_keys)
 
+    def test_empty_region_label_raster_is_kept_without_table_region(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            imc, _maxfuse = _write_project(root)
+            tifffile.imwrite(
+                root / "regions" / "ROI 2_regions.tiff",
+                np.zeros((5, 6), dtype=np.uint8),
+            )
+            spec = SpatialDataSpec(
+                [
+                    CellMasks("cells", root / "masks"),
+                    IMCImages("images", "Panel", root / "immune"),
+                    IMCAnnData("cells_table", "Panel", imc, "images", "cells"),
+                    RegionLabels(
+                        "regions",
+                        root / "regions",
+                        "_regions",
+                        {1: "Tissue", 2: "Edge"},
+                        "cells",
+                    ),
+                ]
+            )
+
+            plan = plan_spatialdata(spec)
+            self.assertTrue(plan.ok, plan.report.to_frame())
+            self.assertTrue(
+                any(
+                    issue.code == "empty_region_labels" and issue.roi == "ROI 2"
+                    for issue in plan.report.warnings
+                )
+            )
+
+            sdata = create_spatialdata(plan)
+            self.assertIn("labels_regions_ROI_2", sdata.labels)
+            table = sdata.tables["table_regions"]
+            self.assertEqual(
+                table.obs["_sbt_region"].cat.categories.tolist(),
+                ["labels_regions_ROI_1"],
+            )
+            self.assertTrue(
+                get_label_annotations(sdata, "regions", roi="ROI 2").empty
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

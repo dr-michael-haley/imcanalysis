@@ -23,6 +23,8 @@ sections/nimbus
 sections/batch_integration
 sections/rapids
 sections/cellvision
+sections/hyperstac
+sections/cox
 sections/biobatchnet
 sections/process
 sections/visualization

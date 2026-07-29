@@ -38,6 +38,13 @@ for ordering and usage guidance.
 | [`slogs`](slogs.md) | Organize SLURM output files using AnnData pipeline run metadata and verify against recorded jobs | `imc_segmentation` | general, logging |
 | [`rebuildmeta`](rebuildmeta.md) | Rebuild metadata folder tables from an existing AnnData file | `imc_segmentation` | general, rebuild_metadata, logging |
 | [`popqc`](popqc.md) | Assess population support from existing graph, UMAP, PCA, and precomputed clustering-sweep state | `imc_cellcharter` | general, population_embedding_qc, logging |
+| [`hyperstac-preprocess`](hyperstac-preprocess.md) | Background-correct and robustly scale ROI/channel TIFF images for HyPERSTAC | `hyperstac` | general, hyperstac, logging |
+| [`hyperstac-model`](hyperstac-model.md) | Tile normalized IMC images, train HyPERSTAC VICReg, and extract patch representations | `hyperstac` | general, hyperstac, logging |
+| [`hyperstac-permutation`](hyperstac-permutation.md) | Quantify HyPERSTAC embedding sensitivity to channel zeroing and pixel shuffling | `hyperstac` | general, hyperstac, logging |
+| [`hyperstac-visualise`](hyperstac-visualise.md) | Run HyPERSTAC clustering scans and create embedding, marker, spatial, and gallery reports | `hyperstac` | general, hyperstac, logging |
+| [`cox`](cox.md) | Combine case-level features from one or more AnnData obs sources and compare Cox models | `hyperstac` | general, cox, logging |
+| [`hyperstac-stability`](hyperstac-stability.md) | Cross-reference HyPERSTAC Leiden marker environments, perturbation sensitivity, and Cox effects | `hyperstac` | general, hyperstac, cox, logging |
+| [`hyperstac-full`](hyperstac-full.md) | Run HyPERSTAC preprocessing, representation, sensitivity, visualisation, Cox, and stability in one GPU job | `hyperstac` | general, hyperstac, cox, logging |
 
 ```{toctree}
 :maxdepth: 1
@@ -72,4 +79,11 @@ remap
 slogs
 rebuildmeta
 popqc
+hyperstac-preprocess
+hyperstac-model
+hyperstac-permutation
+hyperstac-visualise
+cox
+hyperstac-stability
+hyperstac-full
 ```
