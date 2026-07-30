@@ -15,42 +15,13 @@ from scipy.spatial import cKDTree
 from skimage.measure import regionprops
 from skimage.segmentation import expand_labels
 
+from .feature_catalog import (
+    CONTEXT_FEATURE_DESCRIPTIONS,
+    DISTRIBUTION_FEATURE_DESCRIPTIONS,
+    REGION_IMAGE_FEATURE_DESCRIPTIONS,
+    SHAPE_FEATURE_DESCRIPTIONS,
+)
 from .models import SyntheticFeatureRecipe
-
-DISTRIBUTION_FEATURE_DESCRIPTIONS = {
-    "pixel_count": "Number of finite pixels contributing to this feature set for the object.",
-    "mean": "Mean pixel value inside the object mask.",
-    "median": "Median pixel value inside the object mask.",
-    "std": "Standard deviation of pixel values inside the object mask.",
-    "min": "Minimum pixel value inside the object mask.",
-    "max": "Maximum pixel value inside the object mask.",
-    "sum": "Sum of pixel values inside the object mask.",
-    "q05": "5th percentile pixel value inside the object mask.",
-    "q10": "10th percentile pixel value inside the object mask.",
-    "q25": "25th percentile pixel value inside the object mask.",
-    "q75": "75th percentile pixel value inside the object mask.",
-    "q90": "90th percentile pixel value inside the object mask.",
-    "q95": "95th percentile pixel value inside the object mask.",
-    "iqr": "Interquartile range of pixel values inside the object mask.",
-    "range": "Maximum minus minimum pixel value inside the object mask.",
-    "cv": "Coefficient of variation of pixel values inside the object mask.",
-}
-
-REGION_IMAGE_FEATURE_DESCRIPTIONS = {
-    "core_mean": "Mean value in the one-pixel-eroded object core.",
-    "border_mean": "Mean value on the one-pixel object border.",
-    "core_to_border_ratio": "Ratio of core mean to border mean; useful for central enrichment versus edge signal.",
-    "weighted_x": "X coordinate of the intensity-weighted centroid for this image-derived feature set.",
-    "weighted_y": "Y coordinate of the intensity-weighted centroid for this image-derived feature set.",
-    "weighted_centroid_offset_px": "Distance between the mask geometric centroid and the intensity-weighted centroid in pixels.",
-    "weighted_centroid_offset_fraction_radius": "Intensity-weighted centroid offset divided by the equivalent object radius.",
-    "local_bg_pixel_count": "Number of finite local-background pixels in the ring around the object.",
-    "local_bg_mean": "Mean value in the local background ring around the object.",
-    "local_bg_std": "Standard deviation in the local background ring around the object.",
-    "foreground_to_bg_ratio": "Object mean divided by local background mean.",
-    "foreground_bg_contrast": "Object mean minus local background mean.",
-    "foreground_bg_contrast_z": "Object-background contrast divided by local background standard deviation.",
-}
 
 
 @dataclass
@@ -107,12 +78,20 @@ def add_distribution_features(
     prefix: str,
     *,
     separator: str = "::",
+    selected_suffixes: list[str] | tuple[str, ...] | None = None,
 ) -> None:
     """Add the CellPose-compatible distribution summaries."""
 
+    selected_names = list(
+        DISTRIBUTION_FEATURE_DESCRIPTIONS
+        if selected_suffixes is None
+        else selected_suffixes
+    )
+    selected = set(selected_names)
     values = _finite(values)
-    row[f"{prefix}{separator}pixel_count"] = int(values.size)
-    for suffix in DISTRIBUTION_FEATURE_DESCRIPTIONS:
+    if "pixel_count" in selected:
+        row[f"{prefix}{separator}pixel_count"] = int(values.size)
+    for suffix in selected_names:
         if suffix != "pixel_count":
             row[f"{prefix}{separator}{suffix}"] = np.nan
     if values.size == 0:
@@ -124,23 +103,28 @@ def add_distribution_features(
     std = float(np.std(values))
     minimum = float(np.min(values))
     maximum = float(np.max(values))
+    calculated = {
+        f"{prefix}{separator}mean": mean,
+        f"{prefix}{separator}median": float(q50),
+        f"{prefix}{separator}std": std,
+        f"{prefix}{separator}min": minimum,
+        f"{prefix}{separator}max": maximum,
+        f"{prefix}{separator}sum": float(np.sum(values)),
+        f"{prefix}{separator}q05": float(q05),
+        f"{prefix}{separator}q10": float(q10),
+        f"{prefix}{separator}q25": float(q25),
+        f"{prefix}{separator}q75": float(q75),
+        f"{prefix}{separator}q90": float(q90),
+        f"{prefix}{separator}q95": float(q95),
+        f"{prefix}{separator}iqr": float(q75 - q25),
+        f"{prefix}{separator}range": float(maximum - minimum),
+        f"{prefix}{separator}cv": _safe_ratio(std, abs(mean)),
+    }
     row.update(
         {
-            f"{prefix}{separator}mean": mean,
-            f"{prefix}{separator}median": float(q50),
-            f"{prefix}{separator}std": std,
-            f"{prefix}{separator}min": minimum,
-            f"{prefix}{separator}max": maximum,
-            f"{prefix}{separator}sum": float(np.sum(values)),
-            f"{prefix}{separator}q05": float(q05),
-            f"{prefix}{separator}q10": float(q10),
-            f"{prefix}{separator}q25": float(q25),
-            f"{prefix}{separator}q75": float(q75),
-            f"{prefix}{separator}q90": float(q90),
-            f"{prefix}{separator}q95": float(q95),
-            f"{prefix}{separator}iqr": float(q75 - q25),
-            f"{prefix}{separator}range": float(maximum - minimum),
-            f"{prefix}{separator}cv": _safe_ratio(std, abs(mean)),
+            key: value
+            for key, value in calculated.items()
+            if key.rsplit(separator, 1)[-1] in selected
         }
     )
 
@@ -151,7 +135,11 @@ def gradient_magnitude(image: np.ndarray) -> np.ndarray:
     return np.sqrt(gradient_y**2 + gradient_x**2).astype(np.float32)
 
 
-def _shape_features(region, image_shape: tuple[int, int]) -> dict[str, Any]:
+def _shape_features(
+    region,
+    image_shape: tuple[int, int],
+    selected_suffixes: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
     min_row, min_col, max_row, max_col = region.bbox
     bbox_height = max_row - min_row
     bbox_width = max_col - min_col
@@ -188,7 +176,7 @@ def _shape_features(region, image_shape: tuple[int, int]) -> dict[str, Any]:
         image_shape[0] - max_row,
         image_shape[1] - max_col,
     )
-    return {
+    calculated = {
         "X_loc": float(region.centroid[1]),
         "Y_loc": float(region.centroid[0]),
         "bbox_min_row": int(min_row),
@@ -225,9 +213,21 @@ def _shape_features(region, image_shape: tuple[int, int]) -> dict[str, Any]:
         "mask_edge_touching": bool(edge_distance == 0),
         "mask_min_distance_to_edge_px": int(edge_distance),
     }
+    selected = set(
+        SHAPE_FEATURE_DESCRIPTIONS
+        if selected_suffixes is None
+        else selected_suffixes
+    )
+    return {
+        key: value for key, value in calculated.items() if key in selected
+    }
 
 
-def _context_features(mask: np.ndarray, region) -> dict[str, Any]:
+def _context_features(
+    mask: np.ndarray,
+    region,
+    selected_suffixes: list[str] | tuple[str, ...] | None = None,
+) -> dict[str, Any]:
     min_row, min_col, max_row, max_col = region.bbox
     pad = 5
     row_slice = slice(max(0, min_row - pad), min(mask.shape[0], max_row + pad))
@@ -242,11 +242,19 @@ def _context_features(mask: np.ndarray, region) -> dict[str, Any]:
     )
     nearby_labels = np.unique(local_labels[nearby])
     touching_labels = np.unique(local_labels[touching])
-    return {
+    calculated = {
         "mask_neighbor_count_5px": int(np.count_nonzero(nearby_labels > 0)),
         "mask_touching_neighbor_count_1px": int(
             np.count_nonzero(touching_labels > 0)
         ),
+    }
+    selected = set(
+        CONTEXT_FEATURE_DESCRIPTIONS
+        if selected_suffixes is None
+        else selected_suffixes
+    )
+    return {
+        key: value for key, value in calculated.items() if key in selected
     }
 
 
@@ -347,6 +355,8 @@ def _region_image_features(
     original_region,
     prefix: str,
     ring_distance: int,
+    distribution_suffixes: list[str] | tuple[str, ...] | None = None,
+    region_suffixes: list[str] | tuple[str, ...] | None = None,
 ) -> None:
     local_mask = measurement_region.image.astype(bool)
     local_image = image[measurement_region.slice]
@@ -441,37 +451,71 @@ def _region_image_features(
             float(foreground_mean) - background_mean,
             background_std,
         )
+    selected_distribution = set(
+        DISTRIBUTION_FEATURE_DESCRIPTIONS
+        if distribution_suffixes is None
+        else distribution_suffixes
+    )
+    selected_regions = set(
+        REGION_IMAGE_FEATURE_DESCRIPTIONS
+        if region_suffixes is None
+        else region_suffixes
+    )
+    for suffix in DISTRIBUTION_FEATURE_DESCRIPTIONS:
+        if suffix not in selected_distribution:
+            row.pop(f"{prefix}::{suffix}", None)
+    for suffix in REGION_IMAGE_FEATURE_DESCRIPTIONS:
+        if suffix not in selected_regions:
+            row.pop(f"{prefix}::{suffix}", None)
 
 
 def _add_nearest_centroid_context(
     table: pd.DataFrame,
     all_regions: list,
+    selected_suffixes: list[str] | tuple[str, ...] | None = None,
 ) -> pd.DataFrame:
     if table.empty:
         return table
+    selected_suffixes = list(
+        CONTEXT_FEATURE_DESCRIPTIONS
+        if selected_suffixes is None
+        else selected_suffixes
+    )
+    selected_features = set(selected_suffixes)
     all_coordinates = np.asarray(
         [[region.centroid[0], region.centroid[1]] for region in all_regions],
         dtype=float,
     )
     if len(all_coordinates) <= 1:
-        table["nearest_centroid_distance_px"] = np.nan
-        table["centroid_neighbor_count_25px"] = 0
-        table["centroid_neighbor_count_50px"] = 0
+        if "nearest_centroid_distance_px" in selected_features:
+            table["nearest_centroid_distance_px"] = np.nan
+        if "centroid_neighbor_count_25px" in selected_features:
+            table["centroid_neighbor_count_25px"] = 0
+        if "centroid_neighbor_count_50px" in selected_features:
+            table["centroid_neighbor_count_50px"] = 0
         return table
     tree = cKDTree(all_coordinates)
-    selected = table[["Y_loc", "X_loc"]].to_numpy(dtype=float)
-    nearest, _ = tree.query(selected, k=2)
-    table["nearest_centroid_distance_px"] = nearest[:, 1]
-    table["centroid_neighbor_count_25px"] = [
-        len(tree.query_ball_point(point, r=25)) - 1 for point in selected
-    ]
-    table["centroid_neighbor_count_50px"] = [
-        len(tree.query_ball_point(point, r=50)) - 1 for point in selected
-    ]
+    selected_coordinates = table[["Y_loc", "X_loc"]].to_numpy(dtype=float)
+    nearest, _ = tree.query(selected_coordinates, k=2)
+    if "nearest_centroid_distance_px" in selected_features:
+        table["nearest_centroid_distance_px"] = nearest[:, 1]
+    if "centroid_neighbor_count_25px" in selected_features:
+        table["centroid_neighbor_count_25px"] = [
+            len(tree.query_ball_point(point, r=25)) - 1
+            for point in selected_coordinates
+        ]
+    if "centroid_neighbor_count_50px" in selected_features:
+        table["centroid_neighbor_count_50px"] = [
+            len(tree.query_ball_point(point, r=50)) - 1
+            for point in selected_coordinates
+        ]
     return table
 
 
-def _add_cohort_roi_ranks(table: pd.DataFrame) -> pd.DataFrame:
+def _add_cohort_roi_ranks(
+    table: pd.DataFrame,
+    statistics: list[str] | tuple[str, ...] = ("zscore", "percentile"),
+) -> pd.DataFrame:
     candidates = [
         column
         for column in table.columns
@@ -488,10 +532,12 @@ def _add_cohort_roi_ranks(table: pd.DataFrame) -> pd.DataFrame:
         values = pd.to_numeric(table[column], errors="coerce")
         mean = values.mean(skipna=True)
         std = values.std(skipna=True, ddof=0)
-        table[f"{column}::cohort_roi_zscore"] = (
-            (values - mean) / std if pd.notna(std) and std > 0 else 0.0
-        )
-        table[f"{column}::cohort_roi_percentile"] = values.rank(pct=True)
+        if "zscore" in statistics:
+            table[f"{column}::cohort_roi_zscore"] = (
+                (values - mean) / std if pd.notna(std) and std > 0 else 0.0
+            )
+        if "percentile" in statistics:
+            table[f"{column}::cohort_roi_percentile"] = values.rank(pct=True)
     return table
 
 
@@ -556,6 +602,8 @@ def build_roi_features(
             "ROI": str(roi),
             "ObjectNumber": object_id,
             "CellID": f"{roi}_{object_id}",
+            "X_loc": float(original.centroid[1]),
+            "Y_loc": float(original.centroid[0]),
             "measurement_mask_offset_px": int(recipe.mask_offset_px),
             "measurement_allows_cell_overlap": bool(
                 recipe.allow_positive_offset_overlap
@@ -563,16 +611,21 @@ def build_roi_features(
             "measurement_region_vanished": measurement is None,
         }
         if recipe.shape_features:
-            row.update(_shape_features(original, mask.shape))
-        else:
             row.update(
-                {
-                    "X_loc": float(original.centroid[1]),
-                    "Y_loc": float(original.centroid[0]),
-                }
+                _shape_features(
+                    original,
+                    mask.shape,
+                    recipe.shape_feature_names,
+                )
             )
         if recipe.context_features:
-            row.update(_context_features(mask, original))
+            row.update(
+                _context_features(
+                    mask,
+                    original,
+                    recipe.context_feature_names,
+                )
+            )
         if measurement is not None:
             for channel, image in channel_images.items():
                 prefix = f"channel::{channel}"
@@ -585,41 +638,78 @@ def build_roi_features(
                         original,
                         prefix,
                         recipe.background_ring_px,
+                        (
+                            recipe.distribution_feature_names
+                            if recipe.distribution_features
+                            else []
+                        ),
+                        recipe.region_feature_names,
                     )
                 elif recipe.distribution_features:
                     values = np.asarray(image)[measurement.slice][
                         measurement.image.astype(bool)
                     ]
-                    add_distribution_features(row, values, prefix)
+                    add_distribution_features(
+                        row,
+                        values,
+                        prefix,
+                        selected_suffixes=recipe.distribution_feature_names,
+                    )
                 if recipe.gradient_features:
                     values = gradients[channel][measurement.slice][
                         measurement.image.astype(bool)
                     ]
-                    add_distribution_features(row, values, f"{prefix}::gradient")
+                    add_distribution_features(
+                        row,
+                        values,
+                        f"{prefix}::gradient",
+                        selected_suffixes=recipe.gradient_feature_names,
+                    )
         else:
             for channel in channel_images:
                 prefix = f"channel::{channel}"
                 if recipe.distribution_features or recipe.region_features:
-                    add_distribution_features(row, np.asarray([]), prefix)
+                    add_distribution_features(
+                        row,
+                        np.asarray([]),
+                        prefix,
+                        selected_suffixes=(
+                            recipe.distribution_feature_names
+                            if recipe.distribution_features
+                            else []
+                        ),
+                    )
                 if recipe.region_features:
-                    for suffix in REGION_IMAGE_FEATURE_DESCRIPTIONS:
+                    for suffix in recipe.region_feature_names:
                         row[f"{prefix}::{suffix}"] = (
                             0 if suffix == "local_bg_pixel_count" else np.nan
                         )
                 if recipe.gradient_features:
                     add_distribution_features(
-                        row, np.asarray([]), f"{prefix}::gradient"
+                        row,
+                        np.asarray([]),
+                        f"{prefix}::gradient",
+                        selected_suffixes=recipe.gradient_feature_names,
                     )
         rows.append(row)
 
     table = pd.DataFrame(rows)
     if recipe.context_features:
-        table = _add_nearest_centroid_context(table, all_regions)
-        table["roi_total_object_count"] = len(all_regions)
-        table["roi_eligible_object_count"] = len(eligible_ids)
-        table["roi_full_mask_area_fraction"] = float(np.count_nonzero(mask)) / mask.size
+        table = _add_nearest_centroid_context(
+            table,
+            all_regions,
+            recipe.context_feature_names,
+        )
+        if "roi_total_object_count" in recipe.context_feature_names:
+            table["roi_total_object_count"] = len(all_regions)
+        if "roi_eligible_object_count" in recipe.context_feature_names:
+            table["roi_eligible_object_count"] = len(eligible_ids)
+        if "roi_full_mask_area_fraction" in recipe.context_feature_names:
+            table["roi_full_mask_area_fraction"] = (
+                float(np.count_nonzero(mask)) / mask.size
+            )
     if recipe.roi_rank_features:
-        table = _add_cohort_roi_ranks(table)
+        table = _add_cohort_roi_ranks(table, recipe.roi_rank_statistics)
     leading = ["ROI", "ObjectNumber", "CellID", "X_loc", "Y_loc"]
     table = table.loc[:, [column for column in leading if column in table] + [
         column for column in table.columns if column not in leading

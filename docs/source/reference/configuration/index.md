@@ -23,6 +23,7 @@ sections/nimbus
 sections/batch_integration
 sections/rapids
 sections/maxfuse
+sections/spatialdata
 sections/cellvision
 sections/hyperstac
 sections/cox

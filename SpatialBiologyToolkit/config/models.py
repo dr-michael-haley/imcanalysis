@@ -2035,6 +2035,275 @@ class MaxFuseConfig(ConfigModel):
         return self
 
 
+class SpatialDataImagePanelConfig(ConfigModel):
+    """One explicitly configured standalone ROI-by-channel image panel."""
+
+    name: str = Field(min_length=1)
+    folder: str = Field(min_length=1)
+    panel_name: Optional[str] = None
+    channels: List[str] = Field(default_factory=list)
+    reference: str = "cells"
+    allow_partial: bool = True
+
+
+class SpatialDataHistologyConfig(ConfigModel):
+    """One explicitly configured histology image collection."""
+
+    name: str = Field(min_length=1)
+    folder: str = Field(min_length=1)
+    suffix: str = ""
+    reference: str = "cells"
+    allow_partial: bool = True
+    drop_alpha: bool = False
+
+
+class SpatialDataRegionLabelsConfig(ConfigModel):
+    """One categorical raster collection and its value-to-name mapping."""
+
+    name: str = Field(min_length=1)
+    folder: str = Field(min_length=1)
+    mapping_path: str = Field(min_length=1)
+    suffix: str = ""
+    reference: str = "cells"
+    allow_partial: bool = True
+    value_key: str = "label_value"
+    name_key: str = "label_name"
+    mapping_roi_key: Optional[str] = None
+
+
+class SpatialDataMaxFuseTableConfig(ConfigModel):
+    """One matched transcriptome AnnData linked to the primary IMC table."""
+
+    name: str = Field(min_length=1)
+    adata_path: str = Field(min_length=1)
+    imc_table: str = "cell_quantification"
+    table_name: Optional[str] = None
+    copy_adata: bool = True
+
+
+@config_section("spatialdata")
+class SpatialDataConfig(ConfigModel):
+    """Configuration for discovery, planning, and SpatialData Zarr creation."""
+
+    action: Literal["plan", "build"] = config_field(
+        "plan",
+        description="Run read-only discovery/planning or also create a new Zarr store.",
+        level="basic",
+        stage="spatialdata",
+        ui_group="Stage control",
+        advice="Keep plan until the selected assets and planner diagnostics have been reviewed.",
+    )
+    root: str = config_field(
+        ".",
+        description="Project-relative root searched for likely spatial assets.",
+        level="basic",
+        stage="spatialdata",
+        ui_group="Discovery",
+    )
+    output_path: str = config_field(
+        "spatialdata.zarr",
+        description="Project-relative destination for a newly built SpatialData Zarr.",
+        level="basic",
+        stage="spatialdata",
+        ui_group="Output",
+        advice="Existing paths are never overwritten.",
+        min_length=1,
+    )
+    anndata_path: Optional[str] = config_field(
+        None,
+        description="Explicit primary quantified IMC AnnData; null allows conservative discovery.",
+        level="basic",
+        stage="spatialdata",
+        ui_group="Primary assets",
+    )
+    cell_masks_folder: Optional[str] = config_field(
+        None,
+        description="Explicit folder containing one integer cell mask per ROI.",
+        level="basic",
+        stage="spatialdata",
+        ui_group="Primary assets",
+    )
+    primary_images_folder: Optional[str] = config_field(
+        None,
+        description="Explicit folder containing one channel-image subfolder per ROI.",
+        level="basic",
+        stage="spatialdata",
+        ui_group="Primary assets",
+    )
+    primary_table_name: str = config_field(
+        "cell_quantification",
+        description="Stable modality name for the primary quantified cell table.",
+        stage="spatialdata",
+        ui_group="Naming",
+        min_length=1,
+    )
+    primary_images_name: str = config_field(
+        "cell_images",
+        description="Stable modality name for the primary IMC image panel.",
+        stage="spatialdata",
+        ui_group="Naming",
+        min_length=1,
+    )
+    cell_masks_name: str = config_field(
+        "cells",
+        description="Stable modality name for the primary cell masks.",
+        stage="spatialdata",
+        ui_group="Naming",
+        min_length=1,
+    )
+    primary_panel_name: str = config_field(
+        "IMC panel",
+        description="Human-readable name for the quantified IMC panel.",
+        stage="spatialdata",
+        ui_group="Naming",
+        min_length=1,
+    )
+    roi_key: Optional[str] = config_field(
+        None,
+        description="AnnData ROI column; null falls back to general.roi_obs.",
+        stage="spatialdata",
+        ui_group="AnnData columns",
+    )
+    instance_key: str = config_field(
+        "ObjectNumber",
+        description="ROI-local integer mask-instance column in the primary AnnData.",
+        level="basic",
+        stage="spatialdata",
+        ui_group="AnnData columns",
+        min_length=1,
+    )
+    x_key: Optional[str] = config_field(
+        None,
+        description="AnnData X-coordinate column; null falls back to general.x_coord_obs.",
+        stage="spatialdata",
+        ui_group="AnnData columns",
+    )
+    y_key: Optional[str] = config_field(
+        None,
+        description="AnnData Y-coordinate column; null falls back to general.y_coord_obs.",
+        stage="spatialdata",
+        ui_group="AnnData columns",
+    )
+    copy_adata: bool = config_field(
+        False,
+        description="Copy the primary AnnData before SpatialData table annotation.",
+        stage="spatialdata",
+        ui_group="Memory",
+        advice="False avoids a second large in-memory copy while leaving the source H5AD unchanged.",
+    )
+    discover_unlisted_assets: bool = config_field(
+        True,
+        description="Search for additional likely assets beyond explicitly configured paths.",
+        level="basic",
+        stage="spatialdata",
+        ui_group="Discovery",
+    )
+    include_discovered_image_panels: bool = config_field(
+        True,
+        description="Include high-confidence unquantified ROI image panels in the proposed spec.",
+        stage="spatialdata",
+        ui_group="Discovery",
+    )
+    include_discovered_histology: bool = config_field(
+        True,
+        description="Include high-confidence RGB/RGBA ROI collections in the proposed spec.",
+        stage="spatialdata",
+        ui_group="Discovery",
+    )
+    include_discovered_maxfuse: bool = config_field(
+        True,
+        description="Include high-confidence matched transcriptome AnnData candidates.",
+        stage="spatialdata",
+        ui_group="Discovery",
+    )
+    additional_image_panels: List[SpatialDataImagePanelConfig] = config_field(
+        default_factory=list,
+        description="Explicit standalone ROI-by-channel image panels.",
+        stage="spatialdata",
+        ui_group="Additional assets",
+    )
+    histology: List[SpatialDataHistologyConfig] = config_field(
+        default_factory=list,
+        description="Explicit histology image collections.",
+        stage="spatialdata",
+        ui_group="Additional assets",
+    )
+    region_labels: List[SpatialDataRegionLabelsConfig] = config_field(
+        default_factory=list,
+        description="Explicit categorical label rasters with semantic mapping tables.",
+        stage="spatialdata",
+        ui_group="Additional assets",
+    )
+    maxfuse_tables: List[SpatialDataMaxFuseTableConfig] = config_field(
+        default_factory=list,
+        description="Explicit matched-transcriptome AnnData tables.",
+        stage="spatialdata",
+        ui_group="Additional assets",
+    )
+    attrs: Dict[str, Any] = config_field(
+        default_factory=dict,
+        description="Small project-level attributes to place on the SpatialData object.",
+        stage="spatialdata",
+        ui_group="Output",
+    )
+    raster_chunks: tuple[int, int] = config_field(
+        (512, 512),
+        description="Y/X Dask chunk dimensions used for raster elements.",
+        stage="spatialdata",
+        ui_group="Performance",
+    )
+    scale_factors: Optional[List[int]] = config_field(
+        None,
+        description="Optional multiscale pyramid factors passed to SpatialData raster parsers.",
+        stage="spatialdata",
+        ui_group="Performance",
+    )
+    scan_depth: int = config_field(
+        3,
+        description="Maximum recursive folder depth for discovery.",
+        stage="spatialdata",
+        ui_group="Discovery bounds",
+        ge=0,
+    )
+    max_scan_entries: int = config_field(
+        50_000,
+        description="Maximum files and folders inspected during discovery.",
+        stage="spatialdata",
+        ui_group="Discovery bounds",
+        ge=1,
+    )
+    sample_files: int = config_field(
+        5,
+        description="Representative files or ROI folders inspected per candidate collection.",
+        stage="spatialdata",
+        ui_group="Discovery bounds",
+        ge=1,
+    )
+
+    @model_validator(mode="after")
+    def _validate_spatialdata(self) -> "SpatialDataConfig":
+        if not self.output_path.casefold().endswith(".zarr"):
+            raise ValueError("spatialdata.output_path must end with .zarr")
+        if any(value <= 0 for value in self.raster_chunks):
+            raise ValueError("spatialdata.raster_chunks values must be positive")
+        if self.scale_factors is not None and any(
+            value <= 1 for value in self.scale_factors
+        ):
+            raise ValueError("spatialdata.scale_factors values must be greater than 1")
+        names = [
+            self.cell_masks_name,
+            self.primary_images_name,
+            self.primary_table_name,
+            *(item.name for item in self.additional_image_panels),
+            *(item.name for item in self.histology),
+            *(item.name for item in self.region_labels),
+            *(item.name for item in self.maxfuse_tables),
+        ]
+        if len({name.casefold() for name in names}) != len(names):
+            raise ValueError("SpatialData modality names must be unique case-insensitively")
+        return self
+
+
 @config_section("cellvision")
 class CellVisionConfig(ConfigModel):
     """Configuration for single-cell image representation learning and clustering."""
@@ -5424,6 +5693,7 @@ class PipelineConfig(ConfigModel):
     batch_integration: BatchIntegrationConfig = Field(default_factory=BatchIntegrationConfig)
     rapids: RapidsProcessConfig = Field(default_factory=RapidsProcessConfig)
     maxfuse: MaxFuseConfig = Field(default_factory=MaxFuseConfig)
+    spatialdata: SpatialDataConfig = Field(default_factory=SpatialDataConfig)
     cellvision: CellVisionConfig = Field(default_factory=CellVisionConfig)
     hyperstac: HyperstacConfig = Field(default_factory=HyperstacConfig)
     cox: CoxConfig = Field(default_factory=CoxConfig)
@@ -5452,6 +5722,7 @@ DEFAULT_CONFIG_CLASSES = {
     "batch_integration": BatchIntegrationConfig,
     "rapids": RapidsProcessConfig,
     "maxfuse": MaxFuseConfig,
+    "spatialdata": SpatialDataConfig,
     "cellvision": CellVisionConfig,
     "hyperstac": HyperstacConfig,
     "cox": CoxConfig,
@@ -5498,6 +5769,11 @@ __all__ = [
     "RemapObsConfig",
     "SegmentationConfig",
     "StarlingConfig",
+    "SpatialDataConfig",
+    "SpatialDataHistologyConfig",
+    "SpatialDataImagePanelConfig",
+    "SpatialDataMaxFuseTableConfig",
+    "SpatialDataRegionLabelsConfig",
     "SubclusteringConfig",
     "VisualizationConfig",
     "config_field",

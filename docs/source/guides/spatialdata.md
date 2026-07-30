@@ -14,6 +14,45 @@ sdata = create_spatialdata(spec, plan=plan)
 updated = add_modality(sdata, new_modality)
 ```
 
+Folder-level workflows can use the public discovery layer before the same
+strict planner:
+
+```python
+from SpatialBiologyToolkit.spatialdata import (
+    SpatialDataAssetHints,
+    build_spatialdata_from_assets,
+    plan_spatialdata_from_assets,
+)
+
+hints = SpatialDataAssetHints(
+    anndata="anndata.h5ad",
+    cell_masks="Masks",
+    primary_images="Images",
+)
+asset_plan = plan_spatialdata_from_assets(".", hints=hints)
+display(asset_plan.inventory.candidates_frame())
+display(asset_plan.proposal.selections_frame())
+display(asset_plan.proposal.issues_frame())
+display(asset_plan.spatialdata_plan.report.to_frame())
+asset_plan.raise_for_errors()
+
+result = build_spatialdata_from_assets(
+    ".",
+    "spatialdata.zarr",
+    asset_plan=asset_plan,
+)
+```
+
+Explicit hints take priority while unlisted likely assets can still be
+discovered. Set `discover_unlisted_assets=False` for a completely explicit
+build. Discovery never replaces `plan_spatialdata()`: it proposes a
+`SpatialDataSpec`, and the existing planner performs the authoritative
+file-, relationship-, instance-, label-, and alignment validation.
+
+The managed equivalent is `sbt run spatialdata`. Its default configuration is
+plan-only; see the SpatialData assembly stage guide for configuration and
+SLURM behavior.
+
 `create_spatialdata()` accepts only a `SpatialDataSpec` or a validated
 `SpatialDataPlan`. It does not have a separate legacy positional
 AnnData/images/masks call.

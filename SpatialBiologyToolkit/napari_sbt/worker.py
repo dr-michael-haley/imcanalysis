@@ -8,7 +8,7 @@ import os
 import sys
 import time
 from collections.abc import Callable
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -30,7 +30,7 @@ from SpatialBiologyToolkit.qc_classifier.io import (
 )
 
 from .cohort import eligible_ids_by_roi, validate_frozen_cohort
-from .feature_sources import combine_feature_sources
+from .feature_sources import combine_feature_sources, load_feature_source
 from .features import build_feature_dictionary, build_roi_features
 from .models import FeatureSource, SyntheticFeatureRecipe
 from .storage import (
@@ -204,6 +204,7 @@ def _roi_task(payload: dict) -> dict:
         "warnings": result_warnings,
         "elapsed_seconds": time.monotonic() - started,
         "resumed": False,
+        "worker_pid": os.getpid(),
     }
 
 
@@ -215,6 +216,109 @@ def _fragment_is_valid(fragment: Path, sidecar: Path, fingerprint: str) -> bool:
         return metadata.get("fingerprint") == fingerprint
     except Exception:  # noqa: BLE001 - invalid cache sidecars are treated as stale
         return False
+
+
+def validate_feature_sources(
+    experiment: str | Path,
+    *,
+    progress: Callable[[dict], None] | None = None,
+) -> dict:
+    """Validate imported feature sources against the frozen cohort."""
+
+    notify = progress or _emit
+    manifest, paths = load_experiment(experiment)
+    cohort = read_dataframe(paths.root / manifest.cell_scope.snapshot_path)
+    input_root = (
+        Path(manifest.project_root).expanduser().resolve(strict=False)
+        if manifest.project_root
+        else paths.root
+    )
+    sources = [
+        source.model_copy(
+            deep=True,
+            update={
+                "path": (
+                    str(_resolve_input_path(source.path, input_root))
+                    if source.path
+                    else None
+                )
+            },
+        )
+        for source in manifest.feature_sources
+        if source.enabled and source.kind != "synthetic"
+    ]
+    notify(
+        {
+            "event": "source_validation_started",
+            "source_count": len(sources),
+            "eligible_cells": len(cohort),
+            "orchestrator_pid": os.getpid(),
+        }
+    )
+    results: list[dict] = []
+    for index, source in enumerate(sources, start=1):
+        notify(
+            {
+                "event": "source_validation_running",
+                "source_id": source.source_id,
+                "source_index": index,
+                "source_count": len(sources),
+            }
+        )
+        try:
+            result = load_feature_source(
+                source,
+                cohort,
+                roi_obs=manifest.roi_obs,
+                object_id_obs=manifest.object_id_obs,
+            )
+            row = {
+                "source_id": source.source_id,
+                "kind": source.kind,
+                "status": "valid",
+                "eligible_cells": len(cohort),
+                "covered_cells": result.covered_cell_count,
+                "missing_cells": len(result.missing_cells),
+                "feature_count": len(result.feature_columns),
+                "error": "",
+            }
+            notify({"event": "source_valid", **row})
+        except Exception as exc:  # noqa: BLE001 - report every source independently
+            row = {
+                "source_id": source.source_id,
+                "kind": source.kind,
+                "status": "invalid",
+                "eligible_cells": len(cohort),
+                "covered_cells": 0,
+                "missing_cells": len(cohort),
+                "feature_count": 0,
+                "error": f"{type(exc).__name__}: {exc}",
+            }
+            notify({"event": "source_invalid", **row})
+        results.append(row)
+    report = {
+        "schema_version": 1,
+        "experiment_id": manifest.experiment_id,
+        "experiment_revision": manifest.revision,
+        "eligible_cells": len(cohort),
+        "valid_sources": sum(row["status"] == "valid" for row in results),
+        "invalid_sources": sum(row["status"] == "invalid" for row in results),
+        "sources": results,
+        "completed_at": utc_now().isoformat(),
+    }
+    destination = write_json(paths.features / "source_validation.json", report)
+    notify(
+        {
+            "event": "source_validation_completed",
+            **{
+                key: value
+                for key, value in report.items()
+                if key not in {"sources"}
+            },
+            "report": str(destination),
+        }
+    )
+    return report
 
 
 def run_feature_build(
@@ -359,20 +463,65 @@ def run_feature_build(
     if tasks:
         executor = ProcessPoolExecutor(max_workers=worker_count)
         future_to_roi = {executor.submit(_roi_task, task): task["roi"] for task in tasks}
+        pending = set(future_to_roi)
+        total_work = len(eligible)
         try:
-            for future in as_completed(future_to_roi):
-                roi = future_to_roi[future]
-                try:
-                    result = future.result()
-                    completed.append(result)
-                    warnings.extend(result["warnings"])
-                    notify({"event": "roi_completed", **result})
-                except Exception as exc:  # noqa: BLE001 - isolate failures per ROI
-                    failures.append({"ROI": roi, "error": f"{type(exc).__name__}: {exc}"})
-                    notify({"event": "roi_failed", "roi": roi, "error": str(exc)})
+            while pending:
+                finished, pending = wait(
+                    pending,
+                    timeout=2.0,
+                    return_when=FIRST_COMPLETED,
+                )
+                if not finished:
+                    notify(
+                        {
+                            "event": "heartbeat",
+                            "completed_rois": len(completed),
+                            "failed_rois": len(failures),
+                            "pending_rois": len(pending),
+                            "running_workers": min(worker_count, len(pending)),
+                            "total_rois": total_work,
+                            "orchestrator_pid": os.getpid(),
+                            "elapsed_seconds": time.monotonic() - started,
+                        }
+                    )
+                for future in finished:
+                    roi = future_to_roi[future]
+                    try:
+                        result = future.result()
+                        completed.append(result)
+                        warnings.extend(result["warnings"])
+                        notify(
+                            {
+                                "event": "roi_completed",
+                                **result,
+                                "completed_rois": len(completed),
+                                "failed_rois": len(failures),
+                                "pending_rois": len(pending),
+                                "total_rois": total_work,
+                            }
+                        )
+                    except Exception as exc:  # noqa: BLE001 - isolate failures per ROI
+                        failures.append(
+                            {
+                                "ROI": roi,
+                                "error": f"{type(exc).__name__}: {exc}",
+                            }
+                        )
+                        notify(
+                            {
+                                "event": "roi_failed",
+                                "roi": roi,
+                                "error": str(exc),
+                                "completed_rois": len(completed),
+                                "failed_rois": len(failures),
+                                "pending_rois": len(pending),
+                                "total_rois": total_work,
+                            }
+                        )
                 if cancel_path.exists():
-                    for pending in future_to_roi:
-                        pending.cancel()
+                    for pending_future in pending:
+                        pending_future.cancel()
                     executor.shutdown(wait=True, cancel_futures=True)
                     cancel_path.unlink(missing_ok=True)
                     notify(
@@ -518,6 +667,8 @@ def build_parser() -> argparse.ArgumentParser:
     features = subparsers.add_parser("features")
     features.add_argument("--experiment", required=True)
     features.add_argument("--workers", type=int, default=None)
+    validate_sources = subparsers.add_parser("validate-sources")
+    validate_sources.add_argument("--experiment", required=True)
     return parser
 
 
@@ -533,6 +684,17 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # noqa: BLE001 - CLI reports a structured failure
             _emit({"event": "build_failed", "error": f"{type(exc).__name__}: {exc}"})
             return 1
+    elif args.command == "validate-sources":
+        try:
+            validate_feature_sources(args.experiment)
+        except Exception as exc:  # noqa: BLE001 - structured subprocess failure
+            _emit(
+                {
+                    "event": "source_validation_failed",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            return 1
     return 0
 
 
@@ -545,4 +707,5 @@ __all__ = [
     "FeatureBuildResult",
     "main",
     "run_feature_build",
+    "validate_feature_sources",
 ]

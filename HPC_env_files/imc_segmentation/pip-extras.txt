@@ -3,3 +3,4 @@ Nimbus-Inference==0.0.4
 openai==2.7.1
 SpatialDM==0.3.1
 pyarrow>=15
+spatialdata>=0.7,<0.8

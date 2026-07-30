@@ -13,19 +13,26 @@ import tifffile
 
 from SpatialBiologyToolkit.spatialdata import (
     CellMasks,
+    HistologyAssetHint,
     HistologyImages,
+    IMCImageAssetHint,
     IMCAnnData,
     IMCImages,
+    MaxFuseAssetHint,
     MaxFuseSCRNASeq,
+    RegionLabelsAssetHint,
     RegionLabels,
+    SpatialDataAssetHints,
     SpatialDataSpec,
     add_modality,
+    build_spatialdata_from_assets,
     create_spatialdata,
     get_label_annotations,
     get_roi_elements,
     get_roi_label_elements,
     get_roi_modalities,
     plan_spatialdata,
+    plan_spatialdata_from_assets,
     plot_spatialdata_cells,
     plot_spatialdata_roi,
     summarize_spatialdata,
@@ -165,6 +172,143 @@ def _complete_spec(root: Path, imc: ad.AnnData, maxfuse: ad.AnnData) -> SpatialD
 
 
 class SpatialDataConstructionTests(unittest.TestCase):
+    def test_folder_discovery_accepts_explicit_assets_and_builds(self):
+        from spatialdata import read_zarr
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            imc, maxfuse = _write_project(root)
+            imc_path = root / "cells.h5ad"
+            maxfuse_path = root / "matched_transcriptomes.h5ad"
+            imc.write_h5ad(imc_path)
+            maxfuse.write_h5ad(maxfuse_path)
+
+            hints = SpatialDataAssetHints(
+                anndata=imc_path,
+                cell_masks=root / "masks",
+                primary_images=root / "immune",
+                additional_images=(
+                    IMCImageAssetHint(
+                        name="ecm_images",
+                        folder=root / "ecm",
+                        panel_name="ECM",
+                        channels=("Collagen",),
+                        allow_partial=False,
+                    ),
+                ),
+                histology=(
+                    HistologyAssetHint(
+                        name="he",
+                        folder=root / "histology",
+                        allow_partial=False,
+                    ),
+                ),
+                region_labels=(
+                    RegionLabelsAssetHint(
+                        name="regions",
+                        folder=root / "regions",
+                        suffix="_regions",
+                        value_names={1: "Tissue", 2: "Edge"},
+                        allow_partial=False,
+                    ),
+                ),
+                maxfuse=(
+                    MaxFuseAssetHint(
+                        name="atlas",
+                        adata=maxfuse_path,
+                    ),
+                ),
+                discover_unlisted_assets=False,
+                raster_chunks=(2, 3),
+            )
+
+            asset_plan = plan_spatialdata_from_assets(root, hints=hints)
+            self.assertTrue(asset_plan.ok, asset_plan.summary())
+            self.assertEqual(
+                set(asset_plan.proposal.selected),
+                {
+                    "primary_anndata",
+                    "cell_masks",
+                    "primary_images",
+                    "image_panel:ecm_images",
+                    "histology:he",
+                    "region_labels:regions",
+                    "maxfuse:atlas",
+                },
+            )
+
+            result = build_spatialdata_from_assets(
+                root,
+                "discovered.zarr",
+                asset_plan=asset_plan,
+            )
+            self.assertEqual(
+                result.element_counts,
+                {
+                    "images": 6,
+                    "labels": 4,
+                    "points": 2,
+                    "shapes": 0,
+                    "tables": 3,
+                },
+            )
+            restored = read_zarr(result.output_path)
+            self.assertEqual(
+                set(restored.tables),
+                {"table_cell_quantification", "table_regions", "table_atlas"},
+            )
+
+    def test_folder_discovery_finds_primary_assets_and_reports_unmapped_labels(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            imc, _maxfuse = _write_project(root)
+            imc.write_h5ad(root / "cells.h5ad")
+
+            asset_plan = plan_spatialdata_from_assets(root)
+
+            self.assertTrue(asset_plan.ok, asset_plan.summary())
+            self.assertEqual(
+                Path(
+                    next(
+                        candidate.path
+                        for candidate in asset_plan.inventory.candidates
+                        if candidate.candidate_id
+                        == asset_plan.proposal.selected["primary_anndata"]
+                    )
+                ),
+                root / "cells.h5ad",
+            )
+            self.assertTrue(
+                any(
+                    issue.code == "unselected_region_labels"
+                    and issue.path == root / "regions"
+                    for issue in asset_plan.proposal.issues
+                )
+            )
+
+    def test_folder_discovery_requires_explicit_choice_for_ambiguous_anndata(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            imc, _maxfuse = _write_project(root)
+            imc.write_h5ad(root / "cells_a.h5ad")
+            imc.write_h5ad(root / "cells_b.h5ad")
+
+            asset_plan = plan_spatialdata_from_assets(
+                root,
+                hints=SpatialDataAssetHints(
+                    cell_masks=root / "masks",
+                    primary_images=root / "immune",
+                ),
+            )
+
+            self.assertFalse(asset_plan.ok)
+            self.assertTrue(
+                any(
+                    issue.code == "primary_anndata_ambiguous"
+                    for issue in asset_plan.proposal.errors
+                )
+            )
+
     def test_plan_build_interrogate_plot_and_roundtrip_all_modalities(self):
         import matplotlib.pyplot as plt
         from spatialdata import read_zarr

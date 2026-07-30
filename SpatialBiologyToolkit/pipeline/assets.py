@@ -215,6 +215,15 @@ def resolve_assets(
             count_limit=count_limit,
         )
     )
+    assets.append(
+        inspect_asset(
+            role="spatialdata_zarr",
+            path=resolve_project_path(root, config.spatialdata.output_path),
+            kind="directory",
+            lifecycle="generated_output",
+            count_limit=count_limit,
+        )
+    )
     return assets
 
 

@@ -158,6 +158,8 @@ class ExploreViewRecipe(BaseModel):
             or self.observation_overlay
             or self.populations
             or self.marker_overlays
+            or self.layer_visibility
+            or self.layer_opacities
         )
 
     @property

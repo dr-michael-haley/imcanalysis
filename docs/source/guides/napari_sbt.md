@@ -76,6 +76,41 @@ exist.
 
 ## Feature sources and calculation
 
+Feature work has its own **🧬 Feature Building** tab; it is not required for
+ordinary image exploration. The tab separates source checking, channel
+selection, recipe design, and execution:
+
+1. Add optional imported sources. Tables use
+   `source_name=/path/to/features.parquet`. AnnData and CellVision sources use
+   `source_name=/path/to/data.h5ad::X`, `::obs`, or an `obsm` key such as
+   `::X_cellvision`.
+2. Select **Validate identities, cohort coverage, and numeric features** before
+   a build. Validation runs outside the Napari process and reports whether each
+   source can be read, how many frozen-cohort cells match, how many are missing,
+   and how many usable numeric features it supplies. Its complete
+   machine-readable report is saved as `features/source_validation.json`.
+3. Refresh the channel list and select channels directly from those inferred
+   from `adata.var_names` and the images available for an experiment ROI.
+   Clearing the selection means “use every channel discovered by the worker.”
+4. Enable feature families and tick only the individual measurements required
+   for this experiment. The adjacent descriptions explain the scientific
+   quantity represented by every choice.
+
+The selectable feature families are:
+
+- **Distribution**: fast per-channel pixel summaries such as mean, median,
+  quantiles, spread, range, sum, and coefficient of variation.
+- **Core/border/background/contrast**: more expensive regional measurements,
+  including intensity-centroid displacement and local background comparisons.
+- **Channel gradients**: the selected distribution summaries calculated over
+  gradient magnitude, capturing edges and within-cell texture.
+- **Original-mask morphology**: channel-independent area, perimeter,
+  circularity, axes, solidity, holes, bounding-box, and edge features.
+- **Full-segmentation context**: neighbour counts, nearest-cell distance, and
+  ROI density calculated with every segmented cell as context.
+- **Cohort-relative ROI ranks**: optional z-scores and/or percentile ranks
+  among eligible cells in the same ROI.
+
 Feature sources are joined strictly by `(ROI, ObjectNumber)`, filtered to the
 frozen cohort, and namespaced before modelling. Sources may be CSV/Parquet,
 AnnData `X`, numeric `obs`, a selected `obsm`, CellVision embeddings, or newly
@@ -102,8 +137,14 @@ resizing scientific inputs.
 Local builds run in a `QProcess`; the worker uses a spawn-safe process pool with
 one task per ROI. Completed Parquet fragments are reusable only when the
 experiment, cohort, recipe, and input fingerprints match. Cancellation
-preserves valid fragments. For large datasets, configure the active experiment
-and run:
+preserves valid fragments. During a local build, the panel shows the Python
+process ID and whether it is alive, heartbeat age, elapsed time, active worker
+count, completed/failed/pending ROI counts, the most recent ROI result, and the
+final fragment/source-combination phase. A heartbeat is emitted approximately
+every two seconds while ROI work is outstanding, so a long-running ROI can be
+distinguished from a dead process.
+
+For large datasets, configure the active experiment and run:
 
 ```bash
 sbt run cellfeat
@@ -158,13 +199,19 @@ a different review set.
 
 The **Layers re-added when the ROI changes** list is the explicit reload
 contract. It shows every replayable Explore layer, including its colormap,
-visibility, and opacity. Select one or more entries and use **Delete selected
-recipe items** to remove them from both the recipe and the current replayed
-view. **Update from current layers** rebuilds the recipe from supported layers
-currently present in Napari, capturing manual colormap, visibility, and opacity
-changes. Cohort, context, classification, manual-region, and unsupported
-derived layers are managed separately or reported as ignored rather than being
-silently added to the recipe.
+visibility, and opacity. Select one or more entries and use **Delete/reset
+selected recipe items** to remove Explore entries from both the recipe and the
+current replayed view; selecting a managed classifier entry resets its display
+settings to the defaults. **Update from current layers** rebuilds the recipe
+from supported layers currently present in Napari, capturing manual colormap,
+visibility, and opacity changes. The eligible cohort, excluded-cell context,
+confirmed, proposed, predicted, and uncertainty/probability layers are also
+shown explicitly. Their scientific data continue to be regenerated from masks,
+labels, and scores, but their visible/hidden state and opacity are captured and
+replayed. Changing the eye state in Napari updates the active recipe
+immediately. Manual-region and unsupported derived layers remain separately
+managed or are reported as ignored rather than being silently added to the
+recipe.
 
 **Save current view for selected population** stores a population-specific
 verification recipe inside the experiment. Selecting that observation and
@@ -199,6 +246,7 @@ napari_sbt/<experiment>/
 │   ├── feature_table.parquet
 │   ├── feature_dictionary.csv
 │   ├── coverage_report.csv
+│   ├── source_validation.json
 │   └── feature_manifest.json
 ├── labels/labels.parquet
 ├── explore/review_state.json

@@ -8,7 +8,7 @@ environments:
     toolkit_overlay: editable-no-deps
     smoke_tests:
       - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
-      - [python, -c, "import scanpy, readimc, skimage, pyarrow"]
+      - [python, -c, "import scanpy, readimc, skimage, pyarrow, spatialdata"]
 
   denoise:
     conda_name: imc_denoise
@@ -143,3 +143,4 @@ stage_environments:
   hyperstac-full: [hyperstac]
   cellfeat: [segmentation]
   maxfuse: [maxfuse]
+  spatialdata: [segmentation]

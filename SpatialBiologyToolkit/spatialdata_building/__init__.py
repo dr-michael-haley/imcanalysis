@@ -7,6 +7,24 @@ model-compliant Images, Labels, Points, and Tables elements.
 """
 
 from .core import add_modality, create_spatialdata, plan_spatialdata
+from .discovery import (
+    AssetCandidate,
+    DiscoveryIssue,
+    HistologyAssetHint,
+    IMCImageAssetHint,
+    MaxFuseAssetHint,
+    RegionLabelsAssetHint,
+    SpatialDataAssetHints,
+    SpatialDataAssetInventory,
+    SpatialDataAssetPlan,
+    SpatialDataAssetProposal,
+    SpatialDataBuildResult,
+    SpatialDataDiscoveryOptions,
+    build_spatialdata_from_assets,
+    discover_spatialdata_assets,
+    plan_spatialdata_from_assets,
+    propose_spatialdata_spec,
+)
 from .models import (
     CellMasks,
     HistologyImages,
@@ -21,17 +39,33 @@ from .models import (
 )
 
 __all__ = [
+    "AssetCandidate",
     "CellMasks",
+    "DiscoveryIssue",
+    "HistologyAssetHint",
     "HistologyImages",
+    "IMCImageAssetHint",
     "IMCAnnData",
     "IMCImages",
+    "MaxFuseAssetHint",
     "MaxFuseSCRNASeq",
+    "RegionLabelsAssetHint",
     "RegionLabels",
+    "SpatialDataAssetHints",
+    "SpatialDataAssetInventory",
+    "SpatialDataAssetPlan",
+    "SpatialDataAssetProposal",
+    "SpatialDataBuildResult",
+    "SpatialDataDiscoveryOptions",
     "SpatialDataPlan",
     "SpatialDataSpec",
     "ValidationIssue",
     "ValidationReport",
     "add_modality",
+    "build_spatialdata_from_assets",
     "create_spatialdata",
+    "discover_spatialdata_assets",
+    "plan_spatialdata_from_assets",
     "plan_spatialdata",
+    "propose_spatialdata_spec",
 ]

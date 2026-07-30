@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -51,6 +52,10 @@ from .explore import (
     marker_values,
     population_recipe_key,
 )
+from .feature_catalog import (
+    FEATURE_FAMILY_CATALOG,
+    FEATURE_FAMILY_DESCRIPTIONS,
+)
 from .labels import confirm_proposed, empty_labels, set_label, validate_labels
 from .models import (
     ClassificationClass,
@@ -74,6 +79,35 @@ CLASS_LAYER_NAMES = {
     "proposed": "proposed_classes",
     "predicted": "predicted_classes",
     "uncertainty": "uncertainty_or_probability",
+}
+
+MANAGED_RECIPE_LAYERS = {
+    "classification_cohort": "Eligible-cell classification mask",
+    "excluded_segmentation_context": "Excluded-cell segmentation context",
+    CLASS_LAYER_NAMES["confirmed"]: "Classifier: confirmed classes",
+    CLASS_LAYER_NAMES["proposed"]: "Classifier: proposed classes",
+    CLASS_LAYER_NAMES["predicted"]: "Classifier: predicted classes",
+    CLASS_LAYER_NAMES["uncertainty"]: (
+        "Classifier: uncertainty or selected-class probability"
+    ),
+}
+
+MANAGED_LAYER_DEFAULT_VISIBILITY = {
+    "classification_cohort": True,
+    "excluded_segmentation_context": False,
+    CLASS_LAYER_NAMES["confirmed"]: True,
+    CLASS_LAYER_NAMES["proposed"]: True,
+    CLASS_LAYER_NAMES["predicted"]: False,
+    CLASS_LAYER_NAMES["uncertainty"]: True,
+}
+
+MANAGED_LAYER_DEFAULT_OPACITY = {
+    "classification_cohort": 1.0,
+    "excluded_segmentation_context": 0.18,
+    CLASS_LAYER_NAMES["confirmed"]: 1.0,
+    CLASS_LAYER_NAMES["proposed"]: 1.0,
+    CLASS_LAYER_NAMES["predicted"]: 1.0,
+    CLASS_LAYER_NAMES["uncertainty"]: 1.0,
 }
 
 
@@ -109,8 +143,8 @@ class NapariSBTController:
         images_folders: Iterable[str | Path] = (),
         extra_images_folders: Iterable[str | Path] = (),
     ) -> None:
-        from qtpy.QtCore import Qt
-        from qtpy.QtGui import QColor
+        from qtpy.QtCore import QTimer, Qt
+        from qtpy.QtGui import QColor, QFont
         from qtpy.QtWidgets import (
             QAbstractItemView,
             QCheckBox,
@@ -128,12 +162,15 @@ class NapariSBTController:
             QListWidget,
             QMessageBox,
             QPushButton,
+            QProgressBar,
             QScrollArea,
             QSpinBox,
             QTableWidget,
             QTableWidgetItem,
             QTabWidget,
             QTextEdit,
+            QTreeWidget,
+            QTreeWidgetItem,
             QVBoxLayout,
             QWidget,
         )
@@ -144,6 +181,7 @@ class NapariSBTController:
         self.QColorDialog = QColorDialog
         self.QColor = QColor
         self.QTableWidgetItem = QTableWidgetItem
+        self.QTreeWidgetItem = QTreeWidgetItem
         self.viewer = viewer
         self.project_root = (
             Path(project_root).expanduser().resolve(strict=False)
@@ -163,6 +201,12 @@ class NapariSBTController:
         self.current_mask_path: Path | None = None
         self.current_selected_object: int | None = None
         self.feature_process = None
+        self.source_validation_process = None
+        self.feature_build_started_at: float | None = None
+        self.feature_last_event_at: float | None = None
+        self.feature_progress_state: dict[str, int | float | str] = {}
+        self._feature_output_buffer = ""
+        self._source_validation_output_buffer = ""
         self.reviewed_rois: set[str] = set()
         self._class_shortcuts: list[str] = []
         self.current_image_paths: dict[str, Path] = {}
@@ -170,8 +214,12 @@ class NapariSBTController:
         self.explore_review_state = ExploreReviewState()
         self._explore_layer_names: set[str] = set()
         self._applying_explore_recipe = False
+        self._updating_recipe_layer_state = False
 
         self.root = QWidget()
+        self.feature_health_timer = QTimer(self.root)
+        self.feature_health_timer.setInterval(1000)
+        self.feature_health_timer.timeout.connect(self._update_feature_process_health)
         root_layout = QVBoxLayout(self.root)
         self.scope_label = QLabel("No experiment: classification is disabled.")
         self.scope_label.setWordWrap(True)
@@ -255,8 +303,20 @@ class NapariSBTController:
         class_layout.addLayout(class_buttons)
         setup_layout.addWidget(class_group)
 
-        feature_group = QGroupBox("3. Feature sources and synthetic recipe")
-        feature_form = QFormLayout(feature_group)
+        setup_actions = QHBoxLayout()
+        self.create_button = QPushButton("Create confirmed experiment")
+        self.load_experiment_button = QPushButton("Load experiment")
+        setup_actions.addWidget(self.create_button)
+        setup_actions.addWidget(self.load_experiment_button)
+        setup_layout.addLayout(setup_actions)
+        add_tab(setup, "⚙ Setup")
+
+        # Feature Building
+        feature_builder = QWidget()
+        feature_builder_layout = QVBoxLayout(feature_builder)
+
+        source_group = QGroupBox("1. Imported feature sources")
+        source_form = QFormLayout(source_group)
         self.feature_tables_edit = QTextEdit()
         self.feature_tables_edit.setPlaceholderText(
             "Optional, one per line: source_id=features.parquet"
@@ -267,10 +327,69 @@ class NapariSBTController:
             "Optional, one per line: cellvision=embeddings.h5ad::X_cellvision"
         )
         self.anndata_features_edit.setMaximumHeight(65)
-        self.channels_edit = QLineEdit()
-        self.channels_edit.setPlaceholderText(
-            "Comma-separated channel names; blank means every discovered channel"
+        self.validate_sources_button = QPushButton(
+            "Validate identities, cohort coverage, and numeric features"
         )
+        self.source_validation_table = QTableWidget(0, 7)
+        self.source_validation_table.setHorizontalHeaderLabels(
+            [
+                "Source",
+                "Kind",
+                "Status",
+                "Covered",
+                "Missing",
+                "Features",
+                "Details",
+            ]
+        )
+        self.source_validation_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeToContents
+        )
+        self.source_validation_table.horizontalHeader().setSectionResizeMode(
+            6, QHeaderView.Stretch
+        )
+        self.source_validation_table.setMaximumHeight(180)
+        source_form.addRow("CSV / Parquet tables", self.feature_tables_edit)
+        source_form.addRow(
+            "AnnData / CellVision sources",
+            self.anndata_features_edit,
+        )
+        source_form.addRow("", self.validate_sources_button)
+        source_form.addRow("Validation results", self.source_validation_table)
+        feature_builder_layout.addWidget(source_group)
+
+        channel_group = QGroupBox("2. IMC channels")
+        channel_layout = QVBoxLayout(channel_group)
+        channel_explanation = QLabel(
+            "Select channels from the AnnData panel and discovered ROI images. "
+            "Blank selection means every channel discovered consistently by the worker."
+        )
+        channel_explanation.setWordWrap(True)
+        self.feature_channel_list = QListWidget()
+        self.feature_channel_list.setSelectionMode(
+            QAbstractItemView.ExtendedSelection
+        )
+        self.feature_channel_list.setMaximumHeight(150)
+        channel_actions = QHBoxLayout()
+        self.refresh_feature_channels_button = QPushButton(
+            "Refresh available channels"
+        )
+        self.select_all_feature_channels_button = QPushButton("Select all")
+        self.clear_feature_channels_button = QPushButton("Clear selection")
+        channel_actions.addWidget(self.refresh_feature_channels_button)
+        channel_actions.addWidget(self.select_all_feature_channels_button)
+        channel_actions.addWidget(self.clear_feature_channels_button)
+        self.channels_edit = QLineEdit()
+        self.channels_edit.setReadOnly(True)
+        self.channels_edit.setPlaceholderText("Every discovered channel")
+        channel_layout.addWidget(channel_explanation)
+        channel_layout.addWidget(self.feature_channel_list)
+        channel_layout.addLayout(channel_actions)
+        channel_layout.addWidget(self.channels_edit)
+        feature_builder_layout.addWidget(channel_group)
+
+        feature_group = QGroupBox("3. Synthetic feature recipe")
+        feature_form = QFormLayout(feature_group)
         self.offset_spin = QSpinBox()
         self.offset_spin.setRange(-1000, 1000)
         self.offset_overlap_check = QCheckBox(
@@ -296,6 +415,8 @@ class NapariSBTController:
         self.shape_check.setChecked(True)
         self.context_check = QCheckBox("Full-segmentation context")
         self.context_check.setChecked(True)
+        self.roi_rank_check = QCheckBox("Cohort-relative ROI ranks")
+        self.roi_rank_check.setChecked(True)
         feature_checks = QWidget()
         feature_checks_layout = QHBoxLayout(feature_checks)
         feature_checks_layout.setContentsMargins(0, 0, 0, 0)
@@ -305,38 +426,104 @@ class NapariSBTController:
             self.gradient_check,
             self.shape_check,
             self.context_check,
+            self.roi_rank_check,
         ):
             feature_checks_layout.addWidget(widget)
+        self.feature_family_checks = {
+            "distribution": self.distribution_check,
+            "region": self.region_check,
+            "gradient": self.gradient_check,
+            "shape": self.shape_check,
+            "context": self.context_check,
+            "roi_rank": self.roi_rank_check,
+        }
+        self.feature_tree = QTreeWidget()
+        self.feature_tree.setColumnCount(2)
+        self.feature_tree.setHeaderLabels(
+            ["Feature family / selected feature", "What it measures"]
+        )
+        self.feature_tree.header().setSectionResizeMode(
+            0, QHeaderView.ResizeToContents
+        )
+        self.feature_tree.header().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.feature_tree.setMaximumHeight(360)
+        self.feature_tree_items: dict[str, dict[str, object]] = {}
+        for family, catalog in FEATURE_FAMILY_CATALOG.items():
+            family_item = self.QTreeWidgetItem(
+                [
+                    family.replace("_", " ").title(),
+                    FEATURE_FAMILY_DESCRIPTIONS[family],
+                ]
+            )
+            family_font = family_item.font(0)
+            family_font.setBold(True)
+            family_item.setFont(0, family_font)
+            self.feature_tree.addTopLevelItem(family_item)
+            self.feature_tree_items[family] = {}
+            for key, description in catalog.items():
+                child = self.QTreeWidgetItem([key, description])
+                child.setData(0, self.Qt.UserRole, (family, key))
+                child.setFlags(child.flags() | self.Qt.ItemIsUserCheckable)
+                child.setCheckState(0, self.Qt.Checked)
+                family_item.addChild(child)
+                self.feature_tree_items[family][key] = child
+        self.feature_tree.expandAll()
+        self.feature_selection_summary = QLabel()
+        self.feature_selection_summary.setWordWrap(True)
         self.workers_spin = QSpinBox()
         self.workers_spin.setRange(1, max(os.cpu_count() or 1, 1))
         self.workers_spin.setValue(min(8, max(os.cpu_count() or 1, 1)))
-        feature_form.addRow("Imported tables", self.feature_tables_edit)
-        feature_form.addRow("AnnData / CellVision sources", self.anndata_features_edit)
-        feature_form.addRow("Channels", self.channels_edit)
         feature_form.addRow("Signed intensity-mask offset (px)", self.offset_spin)
         feature_form.addRow("Positive-offset collisions", self.offset_overlap_check)
         feature_form.addRow("Background ring (px)", self.background_ring_spin)
         feature_form.addRow("Nimbus normalization JSON", self.normalization_edit)
-        feature_form.addRow("Feature families", feature_checks)
+        feature_form.addRow("Enabled families", feature_checks)
+        feature_form.addRow("Specific features", self.feature_tree)
+        feature_form.addRow("Selection summary", self.feature_selection_summary)
         feature_form.addRow("Local workers", self.workers_spin)
-        setup_layout.addWidget(feature_group)
-        setup_actions = QHBoxLayout()
-        self.create_button = QPushButton("Create confirmed experiment")
-        self.load_experiment_button = QPushButton("Load experiment")
+        feature_builder_layout.addWidget(feature_group)
+
+        progress_group = QGroupBox("4. Build progress and process health")
+        progress_layout = QVBoxLayout(progress_group)
+        self.feature_progress_bar = QProgressBar()
+        self.feature_progress_bar.setRange(0, 100)
+        self.feature_progress_bar.setValue(0)
+        self.feature_progress_bar.setFormat("Not started")
+        self.feature_phase_label = QLabel("Phase: idle")
+        self.feature_counts_label = QLabel(
+            "ROIs: 0 completed, 0 resumed, 0 failed, 0 pending"
+        )
+        self.feature_current_roi_label = QLabel("Most recent ROI: none")
+        self.feature_elapsed_label = QLabel("Elapsed: 00:00:00")
+        self.feature_process_health_label = QLabel(
+            "Python process: not running"
+        )
+        self.feature_process_health_label.setWordWrap(True)
+        self.feature_progress_log = QTextEdit()
+        self.feature_progress_log.setReadOnly(True)
+        self.feature_progress_log.setMaximumHeight(180)
+        progress_layout.addWidget(self.feature_progress_bar)
+        progress_layout.addWidget(self.feature_phase_label)
+        progress_layout.addWidget(self.feature_counts_label)
+        progress_layout.addWidget(self.feature_current_roi_label)
+        progress_layout.addWidget(self.feature_elapsed_label)
+        progress_layout.addWidget(self.feature_process_health_label)
+        progress_layout.addWidget(self.feature_progress_log)
+        feature_builder_layout.addWidget(progress_group)
+
+        feature_actions = QHBoxLayout()
         self.build_features_button = QPushButton("Build/resume features locally")
         self.cancel_features_button = QPushButton("Cancel build")
         self.cancel_features_button.setEnabled(False)
         self.hpc_button = QPushButton("HPC instructions")
         for widget in (
-            self.create_button,
-            self.load_experiment_button,
             self.build_features_button,
             self.cancel_features_button,
             self.hpc_button,
         ):
-            setup_actions.addWidget(widget)
-        setup_layout.addLayout(setup_actions)
-        add_tab(setup, "Setup")
+            feature_actions.addWidget(widget)
+        feature_builder_layout.addLayout(feature_actions)
+        add_tab(feature_builder, "🧬 Feature Building")
 
         # Explore
         explore = QWidget()
@@ -379,18 +566,19 @@ class NapariSBTController:
         reload_recipe_group = QGroupBox("Layers re-added when the ROI changes")
         reload_recipe_layout = QVBoxLayout(reload_recipe_group)
         self.reload_recipe_help = QLabel(
-            "This is the exact Explore-layer recipe. Cohort and classification "
-            "layers are reconstructed separately and are not listed here."
+            "This is the exact ROI reload recipe. Classifier layers are "
+            "regenerated from labels and scores, while their visible/hidden "
+            "state and opacity are replayed from this list."
         )
         self.reload_recipe_help.setWordWrap(True)
         self.reload_recipe_list = QListWidget()
         self.reload_recipe_list.setSelectionMode(
             QAbstractItemView.ExtendedSelection
         )
-        self.reload_recipe_list.setMaximumHeight(150)
+        self.reload_recipe_list.setMaximumHeight(240)
         reload_recipe_actions = QHBoxLayout()
         self.delete_recipe_items_button = QPushButton(
-            "Delete selected recipe items"
+            "Delete/reset selected recipe items"
         )
         self.update_recipe_from_layers_button = QPushButton(
             "Update from current layers"
@@ -471,7 +659,7 @@ class NapariSBTController:
         image_layout.addWidget(self.channel_list)
         image_layout.addLayout(image_actions)
         explore_layout.addWidget(image_group)
-        add_tab(explore, "Explore")
+        add_tab(explore, "🔬 Explore")
 
         # Classify
         classify = QWidget()
@@ -557,7 +745,7 @@ class NapariSBTController:
         model_form.addRow("Probability class", self.probability_class_combo)
         model_form.addRow("", self.show_probability_button)
         classify_layout.addWidget(model_group)
-        add_tab(classify, "Classify")
+        add_tab(classify, "🏷 Classify")
 
         # Regions & Export
         regions = QWidget()
@@ -586,7 +774,7 @@ class NapariSBTController:
         export_form.addRow("", self.export_cohort_masks_button)
         export_form.addRow("", self.export_clean_masks_button)
         regions_layout.addWidget(export_group)
-        add_tab(regions, "Regions & Export")
+        add_tab(regions, "🗺 Regions & Export")
 
         # Layers & Status
         layers = QWidget()
@@ -629,7 +817,7 @@ class NapariSBTController:
         self.refresh_status_button = QPushButton("Refresh experiment freshness status")
         layers_layout.addWidget(self.refresh_status_button)
         layers_layout.addWidget(self.status_text)
-        add_tab(layers, "Layers & Status")
+        add_tab(layers, "🎨 Layers & Status")
         self.tabs.setStyleSheet(
             """
             QTabBar::tab {
@@ -644,6 +832,7 @@ class NapariSBTController:
             QTabBar::tab:nth-child(3) { background: #fef3c7; }
             QTabBar::tab:nth-child(4) { background: #fce7f3; }
             QTabBar::tab:nth-child(5) { background: #ede9fe; }
+            QTabBar::tab:nth-child(6) { background: #e0f2fe; }
             QTabBar::tab:selected {
                 font-weight: bold;
                 border: 2px solid #5f6368;
@@ -651,9 +840,27 @@ class NapariSBTController:
             }
             """
         )
+        tab_font = QFont(self.tabs.tabBar().font())
+        tab_font.setBold(True)
+        tab_font.setPointSize(max(tab_font.pointSize() + 2, 11))
+        self.tabs.tabBar().setFont(tab_font)
+        tab_text_colours = (
+            "#1d4ed8",
+            "#7c3aed",
+            "#047857",
+            "#b45309",
+            "#be185d",
+            "#0369a1",
+        )
+        for index, colour in enumerate(tab_text_colours):
+            self.tabs.tabBar().setTabTextColor(index, self.QColor(colour))
 
         self._set_class_rows(segmentation_qc_classes())
         self._connect_signals()
+        for family, checkbox in self.feature_family_checks.items():
+            self._feature_family_toggled(family, checkbox.isChecked())
+        self._update_feature_selection_summary()
+        self._update_feature_channel_summary()
         self._refresh_reload_recipe_list()
         self._set_classification_enabled(False)
         if experiment:
@@ -676,6 +883,29 @@ class NapariSBTController:
         self.load_experiment_button.clicked.connect(
             self._guard(self.choose_and_load_experiment)
         )
+        self.validate_sources_button.clicked.connect(
+            self._guard(self.start_source_validation)
+        )
+        self.refresh_feature_channels_button.clicked.connect(
+            self._guard(self.refresh_feature_channel_choices)
+        )
+        self.select_all_feature_channels_button.clicked.connect(
+            lambda: self.feature_channel_list.selectAll()
+        )
+        self.clear_feature_channels_button.clicked.connect(
+            lambda: self.feature_channel_list.clearSelection()
+        )
+        self.feature_channel_list.itemSelectionChanged.connect(
+            self._update_feature_channel_summary
+        )
+        self.feature_tree.itemChanged.connect(self._feature_tree_item_changed)
+        for family, checkbox in self.feature_family_checks.items():
+            checkbox.toggled.connect(
+                lambda checked, family=family: self._feature_family_toggled(
+                    family,
+                    checked,
+                )
+            )
         self.build_features_button.clicked.connect(self._guard(self.start_feature_build))
         self.cancel_features_button.clicked.connect(self.cancel_feature_build)
         self.hpc_button.clicked.connect(
@@ -861,6 +1091,7 @@ class NapariSBTController:
             item.setSelected(item.text() in selected_markers)
         self.refresh_scope_values()
         self.refresh_population_values()
+        self.refresh_feature_channel_choices()
         self.set_status(f"Loaded AnnData selectors for {self.adata.n_obs:,} cells.")
 
     def refresh_scope_values(self) -> None:
@@ -1058,6 +1289,170 @@ class NapariSBTController:
             )
         return sources
 
+    def refresh_feature_channel_choices(self) -> None:
+        selected = set(self.selected_feature_channels())
+        if not selected and self.manifest is not None:
+            selected = set(self.manifest.synthetic_features.channels)
+        panel_channels = (
+            [str(value) for value in self.adata.var_names]
+            if self.adata is not None
+            else []
+        )
+        discovered_channels = list(self.current_image_paths)
+        if self.manifest is not None and not self.current_image_paths:
+            rois = (
+                sorted(self.cohort["ROI"].astype(str).unique())
+                if not self.cohort.empty
+                else []
+            )
+            if rois:
+                aliases = (
+                    build_image_channel_aliases(
+                        self.adata.var_names,
+                        self.adata.var,
+                    )
+                    if self.adata is not None
+                    else {}
+                )
+                discovered = discover_roi_images(
+                    self.manifest.images_folders
+                    + self.manifest.extra_images_folders,
+                    rois[0],
+                    channel_aliases=aliases,
+                )
+                discovered_channels.extend(discovered)
+        channels = list(
+            dict.fromkeys(
+                discovered_channels
+                or panel_channels
+            )
+        )
+        for channel in (
+            self.manifest.synthetic_features.channels
+            if self.manifest is not None
+            else []
+        ):
+            if channel not in channels:
+                channels.append(channel)
+        verified = set(discovered_channels)
+        self.feature_channel_list.clear()
+        for channel in channels:
+            from qtpy.QtWidgets import QListWidgetItem
+
+            item = QListWidgetItem(channel)
+            item.setToolTip(
+                (
+                    "Discovered in the current/preview ROI. Selected channels "
+                    "must also be available in every ROI used by the worker."
+                    if channel in verified
+                    else "Panel or saved-recipe channel not yet verified against "
+                    "an experiment ROI."
+                )
+            )
+            self.feature_channel_list.addItem(item)
+            item.setSelected(channel in selected)
+        self._update_feature_channel_summary()
+        self.set_status(
+            f"Found {len(channels)} feature channel choice(s); "
+            f"{len(verified)} were discovered in an experiment ROI."
+        )
+
+    def selected_feature_channels(self) -> list[str]:
+        if not hasattr(self, "feature_channel_list"):
+            return []
+        return [
+            item.text() for item in self.feature_channel_list.selectedItems()
+        ]
+
+    def _update_feature_channel_summary(self) -> None:
+        channels = self.selected_feature_channels()
+        self.channels_edit.setText(
+            ", ".join(channels) if channels else ""
+        )
+        self.channels_edit.setToolTip(
+            (
+                f"{len(channels)} explicitly selected channel(s)."
+                if channels
+                else "No explicit selection: use every channel discovered by "
+                "the feature worker."
+            )
+        )
+        self._update_feature_selection_summary()
+
+    def _feature_family_toggled(self, family: str, checked: bool) -> None:
+        items = self.feature_tree_items.get(family, {})
+        if checked and not any(
+            item.checkState(0) == self.Qt.Checked for item in items.values()
+        ):
+            self.feature_tree.blockSignals(True)
+            for item in items.values():
+                item.setCheckState(0, self.Qt.Checked)
+            self.feature_tree.blockSignals(False)
+        for item in items.values():
+            item.setDisabled(not checked)
+        self._update_feature_selection_summary()
+
+    def _feature_tree_item_changed(self, _item, _column: int) -> None:
+        self._update_feature_selection_summary()
+
+    def selected_feature_names(self, family: str) -> list[str]:
+        return [
+            name
+            for name, item in self.feature_tree_items.get(family, {}).items()
+            if item.checkState(0) == self.Qt.Checked
+        ]
+
+    def _update_feature_selection_summary(self) -> None:
+        if not hasattr(self, "feature_selection_summary"):
+            return
+        selected_counts = {
+            family: len(self.selected_feature_names(family))
+            if checkbox.isChecked()
+            else 0
+            for family, checkbox in self.feature_family_checks.items()
+        }
+        channel_count = len(self.selected_feature_channels())
+        channel_text = (
+            str(channel_count)
+            if channel_count
+            else "all consistently discovered"
+        )
+        self.feature_selection_summary.setText(
+            "Channels: "
+            f"{channel_text}; per-channel distribution "
+            f"{selected_counts['distribution']}, region "
+            f"{selected_counts['region']}, gradient "
+            f"{selected_counts['gradient']}; per-cell shape "
+            f"{selected_counts['shape']}, context "
+            f"{selected_counts['context']}; ROI-rank statistics "
+            f"{selected_counts['roi_rank']}."
+        )
+
+    def synthetic_recipe_from_controls(self) -> SyntheticFeatureRecipe:
+        return SyntheticFeatureRecipe(
+            channels=self.selected_feature_channels(),
+            mask_offset_px=self.offset_spin.value(),
+            allow_positive_offset_overlap=self.offset_overlap_check.isChecked(),
+            distribution_features=self.distribution_check.isChecked(),
+            region_features=self.region_check.isChecked(),
+            gradient_features=self.gradient_check.isChecked(),
+            shape_features=self.shape_check.isChecked(),
+            context_features=self.context_check.isChecked(),
+            roi_rank_features=self.roi_rank_check.isChecked(),
+            distribution_feature_names=self.selected_feature_names(
+                "distribution"
+            ),
+            region_feature_names=self.selected_feature_names("region"),
+            gradient_feature_names=self.selected_feature_names("gradient"),
+            shape_feature_names=self.selected_feature_names("shape"),
+            context_feature_names=self.selected_feature_names("context"),
+            roi_rank_statistics=self.selected_feature_names("roi_rank"),
+            background_ring_px=self.background_ring_spin.value(),
+            normalization_dict_path=(
+                self.normalization_edit.text().strip() or None
+            ),
+        )
+
     def create_experiment(self) -> None:
         preview = self.preview_cohort()
         reply = self.QMessageBox.question(
@@ -1097,11 +1492,6 @@ class NapariSBTController:
             obs_values=self.selected_scope_values(),
             snapshot_path=str(provisional_paths.relative_to(root)),
         )
-        channels = [
-            value.strip()
-            for value in self.channels_edit.text().split(",")
-            if value.strip()
-        ]
         manifest = ExperimentManifest(
             name=name,
             project_root=str(self.project_root),
@@ -1114,20 +1504,7 @@ class NapariSBTController:
             cell_scope=scope,
             classes=self.class_definitions(),
             feature_sources=self.feature_sources(),
-            synthetic_features=SyntheticFeatureRecipe(
-                channels=channels,
-                mask_offset_px=self.offset_spin.value(),
-                allow_positive_offset_overlap=self.offset_overlap_check.isChecked(),
-                distribution_features=self.distribution_check.isChecked(),
-                region_features=self.region_check.isChecked(),
-                gradient_features=self.gradient_check.isChecked(),
-                shape_features=self.shape_check.isChecked(),
-                context_features=self.context_check.isChecked(),
-                background_ring_px=self.background_ring_spin.value(),
-                normalization_dict_path=(
-                    self.normalization_edit.text().strip() or None
-                ),
-            ),
+            synthetic_features=self.synthetic_recipe_from_controls(),
             annotated_adata_path=self.annotated_path_edit.text().strip(),
         )
         self.paths = save_experiment(manifest, root, audit_action="create_experiment")
@@ -1162,9 +1539,6 @@ class NapariSBTController:
         self.normalization_edit.setText(
             self.manifest.synthetic_features.normalization_dict_path or ""
         )
-        self.channels_edit.setText(
-            ", ".join(self.manifest.synthetic_features.channels)
-        )
         self.distribution_check.setChecked(
             self.manifest.synthetic_features.distribution_features
         )
@@ -1176,6 +1550,34 @@ class NapariSBTController:
         self.context_check.setChecked(
             self.manifest.synthetic_features.context_features
         )
+        self.roi_rank_check.setChecked(
+            self.manifest.synthetic_features.roi_rank_features
+        )
+        selected_by_family = {
+            "distribution": set(
+                self.manifest.synthetic_features.distribution_feature_names
+            ),
+            "region": set(self.manifest.synthetic_features.region_feature_names),
+            "gradient": set(
+                self.manifest.synthetic_features.gradient_feature_names
+            ),
+            "shape": set(self.manifest.synthetic_features.shape_feature_names),
+            "context": set(
+                self.manifest.synthetic_features.context_feature_names
+            ),
+            "roi_rank": set(
+                self.manifest.synthetic_features.roi_rank_statistics
+            ),
+        }
+        self.feature_tree.blockSignals(True)
+        for family, items in self.feature_tree_items.items():
+            selected_names = selected_by_family[family]
+            for name, item in items.items():
+                item.setCheckState(
+                    0,
+                    self.Qt.Checked if name in selected_names else self.Qt.Unchecked,
+                )
+        self.feature_tree.blockSignals(False)
         self.feature_tables_edit.setPlainText(
             "\n".join(
                 f"{source.source_id}={source.path}"
@@ -1226,6 +1628,13 @@ class NapariSBTController:
                 for index in range(self.value_list.count()):
                     item = self.value_list.item(index)
                     item.setSelected(item.text() in selected_values)
+        self.refresh_feature_channel_choices()
+        requested_channels = set(self.manifest.synthetic_features.channels)
+        for index in range(self.feature_channel_list.count()):
+            item = self.feature_channel_list.item(index)
+            item.setSelected(item.text() in requested_channels)
+        self._update_feature_channel_summary()
+        self._update_feature_selection_summary()
         self.refresh_class_controls()
         self.refresh_rois()
         self._set_classification_enabled(True)
@@ -1386,8 +1795,9 @@ class NapariSBTController:
                 },
             )
         self.set_status(
-            "Saved the current images, colours, populations, observation, and "
-            f"marker overlays for {self.population_value_combo.currentText()!r}."
+            "Saved the current images, colours, populations, observation, "
+            "marker overlays, and layer visibility for "
+            f"{self.population_value_combo.currentText()!r}."
         )
 
     def restore_population_view(self) -> None:
@@ -1513,6 +1923,15 @@ class NapariSBTController:
                     "description": f"adata.X marker [{colormap}]: {marker}",
                 }
             )
+        if self.manifest is not None:
+            for name, description in MANAGED_RECIPE_LAYERS.items():
+                entries.append(
+                    {
+                        "kind": "managed",
+                        "name": name,
+                        "description": description,
+                    }
+                )
         return entries
 
     def _refresh_reload_recipe_list(self) -> None:
@@ -1534,15 +1953,25 @@ class NapariSBTController:
         for entry in entries:
             name = entry["name"]
             visible = self.explore_recipe.layer_visibility.get(name, True)
-            opacity = self.explore_recipe.layer_opacities.get(name, 1.0)
-            state = "visible" if visible else "hidden"
+            if entry["kind"] == "managed":
+                visible = self.explore_recipe.layer_visibility.get(
+                    name,
+                    MANAGED_LAYER_DEFAULT_VISIBILITY[name],
+                )
+                opacity = self.explore_recipe.layer_opacities.get(
+                    name,
+                    MANAGED_LAYER_DEFAULT_OPACITY[name],
+                )
+            else:
+                opacity = self.explore_recipe.layer_opacities.get(name, 1.0)
+            state = "👁 visible" if visible else "◌ hidden"
             item = QListWidgetItem(
                 f"{entry['description']} — {state}, opacity {opacity:.2f}"
             )
             item.setData(self.Qt.UserRole, entry)
             item.setToolTip(
                 f"Napari layer: {name}\nThis layer will be reconstructed for "
-                "the next ROI."
+                "the next ROI with this visibility and opacity."
             )
             self.reload_recipe_list.addItem(item)
 
@@ -1585,6 +2014,8 @@ class NapariSBTController:
         if not selected:
             raise ValueError("Select one or more ROI reload recipe items.")
         payload = self.explore_recipe.model_dump(mode="json")
+        removed = 0
+        reset = 0
         for entry in selected:
             kind = entry["kind"]
             name = entry["name"]
@@ -1615,11 +2046,21 @@ class NapariSBTController:
                     for marker in payload["marker_overlays"]
                     if marker != entry["marker"]
                 ]
+            elif kind == "managed":
+                self._drop_recipe_layer_settings(payload, name)
+                reset += 1
+                continue
             self._drop_recipe_layer_settings(payload, name)
+            removed += 1
         self._apply_explore_recipe(ExploreViewRecipe.model_validate(payload))
-        self.set_status(
-            f"Deleted {len(selected)} item(s) from the ROI reload recipe."
-        )
+        actions = []
+        if removed:
+            actions.append(f"deleted {removed} Explore item(s)")
+        if reset:
+            actions.append(
+                f"reset {reset} managed layer(s) to default display settings"
+            )
+        self.set_status("ROI reload recipe: " + " and ".join(actions) + ".")
 
     def _layer_reload_descriptor(self, layer) -> dict | None:
         metadata = getattr(layer, "metadata", None)
@@ -1680,24 +2121,26 @@ class NapariSBTController:
         """Rebuild the ROI reload recipe from supported layers in the viewer."""
 
         descriptors: list[tuple[object, dict]] = []
+        managed_layers: list[tuple[object, str]] = []
         non_recipe_layers: list[str] = []
-        managed_names = {
-            "classification_cohort",
-            "excluded_segmentation_context",
+        managed_names = set(MANAGED_RECIPE_LAYERS)
+        separately_managed_names = {
             "cohort_preview",
             "manual_tissue_regions",
-            *CLASS_LAYER_NAMES.values(),
         }
         for layer in self.viewer.layers:
+            name = str(getattr(layer, "name", ""))
             descriptor = self._layer_reload_descriptor(layer)
             if descriptor is not None:
                 descriptors.append((layer, descriptor))
-            elif str(getattr(layer, "name", "")) not in managed_names:
-                non_recipe_layers.append(str(getattr(layer, "name", "")))
-        if not descriptors:
+            elif name in managed_names:
+                managed_layers.append((layer, name))
+            elif name not in separately_managed_names:
+                non_recipe_layers.append(name)
+        if not descriptors and not managed_layers:
             self._apply_explore_recipe(ExploreViewRecipe())
             message = (
-                "No replayable Explore layers were present; the ROI reload "
+                "No replayable Explore or classifier layers were present; the ROI reload "
                 "recipe is now empty."
             )
             if non_recipe_layers:
@@ -1804,8 +2247,16 @@ class NapariSBTController:
             )
         }
         layer_colormaps: dict[str, str] = {}
-        layer_visibility: dict[str, bool] = {}
-        layer_opacities: dict[str, float] = {}
+        layer_visibility: dict[str, bool] = {
+            name: value
+            for name, value in self.explore_recipe.layer_visibility.items()
+            if name in MANAGED_RECIPE_LAYERS
+        }
+        layer_opacities: dict[str, float] = {
+            name: value
+            for name, value in self.explore_recipe.layer_opacities.items()
+            if name in MANAGED_RECIPE_LAYERS
+        }
         for layer, descriptor in descriptors:
             name = descriptor["name"]
             if name not in included_names:
@@ -1817,6 +2268,9 @@ class NapariSBTController:
                 "marker",
             }:
                 layer_colormaps[name] = colormap
+            layer_visibility[name] = bool(getattr(layer, "visible", True))
+            layer_opacities[name] = float(getattr(layer, "opacity", 1.0))
+        for layer, name in managed_layers:
             layer_visibility[name] = bool(getattr(layer, "visible", True))
             layer_opacities[name] = float(getattr(layer, "opacity", 1.0))
 
@@ -1832,9 +2286,10 @@ class NapariSBTController:
             layer_opacities=layer_opacities,
         )
         self._apply_explore_recipe(recipe)
+        included_count = len(included_names) + len(managed_layers)
         message = (
-            f"Updated the ROI reload recipe from {len(included_names)} current "
-            "Explore layer(s)."
+            f"Updated the ROI reload recipe from {included_count} current "
+            "Explore/classifier layer(s), including visible/hidden states."
         )
         if ignored:
             message += (
@@ -1916,16 +2371,17 @@ class NapariSBTController:
             self.roi_combo.setItemData(
                 index,
                 (
-                    "Viewed with the current Explore settings"
+                    "Viewed with the current ROI reload recipe"
                     if is_viewed
-                    else "Not yet viewed with the current Explore settings"
+                    else "Not yet viewed with the current ROI reload recipe"
                 ),
                 self.Qt.ToolTipRole,
             )
         reviewed_count = len(viewed & available)
         self.viewed_rois_label.setText(
             f"{reviewed_count}/{len(available)} ROIs viewed with the current "
-            "images, colours, and overlays. Green = viewed; amber = not viewed."
+            "images, overlays, and classifier visibility. "
+            "Green = viewed; amber = not viewed."
         )
 
     def _remove_layers(self, names: Iterable[str]) -> None:
@@ -1933,17 +2389,96 @@ class NapariSBTController:
             if name in self.viewer.layers:
                 self.viewer.layers.remove(name)
 
+    def _is_recipe_tracked_layer(self, name: str) -> bool:
+        if name in MANAGED_RECIPE_LAYERS:
+            return True
+        return name in {
+            entry["name"]
+            for entry in self._recipe_layer_entries()
+            if entry["kind"] != "managed"
+        }
+
+    def _bind_recipe_display_tracking(self, layer) -> None:
+        if getattr(layer, "_napari_sbt_recipe_display_bound", False):
+            return
+        events = getattr(layer, "events", None)
+        if events is None:
+            return
+
+        def display_changed(_event=None, tracked_layer=layer):
+            self._record_layer_display_state(tracked_layer)
+
+        for event_name in ("visible", "opacity"):
+            emitter = getattr(events, event_name, None)
+            if emitter is not None:
+                emitter.connect(display_changed)
+        layer._napari_sbt_recipe_display_callback = display_changed
+        layer._napari_sbt_recipe_display_bound = True
+
+    def _record_layer_display_state(self, layer) -> None:
+        if self._updating_recipe_layer_state:
+            return
+        name = str(getattr(layer, "name", ""))
+        if not self._is_recipe_tracked_layer(name):
+            return
+        payload = self.explore_recipe.model_dump(mode="json")
+        payload["layer_visibility"][name] = bool(
+            getattr(layer, "visible", True)
+        )
+        payload["layer_opacities"][name] = float(
+            getattr(layer, "opacity", 1.0)
+        )
+        self.explore_recipe = ExploreViewRecipe.model_validate(payload)
+        if name == "excluded_segmentation_context":
+            self.context_check_display.blockSignals(True)
+            self.context_check_display.setChecked(bool(layer.visible))
+            self.context_check_display.blockSignals(False)
+        self._refresh_reload_recipe_list()
+        self._refresh_roi_review_colours()
+
+    def _apply_managed_layer_display_settings(self) -> None:
+        self._updating_recipe_layer_state = True
+        try:
+            for name in MANAGED_RECIPE_LAYERS:
+                if name not in self.viewer.layers:
+                    continue
+                layer = self.viewer.layers[name]
+                layer.visible = self.explore_recipe.layer_visibility.get(
+                    name,
+                    MANAGED_LAYER_DEFAULT_VISIBILITY[name],
+                )
+                layer.opacity = self.explore_recipe.layer_opacities.get(
+                    name,
+                    MANAGED_LAYER_DEFAULT_OPACITY[name],
+                )
+                self._bind_recipe_display_tracking(layer)
+            context_visible = self.explore_recipe.layer_visibility.get(
+                "excluded_segmentation_context",
+                MANAGED_LAYER_DEFAULT_VISIBILITY[
+                    "excluded_segmentation_context"
+                ],
+            )
+            self.context_check_display.blockSignals(True)
+            self.context_check_display.setChecked(context_visible)
+            self.context_check_display.blockSignals(False)
+        finally:
+            self._updating_recipe_layer_state = False
+        self._refresh_reload_recipe_list()
+
     def _replace_layer(self, name: str, data, layer_type: str, **kwargs):
-        kwargs.setdefault("opacity", 1.0)
         if name in self.viewer.layers:
             layer = self.viewer.layers[name]
             layer.data = data
             for key, value in kwargs.items():
                 if hasattr(layer, key):
                     setattr(layer, key, value)
+            self._bind_recipe_display_tracking(layer)
             return layer
+        kwargs.setdefault("opacity", 1.0)
         method = getattr(self.viewer, f"add_{layer_type}")
-        return method(data, name=name, **kwargs)
+        layer = method(data, name=name, **kwargs)
+        self._bind_recipe_display_tracking(layer)
+        return layer
 
     def _replace_explore_layer(
         self,
@@ -1990,24 +2525,39 @@ class NapariSBTController:
         self.current_mask_path = mask_paths[roi]
         self.current_selected_object = None
         self.selected_cell_label.setText("No cohort cell selected")
+        cohort_visible = self.explore_recipe.layer_visibility.get(
+            "classification_cohort",
+            MANAGED_LAYER_DEFAULT_VISIBILITY["classification_cohort"],
+        )
         cohort_layer = self._replace_layer(
             "classification_cohort",
             restricted,
             "labels",
-            visible=True,
+            visible=cohort_visible,
         )
         if not getattr(cohort_layer, "_napari_sbt_click_bound", False):
             cohort_layer.mouse_drag_callbacks.append(self._on_cohort_click)
             cohort_layer._napari_sbt_click_bound = True
         context = np.where(restricted == 0, full_mask, 0)
+        context_visible = self.explore_recipe.layer_visibility.get(
+            "excluded_segmentation_context",
+            MANAGED_LAYER_DEFAULT_VISIBILITY[
+                "excluded_segmentation_context"
+            ],
+        )
         context_layer = self._replace_layer(
             "excluded_segmentation_context",
             context,
             "labels",
-            visible=self.context_check_display.isChecked(),
-            opacity=0.18,
+            visible=context_visible,
+            opacity=self.explore_recipe.layer_opacities.get(
+                "excluded_segmentation_context",
+                MANAGED_LAYER_DEFAULT_OPACITY[
+                    "excluded_segmentation_context"
+                ],
+            ),
         )
-        context_layer.visible = self.context_check_display.isChecked()
+        context_layer.visible = context_visible
         self._remove_layers(
             [
                 CLASS_LAYER_NAMES["confirmed"],
@@ -2520,12 +3070,16 @@ class NapariSBTController:
             loaded += self._render_marker_overlays(
                 self.explore_recipe.marker_overlays
             )
+        self._apply_managed_layer_display_settings()
+        managed_present = sum(
+            name in self.viewer.layers for name in MANAGED_RECIPE_LAYERS
+        )
         self._refresh_reload_recipe_list()
-        if loaded:
+        if loaded or managed_present:
             self._mark_current_explore_viewed()
             self.set_status(
-                f"Loaded {loaded} Explore layer(s) for ROI {self.current_roi}; "
-                "all new layer opacities default to 1.0."
+                f"Replayed {loaded} Explore and {managed_present} managed "
+                f"classification layer setting(s) for ROI {self.current_roi}."
             )
         else:
             self._refresh_roi_review_colours()
@@ -2815,7 +3369,12 @@ class NapariSBTController:
                 data,
                 "labels",
                 colormap=self._class_colormap(),
-                visible=False,
+                visible=self.explore_recipe.layer_visibility.get(
+                    CLASS_LAYER_NAMES["predicted"],
+                    MANAGED_LAYER_DEFAULT_VISIBILITY[
+                        CLASS_LAYER_NAMES["predicted"]
+                    ],
+                ),
             )
             uncertainty = pd.Series(
                 pd.to_numeric(rows["normalized_entropy"], errors="coerce").to_numpy(),
@@ -2828,6 +3387,7 @@ class NapariSBTController:
                 colormap="magma",
                 contrast_limits=(0, 1),
             )
+        self._apply_managed_layer_display_settings()
 
     def _load_feature_table(self) -> pd.DataFrame:
         if not self.paths.feature_table.exists():
@@ -3008,28 +3568,141 @@ class NapariSBTController:
         )
         self.set_status(f"Showing cohort-only probability for class {class_id!r}.")
 
+    def start_source_validation(self) -> None:
+        if self.manifest is None:
+            raise RuntimeError("Create or load an experiment before validating sources.")
+        if self.feature_process is not None:
+            raise RuntimeError("Wait for the feature build to finish first.")
+        if self.source_validation_process is not None:
+            raise RuntimeError("Feature-source validation is already running.")
+        self.manifest.feature_sources = self.feature_sources()
+        save_experiment(
+            self.manifest,
+            self.paths.root,
+            audit_action="update_feature_sources",
+        )
+        self.source_validation_table.setRowCount(0)
+        self._source_validation_output_buffer = ""
+
+        from qtpy.QtCore import QProcess
+
+        process = QProcess(self.root)
+        process.setProgram(sys.executable)
+        process.setArguments(
+            [
+                "-m",
+                "SpatialBiologyToolkit.napari_sbt.worker",
+                "validate-sources",
+                "--experiment",
+                str(self.paths.root),
+            ]
+        )
+        process.setProcessChannelMode(QProcess.MergedChannels)
+        process.readyReadStandardOutput.connect(
+            self._read_source_validation_progress
+        )
+        process.finished.connect(self._source_validation_finished)
+        self.source_validation_process = process
+        self.validate_sources_button.setEnabled(False)
+        process.start()
+        self.set_status(
+            "Validating imported feature sources against the frozen cohort in "
+            "a separate Python process."
+        )
+
+    def _read_source_validation_progress(self, *, flush: bool = False) -> None:
+        if self.source_validation_process is not None:
+            self._source_validation_output_buffer += bytes(
+                self.source_validation_process.readAllStandardOutput()
+            ).decode(errors="replace")
+        lines = self._source_validation_output_buffer.splitlines(keepends=True)
+        self._source_validation_output_buffer = ""
+        for raw_line in lines:
+            if not flush and not raw_line.endswith(("\n", "\r")):
+                self._source_validation_output_buffer = raw_line
+                continue
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                self.set_status(f"SOURCE VALIDATION — {line}")
+                continue
+            event_name = event.get("event", "source_validation")
+            if event_name in {"source_valid", "source_invalid"}:
+                self._add_source_validation_row(event)
+                self.set_status(
+                    f"Source {event.get('source_id')!r}: "
+                    f"{event.get('status')} — "
+                    f"{event.get('covered_cells', 0):,}/"
+                    f"{event.get('eligible_cells', 0):,} cohort cells, "
+                    f"{event.get('feature_count', 0):,} features."
+                )
+            elif event_name == "source_validation_running":
+                self.set_status(
+                    f"Checking source {event.get('source_index')}/"
+                    f"{event.get('source_count')}: "
+                    f"{event.get('source_id')!r}."
+                )
+            elif event_name == "source_validation_completed":
+                self.set_status(
+                    f"Source validation complete: "
+                    f"{event.get('valid_sources', 0)} valid, "
+                    f"{event.get('invalid_sources', 0)} invalid. "
+                    f"Report: {event.get('report', '')}"
+                )
+            elif event_name == "source_validation_failed":
+                self.set_status(
+                    f"SOURCE VALIDATION FAILED — {event.get('error', '')}"
+                )
+
+    def _add_source_validation_row(self, event: dict) -> None:
+        row = self.source_validation_table.rowCount()
+        self.source_validation_table.insertRow(row)
+        eligible = int(event.get("eligible_cells", 0) or 0)
+        covered = int(event.get("covered_cells", 0) or 0)
+        values = [
+            str(event.get("source_id", "")),
+            str(event.get("kind", "")),
+            str(event.get("status", "")),
+            f"{covered:,} / {eligible:,}",
+            f"{int(event.get('missing_cells', 0) or 0):,}",
+            f"{int(event.get('feature_count', 0) or 0):,}",
+            str(
+                event.get("error", "")
+                or "Identity join and feature matrix are usable."
+            ),
+        ]
+        for column, value in enumerate(values):
+            item = self.QTableWidgetItem(value)
+            if event.get("status") == "invalid":
+                item.setBackground(self.QColor("#fee2e2"))
+            elif event.get("status") == "valid":
+                item.setBackground(self.QColor("#dcfce7"))
+            self.source_validation_table.setItem(row, column, item)
+
+    def _source_validation_finished(self, exit_code: int, _status) -> None:
+        self._read_source_validation_progress(flush=True)
+        self.source_validation_process = None
+        self.validate_sources_button.setEnabled(True)
+        if exit_code == 0:
+            self.set_status(
+                "Imported-source validation finished. Review coverage and missing "
+                "cells in the Feature Building table."
+            )
+        else:
+            self.set_status(f"Feature-source validation exited with code {exit_code}.")
+
     def start_feature_build(self) -> None:
         if self.manifest is None:
             raise RuntimeError("Create or load an experiment before feature extraction.")
         if self.feature_process is not None:
             raise RuntimeError("A feature build is already running.")
+        if self.source_validation_process is not None:
+            raise RuntimeError("Wait for feature-source validation to finish first.")
         self.manifest.feature_sources = self.feature_sources()
-        self.manifest.synthetic_features = SyntheticFeatureRecipe(
-            channels=[
-                value.strip()
-                for value in self.channels_edit.text().split(",")
-                if value.strip()
-            ],
-            mask_offset_px=self.offset_spin.value(),
-            allow_positive_offset_overlap=self.offset_overlap_check.isChecked(),
-            distribution_features=self.distribution_check.isChecked(),
-            region_features=self.region_check.isChecked(),
-            gradient_features=self.gradient_check.isChecked(),
-            shape_features=self.shape_check.isChecked(),
-            context_features=self.context_check.isChecked(),
-            background_ring_px=self.background_ring_spin.value(),
-            normalization_dict_path=self.normalization_edit.text().strip() or None,
-        )
+        self.manifest.synthetic_features = self.synthetic_recipe_from_controls()
         save_experiment(
             self.manifest,
             self.paths.root,
@@ -3054,39 +3727,252 @@ class NapariSBTController:
         process.readyReadStandardOutput.connect(self._read_feature_progress)
         process.finished.connect(self._feature_build_finished)
         self.feature_process = process
+        self.feature_build_started_at = time.monotonic()
+        self.feature_last_event_at = self.feature_build_started_at
+        self.feature_progress_state = {
+            "phase": "Starting feature worker",
+            "total_rois": 0,
+            "completed_rois": 0,
+            "failed_rois": 0,
+            "pending_rois": 0,
+            "workers": self.workers_spin.value(),
+            "recent": "Waiting for worker startup",
+        }
+        self._feature_output_buffer = ""
+        self.feature_progress_log.clear()
+        self.feature_progress_bar.setRange(0, 0)
+        self.feature_progress_bar.setFormat("Starting worker…")
+        self._refresh_feature_progress_widgets()
         self.build_features_button.setEnabled(False)
+        self.validate_sources_button.setEnabled(False)
         self.cancel_features_button.setEnabled(True)
         process.start()
+        self.feature_health_timer.start()
         self.set_status("Started cohort-first feature build in a subprocess.")
 
-    def _read_feature_progress(self) -> None:
-        if self.feature_process is None:
-            return
-        text = bytes(self.feature_process.readAllStandardOutput()).decode(
-            errors="replace"
-        )
-        for line in text.splitlines():
+    def _read_feature_progress(self, *, flush: bool = False) -> None:
+        if self.feature_process is not None:
+            self._feature_output_buffer += bytes(
+                self.feature_process.readAllStandardOutput()
+            ).decode(errors="replace")
+        lines = self._feature_output_buffer.splitlines(keepends=True)
+        self._feature_output_buffer = ""
+        for raw_line in lines:
+            if not flush and not raw_line.endswith(("\n", "\r")):
+                self._feature_output_buffer = raw_line
+                continue
+            line = raw_line.strip()
+            if not line:
+                continue
             try:
                 event = json.loads(line)
-                self.set_status(
-                    f"FEATURE {event.get('event', 'progress')} — "
-                    f"{event.get('roi', '')} {event.get('error', '')}".strip()
-                )
             except json.JSONDecodeError:
-                self.set_status(line)
+                self.feature_progress_log.append(line)
+                self.set_status(f"FEATURE WORKER — {line}")
+                continue
+            self._handle_feature_progress_event(event)
+
+    def _handle_feature_progress_event(self, event: dict) -> None:
+        self.feature_last_event_at = time.monotonic()
+        state = self.feature_progress_state
+        name = str(event.get("event", "progress"))
+        if name == "build_started":
+            total = int(event.get("represented_rois", 0) or 0)
+            pending = int(event.get("pending_rois", 0) or 0)
+            resumed = int(event.get("resumed_rois", 0) or 0)
+            state.update(
+                {
+                    "phase": "Extracting ROI features",
+                    "total_rois": total,
+                    "completed_rois": resumed,
+                    "failed_rois": max(0, total - pending - resumed),
+                    "pending_rois": pending,
+                    "workers": int(event.get("workers", 0) or 0),
+                    "eligible_cells": int(event.get("eligible_cells", 0) or 0),
+                    "recent": (
+                        f"Started {pending} ROI task(s); reused "
+                        f"{resumed} valid fragment(s)"
+                    ),
+                }
+            )
+        elif name in {"heartbeat", "roi_completed", "roi_failed"}:
+            for key in (
+                "completed_rois",
+                "failed_rois",
+                "pending_rois",
+                "total_rois",
+            ):
+                if key in event:
+                    state[key] = int(event[key] or 0)
+            if name == "heartbeat":
+                state["phase"] = (
+                    "Combining fragments and imported sources"
+                    if int(state.get("pending_rois", 0)) == 0
+                    else "Extracting ROI features"
+                )
+                state["recent"] = (
+                    f"Worker heartbeat; "
+                    f"{event.get('running_workers', 0)} ROI worker(s) active"
+                )
+                state["orchestrator_pid"] = int(
+                    event.get("orchestrator_pid", 0) or 0
+                )
+            elif name == "roi_completed":
+                state["recent"] = (
+                    f"Completed {event.get('roi')} in "
+                    f"{float(event.get('elapsed_seconds', 0) or 0):.1f}s "
+                    f"({int(event.get('rows', 0) or 0):,} cells; "
+                    f"PID {event.get('worker_pid', '?')})"
+                )
+                if int(state.get("pending_rois", 0)) == 0:
+                    state["phase"] = "Combining fragments and imported sources"
+            else:
+                state["recent"] = (
+                    f"Failed {event.get('roi')}: {event.get('error', '')}"
+                )
+        elif name == "roi_resumed":
+            state["recent"] = f"Reusing valid fragment for {event.get('roi')}"
+        elif name == "build_completed":
+            total = int(event.get("represented_rois", 0) or 0)
+            state.update(
+                {
+                    "phase": "Feature build complete",
+                    "total_rois": total,
+                    "completed_rois": int(
+                        event.get("completed_rois", total) or 0
+                    ),
+                    "failed_rois": int(event.get("failures", 0) or 0),
+                    "pending_rois": 0,
+                    "recent": (
+                        f"Wrote {int(event.get('feature_count', 0) or 0):,} "
+                        f"features for "
+                        f"{int(event.get('eligible_cells', 0) or 0):,} cells"
+                    ),
+                }
+            )
+        elif name == "cancelled":
+            state["phase"] = "Cancellation acknowledged"
+            state["recent"] = str(event.get("message", "Fragments were preserved."))
+        elif name == "build_failed":
+            state["phase"] = "Feature build failed"
+            state["recent"] = str(event.get("error", "Unknown worker error"))
+        else:
+            state["recent"] = " ".join(
+                str(value)
+                for value in (name, event.get("roi"), event.get("error"))
+                if value not in (None, "")
+            )
+        self.feature_progress_log.append(
+            self._format_feature_progress_event(event)
+        )
+        self._refresh_feature_progress_widgets()
+
+    @staticmethod
+    def _format_feature_progress_event(event: dict) -> str:
+        name = str(event.get("event", "progress")).replace("_", " ")
+        details = []
+        if event.get("roi"):
+            details.append(f"ROI {event['roi']}")
+        if event.get("rows") is not None:
+            details.append(f"{int(event['rows']):,} cells")
+        if event.get("elapsed_seconds") is not None:
+            details.append(f"{float(event['elapsed_seconds']):.1f}s")
+        if event.get("error"):
+            details.append(str(event["error"]))
+        if event.get("message"):
+            details.append(str(event["message"]))
+        return f"{name}: " + ("; ".join(details) if details else "received")
+
+    def _refresh_feature_progress_widgets(self) -> None:
+        state = self.feature_progress_state
+        total = int(state.get("total_rois", 0) or 0)
+        complete = int(state.get("completed_rois", 0) or 0)
+        failed = int(state.get("failed_rois", 0) or 0)
+        pending = int(state.get("pending_rois", 0) or 0)
+        if total:
+            processed = min(total, complete + failed)
+            self.feature_progress_bar.setRange(0, total)
+            self.feature_progress_bar.setValue(processed)
+            self.feature_progress_bar.setFormat(f"{processed}/{total} ROIs (%p%)")
+        elif self.feature_process is None:
+            self.feature_progress_bar.setRange(0, 100)
+            self.feature_progress_bar.setValue(0)
+            phase = str(state.get("phase", "Not started"))
+            self.feature_progress_bar.setFormat(
+                "Failed" if "failed" in phase.lower() or "exited" in phase.lower()
+                else "Not started"
+            )
+        self.feature_phase_label.setText(
+            f"Phase: {state.get('phase', 'Not started')}"
+        )
+        self.feature_counts_label.setText(
+            f"ROIs: {complete} complete, {failed} failed, "
+            f"{pending} pending / {total} total"
+        )
+        self.feature_current_roi_label.setText(
+            f"Latest: {state.get('recent', 'No worker events yet')}"
+        )
+        self._update_feature_process_health()
+
+    def _update_feature_process_health(self) -> None:
+        if self.feature_build_started_at is None:
+            self.feature_elapsed_label.setText("Elapsed: —")
+            self.feature_process_health_label.setText("Process: not running")
+            return
+        elapsed = max(0.0, time.monotonic() - self.feature_build_started_at)
+        self.feature_elapsed_label.setText(f"Elapsed: {elapsed:.0f}s")
+        process = self.feature_process
+        if process is None:
+            self.feature_process_health_label.setText("Process: finished")
+            return
+        try:
+            process_state = process.state()
+            state_value = getattr(process_state, "value", process_state)
+            running = int(state_value) != 0
+            pid = int(process.processId())
+        except (AttributeError, TypeError, ValueError):
+            running = True
+            pid = 0
+        heartbeat_age = (
+            max(0.0, time.monotonic() - self.feature_last_event_at)
+            if self.feature_last_event_at is not None
+            else elapsed
+        )
+        if not running:
+            health = "stopped"
+        elif heartbeat_age <= 6:
+            health = "live and reporting"
+        elif int(self.feature_progress_state.get("pending_rois", 0) or 0) == 0:
+            health = "live; finalizing outputs"
+        else:
+            health = (
+                f"live; waiting {heartbeat_age:.0f}s for the next worker heartbeat"
+            )
+        pid_text = f" PID {pid};" if pid else ""
+        self.feature_process_health_label.setText(
+            f"Process:{pid_text} {health}"
+        )
 
     def _feature_build_finished(self, exit_code: int, _status) -> None:
-        self._read_feature_progress()
+        self._read_feature_progress(flush=True)
+        self.feature_health_timer.stop()
         self.feature_process = None
         self.build_features_button.setEnabled(True)
+        self.validate_sources_button.setEnabled(True)
         self.cancel_features_button.setEnabled(False)
         if exit_code == 0 and self.paths is not None:
             self.manifest, self.paths = load_experiment(self.paths.root)
             self._update_scope_text()
             self.refresh_status()
-        self.set_status(
-            "Feature build completed." if exit_code == 0 else f"Feature build exited {exit_code}."
-        )
+            self.feature_progress_state["phase"] = "Feature build complete"
+            self.feature_progress_state["pending_rois"] = 0
+            self.set_status("Feature build completed.")
+        else:
+            self.feature_progress_state["phase"] = (
+                f"Feature build exited with code {exit_code}"
+            )
+            self.set_status(f"Feature build exited {exit_code}.")
+        self._refresh_feature_progress_widgets()
 
     def cancel_feature_build(self) -> None:
         if self.feature_process is not None:

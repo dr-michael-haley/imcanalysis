@@ -190,6 +190,12 @@ STAGE_PRESENTATION: dict[str, tuple[str, int, str, str]] = {
         "MaxFuse_Matching",
         "maxfuse.md",
     ),
+    "spatialdata": (
+        "SpatialData Assembly",
+        39,
+        "SpatialData_Assembly",
+        "spatialdata.md",
+    ),
 }
 
 STAGE_MODULES: dict[str, tuple[str, ...]] = {
@@ -257,6 +263,7 @@ STAGE_MODULES: dict[str, tuple[str, ...]] = {
     ),
     "cellfeat": ("SpatialBiologyToolkit.scripts.cell_features",),
     "maxfuse": ("SpatialBiologyToolkit.scripts.maxfuse_matching",),
+    "spatialdata": ("SpatialBiologyToolkit.scripts.spatialdata_builder",),
 }
 
 STAGE_CONFIG_SECTIONS: dict[str, tuple[str, ...]] = {
@@ -298,6 +305,7 @@ STAGE_CONFIG_SECTIONS: dict[str, tuple[str, ...]] = {
     "hyperstac-full": ("general", "hyperstac", "cox"),
     "cellfeat": ("general", "napari_sbt"),
     "maxfuse": ("general", "maxfuse"),
+    "spatialdata": ("general", "spatialdata"),
 }
 
 
@@ -810,6 +818,22 @@ STAGES: tuple[StageSpec, ...] = (
             "Exactly one scRNA-seq reference is supported per execution.",
             "No fixed upstream stage is imposed because either AnnData input may be curated externally.",
             "MaxFuse scores are similarities rather than calibrated probabilities.",
+        ),
+    ),
+    _stage(
+        "spatialdata",
+        "job_spatialdata.sh",
+        "Discover or explicitly select spatial assets, validate their relationships, and optionally build a SpatialData Zarr.",
+        produces=("spatialdata_zarr", "human_outputs"),
+        outputs=(
+            "Asset candidate, selection, discovery-diagnostic, and planner-diagnostic tables",
+            "Machine-readable SpatialData plan summary",
+            "Validated multimodal SpatialData Zarr when spatialdata.action=build",
+        ),
+        notes=(
+            "No fixed upstream stage is imposed because image, mask, AnnData, histology, label, and MaxFuse assets may be curated externally.",
+            "The default plan action is read-only and does not create the configured SpatialData Zarr.",
+            "Existing SpatialData output paths are never overwritten.",
         ),
     ),
 )

@@ -10,6 +10,14 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, model_validator
 
+from .feature_catalog import (
+    CONTEXT_FEATURE_DESCRIPTIONS,
+    DISTRIBUTION_FEATURE_DESCRIPTIONS,
+    REGION_IMAGE_FEATURE_DESCRIPTIONS,
+    ROI_RANK_FEATURE_DESCRIPTIONS,
+    SHAPE_FEATURE_DESCRIPTIONS,
+)
+
 SCHEMA_VERSION = 1
 CLASS_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 SHORTCUT_PATTERN = re.compile(r"^[1-8]$")
@@ -117,12 +125,83 @@ class SyntheticFeatureRecipe(BaseModel):
     shape_features: bool = True
     context_features: bool = True
     roi_rank_features: bool = True
+    distribution_feature_names: list[str] = Field(
+        default_factory=lambda: list(DISTRIBUTION_FEATURE_DESCRIPTIONS)
+    )
+    region_feature_names: list[str] = Field(
+        default_factory=lambda: list(REGION_IMAGE_FEATURE_DESCRIPTIONS)
+    )
+    gradient_feature_names: list[str] = Field(
+        default_factory=lambda: list(DISTRIBUTION_FEATURE_DESCRIPTIONS)
+    )
+    shape_feature_names: list[str] = Field(
+        default_factory=lambda: list(SHAPE_FEATURE_DESCRIPTIONS)
+    )
+    context_feature_names: list[str] = Field(
+        default_factory=lambda: list(CONTEXT_FEATURE_DESCRIPTIONS)
+    )
+    roi_rank_statistics: list[str] = Field(
+        default_factory=lambda: list(ROI_RANK_FEATURE_DESCRIPTIONS)
+    )
     background_ring_px: int = Field(default=5, ge=1, le=100)
     normalization_dict_path: str | None = None
 
     @model_validator(mode="after")
     def validate_recipe(self) -> SyntheticFeatureRecipe:
         self.channels = list(dict.fromkeys(str(channel) for channel in self.channels))
+        selections = (
+            (
+                "distribution",
+                "distribution_features",
+                "distribution_feature_names",
+                DISTRIBUTION_FEATURE_DESCRIPTIONS,
+            ),
+            (
+                "region",
+                "region_features",
+                "region_feature_names",
+                REGION_IMAGE_FEATURE_DESCRIPTIONS,
+            ),
+            (
+                "gradient",
+                "gradient_features",
+                "gradient_feature_names",
+                DISTRIBUTION_FEATURE_DESCRIPTIONS,
+            ),
+            (
+                "shape",
+                "shape_features",
+                "shape_feature_names",
+                SHAPE_FEATURE_DESCRIPTIONS,
+            ),
+            (
+                "context",
+                "context_features",
+                "context_feature_names",
+                CONTEXT_FEATURE_DESCRIPTIONS,
+            ),
+            (
+                "ROI-rank",
+                "roi_rank_features",
+                "roi_rank_statistics",
+                ROI_RANK_FEATURE_DESCRIPTIONS,
+            ),
+        )
+        for label, enabled_field, selection_field, catalog in selections:
+            selected = list(
+                dict.fromkeys(str(value) for value in getattr(self, selection_field))
+            )
+            unknown = sorted(set(selected) - set(catalog))
+            if unknown:
+                raise ValueError(
+                    f"Unknown {label} feature selection(s): {unknown}"
+                )
+            setattr(self, selection_field, selected)
+            if getattr(self, enabled_field) and not selected:
+                raise ValueError(
+                    f"Enabled {label} feature family requires at least one "
+                    "selected feature."
+                )
         if not any(
             (
                 self.distribution_features,
