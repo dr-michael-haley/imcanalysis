@@ -21,6 +21,8 @@ This reference is split by module so the site navigation stays compact.
    image_analysis
    imc_import_bodenmiller
    imc_import_steinpose
+   maxfuse_matching
+   maxfuse_reports
    napari_cellpose_qc_active_learning
    napari_imc_explorer
    pcf

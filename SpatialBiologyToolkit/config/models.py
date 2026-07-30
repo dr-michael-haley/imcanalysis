@@ -1534,6 +1534,507 @@ class RapidsProcessConfig(ConfigModel):
     )
 
 
+class MaxFuseGeneListConfig(ConfigModel):
+    """One optional gene-list file used to annotate MaxFuse DEG results."""
+
+    path: str = Field(min_length=1)
+    name: Optional[str] = None
+    format: Literal["auto", "wide", "long"] = "auto"
+    gene_column: str = "gene"
+    group_column: str = "group"
+
+
+@config_section("maxfuse")
+class MaxFuseConfig(ConfigModel):
+    """Configuration for one-reference MaxFuse matching and reporting."""
+
+    enabled: bool = config_field(
+        True,
+        description="Run the MaxFuse cross-modality matching stage.",
+        level="basic",
+        stage="maxfuse",
+        ui_group="Stage control",
+    )
+    reference_name: str = config_field(
+        "atlas",
+        description="Stable short name used to prefix transferred reference annotations.",
+        level="basic",
+        stage="maxfuse",
+        ui_group="Inputs",
+        min_length=1,
+    )
+    reference_adata_path: str = config_field(
+        "maxfuse/reference.h5ad",
+        description="Project-relative AnnData path for the single scRNA-seq reference.",
+        level="basic",
+        stage="maxfuse",
+        ui_group="Inputs",
+        advice="Exactly one reference is supported per execution.",
+        min_length=1,
+    )
+    target_adata_path: Optional[str] = config_field(
+        None,
+        description="Optional target IMC AnnData path; defaults to general.anndata_path.",
+        level="basic",
+        stage="maxfuse",
+        ui_group="Inputs",
+    )
+    feature_mapping_path: str = config_field(
+        "maxfuse/feature_mapping.csv",
+        description="CSV mapping measured target features to linked reference genes.",
+        level="basic",
+        stage="maxfuse",
+        ui_group="Inputs",
+        min_length=1,
+    )
+    asset_folder: str = config_field(
+        "maxfuse_results",
+        description="Canonical project-relative folder for reusable MaxFuse result assets.",
+        level="basic",
+        stage="maxfuse",
+        ui_group="Reusable outputs",
+        advice="Execution figures and diagnostic tables are stored separately in the managed report.",
+        min_length=1,
+    )
+    target_feature_column: str = config_field(
+        "IMC",
+        description="Feature-mapping column containing target IMC marker names.",
+        stage="maxfuse",
+        ui_group="Feature mapping",
+        min_length=1,
+    )
+    reference_feature_column: str = config_field(
+        "snRNAseq",
+        description="Feature-mapping column containing linked scRNA-seq gene names.",
+        stage="maxfuse",
+        ui_group="Feature mapping",
+        min_length=1,
+    )
+    mapping_filter_column: Optional[str] = config_field(
+        "All",
+        description="Optional mapping column whose truthy rows are eligible for matching.",
+        stage="maxfuse",
+        ui_group="Feature mapping",
+    )
+    reference_layer: Optional[str] = config_field(
+        None,
+        description="Optional reference AnnData layer used for matching, expression plots, and DEGs.",
+        stage="maxfuse",
+        ui_group="Inputs",
+    )
+    target_layer: Optional[str] = config_field(
+        None,
+        description="Optional target AnnData layer used for matching.",
+        stage="maxfuse",
+        ui_group="Inputs",
+    )
+    reference_smoothing_obs: Optional[str] = config_field(
+        "annotation_level_3",
+        description="Reference observation labels used only for within-modality centroid shrinkage.",
+        level="basic",
+        stage="maxfuse",
+        ui_group="Labels",
+    )
+    target_smoothing_obs: Optional[str] = config_field(
+        None,
+        description="Target observation labels used for centroid shrinkage; defaults to target_population_obs.",
+        stage="maxfuse",
+        ui_group="Labels",
+    )
+    target_population_obs: Optional[str] = config_field(
+        None,
+        description="Target population column used in matching reports; defaults to general.population_obs_primary.",
+        level="basic",
+        stage="maxfuse",
+        ui_group="Labels",
+    )
+    reference_transfer_obs: List[str] = config_field(
+        description="Reference observation columns transferred to matched target cells.",
+        level="basic",
+        stage="maxfuse",
+        ui_group="Labels",
+        default_factory=lambda: ["annotation_level_3", "annotation_level_4"],
+    )
+    reference_label_roles: Dict[str, Literal["lineage", "subtype", "state", "other"]] = config_field(
+        description="Optional biological roles for transferred reference label columns.",
+        stage="maxfuse",
+        ui_group="Labels",
+        default_factory=dict,
+    )
+    sample_obs: Optional[str] = config_field(
+        None,
+        description="Optional target sample column for coverage diagnostics; defaults to general.case_obs.",
+        stage="maxfuse",
+        ui_group="Labels",
+    )
+    roi_obs: Optional[str] = config_field(
+        None,
+        description="Optional target ROI column for coverage diagnostics; defaults to general.roi_obs.",
+        stage="maxfuse",
+        ui_group="Labels",
+    )
+    reference_active_features: int = config_field(
+        1000,
+        description="Maximum number of reference active features used during refinement.",
+        level="basic",
+        stage="maxfuse",
+        ui_group="Feature preparation",
+        ge=2,
+    )
+    reference_shared_sd_min: float = config_field(
+        0.20,
+        description="Minimum reference standard deviation for a linked feature.",
+        stage="maxfuse",
+        ui_group="Feature preparation",
+        ge=0,
+    )
+    target_shared_sd_min: float = config_field(
+        0.025,
+        description="Minimum target standard deviation for a linked feature.",
+        stage="maxfuse",
+        ui_group="Feature preparation",
+        ge=0,
+    )
+    min_shared_features: int = config_field(
+        20,
+        description="Minimum linked features required after availability and variability filtering.",
+        level="basic",
+        stage="maxfuse",
+        ui_group="Feature preparation",
+        ge=2,
+    )
+    zscore_reference: bool = config_field(
+        True,
+        description="Z-score reference active and linked features before matching.",
+        stage="maxfuse",
+        ui_group="Feature preparation",
+    )
+    zscore_target: bool = config_field(
+        False,
+        description="Z-score target features; leave false for already scaled SBT IMC data.",
+        stage="maxfuse",
+        ui_group="Feature preparation",
+    )
+    batching_scheme: Literal["cyclic", "pairwise"] = config_field(
+        "cyclic",
+        description="MaxFuse batch pairing scheme.",
+        stage="maxfuse",
+        ui_group="Matching",
+    )
+    max_outward_size: int = config_field(
+        2000,
+        description="Maximum smaller-modality batch size used in assignment problems.",
+        level="basic",
+        stage="maxfuse",
+        ui_group="Matching",
+        ge=100,
+    )
+    matching_ratio: int = config_field(
+        4,
+        description="Approximate target-to-reference candidate ratio within MaxFuse batches.",
+        stage="maxfuse",
+        ui_group="Matching",
+        ge=1,
+    )
+    metacell_size: int = config_field(
+        2,
+        description="Average reference metacell size.",
+        stage="maxfuse",
+        ui_group="Matching",
+        ge=1,
+    )
+    n_neighbors_reference: int = config_field(
+        15,
+        description="Reference within-modality graph neighbour count.",
+        stage="maxfuse",
+        ui_group="Graph construction",
+        ge=2,
+    )
+    n_neighbors_target: int = config_field(
+        15,
+        description="Target within-modality graph neighbour count.",
+        stage="maxfuse",
+        ui_group="Graph construction",
+        ge=2,
+    )
+    graph_svd_reference: int = config_field(
+        40,
+        description="Reference active-space SVD components for graph construction.",
+        stage="maxfuse",
+        ui_group="Graph construction",
+        ge=2,
+    )
+    graph_svd_target: Optional[int] = config_field(
+        20,
+        description="Target active-space SVD components for graph construction.",
+        stage="maxfuse",
+        ui_group="Graph construction",
+        ge=2,
+    )
+    graph_resolution_reference: float = config_field(
+        2.0,
+        description="Reference graph clustering resolution.",
+        stage="maxfuse",
+        ui_group="Graph construction",
+        gt=0,
+    )
+    graph_resolution_target: float = config_field(
+        2.0,
+        description="Target graph clustering resolution.",
+        stage="maxfuse",
+        ui_group="Graph construction",
+        gt=0,
+    )
+    graph_resolution_tolerance: float = config_field(
+        0.1,
+        description="Resolution difference below which MaxFuse merges graph communities.",
+        stage="maxfuse",
+        ui_group="Graph construction",
+        ge=0,
+    )
+    initial_weight_reference: float = config_field(
+        0.3,
+        description="Raw-reference weight during initial fuzzy smoothing.",
+        stage="maxfuse",
+        ui_group="Initial pivots",
+        ge=0,
+        le=1,
+    )
+    initial_weight_target: float = config_field(
+        0.3,
+        description="Raw-target weight during initial fuzzy smoothing.",
+        stage="maxfuse",
+        ui_group="Initial pivots",
+        ge=0,
+        le=1,
+    )
+    initial_svd_reference: int = config_field(
+        20,
+        description="Reference linked-space SVD components for initial pivots.",
+        stage="maxfuse",
+        ui_group="Initial pivots",
+        ge=2,
+    )
+    initial_svd_target: int = config_field(
+        20,
+        description="Target linked-space SVD components for initial pivots.",
+        stage="maxfuse",
+        ui_group="Initial pivots",
+        ge=2,
+    )
+    refine_weight_reference: float = config_field(
+        0.3,
+        description="Raw-reference weight during pivot refinement.",
+        stage="maxfuse",
+        ui_group="Pivot refinement",
+        ge=0,
+        le=1,
+    )
+    refine_weight_target: float = config_field(
+        0.3,
+        description="Raw-target weight during pivot refinement.",
+        stage="maxfuse",
+        ui_group="Pivot refinement",
+        ge=0,
+        le=1,
+    )
+    refine_svd_reference: int = config_field(
+        40,
+        description="Reference active-space SVD components during refinement and propagation.",
+        stage="maxfuse",
+        ui_group="Pivot refinement",
+        ge=2,
+    )
+    refine_svd_target: Optional[int] = config_field(
+        None,
+        description="Optional target active-space SVD components during refinement.",
+        stage="maxfuse",
+        ui_group="Pivot refinement",
+        ge=2,
+    )
+    refine_cca_components: int = config_field(
+        25,
+        description="CCA components used for pivot refinement.",
+        stage="maxfuse",
+        ui_group="Pivot refinement",
+        ge=2,
+    )
+    refine_iterations: int = config_field(
+        1,
+        description="Pivot-refinement iterations; one is the historical spatial-omics default.",
+        level="basic",
+        stage="maxfuse",
+        ui_group="Pivot refinement",
+        ge=1,
+    )
+    pivot_filter_fraction: float = config_field(
+        0.5,
+        description="Fraction of weak refined pivots discarded.",
+        stage="maxfuse",
+        ui_group="Filtering and propagation",
+        ge=0,
+        le=1,
+    )
+    propagation_weight_reference: float = config_field(
+        0.7,
+        description="Raw-reference weight during propagation.",
+        stage="maxfuse",
+        ui_group="Filtering and propagation",
+        ge=0,
+        le=1,
+    )
+    propagation_weight_target: float = config_field(
+        0.7,
+        description="Raw-target weight during propagation.",
+        stage="maxfuse",
+        ui_group="Filtering and propagation",
+        ge=0,
+        le=1,
+    )
+    propagated_filter_fraction: float = config_field(
+        0.3,
+        description="Fraction of weak propagated matches discarded.",
+        stage="maxfuse",
+        ui_group="Filtering and propagation",
+        ge=0,
+        le=1,
+    )
+    randomized_svd: bool = config_field(
+        True,
+        description="Use randomized SVD for large active matrices.",
+        stage="maxfuse",
+        ui_group="Performance",
+    )
+    seed: int = config_field(
+        100,
+        description="Random seed for batching, SVD, and deterministic plotting samples.",
+        level="basic",
+        stage="maxfuse",
+        ui_group="Performance",
+        ge=0,
+    )
+    report_score_threshold: float = config_field(
+        0.30,
+        description="Minimum score used for default plots and DEG analysis; reusable matches remain unfiltered.",
+        level="basic",
+        stage="maxfuse",
+        ui_group="Reporting",
+        ge=0,
+        le=1,
+    )
+    sensitivity_thresholds: List[float] = config_field(
+        description="Post-hoc score thresholds used for coverage reporting without refitting MaxFuse.",
+        stage="maxfuse",
+        ui_group="Reporting",
+        default_factory=lambda: [0.3, 0.5, 0.7, 0.8, 0.85, 0.9],
+    )
+    reference_umap_key: str = config_field(
+        "X_umap",
+        description="Reference embedding key used for UMAP report panels.",
+        stage="maxfuse",
+        ui_group="Reporting",
+        min_length=1,
+    )
+    target_umap_key: str = config_field(
+        "X_umap",
+        description="Target embedding key used for UMAP report panels.",
+        stage="maxfuse",
+        ui_group="Reporting",
+        min_length=1,
+    )
+    max_umap_points: int = config_field(
+        200000,
+        description="Maximum deterministically sampled points in each UMAP report.",
+        stage="maxfuse",
+        ui_group="Reporting",
+        ge=1000,
+    )
+    figure_dpi: int = config_field(
+        300,
+        description="Raster resolution used for MaxFuse report figures.",
+        stage="maxfuse",
+        ui_group="Reporting",
+        ge=72,
+    )
+    figure_formats: List[Literal["png", "svg"]] = config_field(
+        description="Figure formats written for each MaxFuse diagnostic.",
+        stage="maxfuse",
+        ui_group="Reporting",
+        default_factory=lambda: ["png", "svg"],
+    )
+    plot_stacked_violin: bool = config_field(
+        True,
+        description="Generate a linked-gene stacked-violin companion to the matrix plot.",
+        stage="maxfuse",
+        ui_group="Reporting",
+    )
+    run_degs: bool = config_field(
+        True,
+        description="Run Wilcoxon one-versus-rest DEGs on matched reference cells.",
+        level="basic",
+        stage="maxfuse",
+        ui_group="Differential expression",
+    )
+    deg_top_genes: int = config_field(
+        20,
+        description="Top genes displayed per transferred target population.",
+        stage="maxfuse",
+        ui_group="Differential expression",
+        ge=1,
+    )
+    deg_min_cells: int = config_field(
+        20,
+        description="Minimum unique matched reference cells required per DEG group.",
+        stage="maxfuse",
+        ui_group="Differential expression",
+        ge=2,
+    )
+    gene_lists: List[MaxFuseGeneListConfig] = config_field(
+        description="Optional wide or long gene-list files used to annotate and enrich DEG results.",
+        level="basic",
+        stage="maxfuse",
+        ui_group="Differential expression",
+        default_factory=list,
+    )
+    write_matched_transcriptomes: bool = config_field(
+        False,
+        description="Write an optional target-indexed matched-transcriptome AnnData asset.",
+        stage="maxfuse",
+        ui_group="Reusable outputs",
+        advice="This can be very large because repeated reference matches are materialized.",
+    )
+    matched_transcriptome_min_score: float = config_field(
+        0.85,
+        description="Score threshold for the optional matched-transcriptome asset.",
+        stage="maxfuse",
+        ui_group="Reusable outputs",
+        ge=0,
+        le=1,
+    )
+
+    @model_validator(mode="after")
+    def _validate_maxfuse(self) -> "MaxFuseConfig":
+        if not self.reference_transfer_obs:
+            raise ValueError("reference_transfer_obs must contain at least one column")
+        if len(set(self.reference_transfer_obs)) != len(self.reference_transfer_obs):
+            raise ValueError("reference_transfer_obs must not contain duplicates")
+        unknown_roles = sorted(
+            set(self.reference_label_roles) - set(self.reference_transfer_obs)
+        )
+        if unknown_roles:
+            raise ValueError(
+                "reference_label_roles contains columns absent from "
+                f"reference_transfer_obs: {unknown_roles}"
+            )
+        if not self.sensitivity_thresholds:
+            raise ValueError("sensitivity_thresholds must not be empty")
+        if any(value < 0 or value > 1 for value in self.sensitivity_thresholds):
+            raise ValueError("sensitivity_thresholds values must be between 0 and 1")
+        if len(set(self.figure_formats)) != len(self.figure_formats):
+            raise ValueError("figure_formats must not contain duplicates")
+        return self
+
+
 @config_section("cellvision")
 class CellVisionConfig(ConfigModel):
     """Configuration for single-cell image representation learning and clustering."""
@@ -4922,6 +5423,7 @@ class PipelineConfig(ConfigModel):
     nimbus: NimbusConfig = Field(default_factory=NimbusConfig)
     batch_integration: BatchIntegrationConfig = Field(default_factory=BatchIntegrationConfig)
     rapids: RapidsProcessConfig = Field(default_factory=RapidsProcessConfig)
+    maxfuse: MaxFuseConfig = Field(default_factory=MaxFuseConfig)
     cellvision: CellVisionConfig = Field(default_factory=CellVisionConfig)
     hyperstac: HyperstacConfig = Field(default_factory=HyperstacConfig)
     cox: CoxConfig = Field(default_factory=CoxConfig)
@@ -4949,6 +5451,7 @@ DEFAULT_CONFIG_CLASSES = {
     "nimbus": NimbusConfig,
     "batch_integration": BatchIntegrationConfig,
     "rapids": RapidsProcessConfig,
+    "maxfuse": MaxFuseConfig,
     "cellvision": CellVisionConfig,
     "hyperstac": HyperstacConfig,
     "cox": CoxConfig,
@@ -4981,6 +5484,8 @@ __all__ = [
     "GeneralConfig",
     "HyperstacConfig",
     "LoggingConfig",
+    "MaxFuseConfig",
+    "MaxFuseGeneListConfig",
     "NapariSBTConfig",
     "NetworkxSpatialConfig",
     "NimbusConfig",

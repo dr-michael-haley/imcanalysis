@@ -184,6 +184,12 @@ STAGE_PRESENTATION: dict[str, tuple[str, int, str, str]] = {
         "Cohort_Cell_Features",
         "cell_features.md",
     ),
+    "maxfuse": (
+        "MaxFuse Matching",
+        38,
+        "MaxFuse_Matching",
+        "maxfuse.md",
+    ),
 }
 
 STAGE_MODULES: dict[str, tuple[str, ...]] = {
@@ -250,6 +256,7 @@ STAGE_MODULES: dict[str, tuple[str, ...]] = {
         "SpatialBiologyToolkit.scripts.hyperstac_full",
     ),
     "cellfeat": ("SpatialBiologyToolkit.scripts.cell_features",),
+    "maxfuse": ("SpatialBiologyToolkit.scripts.maxfuse_matching",),
 }
 
 STAGE_CONFIG_SECTIONS: dict[str, tuple[str, ...]] = {
@@ -290,6 +297,7 @@ STAGE_CONFIG_SECTIONS: dict[str, tuple[str, ...]] = {
     "hyperstac-stability": ("general", "hyperstac", "cox"),
     "hyperstac-full": ("general", "hyperstac", "cox"),
     "cellfeat": ("general", "napari_sbt"),
+    "maxfuse": ("general", "maxfuse"),
 }
 
 
@@ -779,6 +787,29 @@ STAGES: tuple[StageSpec, ...] = (
         notes=(
             "No fixed upstream dependency is imposed because experiments may use existing masks, AnnData, or imported features from several workflow branches.",
             "The frozen cohort and full original masks define cell eligibility and scientific spatial context respectively.",
+        ),
+    ),
+    _stage(
+        "maxfuse",
+        "job_maxfuse.sh",
+        "Match one scRNA-seq reference to IMC cells and transfer reference annotations.",
+        requires=(
+            "maxfuse_reference",
+            "maxfuse_target",
+            "maxfuse_feature_mapping",
+        ),
+        produces=("maxfuse_assets", "human_outputs"),
+        outputs=(
+            "Target-unique MaxFuse match table and target-indexed transfer AnnData",
+            "Annotated concordance and mean-score heatmaps",
+            "Reference and target UMAP projections",
+            "Linked-gene matrix/violin plots and reference RNA DEGs",
+            "Score, population, sample, and ROI coverage diagnostics",
+        ),
+        notes=(
+            "Exactly one scRNA-seq reference is supported per execution.",
+            "No fixed upstream stage is imposed because either AnnData input may be curated externally.",
+            "MaxFuse scores are similarities rather than calibrated probabilities.",
         ),
     ),
 )

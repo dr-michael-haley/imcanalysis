@@ -13,6 +13,7 @@ import pandas as pd
 
 from SpatialBiologyToolkit.pipeline.manifests import write_json
 from SpatialBiologyToolkit.qc_classifier.io import (
+    build_image_channel_aliases,
     discover_mask_files,
     discover_roi_images,
     load_display_image,
@@ -41,6 +42,14 @@ from .exports import (
     export_assignment_table,
     export_cleaned_masks,
     materialize_cohort_masks,
+)
+from .explore import (
+    SIX_COLOUR_COLORMAPS,
+    ExploreReviewState,
+    ExploreViewRecipe,
+    categorical_colour_map,
+    marker_values,
+    population_recipe_key,
 )
 from .labels import confirm_proposed, empty_labels, set_label, validate_labels
 from .models import (
@@ -156,6 +165,11 @@ class NapariSBTController:
         self.feature_process = None
         self.reviewed_rois: set[str] = set()
         self._class_shortcuts: list[str] = []
+        self.current_image_paths: dict[str, Path] = {}
+        self.explore_recipe = ExploreViewRecipe()
+        self.explore_review_state = ExploreReviewState()
+        self._explore_layer_names: set[str] = set()
+        self._applying_explore_recipe = False
 
         self.root = QWidget()
         root_layout = QVBoxLayout(self.root)
@@ -329,46 +343,131 @@ class NapariSBTController:
         explore_layout = QVBoxLayout(explore)
         roi_row = QHBoxLayout()
         self.roi_combo = QComboBox()
-        self.show_empty_rois = QCheckBox("Include ROIs with no eligible cells")
-        self.context_check_display = QCheckBox("Show dimmed full-mask context")
+        self.previous_roi_button = QPushButton("Previous ROI")
+        self.next_roi_button = QPushButton("Next ROI")
         self.reload_roi_button = QPushButton("Load ROI")
+        roi_row.addWidget(self.previous_roi_button)
         roi_row.addWidget(QLabel("ROI"))
         roi_row.addWidget(self.roi_combo)
-        roi_row.addWidget(self.show_empty_rois)
-        roi_row.addWidget(self.context_check_display)
+        roi_row.addWidget(self.next_roi_button)
         roi_row.addWidget(self.reload_roi_button)
         explore_layout.addLayout(roi_row)
+        roi_options_row = QHBoxLayout()
+        self.show_empty_rois = QCheckBox("Include ROIs with no eligible cells")
+        self.context_check_display = QCheckBox("Show dimmed full-mask context")
+        self.auto_reload_view_check = QCheckBox(
+            "Reload the current Explore view when ROI changes"
+        )
+        self.auto_reload_view_check.setChecked(True)
+        self.viewed_rois_label = QLabel("No Explore view is active.")
+        self.viewed_rois_label.setWordWrap(True)
+        roi_options_row.addWidget(self.show_empty_rois)
+        roi_options_row.addWidget(self.context_check_display)
+        roi_options_row.addWidget(self.auto_reload_view_check)
+        explore_layout.addLayout(roi_options_row)
+        explore_layout.addWidget(self.viewed_rois_label)
+
+        layer_actions = QHBoxLayout()
+        self.hide_all_layers_button = QPushButton("Hide all layers")
+        self.show_all_layers_button = QPushButton("Show all layers")
+        self.delete_all_layers_button = QPushButton("Delete all layers")
+        layer_actions.addWidget(self.hide_all_layers_button)
+        layer_actions.addWidget(self.show_all_layers_button)
+        layer_actions.addWidget(self.delete_all_layers_button)
+        explore_layout.addLayout(layer_actions)
+
+        reload_recipe_group = QGroupBox("Layers re-added when the ROI changes")
+        reload_recipe_layout = QVBoxLayout(reload_recipe_group)
+        self.reload_recipe_help = QLabel(
+            "This is the exact Explore-layer recipe. Cohort and classification "
+            "layers are reconstructed separately and are not listed here."
+        )
+        self.reload_recipe_help.setWordWrap(True)
+        self.reload_recipe_list = QListWidget()
+        self.reload_recipe_list.setSelectionMode(
+            QAbstractItemView.ExtendedSelection
+        )
+        self.reload_recipe_list.setMaximumHeight(150)
+        reload_recipe_actions = QHBoxLayout()
+        self.delete_recipe_items_button = QPushButton(
+            "Delete selected recipe items"
+        )
+        self.update_recipe_from_layers_button = QPushButton(
+            "Update from current layers"
+        )
+        reload_recipe_actions.addWidget(self.delete_recipe_items_button)
+        reload_recipe_actions.addWidget(self.update_recipe_from_layers_button)
+        reload_recipe_layout.addWidget(self.reload_recipe_help)
+        reload_recipe_layout.addWidget(self.reload_recipe_list)
+        reload_recipe_layout.addLayout(reload_recipe_actions)
+        explore_layout.addWidget(reload_recipe_group)
+
         overlay_group = QGroupBox("AnnData overlays and population-to-cohort transfer")
         overlay_form = QFormLayout(overlay_group)
         self.overlay_obs_combo = QComboBox()
         self.overlay_button = QPushButton("Render observation overlay")
         self.population_obs_combo = QComboBox()
         self.population_value_combo = QComboBox()
+        self.population_layer_list = QListWidget()
+        self.population_layer_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.population_layer_list.setMaximumHeight(110)
+        self.load_population_layers_button = QPushButton(
+            "Add selected populations as separate layers"
+        )
         self.rank_rois_button = QPushButton("Rank ROIs by selected population")
         self.use_population_button = QPushButton(
             "Use this population as classification cohort"
+        )
+        self.save_population_view_button = QPushButton(
+            "Save current view for selected population"
+        )
+        self.load_population_view_button = QPushButton(
+            "Load saved view for selected population"
+        )
+        self.marker_overlay_list = QListWidget()
+        self.marker_overlay_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.marker_overlay_list.setMaximumHeight(110)
+        self.load_marker_overlays_button = QPushButton(
+            "Add selected adata.X markers as cell overlays"
         )
         overlay_form.addRow("Categorical or numeric observation", self.overlay_obs_combo)
         overlay_form.addRow("", self.overlay_button)
         overlay_form.addRow("Population observation", self.population_obs_combo)
         overlay_form.addRow("Population", self.population_value_combo)
+        overlay_form.addRow("Separate population layers", self.population_layer_list)
+        overlay_form.addRow("", self.load_population_layers_button)
+        overlay_form.addRow("Cell-level marker overlays", self.marker_overlay_list)
+        overlay_form.addRow("", self.load_marker_overlays_button)
         population_actions = QWidget()
         population_actions_layout = QHBoxLayout(population_actions)
         population_actions_layout.setContentsMargins(0, 0, 0, 0)
         population_actions_layout.addWidget(self.rank_rois_button)
         population_actions_layout.addWidget(self.use_population_button)
         overlay_form.addRow("", population_actions)
+        population_view_actions = QWidget()
+        population_view_actions_layout = QHBoxLayout(population_view_actions)
+        population_view_actions_layout.setContentsMargins(0, 0, 0, 0)
+        population_view_actions_layout.addWidget(self.save_population_view_button)
+        population_view_actions_layout.addWidget(self.load_population_view_button)
+        overlay_form.addRow("Population verification view", population_view_actions)
         explore_layout.addWidget(overlay_group)
-        image_group = QGroupBox("Raw, extra, and RGB images")
+        image_group = QGroupBox("Raw, extra, greyscale, and multicolour images")
         image_layout = QVBoxLayout(image_group)
+        self.image_coverage_label = QLabel("No ROI images discovered yet.")
+        self.image_coverage_label.setWordWrap(True)
         self.channel_list = QListWidget()
         self.channel_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.channel_list.setMaximumHeight(120)
         image_actions = QHBoxLayout()
-        self.load_channels_button = QPushButton("Load selected images")
+        self.load_channels_button = QPushButton("Load selected greyscale")
+        self.load_six_colour_button = QPushButton(
+            "Load selected as R/G/B/C/Y/M"
+        )
         self.load_rgb_button = QPushButton("Load first three selected as RGB")
         image_actions.addWidget(self.load_channels_button)
+        image_actions.addWidget(self.load_six_colour_button)
         image_actions.addWidget(self.load_rgb_button)
+        image_layout.addWidget(self.image_coverage_label)
         image_layout.addWidget(self.channel_list)
         image_layout.addLayout(image_actions)
         explore_layout.addWidget(image_group)
@@ -531,9 +630,31 @@ class NapariSBTController:
         layers_layout.addWidget(self.refresh_status_button)
         layers_layout.addWidget(self.status_text)
         add_tab(layers, "Layers & Status")
+        self.tabs.setStyleSheet(
+            """
+            QTabBar::tab {
+                color: #202124;
+                border: 1px solid #9aa0a6;
+                border-bottom: none;
+                padding: 6px 10px;
+                margin-right: 1px;
+            }
+            QTabBar::tab:nth-child(1) { background: #dbeafe; }
+            QTabBar::tab:nth-child(2) { background: #dcfce7; }
+            QTabBar::tab:nth-child(3) { background: #fef3c7; }
+            QTabBar::tab:nth-child(4) { background: #fce7f3; }
+            QTabBar::tab:nth-child(5) { background: #ede9fe; }
+            QTabBar::tab:selected {
+                font-weight: bold;
+                border: 2px solid #5f6368;
+                border-bottom: none;
+            }
+            """
+        )
 
         self._set_class_rows(segmentation_qc_classes())
         self._connect_signals()
+        self._refresh_reload_recipe_list()
         self._set_classification_enabled(False)
         if experiment:
             self.load_existing_experiment(Path(experiment))
@@ -563,10 +684,32 @@ class NapariSBTController:
                 "then run `sbt run cellfeat` (8 CPUs, 64 GB, 24 hours)."
             )
         )
-        self.roi_combo.currentTextChanged.connect(self._guard(self.load_roi))
+        self.roi_combo.currentTextChanged.connect(
+            self._guard(self.load_roi, pass_signal_args=True)
+        )
         self.reload_roi_button.clicked.connect(self._guard(self.load_roi))
-        self.show_empty_rois.toggled.connect(self.refresh_rois)
+        self.previous_roi_button.clicked.connect(
+            lambda: self.move_roi(-1)
+        )
+        self.next_roi_button.clicked.connect(
+            lambda: self.move_roi(1)
+        )
+        self.show_empty_rois.toggled.connect(self._guard(self.refresh_rois))
         self.context_check_display.toggled.connect(self.toggle_context)
+        self.auto_reload_view_check.toggled.connect(
+            self._guard(self.auto_reload_explore_view)
+        )
+        self.hide_all_layers_button.clicked.connect(self._guard(self.hide_all_layers))
+        self.show_all_layers_button.clicked.connect(self._guard(self.show_all_layers))
+        self.delete_all_layers_button.clicked.connect(
+            self._guard(self.delete_all_layers)
+        )
+        self.delete_recipe_items_button.clicked.connect(
+            self._guard(self.delete_selected_recipe_items)
+        )
+        self.update_recipe_from_layers_button.clicked.connect(
+            self._guard(self.update_recipe_from_current_layers)
+        )
         self.overlay_obs_combo.currentTextChanged.connect(
             lambda: self.set_status("Overlay selection changed.")
         )
@@ -574,11 +717,29 @@ class NapariSBTController:
         self.population_obs_combo.currentTextChanged.connect(
             self._guard(self.refresh_population_values)
         )
+        self.population_value_combo.currentTextChanged.connect(
+            self._guard(self.restore_population_view)
+        )
+        self.load_population_layers_button.clicked.connect(
+            self._guard(self.load_selected_population_layers)
+        )
+        self.load_marker_overlays_button.clicked.connect(
+            self._guard(self.load_selected_marker_overlays)
+        )
         self.rank_rois_button.clicked.connect(self._guard(self.rank_rois_by_population))
         self.use_population_button.clicked.connect(
             self._guard(self.use_population_as_cohort)
         )
+        self.save_population_view_button.clicked.connect(
+            self._guard(self.save_population_view)
+        )
+        self.load_population_view_button.clicked.connect(
+            self._guard(self.restore_population_view)
+        )
         self.load_channels_button.clicked.connect(self._guard(self.load_selected_channels))
+        self.load_six_colour_button.clicked.connect(
+            self._guard(self.load_six_colour_channels)
+        )
         self.load_rgb_button.clicked.connect(self._guard(self.load_rgb))
         self.propose_button.clicked.connect(lambda: self.annotate_selected("proposed"))
         self.confirm_button.clicked.connect(lambda: self.annotate_selected("confirmed"))
@@ -588,7 +749,9 @@ class NapariSBTController:
         self.train_button.clicked.connect(self._guard(self.train_model))
         self.score_button.clicked.connect(self._guard(self.score_model))
         self.refresh_queue_button.clicked.connect(self._guard(self.refresh_uncertainty_queue))
-        self.queue_list.itemDoubleClicked.connect(self._guard(self.navigate_queue_item))
+        self.queue_list.itemDoubleClicked.connect(
+            self._guard(self.navigate_queue_item, pass_signal_args=True)
+        )
         self.bulk_propose_button.clicked.connect(self._guard(self.bulk_propose))
         self.show_probability_button.clicked.connect(
             self._guard(self.show_selected_probability)
@@ -619,10 +782,12 @@ class NapariSBTController:
         self.refresh_status_button.clicked.connect(self._guard(self.refresh_status))
         self._update_scope_widget_state()
 
-    def _guard(self, callback):
+    def _guard(self, callback, *, pass_signal_args: bool = False):
         def wrapped(*args, **kwargs):
             try:
-                return callback(*args, **kwargs)
+                if pass_signal_args:
+                    return callback(*args, **kwargs)
+                return callback()
             except Exception as exc:  # noqa: BLE001 - Qt callback error boundary
                 self.set_status(f"ERROR — {type(exc).__name__}: {exc}")
                 self.QMessageBox.critical(
@@ -684,6 +849,16 @@ class NapariSBTController:
         if preferred:
             self.obs_combo.setCurrentText(preferred[0])
             self.population_obs_combo.setCurrentText(preferred[0])
+        selected_markers = {
+            item.text() for item in self.marker_overlay_list.selectedItems()
+        }
+        self.marker_overlay_list.clear()
+        self.marker_overlay_list.addItems(
+            [str(marker) for marker in self.adata.var_names]
+        )
+        for index in range(self.marker_overlay_list.count()):
+            item = self.marker_overlay_list.item(index)
+            item.setSelected(item.text() in selected_markers)
         self.refresh_scope_values()
         self.refresh_population_values()
         self.set_status(f"Loaded AnnData selectors for {self.adata.n_obs:,} cells.")
@@ -1036,6 +1211,7 @@ class NapariSBTController:
             )
         else:
             self.reviewed_rois = set()
+        self._load_explore_review_state()
         if self.manifest.anndata_path:
             self.load_anndata_selectors()
             self.scope_combo.setCurrentIndex(
@@ -1118,6 +1294,639 @@ class NapariSBTController:
         if current in rois:
             self.roi_combo.setCurrentText(current)
         self.roi_combo.blockSignals(False)
+        self._refresh_roi_review_colours()
+
+    def move_roi(self, step: int) -> None:
+        """Move through the currently ordered ROI list."""
+
+        if not self.roi_combo.count():
+            return
+        current = self.roi_combo.currentIndex()
+        target = current + int(step)
+        if target < 0 or target >= self.roi_combo.count():
+            direction = "previous" if step < 0 else "next"
+            self.set_status(f"There is no {direction} ROI in the current ordering.")
+            return
+        self.roi_combo.setCurrentIndex(target)
+
+    def hide_all_layers(self) -> None:
+        for layer in self.viewer.layers:
+            layer.visible = False
+        self.set_status("All Napari layers are hidden.")
+
+    def show_all_layers(self) -> None:
+        for layer in self.viewer.layers:
+            layer.visible = True
+        self.set_status("All Napari layers are visible.")
+
+    def delete_all_layers(self) -> None:
+        for layer in list(self.viewer.layers):
+            self.viewer.layers.remove(layer)
+        self._explore_layer_names.clear()
+        self.set_status(
+            "All Napari layers were deleted. Load the ROI again to restore the "
+            "cohort and classification layers."
+        )
+
+    def _explore_state_path(self) -> Path | None:
+        if self.paths is None:
+            return None
+        return self.paths.root / "explore" / "review_state.json"
+
+    def _load_explore_review_state(self) -> None:
+        self.explore_recipe = ExploreViewRecipe()
+        self.explore_review_state = ExploreReviewState()
+        path = self._explore_state_path()
+        if path is None or not path.exists():
+            self._refresh_reload_recipe_list()
+            return
+        try:
+            self.explore_review_state = ExploreReviewState.model_validate(
+                json.loads(path.read_text(encoding="utf-8"))
+            )
+        except Exception as exc:  # noqa: BLE001 - preserve usable experiment
+            self.set_status(
+                f"Could not read Explore review state from {path.name}: {exc}"
+            )
+        self._refresh_reload_recipe_list()
+
+    def _save_explore_review_state(self) -> None:
+        path = self._explore_state_path()
+        if path is not None:
+            write_json(
+                path,
+                self.explore_review_state.model_dump(mode="json"),
+            )
+
+    def _current_population_recipe_key(self) -> str | None:
+        observation = self.population_obs_combo.currentText().strip()
+        population = self.population_value_combo.currentText().strip()
+        if not observation or not population:
+            return None
+        return population_recipe_key(observation, population)
+
+    def save_population_view(self) -> None:
+        if not self.explore_recipe.has_content:
+            raise ValueError("Load at least one Explore layer before saving a view.")
+        key = self._current_population_recipe_key()
+        if key is None:
+            raise ValueError("Select a population observation and population first.")
+        self.explore_review_state.population_recipes[key] = (
+            self.explore_recipe.model_copy(deep=True)
+        )
+        self._save_explore_review_state()
+        if self.paths is not None:
+            append_audit(
+                self.paths,
+                {
+                    "action": "save_population_explore_view",
+                    "population_observation": self.population_obs_combo.currentText(),
+                    "population": self.population_value_combo.currentText(),
+                    "view_fingerprint": self.explore_recipe.fingerprint,
+                },
+            )
+        self.set_status(
+            "Saved the current images, colours, populations, observation, and "
+            f"marker overlays for {self.population_value_combo.currentText()!r}."
+        )
+
+    def restore_population_view(self) -> None:
+        if self._applying_explore_recipe:
+            return
+        key = self._current_population_recipe_key()
+        recipe = (
+            self.explore_review_state.population_recipes.get(key)
+            if key is not None
+            else None
+        )
+        if recipe is None:
+            self._refresh_roi_review_colours()
+            return
+        self._apply_explore_recipe(recipe)
+        self.set_status(
+            f"Loaded the saved Explore view for "
+            f"{self.population_value_combo.currentText()!r}."
+        )
+
+    def _set_list_selection(self, widget, values: Iterable[str]) -> None:
+        selected = {str(value) for value in values}
+        for index in range(widget.count()):
+            item = widget.item(index)
+            item.setSelected(item.text() in selected)
+
+    def _recipe_layer_entries(self) -> list[dict]:
+        recipe = self.explore_recipe
+        entries: list[dict] = []
+        if recipe.image_mode == "rgb" and recipe.image_channels:
+            entries.append(
+                {
+                    "kind": "rgb",
+                    "name": "population_qc_rgb",
+                    "channels": list(recipe.image_channels),
+                    "description": (
+                        "RGB composite: " + " + ".join(recipe.image_channels)
+                    ),
+                }
+            )
+        elif recipe.image_mode != "none":
+            for index, channel in enumerate(recipe.image_channels):
+                name = f"image::{channel}"
+                default_colormap = (
+                    "gray"
+                    if recipe.image_mode == "grayscale"
+                    else SIX_COLOUR_COLORMAPS[
+                        index % len(SIX_COLOUR_COLORMAPS)
+                    ]
+                )
+                colormap = recipe.layer_colormaps.get(name, default_colormap)
+                entries.append(
+                    {
+                        "kind": "image",
+                        "name": name,
+                        "channel": channel,
+                        "description": f"Image [{colormap}]: {channel}",
+                    }
+                )
+        if recipe.observation_overlay:
+            name = f"obs::{recipe.observation_overlay}"
+            colormap = recipe.layer_colormaps.get(name)
+            if (
+                not colormap
+                and self.adata is not None
+                and recipe.observation_overlay in self.adata.obs
+                and not pd.api.types.is_numeric_dtype(
+                    self.adata.obs[recipe.observation_overlay]
+                )
+            ):
+                colormap = "adata.uns categorical palette"
+            suffix = f" [{colormap}]" if colormap else ""
+            entries.append(
+                {
+                    "kind": "observation",
+                    "name": name,
+                    "observation": recipe.observation_overlay,
+                    "description": (
+                        f"AnnData observation{suffix}: "
+                        f"{recipe.observation_overlay}"
+                    ),
+                }
+            )
+        if recipe.population_observation:
+            population_colours = (
+                categorical_colour_map(
+                    self.adata,
+                    recipe.population_observation,
+                )
+                if (
+                    self.adata is not None
+                    and recipe.population_observation in self.adata.obs
+                )
+                else {}
+            )
+            for population in recipe.populations:
+                name = (
+                    f"population::{recipe.population_observation}::{population}"
+                )
+                colour = population_colours.get(population)
+                suffix = f" [{colour}]" if colour else ""
+                entries.append(
+                    {
+                        "kind": "population",
+                        "name": name,
+                        "observation": recipe.population_observation,
+                        "population": population,
+                        "description": (
+                            f"Population{suffix}: "
+                            f"{recipe.population_observation} = "
+                            f"{population}"
+                        ),
+                    }
+                )
+        for marker in recipe.marker_overlays:
+            name = f"adata.X::{marker}"
+            colormap = recipe.layer_colormaps.get(name, "viridis")
+            entries.append(
+                {
+                    "kind": "marker",
+                    "name": name,
+                    "marker": marker,
+                    "description": f"adata.X marker [{colormap}]: {marker}",
+                }
+            )
+        return entries
+
+    def _refresh_reload_recipe_list(self) -> None:
+        if not hasattr(self, "reload_recipe_list"):
+            return
+        self.reload_recipe_list.clear()
+        entries = self._recipe_layer_entries()
+        if not entries:
+            from qtpy.QtWidgets import QListWidgetItem
+
+            item = QListWidgetItem(
+                "No Explore layers are currently configured for ROI reload."
+            )
+            item.setFlags(item.flags() & ~self.Qt.ItemIsSelectable)
+            self.reload_recipe_list.addItem(item)
+            return
+        from qtpy.QtWidgets import QListWidgetItem
+
+        for entry in entries:
+            name = entry["name"]
+            visible = self.explore_recipe.layer_visibility.get(name, True)
+            opacity = self.explore_recipe.layer_opacities.get(name, 1.0)
+            state = "visible" if visible else "hidden"
+            item = QListWidgetItem(
+                f"{entry['description']} — {state}, opacity {opacity:.2f}"
+            )
+            item.setData(self.Qt.UserRole, entry)
+            item.setToolTip(
+                f"Napari layer: {name}\nThis layer will be reconstructed for "
+                "the next ROI."
+            )
+            self.reload_recipe_list.addItem(item)
+
+    def _prune_recipe_layer_settings(self) -> None:
+        valid_names = {
+            entry["name"] for entry in self._recipe_layer_entries()
+        }
+        payload = self.explore_recipe.model_dump(mode="json")
+        changed = False
+        for key in (
+            "layer_colormaps",
+            "layer_visibility",
+            "layer_opacities",
+        ):
+            filtered = {
+                name: value
+                for name, value in payload[key].items()
+                if name in valid_names
+            }
+            if filtered != payload[key]:
+                payload[key] = filtered
+                changed = True
+        if changed:
+            self.explore_recipe = ExploreViewRecipe.model_validate(payload)
+
+    def _drop_recipe_layer_settings(self, payload: dict, name: str) -> None:
+        for key in (
+            "layer_colormaps",
+            "layer_visibility",
+            "layer_opacities",
+        ):
+            payload.get(key, {}).pop(name, None)
+
+    def delete_selected_recipe_items(self) -> None:
+        selected = [
+            item.data(self.Qt.UserRole)
+            for item in self.reload_recipe_list.selectedItems()
+            if item.data(self.Qt.UserRole)
+        ]
+        if not selected:
+            raise ValueError("Select one or more ROI reload recipe items.")
+        payload = self.explore_recipe.model_dump(mode="json")
+        for entry in selected:
+            kind = entry["kind"]
+            name = entry["name"]
+            if kind in {"image", "rgb"}:
+                if kind == "rgb":
+                    payload["image_channels"] = []
+                else:
+                    payload["image_channels"] = [
+                        channel
+                        for channel in payload["image_channels"]
+                        if channel != entry["channel"]
+                    ]
+                if not payload["image_channels"]:
+                    payload["image_mode"] = "none"
+            elif kind == "observation":
+                payload["observation_overlay"] = None
+            elif kind == "population":
+                payload["populations"] = [
+                    population
+                    for population in payload["populations"]
+                    if population != entry["population"]
+                ]
+                if not payload["populations"]:
+                    payload["population_observation"] = None
+            elif kind == "marker":
+                payload["marker_overlays"] = [
+                    marker
+                    for marker in payload["marker_overlays"]
+                    if marker != entry["marker"]
+                ]
+            self._drop_recipe_layer_settings(payload, name)
+        self._apply_explore_recipe(ExploreViewRecipe.model_validate(payload))
+        self.set_status(
+            f"Deleted {len(selected)} item(s) from the ROI reload recipe."
+        )
+
+    def _layer_reload_descriptor(self, layer) -> dict | None:
+        metadata = getattr(layer, "metadata", None)
+        if isinstance(metadata, dict):
+            descriptor = metadata.get("napari_sbt_reload")
+            if isinstance(descriptor, dict):
+                return dict(descriptor)
+        name = str(getattr(layer, "name", ""))
+        if (
+            name == "population_qc_rgb"
+            and self.explore_recipe.image_mode == "rgb"
+        ):
+            return {
+                "kind": "rgb",
+                "name": name,
+                "channels": list(self.explore_recipe.image_channels),
+            }
+        if name.startswith("image::"):
+            return {
+                "kind": "image",
+                "name": name,
+                "channel": name.removeprefix("image::"),
+                "mode": "six_colour",
+            }
+        if name.startswith("obs::"):
+            return {
+                "kind": "observation",
+                "name": name,
+                "observation": name.removeprefix("obs::"),
+            }
+        if name.startswith("adata.X::"):
+            return {
+                "kind": "marker",
+                "name": name,
+                "marker": name.removeprefix("adata.X::"),
+            }
+        if name.startswith("population::"):
+            parts = name.split("::", 2)
+            if len(parts) == 3:
+                return {
+                    "kind": "population",
+                    "name": name,
+                    "observation": parts[1],
+                    "population": parts[2],
+                }
+        return None
+
+    def _layer_colormap_name(self, layer) -> str | None:
+        colormap = getattr(layer, "colormap", None)
+        if isinstance(colormap, str):
+            return colormap
+        name = getattr(colormap, "name", None)
+        if name and not str(name).startswith("[unnamed"):
+            return str(name)
+        return None
+
+    def update_recipe_from_current_layers(self) -> None:
+        """Rebuild the ROI reload recipe from supported layers in the viewer."""
+
+        descriptors: list[tuple[object, dict]] = []
+        non_recipe_layers: list[str] = []
+        managed_names = {
+            "classification_cohort",
+            "excluded_segmentation_context",
+            "cohort_preview",
+            "manual_tissue_regions",
+            *CLASS_LAYER_NAMES.values(),
+        }
+        for layer in self.viewer.layers:
+            descriptor = self._layer_reload_descriptor(layer)
+            if descriptor is not None:
+                descriptors.append((layer, descriptor))
+            elif str(getattr(layer, "name", "")) not in managed_names:
+                non_recipe_layers.append(str(getattr(layer, "name", "")))
+        if not descriptors:
+            self._apply_explore_recipe(ExploreViewRecipe())
+            message = (
+                "No replayable Explore layers were present; the ROI reload "
+                "recipe is now empty."
+            )
+            if non_recipe_layers:
+                message += (
+                    " Unsupported layers were not added: "
+                    + ", ".join(non_recipe_layers)
+                    + "."
+                )
+            self.set_status(message)
+            return
+
+        rgb = [
+            (layer, descriptor)
+            for layer, descriptor in descriptors
+            if descriptor["kind"] == "rgb"
+        ]
+        images = [
+            (layer, descriptor)
+            for layer, descriptor in descriptors
+            if descriptor["kind"] == "image"
+        ]
+        ignored: list[str] = list(non_recipe_layers)
+        if rgb:
+            rgb_layer, rgb_descriptor = rgb[-1]
+            image_mode = "rgb"
+            image_channels = list(rgb_descriptor.get("channels", []))
+            included = [(rgb_layer, rgb_descriptor)]
+            ignored.extend(
+                descriptor["name"] for _layer, descriptor in images
+            )
+        else:
+            included = [
+                (layer, descriptor)
+                for layer, descriptor in images
+                if descriptor.get("channel") in self.current_image_paths
+            ]
+            ignored.extend(
+                descriptor["name"]
+                for _layer, descriptor in images
+                if descriptor.get("channel") not in self.current_image_paths
+            )
+            image_channels = [
+                descriptor["channel"] for _layer, descriptor in included
+            ]
+            image_mode = "none"
+            if image_channels:
+                colormaps = {
+                    self._layer_colormap_name(layer)
+                    for layer, _descriptor in included
+                }
+                image_mode = (
+                    "grayscale"
+                    if colormaps <= {None, "gray", "grey"}
+                    else "six_colour"
+                )
+
+        observation_layers = [
+            (layer, descriptor)
+            for layer, descriptor in descriptors
+            if descriptor["kind"] == "observation"
+        ]
+        observation_overlay = None
+        if observation_layers:
+            observation_overlay = observation_layers[-1][1]["observation"]
+            ignored.extend(
+                descriptor["name"]
+                for _layer, descriptor in observation_layers[:-1]
+            )
+
+        population_layers = [
+            (layer, descriptor)
+            for layer, descriptor in descriptors
+            if descriptor["kind"] == "population"
+        ]
+        population_observation = None
+        populations: list[str] = []
+        if population_layers:
+            population_observation = population_layers[0][1]["observation"]
+            for _layer, descriptor in population_layers:
+                if descriptor["observation"] == population_observation:
+                    populations.append(descriptor["population"])
+                else:
+                    ignored.append(descriptor["name"])
+
+        marker_layers = [
+            (layer, descriptor)
+            for layer, descriptor in descriptors
+            if descriptor["kind"] == "marker"
+        ]
+        marker_overlays = [
+            descriptor["marker"] for _layer, descriptor in marker_layers
+        ]
+        included_names = {
+            descriptor["name"]
+            for _layer, descriptor in (
+                included
+                + observation_layers[-1:]
+                + [
+                    item
+                    for item in population_layers
+                    if item[1]["observation"] == population_observation
+                ]
+                + marker_layers
+            )
+        }
+        layer_colormaps: dict[str, str] = {}
+        layer_visibility: dict[str, bool] = {}
+        layer_opacities: dict[str, float] = {}
+        for layer, descriptor in descriptors:
+            name = descriptor["name"]
+            if name not in included_names:
+                continue
+            colormap = self._layer_colormap_name(layer)
+            if colormap and descriptor["kind"] in {
+                "image",
+                "observation",
+                "marker",
+            }:
+                layer_colormaps[name] = colormap
+            layer_visibility[name] = bool(getattr(layer, "visible", True))
+            layer_opacities[name] = float(getattr(layer, "opacity", 1.0))
+
+        recipe = ExploreViewRecipe(
+            image_mode=image_mode,
+            image_channels=image_channels,
+            observation_overlay=observation_overlay,
+            population_observation=population_observation,
+            populations=list(dict.fromkeys(populations)),
+            marker_overlays=list(dict.fromkeys(marker_overlays)),
+            layer_colormaps=layer_colormaps,
+            layer_visibility=layer_visibility,
+            layer_opacities=layer_opacities,
+        )
+        self._apply_explore_recipe(recipe)
+        message = (
+            f"Updated the ROI reload recipe from {len(included_names)} current "
+            "Explore layer(s)."
+        )
+        if ignored:
+            message += (
+                " Ignored unsupported or conflicting layers: "
+                + ", ".join(ignored)
+                + "."
+            )
+        self.set_status(message)
+
+    def _apply_explore_recipe(self, recipe: ExploreViewRecipe) -> None:
+        self._applying_explore_recipe = True
+        try:
+            self.explore_recipe = recipe.model_copy(deep=True)
+            self._prune_recipe_layer_settings()
+            if (
+                recipe.observation_overlay
+                and self.overlay_obs_combo.findText(recipe.observation_overlay) >= 0
+            ):
+                self.overlay_obs_combo.setCurrentText(recipe.observation_overlay)
+            if (
+                recipe.population_observation
+                and self.population_obs_combo.findText(
+                    recipe.population_observation
+                )
+                >= 0
+            ):
+                self.population_obs_combo.setCurrentText(
+                    recipe.population_observation
+                )
+                self.refresh_population_values()
+            self._set_list_selection(
+                self.population_layer_list,
+                recipe.populations,
+            )
+            self._set_list_selection(
+                self.marker_overlay_list,
+                recipe.marker_overlays,
+            )
+            self._set_list_selection(self.channel_list, recipe.image_channels)
+        finally:
+            self._applying_explore_recipe = False
+        self._refresh_reload_recipe_list()
+        if self.current_roi:
+            self.replay_explore_view()
+
+    def _mark_current_explore_viewed(self) -> None:
+        if not self.current_roi or not self.explore_recipe.has_content:
+            return
+        fingerprint = self.explore_recipe.fingerprint
+        viewed = set(self.explore_review_state.viewed_rois.get(fingerprint, []))
+        viewed.add(str(self.current_roi))
+        self.explore_review_state.viewed_rois[fingerprint] = sorted(viewed)
+        self._save_explore_review_state()
+        self._refresh_roi_review_colours()
+
+    def _refresh_roi_review_colours(self) -> None:
+        if not hasattr(self, "roi_combo"):
+            return
+        if not self.explore_recipe.has_content:
+            for index in range(self.roi_combo.count()):
+                self.roi_combo.setItemData(index, None, self.Qt.BackgroundRole)
+                self.roi_combo.setItemData(index, None, self.Qt.ToolTipRole)
+            self.viewed_rois_label.setText("No Explore view is active.")
+            return
+        viewed = set(
+            self.explore_review_state.viewed_rois.get(
+                self.explore_recipe.fingerprint,
+                [],
+            )
+        )
+        available = {
+            self.roi_combo.itemText(index) for index in range(self.roi_combo.count())
+        }
+        for index in range(self.roi_combo.count()):
+            roi = self.roi_combo.itemText(index)
+            is_viewed = roi in viewed
+            colour = self.QColor("#c6efce" if is_viewed else "#ffeb9c")
+            self.roi_combo.setItemData(index, colour, self.Qt.BackgroundRole)
+            self.roi_combo.setItemData(
+                index,
+                (
+                    "Viewed with the current Explore settings"
+                    if is_viewed
+                    else "Not yet viewed with the current Explore settings"
+                ),
+                self.Qt.ToolTipRole,
+            )
+        reviewed_count = len(viewed & available)
+        self.viewed_rois_label.setText(
+            f"{reviewed_count}/{len(available)} ROIs viewed with the current "
+            "images, colours, and overlays. Green = viewed; amber = not viewed."
+        )
 
     def _remove_layers(self, names: Iterable[str]) -> None:
         for name in names:
@@ -1125,6 +1934,7 @@ class NapariSBTController:
                 self.viewer.layers.remove(name)
 
     def _replace_layer(self, name: str, data, layer_type: str, **kwargs):
+        kwargs.setdefault("opacity", 1.0)
         if name in self.viewer.layers:
             layer = self.viewer.layers[name]
             layer.data = data
@@ -1134,6 +1944,30 @@ class NapariSBTController:
             return layer
         method = getattr(self.viewer, f"add_{layer_type}")
         return method(data, name=name, **kwargs)
+
+    def _replace_explore_layer(
+        self,
+        name: str,
+        data,
+        layer_type: str,
+        *,
+        reload_descriptor: dict | None = None,
+        **kwargs,
+    ):
+        layer = self._replace_layer(name, data, layer_type, **kwargs)
+        if reload_descriptor is not None:
+            metadata = dict(getattr(layer, "metadata", {}) or {})
+            metadata["napari_sbt_reload"] = {
+                "name": name,
+                **reload_descriptor,
+            }
+            layer.metadata = metadata
+        self._explore_layer_names.add(name)
+        return layer
+
+    def _clear_explore_layers(self) -> None:
+        self._remove_layers(list(self._explore_layer_names))
+        self._explore_layer_names.clear()
 
     def load_roi(self, roi: str | None = None) -> None:
         if self.manifest is None:
@@ -1182,12 +2016,27 @@ class NapariSBTController:
                 CLASS_LAYER_NAMES["uncertainty"],
             ]
         )
+        self._clear_explore_layers()
         self.refresh_classification_layers()
         self.refresh_channel_list()
+        if self.auto_reload_view_check.isChecked() and self.explore_recipe.has_content:
+            self.replay_explore_view()
+        else:
+            self._refresh_roi_review_colours()
         self.set_status(
             f"ROI {roi}: {len(eligible)} eligible cells; clicks on other mask "
             "labels are ignored."
         )
+
+    def auto_reload_explore_view(self) -> None:
+        if (
+            self.auto_reload_view_check.isChecked()
+            and self.current_roi
+            and self.explore_recipe.has_content
+        ):
+            self.replay_explore_view()
+        else:
+            self._refresh_roi_review_colours()
 
     def toggle_context(self, checked: bool) -> None:
         if "excluded_segmentation_context" in self.viewer.layers:
@@ -1208,77 +2057,306 @@ class NapariSBTController:
 
     def refresh_channel_list(self) -> None:
         self.channel_list.clear()
+        self.current_image_paths = {}
         if self.manifest is None or not self.current_roi:
+            self.image_coverage_label.setText("No experiment ROI is loaded.")
             return
+        channel_aliases = (
+            build_image_channel_aliases(self.adata.var_names, self.adata.var)
+            if self.adata is not None
+            else {}
+        )
         paths = discover_roi_images(
             self.manifest.images_folders + self.manifest.extra_images_folders,
             self.current_roi,
+            channel_aliases=channel_aliases,
         )
+        self.current_image_paths = dict(paths)
+        logical_names = set(channel_aliases.values())
+        matched = 0
         for channel, path in paths.items():
             from qtpy.QtWidgets import QListWidgetItem
 
             list_item = QListWidgetItem(channel)
             list_item.setData(self.Qt.UserRole, str(path))
+            base_channel = channel.split(" [", 1)[0]
+            if base_channel in logical_names:
+                matched += 1
+                list_item.setToolTip(
+                    f"AnnData variable: {base_channel}\nImage: {path}"
+                )
+            else:
+                list_item.setToolTip(f"Additional image (not in adata.var): {path}")
             self.channel_list.addItem(list_item)
+            list_item.setSelected(channel in self.explore_recipe.image_channels)
+        if paths:
+            additional = len(paths) - matched
+            self.image_coverage_label.setText(
+                f"{len(paths)} images found for {self.current_roi}: "
+                f"{matched} matched to adata.var, {additional} additional."
+            )
+        else:
+            folders = (
+                self.manifest.images_folders + self.manifest.extra_images_folders
+            )
+            self.image_coverage_label.setText(
+                f"No images found for {self.current_roi} in {len(folders)} "
+                "configured folder(s)."
+            )
 
     def load_selected_channels(self) -> None:
-        for item in self.channel_list.selectedItems():
-            image, is_rgb = load_display_image(item.data(self.Qt.UserRole))
-            name = f"image::{item.text()}"
-            self._replace_layer(name, image, "image", rgb=is_rgb, blending="additive")
+        channels = [item.text() for item in self.channel_list.selectedItems()]
+        if not channels:
+            raise ValueError("Select at least one available image.")
+        self._set_recipe_images("grayscale", channels)
+        self.replay_explore_view()
+
+    def load_six_colour_channels(self) -> None:
+        channels = [item.text() for item in self.channel_list.selectedItems()]
+        if not channels:
+            raise ValueError("Select at least one available image.")
+        self._set_recipe_images("six_colour", channels)
+        self.replay_explore_view()
 
     def load_rgb(self) -> None:
-        selected = self.channel_list.selectedItems()
-        if len(selected) < 3:
+        channels = [item.text() for item in self.channel_list.selectedItems()]
+        if len(channels) < 3:
             raise ValueError("Select at least three channel images for an RGB view.")
-        images = [load_display_image(item.data(self.Qt.UserRole))[0] for item in selected[:3]]
-        if len({image.shape for image in images}) != 1:
-            raise ValueError("RGB channels have mismatched shapes.")
-        rgb = np.stack(images, axis=-1)
-        self._replace_layer(
-            "population_qc_rgb",
-            rgb,
-            "image",
-            rgb=True,
-            blending="translucent",
+        self._set_recipe_images("rgb", channels[:3])
+        self.replay_explore_view()
+
+    def _set_recipe_images(self, mode: str, channels: Iterable[str]) -> None:
+        payload = self.explore_recipe.model_dump(mode="json")
+        payload["image_mode"] = mode
+        payload["image_channels"] = [str(channel) for channel in channels]
+        for key in (
+            "layer_colormaps",
+            "layer_visibility",
+            "layer_opacities",
+        ):
+            payload[key] = {
+                name: value
+                for name, value in payload[key].items()
+                if not (
+                    name.startswith("image::")
+                    or name == "population_qc_rgb"
+                )
+            }
+        self.explore_recipe = ExploreViewRecipe.model_validate(payload)
+
+    def _recipe_display_settings(
+        self,
+        name: str,
+        *,
+        default_colormap: str | None = None,
+    ) -> dict:
+        settings = {
+            "visible": self.explore_recipe.layer_visibility.get(name, True),
+            "opacity": self.explore_recipe.layer_opacities.get(name, 1.0),
+        }
+        colormap = self.explore_recipe.layer_colormaps.get(
+            name,
+            default_colormap,
         )
+        if colormap:
+            settings["colormap"] = colormap
+        return settings
+
+    def _render_recipe_images(self) -> int:
+        recipe = self.explore_recipe
+        if recipe.image_mode == "none" or not recipe.image_channels:
+            return 0
+        missing = [
+            channel
+            for channel in recipe.image_channels
+            if channel not in self.current_image_paths
+        ]
+        available = [
+            channel
+            for channel in recipe.image_channels
+            if channel in self.current_image_paths
+        ]
+        if missing:
+            self.set_status(
+                f"ROI {self.current_roi} is missing {len(missing)} requested "
+                f"image(s): {', '.join(missing)}."
+            )
+        if recipe.image_mode == "rgb":
+            if len(available) != 3:
+                self.set_status(
+                    "The RGB composite was not loaded because all three saved "
+                    "channels are not available for this ROI."
+                )
+                return 0
+            images = []
+            for channel in available:
+                image, is_rgb = load_display_image(
+                    self.current_image_paths[channel]
+                )
+                if is_rgb:
+                    raise ValueError(
+                        f"RGB source {channel!r} cannot be one component of a "
+                        "three-channel composite."
+                    )
+                images.append(image)
+            if len({image.shape for image in images}) != 1:
+                raise ValueError("RGB channels have mismatched shapes.")
+            self._replace_explore_layer(
+                "population_qc_rgb",
+                np.stack(images, axis=-1),
+                "image",
+                reload_descriptor={
+                    "kind": "rgb",
+                    "channels": list(recipe.image_channels),
+                },
+                rgb=True,
+                blending="translucent",
+                **self._recipe_display_settings("population_qc_rgb"),
+            )
+            return 1
+        loaded = 0
+        for channel in available:
+            image, is_rgb = load_display_image(self.current_image_paths[channel])
+            name = f"image::{channel}"
+            recipe_index = recipe.image_channels.index(channel)
+            default_colormap = (
+                "gray"
+                if recipe.image_mode == "grayscale"
+                else SIX_COLOUR_COLORMAPS[
+                    recipe_index % len(SIX_COLOUR_COLORMAPS)
+                ]
+            )
+            kwargs = {
+                "rgb": is_rgb,
+                "blending": "translucent" if is_rgb else "additive",
+                **self._recipe_display_settings(
+                    name,
+                    default_colormap=None if is_rgb else default_colormap,
+                ),
+            }
+            self._replace_explore_layer(
+                name,
+                image,
+                "image",
+                reload_descriptor={
+                    "kind": "image",
+                    "channel": channel,
+                    "mode": recipe.image_mode,
+                },
+                **kwargs,
+            )
+            loaded += 1
+        return loaded
 
     def refresh_population_values(self) -> None:
+        current_value = self.population_value_combo.currentText()
+        selected_layers = {
+            item.text() for item in self.population_layer_list.selectedItems()
+        }
+        self.population_value_combo.blockSignals(True)
         self.population_value_combo.clear()
-        if self.adata is None or self.population_obs_combo.currentText() not in self.adata.obs:
+        self.population_layer_list.clear()
+        if (
+            self.adata is None
+            or self.population_obs_combo.currentText() not in self.adata.obs
+        ):
+            self.population_value_combo.blockSignals(False)
             return
-        values = sorted(
-            self.adata.obs[self.population_obs_combo.currentText()]
-            .dropna()
-            .astype(str)
-            .unique()
-        )
+        observation = self.population_obs_combo.currentText()
+        colour_map = categorical_colour_map(self.adata, observation)
+        values = list(colour_map)
         self.population_value_combo.addItems(values)
+        if current_value in values:
+            self.population_value_combo.setCurrentText(current_value)
+        for value in values:
+            from qtpy.QtWidgets import QListWidgetItem
+
+            item = QListWidgetItem(value)
+            colour = self.QColor(colour_map[value])
+            if colour.isValid():
+                item.setBackground(colour)
+                item.setForeground(
+                    self.QColor("#111111" if colour.lightness() > 145 else "#ffffff")
+                )
+            item.setToolTip(
+                f"{observation}={value}; colour retrieved from AnnData when available."
+            )
+            self.population_layer_list.addItem(item)
+            item.setSelected(
+                value in selected_layers
+                or (
+                    self.explore_recipe.population_observation == observation
+                    and value in self.explore_recipe.populations
+                )
+            )
+        self.population_value_combo.blockSignals(False)
+        if not self._applying_explore_recipe:
+            self.restore_population_view()
 
     def render_obs_overlay(self) -> None:
-        if self.adata is None or self.current_mask is None:
-            raise RuntimeError("Load an experiment ROI and AnnData first.")
         observation = self.overlay_obs_combo.currentText()
-        rows = self.adata.obs.loc[
+        if not observation:
+            raise ValueError("Select an AnnData observation.")
+        self.explore_recipe = self.explore_recipe.model_copy(
+            update={"observation_overlay": observation},
+            deep=True,
+        )
+        self.replay_explore_view()
+
+    def _roi_adata_rows(self):
+        if self.adata is None or self.current_mask is None or self.manifest is None:
+            raise RuntimeError("Load an experiment ROI and AnnData first.")
+        roi_selector = (
             self.adata.obs[self.manifest.roi_obs].astype(str).eq(self.current_roi)
+        )
+        rows = self.adata.obs.loc[
+            roi_selector
         ]
         object_ids = pd.to_numeric(
             rows[self.manifest.object_id_obs], errors="coerce"
         ).astype("Int64")
-        values = rows[observation]
         eligible = set(
             self.cohort.loc[
                 self.cohort["ROI"].astype(str).eq(self.current_roi), "ObjectNumber"
             ].astype(int)
         )
-        selected = object_ids.isin(eligible)
+        selected = object_ids.notna() & object_ids.isin(eligible)
+        return rows, object_ids, selected, roi_selector.to_numpy()
+
+    def _direct_label_colormap(self, colours: dict[int, str]):
+        from napari.utils.colormaps import DirectLabelColormap
+
+        return DirectLabelColormap(color_dict={None: "#00000000", **colours})
+
+    def _render_observation_overlay(self, observation: str) -> int:
+        rows, object_ids, selected, _roi_selector = self._roi_adata_rows()
+        if observation not in rows:
+            self.set_status(
+                f"Saved AnnData observation {observation!r} is no longer available."
+            )
+            return 0
+        values = rows[observation]
         if pd.api.types.is_numeric_dtype(values):
             mapping = pd.Series(
                 pd.to_numeric(values[selected], errors="coerce").to_numpy(),
                 index=object_ids[selected].astype(int),
             )
             overlay = _identity_value_map(self.current_mask, mapping)
-            self._replace_layer(f"obs::{observation}", overlay, "image", colormap="viridis")
+            name = f"obs::{observation}"
+            self._replace_explore_layer(
+                name,
+                overlay,
+                "image",
+                reload_descriptor={
+                    "kind": "observation",
+                    "observation": observation,
+                },
+                blending="additive",
+                **self._recipe_display_settings(
+                    name,
+                    default_colormap="viridis",
+                ),
+            )
         else:
             categories = sorted(values[selected].dropna().astype(str).unique())
             codes = {value: index + 1 for index, value in enumerate(categories)}
@@ -1287,8 +2365,170 @@ class NapariSBTController:
                 index=object_ids[selected].astype(int),
             )
             overlay = _identity_value_map(self.current_mask, mapping, dtype=np.int32)
-            self._replace_layer(f"obs::{observation}", overlay, "labels")
-        self.set_status(f"Rendered cohort-only AnnData overlay {observation!r}.")
+            population_colours = categorical_colour_map(self.adata, observation)
+            name = f"obs::{observation}"
+            layer = self._replace_explore_layer(
+                name,
+                overlay,
+                "labels",
+                reload_descriptor={
+                    "kind": "observation",
+                    "observation": observation,
+                },
+                colormap=self._direct_label_colormap(
+                    {
+                        code: population_colours[value]
+                        for value, code in codes.items()
+                    }
+                ),
+                visible=self.explore_recipe.layer_visibility.get(name, True),
+                opacity=self.explore_recipe.layer_opacities.get(name, 1.0),
+            )
+            if hasattr(layer, "contour"):
+                layer.contour = 1
+        return 1
+
+    def load_selected_population_layers(self) -> None:
+        populations = [
+            item.text() for item in self.population_layer_list.selectedItems()
+        ]
+        if not populations and self.population_value_combo.currentText():
+            populations = [self.population_value_combo.currentText()]
+            self._set_list_selection(self.population_layer_list, populations)
+        if not populations:
+            raise ValueError("Select at least one population.")
+        observation = self.population_obs_combo.currentText()
+        self.explore_recipe = self.explore_recipe.model_copy(
+            update={
+                "population_observation": observation,
+                "populations": populations,
+            },
+            deep=True,
+        )
+        self.replay_explore_view()
+
+    def _render_population_layers(
+        self,
+        observation: str,
+        populations: Iterable[str],
+    ) -> int:
+        rows, object_ids, selected, _roi_selector = self._roi_adata_rows()
+        if observation not in rows:
+            self.set_status(
+                f"Saved population observation {observation!r} is unavailable."
+            )
+            return 0
+        values = rows[observation].astype(str)
+        colour_map = categorical_colour_map(self.adata, observation)
+        loaded = 0
+        for population in populations:
+            population_selected = selected & values.eq(str(population))
+            mapping = pd.Series(
+                np.ones(int(population_selected.sum()), dtype=np.int32),
+                index=object_ids[population_selected].astype(int),
+            )
+            overlay = _identity_value_map(
+                self.current_mask,
+                mapping,
+                dtype=np.int32,
+            )
+            colour = colour_map.get(str(population), "#ffffff")
+            name = f"population::{observation}::{population}"
+            layer = self._replace_explore_layer(
+                name,
+                overlay,
+                "labels",
+                reload_descriptor={
+                    "kind": "population",
+                    "observation": observation,
+                    "population": population,
+                },
+                colormap=self._direct_label_colormap({1: colour}),
+                visible=self.explore_recipe.layer_visibility.get(name, True),
+                opacity=self.explore_recipe.layer_opacities.get(name, 1.0),
+            )
+            if hasattr(layer, "contour"):
+                layer.contour = 1
+            loaded += 1
+        return loaded
+
+    def load_selected_marker_overlays(self) -> None:
+        markers = [item.text() for item in self.marker_overlay_list.selectedItems()]
+        if not markers:
+            raise ValueError("Select at least one AnnData marker.")
+        self.explore_recipe = self.explore_recipe.model_copy(
+            update={"marker_overlays": markers},
+            deep=True,
+        )
+        self.replay_explore_view()
+
+    def _render_marker_overlays(self, markers: Iterable[str]) -> int:
+        _rows, object_ids, selected, roi_selector = self._roi_adata_rows()
+        loaded = 0
+        for marker in markers:
+            try:
+                values = marker_values(self.adata, marker)[roi_selector]
+            except KeyError:
+                self.set_status(
+                    f"Saved AnnData marker {marker!r} is no longer available."
+                )
+                continue
+            mapping = pd.Series(
+                pd.to_numeric(values[selected.to_numpy()], errors="coerce"),
+                index=object_ids[selected].astype(int),
+            )
+            overlay = _identity_value_map(self.current_mask, mapping)
+            name = f"adata.X::{marker}"
+            self._replace_explore_layer(
+                name,
+                overlay,
+                "image",
+                reload_descriptor={
+                    "kind": "marker",
+                    "marker": marker,
+                },
+                blending="additive",
+                **self._recipe_display_settings(
+                    name,
+                    default_colormap="viridis",
+                ),
+            )
+            loaded += 1
+        return loaded
+
+    def replay_explore_view(self) -> None:
+        """Render the active ROI-independent recipe and record this review."""
+
+        if not self.current_roi or self.current_mask is None:
+            return
+        self._prune_recipe_layer_settings()
+        self._clear_explore_layers()
+        loaded = self._render_recipe_images()
+        if self.explore_recipe.observation_overlay:
+            loaded += self._render_observation_overlay(
+                self.explore_recipe.observation_overlay
+            )
+        if (
+            self.explore_recipe.population_observation
+            and self.explore_recipe.populations
+        ):
+            loaded += self._render_population_layers(
+                self.explore_recipe.population_observation,
+                self.explore_recipe.populations,
+            )
+        if self.explore_recipe.marker_overlays:
+            loaded += self._render_marker_overlays(
+                self.explore_recipe.marker_overlays
+            )
+        self._refresh_reload_recipe_list()
+        if loaded:
+            self._mark_current_explore_viewed()
+            self.set_status(
+                f"Loaded {loaded} Explore layer(s) for ROI {self.current_roi}; "
+                "all new layer opacities default to 1.0."
+            )
+        else:
+            self._refresh_roi_review_colours()
 
     def rank_rois_by_population(self) -> None:
         observation = self.population_obs_combo.currentText()
@@ -1307,6 +2547,7 @@ class NapariSBTController:
         self.roi_combo.clear()
         self.roi_combo.addItems(ranked)
         self.roi_combo.blockSignals(False)
+        self._refresh_roi_review_colours()
         if ranked:
             self.roi_combo.setCurrentIndex(0)
             self.load_roi(ranked[0])
@@ -1535,6 +2776,11 @@ class NapariSBTController:
             for index, definition in enumerate(self.manifest.classes)
         }
 
+    def _class_colormap(self):
+        from napari.utils.colormaps import DirectLabelColormap
+
+        return DirectLabelColormap(color_dict=self._class_colors())
+
     def refresh_classification_layers(self) -> None:
         if self.current_mask is None or self.manifest is None:
             return
@@ -1553,7 +2799,7 @@ class NapariSBTController:
                 CLASS_LAYER_NAMES[state],
                 data,
                 "labels",
-                color=self._class_colors(),
+                colormap=self._class_colormap(),
             )
         if not self.scores.empty:
             rows = self.scores.loc[
@@ -1568,7 +2814,7 @@ class NapariSBTController:
                 CLASS_LAYER_NAMES["predicted"],
                 data,
                 "labels",
-                color=self._class_colors(),
+                colormap=self._class_colormap(),
                 visible=False,
             )
             uncertainty = pd.Series(
@@ -1921,6 +3167,7 @@ class NapariSBTController:
                 shape_type="polygon",
                 edge_color="yellow",
                 face_color=[1, 1, 0, 0.15],
+                opacity=1.0,
             )
         self.viewer.layers.selection.active = self.viewer.layers[name]
         self.set_status("Draw polygons in the manual_tissue_regions shapes layer.")
@@ -2011,7 +3258,11 @@ class NapariSBTController:
         expanded = expand_labels(
             np.asarray(layer.data), distance=self.expand_spin.value()
         )
-        self.viewer.add_labels(expanded, name=f"{layer.name}_expanded")
+        self.viewer.add_labels(
+            expanded,
+            name=f"{layer.name}_expanded",
+            opacity=1.0,
+        )
 
     def resize_selected_layer(self) -> None:
         from skimage.transform import resize
@@ -2035,12 +3286,17 @@ class NapariSBTController:
             anti_aliasing=not is_labels,
         ).astype(data.dtype)
         if is_labels:
-            self.viewer.add_labels(resized, name=f"{layer.name}_resized")
+            self.viewer.add_labels(
+                resized,
+                name=f"{layer.name}_resized",
+                opacity=1.0,
+            )
         else:
             self.viewer.add_image(
                 resized,
                 name=f"{layer.name}_resized",
                 rgb=bool(data.ndim == 3 and data.shape[-1] in (3, 4)),
+                opacity=1.0,
             )
 
     def mask_selected_image(self) -> None:
@@ -2057,7 +3313,11 @@ class NapariSBTController:
         if data.shape[:2] != keep.shape:
             raise ValueError("Selected image and current mask shapes do not match.")
         masked = data * keep[..., None] if data.ndim == 3 else data * keep
-        self.viewer.add_image(masked, name=f"{layer.name}_cohort_masked")
+        self.viewer.add_image(
+            masked,
+            name=f"{layer.name}_cohort_masked",
+            opacity=1.0,
+        )
 
 
 def launch(

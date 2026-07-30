@@ -15,9 +15,12 @@ class ConfigDefaultsTests(unittest.TestCase):
         resolved = PipelineConfig().model_dump(mode="python")
 
         self.assertEqual(resolved, expected)
-        self.assertEqual(len(resolved), 24)
+        self.assertEqual(len(resolved), 25)
         self.assertEqual(resolved["napari_sbt"]["worker_count"], 8)
         self.assertEqual(resolved["population_embedding_qc"]["mode"], "auto")
+        self.assertEqual(resolved["maxfuse"]["batching_scheme"], "cyclic")
+        self.assertEqual(resolved["maxfuse"]["refine_iterations"], 1)
+        self.assertEqual(resolved["maxfuse"]["report_score_threshold"], 0.30)
 
     def test_sparse_data_fills_missing_sections_and_fields(self):
         config = load_config_data(

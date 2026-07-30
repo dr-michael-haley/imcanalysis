@@ -5725,6 +5725,864 @@
       "title": "LoggingConfig",
       "type": "object"
     },
+    "MaxFuseConfig": {
+      "description": "Configuration for one-reference MaxFuse matching and reporting.",
+      "properties": {
+        "enabled": {
+          "advice": "",
+          "default": true,
+          "description": "Run the MaxFuse cross-modality matching stage.",
+          "level": "basic",
+          "stage": "maxfuse",
+          "title": "Enabled",
+          "type": "boolean",
+          "ui_group": "Stage control"
+        },
+        "reference_name": {
+          "advice": "",
+          "default": "atlas",
+          "description": "Stable short name used to prefix transferred reference annotations.",
+          "level": "basic",
+          "minLength": 1,
+          "stage": "maxfuse",
+          "title": "Reference Name",
+          "type": "string",
+          "ui_group": "Inputs"
+        },
+        "reference_adata_path": {
+          "advice": "Exactly one reference is supported per execution.",
+          "default": "maxfuse/reference.h5ad",
+          "description": "Project-relative AnnData path for the single scRNA-seq reference.",
+          "level": "basic",
+          "minLength": 1,
+          "stage": "maxfuse",
+          "title": "Reference Adata Path",
+          "type": "string",
+          "ui_group": "Inputs"
+        },
+        "target_adata_path": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional target IMC AnnData path; defaults to general.anndata_path.",
+          "level": "basic",
+          "stage": "maxfuse",
+          "title": "Target Adata Path",
+          "ui_group": "Inputs"
+        },
+        "feature_mapping_path": {
+          "advice": "",
+          "default": "maxfuse/feature_mapping.csv",
+          "description": "CSV mapping measured target features to linked reference genes.",
+          "level": "basic",
+          "minLength": 1,
+          "stage": "maxfuse",
+          "title": "Feature Mapping Path",
+          "type": "string",
+          "ui_group": "Inputs"
+        },
+        "asset_folder": {
+          "advice": "Execution figures and diagnostic tables are stored separately in the managed report.",
+          "default": "maxfuse_results",
+          "description": "Canonical project-relative folder for reusable MaxFuse result assets.",
+          "level": "basic",
+          "minLength": 1,
+          "stage": "maxfuse",
+          "title": "Asset Folder",
+          "type": "string",
+          "ui_group": "Reusable outputs"
+        },
+        "target_feature_column": {
+          "advice": "",
+          "default": "IMC",
+          "description": "Feature-mapping column containing target IMC marker names.",
+          "level": "advanced",
+          "minLength": 1,
+          "stage": "maxfuse",
+          "title": "Target Feature Column",
+          "type": "string",
+          "ui_group": "Feature mapping"
+        },
+        "reference_feature_column": {
+          "advice": "",
+          "default": "snRNAseq",
+          "description": "Feature-mapping column containing linked scRNA-seq gene names.",
+          "level": "advanced",
+          "minLength": 1,
+          "stage": "maxfuse",
+          "title": "Reference Feature Column",
+          "type": "string",
+          "ui_group": "Feature mapping"
+        },
+        "mapping_filter_column": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "All",
+          "description": "Optional mapping column whose truthy rows are eligible for matching.",
+          "level": "advanced",
+          "stage": "maxfuse",
+          "title": "Mapping Filter Column",
+          "ui_group": "Feature mapping"
+        },
+        "reference_layer": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional reference AnnData layer used for matching, expression plots, and DEGs.",
+          "level": "advanced",
+          "stage": "maxfuse",
+          "title": "Reference Layer",
+          "ui_group": "Inputs"
+        },
+        "target_layer": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional target AnnData layer used for matching.",
+          "level": "advanced",
+          "stage": "maxfuse",
+          "title": "Target Layer",
+          "ui_group": "Inputs"
+        },
+        "reference_smoothing_obs": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "annotation_level_3",
+          "description": "Reference observation labels used only for within-modality centroid shrinkage.",
+          "level": "basic",
+          "stage": "maxfuse",
+          "title": "Reference Smoothing Obs",
+          "ui_group": "Labels"
+        },
+        "target_smoothing_obs": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Target observation labels used for centroid shrinkage; defaults to target_population_obs.",
+          "level": "advanced",
+          "stage": "maxfuse",
+          "title": "Target Smoothing Obs",
+          "ui_group": "Labels"
+        },
+        "target_population_obs": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Target population column used in matching reports; defaults to general.population_obs_primary.",
+          "level": "basic",
+          "stage": "maxfuse",
+          "title": "Target Population Obs",
+          "ui_group": "Labels"
+        },
+        "reference_transfer_obs": {
+          "advice": "",
+          "description": "Reference observation columns transferred to matched target cells.",
+          "items": {
+            "type": "string"
+          },
+          "level": "basic",
+          "stage": "maxfuse",
+          "title": "Reference Transfer Obs",
+          "type": "array",
+          "ui_group": "Labels"
+        },
+        "reference_label_roles": {
+          "additionalProperties": {
+            "enum": [
+              "lineage",
+              "subtype",
+              "state",
+              "other"
+            ],
+            "type": "string"
+          },
+          "advice": "",
+          "description": "Optional biological roles for transferred reference label columns.",
+          "level": "advanced",
+          "stage": "maxfuse",
+          "title": "Reference Label Roles",
+          "type": "object",
+          "ui_group": "Labels"
+        },
+        "sample_obs": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional target sample column for coverage diagnostics; defaults to general.case_obs.",
+          "level": "advanced",
+          "stage": "maxfuse",
+          "title": "Sample Obs",
+          "ui_group": "Labels"
+        },
+        "roi_obs": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional target ROI column for coverage diagnostics; defaults to general.roi_obs.",
+          "level": "advanced",
+          "stage": "maxfuse",
+          "title": "Roi Obs",
+          "ui_group": "Labels"
+        },
+        "reference_active_features": {
+          "advice": "",
+          "default": 1000,
+          "description": "Maximum number of reference active features used during refinement.",
+          "level": "basic",
+          "minimum": 2,
+          "stage": "maxfuse",
+          "title": "Reference Active Features",
+          "type": "integer",
+          "ui_group": "Feature preparation"
+        },
+        "reference_shared_sd_min": {
+          "advice": "",
+          "default": 0.2,
+          "description": "Minimum reference standard deviation for a linked feature.",
+          "level": "advanced",
+          "minimum": 0,
+          "stage": "maxfuse",
+          "title": "Reference Shared Sd Min",
+          "type": "number",
+          "ui_group": "Feature preparation"
+        },
+        "target_shared_sd_min": {
+          "advice": "",
+          "default": 0.025,
+          "description": "Minimum target standard deviation for a linked feature.",
+          "level": "advanced",
+          "minimum": 0,
+          "stage": "maxfuse",
+          "title": "Target Shared Sd Min",
+          "type": "number",
+          "ui_group": "Feature preparation"
+        },
+        "min_shared_features": {
+          "advice": "",
+          "default": 20,
+          "description": "Minimum linked features required after availability and variability filtering.",
+          "level": "basic",
+          "minimum": 2,
+          "stage": "maxfuse",
+          "title": "Min Shared Features",
+          "type": "integer",
+          "ui_group": "Feature preparation"
+        },
+        "zscore_reference": {
+          "advice": "",
+          "default": true,
+          "description": "Z-score reference active and linked features before matching.",
+          "level": "advanced",
+          "stage": "maxfuse",
+          "title": "Zscore Reference",
+          "type": "boolean",
+          "ui_group": "Feature preparation"
+        },
+        "zscore_target": {
+          "advice": "",
+          "default": false,
+          "description": "Z-score target features; leave false for already scaled SBT IMC data.",
+          "level": "advanced",
+          "stage": "maxfuse",
+          "title": "Zscore Target",
+          "type": "boolean",
+          "ui_group": "Feature preparation"
+        },
+        "batching_scheme": {
+          "advice": "",
+          "default": "cyclic",
+          "description": "MaxFuse batch pairing scheme.",
+          "enum": [
+            "cyclic",
+            "pairwise"
+          ],
+          "level": "advanced",
+          "stage": "maxfuse",
+          "title": "Batching Scheme",
+          "type": "string",
+          "ui_group": "Matching"
+        },
+        "max_outward_size": {
+          "advice": "",
+          "default": 2000,
+          "description": "Maximum smaller-modality batch size used in assignment problems.",
+          "level": "basic",
+          "minimum": 100,
+          "stage": "maxfuse",
+          "title": "Max Outward Size",
+          "type": "integer",
+          "ui_group": "Matching"
+        },
+        "matching_ratio": {
+          "advice": "",
+          "default": 4,
+          "description": "Approximate target-to-reference candidate ratio within MaxFuse batches.",
+          "level": "advanced",
+          "minimum": 1,
+          "stage": "maxfuse",
+          "title": "Matching Ratio",
+          "type": "integer",
+          "ui_group": "Matching"
+        },
+        "metacell_size": {
+          "advice": "",
+          "default": 2,
+          "description": "Average reference metacell size.",
+          "level": "advanced",
+          "minimum": 1,
+          "stage": "maxfuse",
+          "title": "Metacell Size",
+          "type": "integer",
+          "ui_group": "Matching"
+        },
+        "n_neighbors_reference": {
+          "advice": "",
+          "default": 15,
+          "description": "Reference within-modality graph neighbour count.",
+          "level": "advanced",
+          "minimum": 2,
+          "stage": "maxfuse",
+          "title": "N Neighbors Reference",
+          "type": "integer",
+          "ui_group": "Graph construction"
+        },
+        "n_neighbors_target": {
+          "advice": "",
+          "default": 15,
+          "description": "Target within-modality graph neighbour count.",
+          "level": "advanced",
+          "minimum": 2,
+          "stage": "maxfuse",
+          "title": "N Neighbors Target",
+          "type": "integer",
+          "ui_group": "Graph construction"
+        },
+        "graph_svd_reference": {
+          "advice": "",
+          "default": 40,
+          "description": "Reference active-space SVD components for graph construction.",
+          "level": "advanced",
+          "minimum": 2,
+          "stage": "maxfuse",
+          "title": "Graph Svd Reference",
+          "type": "integer",
+          "ui_group": "Graph construction"
+        },
+        "graph_svd_target": {
+          "advice": "",
+          "anyOf": [
+            {
+              "minimum": 2,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": 20,
+          "description": "Target active-space SVD components for graph construction.",
+          "level": "advanced",
+          "stage": "maxfuse",
+          "title": "Graph Svd Target",
+          "ui_group": "Graph construction"
+        },
+        "graph_resolution_reference": {
+          "advice": "",
+          "default": 2.0,
+          "description": "Reference graph clustering resolution.",
+          "exclusiveMinimum": 0,
+          "level": "advanced",
+          "stage": "maxfuse",
+          "title": "Graph Resolution Reference",
+          "type": "number",
+          "ui_group": "Graph construction"
+        },
+        "graph_resolution_target": {
+          "advice": "",
+          "default": 2.0,
+          "description": "Target graph clustering resolution.",
+          "exclusiveMinimum": 0,
+          "level": "advanced",
+          "stage": "maxfuse",
+          "title": "Graph Resolution Target",
+          "type": "number",
+          "ui_group": "Graph construction"
+        },
+        "graph_resolution_tolerance": {
+          "advice": "",
+          "default": 0.1,
+          "description": "Resolution difference below which MaxFuse merges graph communities.",
+          "level": "advanced",
+          "minimum": 0,
+          "stage": "maxfuse",
+          "title": "Graph Resolution Tolerance",
+          "type": "number",
+          "ui_group": "Graph construction"
+        },
+        "initial_weight_reference": {
+          "advice": "",
+          "default": 0.3,
+          "description": "Raw-reference weight during initial fuzzy smoothing.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "maxfuse",
+          "title": "Initial Weight Reference",
+          "type": "number",
+          "ui_group": "Initial pivots"
+        },
+        "initial_weight_target": {
+          "advice": "",
+          "default": 0.3,
+          "description": "Raw-target weight during initial fuzzy smoothing.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "maxfuse",
+          "title": "Initial Weight Target",
+          "type": "number",
+          "ui_group": "Initial pivots"
+        },
+        "initial_svd_reference": {
+          "advice": "",
+          "default": 20,
+          "description": "Reference linked-space SVD components for initial pivots.",
+          "level": "advanced",
+          "minimum": 2,
+          "stage": "maxfuse",
+          "title": "Initial Svd Reference",
+          "type": "integer",
+          "ui_group": "Initial pivots"
+        },
+        "initial_svd_target": {
+          "advice": "",
+          "default": 20,
+          "description": "Target linked-space SVD components for initial pivots.",
+          "level": "advanced",
+          "minimum": 2,
+          "stage": "maxfuse",
+          "title": "Initial Svd Target",
+          "type": "integer",
+          "ui_group": "Initial pivots"
+        },
+        "refine_weight_reference": {
+          "advice": "",
+          "default": 0.3,
+          "description": "Raw-reference weight during pivot refinement.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "maxfuse",
+          "title": "Refine Weight Reference",
+          "type": "number",
+          "ui_group": "Pivot refinement"
+        },
+        "refine_weight_target": {
+          "advice": "",
+          "default": 0.3,
+          "description": "Raw-target weight during pivot refinement.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "maxfuse",
+          "title": "Refine Weight Target",
+          "type": "number",
+          "ui_group": "Pivot refinement"
+        },
+        "refine_svd_reference": {
+          "advice": "",
+          "default": 40,
+          "description": "Reference active-space SVD components during refinement and propagation.",
+          "level": "advanced",
+          "minimum": 2,
+          "stage": "maxfuse",
+          "title": "Refine Svd Reference",
+          "type": "integer",
+          "ui_group": "Pivot refinement"
+        },
+        "refine_svd_target": {
+          "advice": "",
+          "anyOf": [
+            {
+              "minimum": 2,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional target active-space SVD components during refinement.",
+          "level": "advanced",
+          "stage": "maxfuse",
+          "title": "Refine Svd Target",
+          "ui_group": "Pivot refinement"
+        },
+        "refine_cca_components": {
+          "advice": "",
+          "default": 25,
+          "description": "CCA components used for pivot refinement.",
+          "level": "advanced",
+          "minimum": 2,
+          "stage": "maxfuse",
+          "title": "Refine Cca Components",
+          "type": "integer",
+          "ui_group": "Pivot refinement"
+        },
+        "refine_iterations": {
+          "advice": "",
+          "default": 1,
+          "description": "Pivot-refinement iterations; one is the historical spatial-omics default.",
+          "level": "basic",
+          "minimum": 1,
+          "stage": "maxfuse",
+          "title": "Refine Iterations",
+          "type": "integer",
+          "ui_group": "Pivot refinement"
+        },
+        "pivot_filter_fraction": {
+          "advice": "",
+          "default": 0.5,
+          "description": "Fraction of weak refined pivots discarded.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "maxfuse",
+          "title": "Pivot Filter Fraction",
+          "type": "number",
+          "ui_group": "Filtering and propagation"
+        },
+        "propagation_weight_reference": {
+          "advice": "",
+          "default": 0.7,
+          "description": "Raw-reference weight during propagation.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "maxfuse",
+          "title": "Propagation Weight Reference",
+          "type": "number",
+          "ui_group": "Filtering and propagation"
+        },
+        "propagation_weight_target": {
+          "advice": "",
+          "default": 0.7,
+          "description": "Raw-target weight during propagation.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "maxfuse",
+          "title": "Propagation Weight Target",
+          "type": "number",
+          "ui_group": "Filtering and propagation"
+        },
+        "propagated_filter_fraction": {
+          "advice": "",
+          "default": 0.3,
+          "description": "Fraction of weak propagated matches discarded.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "maxfuse",
+          "title": "Propagated Filter Fraction",
+          "type": "number",
+          "ui_group": "Filtering and propagation"
+        },
+        "randomized_svd": {
+          "advice": "",
+          "default": true,
+          "description": "Use randomized SVD for large active matrices.",
+          "level": "advanced",
+          "stage": "maxfuse",
+          "title": "Randomized Svd",
+          "type": "boolean",
+          "ui_group": "Performance"
+        },
+        "seed": {
+          "advice": "",
+          "default": 100,
+          "description": "Random seed for batching, SVD, and deterministic plotting samples.",
+          "level": "basic",
+          "minimum": 0,
+          "stage": "maxfuse",
+          "title": "Seed",
+          "type": "integer",
+          "ui_group": "Performance"
+        },
+        "report_score_threshold": {
+          "advice": "",
+          "default": 0.3,
+          "description": "Minimum score used for default plots and DEG analysis; reusable matches remain unfiltered.",
+          "level": "basic",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "maxfuse",
+          "title": "Report Score Threshold",
+          "type": "number",
+          "ui_group": "Reporting"
+        },
+        "sensitivity_thresholds": {
+          "advice": "",
+          "description": "Post-hoc score thresholds used for coverage reporting without refitting MaxFuse.",
+          "items": {
+            "type": "number"
+          },
+          "level": "advanced",
+          "stage": "maxfuse",
+          "title": "Sensitivity Thresholds",
+          "type": "array",
+          "ui_group": "Reporting"
+        },
+        "reference_umap_key": {
+          "advice": "",
+          "default": "X_umap",
+          "description": "Reference embedding key used for UMAP report panels.",
+          "level": "advanced",
+          "minLength": 1,
+          "stage": "maxfuse",
+          "title": "Reference Umap Key",
+          "type": "string",
+          "ui_group": "Reporting"
+        },
+        "target_umap_key": {
+          "advice": "",
+          "default": "X_umap",
+          "description": "Target embedding key used for UMAP report panels.",
+          "level": "advanced",
+          "minLength": 1,
+          "stage": "maxfuse",
+          "title": "Target Umap Key",
+          "type": "string",
+          "ui_group": "Reporting"
+        },
+        "max_umap_points": {
+          "advice": "",
+          "default": 200000,
+          "description": "Maximum deterministically sampled points in each UMAP report.",
+          "level": "advanced",
+          "minimum": 1000,
+          "stage": "maxfuse",
+          "title": "Max Umap Points",
+          "type": "integer",
+          "ui_group": "Reporting"
+        },
+        "figure_dpi": {
+          "advice": "",
+          "default": 300,
+          "description": "Raster resolution used for MaxFuse report figures.",
+          "level": "advanced",
+          "minimum": 72,
+          "stage": "maxfuse",
+          "title": "Figure Dpi",
+          "type": "integer",
+          "ui_group": "Reporting"
+        },
+        "figure_formats": {
+          "advice": "",
+          "description": "Figure formats written for each MaxFuse diagnostic.",
+          "items": {
+            "enum": [
+              "png",
+              "svg"
+            ],
+            "type": "string"
+          },
+          "level": "advanced",
+          "stage": "maxfuse",
+          "title": "Figure Formats",
+          "type": "array",
+          "ui_group": "Reporting"
+        },
+        "plot_stacked_violin": {
+          "advice": "",
+          "default": true,
+          "description": "Generate a linked-gene stacked-violin companion to the matrix plot.",
+          "level": "advanced",
+          "stage": "maxfuse",
+          "title": "Plot Stacked Violin",
+          "type": "boolean",
+          "ui_group": "Reporting"
+        },
+        "run_degs": {
+          "advice": "",
+          "default": true,
+          "description": "Run Wilcoxon one-versus-rest DEGs on matched reference cells.",
+          "level": "basic",
+          "stage": "maxfuse",
+          "title": "Run Degs",
+          "type": "boolean",
+          "ui_group": "Differential expression"
+        },
+        "deg_top_genes": {
+          "advice": "",
+          "default": 20,
+          "description": "Top genes displayed per transferred target population.",
+          "level": "advanced",
+          "minimum": 1,
+          "stage": "maxfuse",
+          "title": "Deg Top Genes",
+          "type": "integer",
+          "ui_group": "Differential expression"
+        },
+        "deg_min_cells": {
+          "advice": "",
+          "default": 20,
+          "description": "Minimum unique matched reference cells required per DEG group.",
+          "level": "advanced",
+          "minimum": 2,
+          "stage": "maxfuse",
+          "title": "Deg Min Cells",
+          "type": "integer",
+          "ui_group": "Differential expression"
+        },
+        "gene_lists": {
+          "advice": "",
+          "description": "Optional wide or long gene-list files used to annotate and enrich DEG results.",
+          "items": {
+            "$ref": "#/$defs/MaxFuseGeneListConfig"
+          },
+          "level": "basic",
+          "stage": "maxfuse",
+          "title": "Gene Lists",
+          "type": "array",
+          "ui_group": "Differential expression"
+        },
+        "write_matched_transcriptomes": {
+          "advice": "This can be very large because repeated reference matches are materialized.",
+          "default": false,
+          "description": "Write an optional target-indexed matched-transcriptome AnnData asset.",
+          "level": "advanced",
+          "stage": "maxfuse",
+          "title": "Write Matched Transcriptomes",
+          "type": "boolean",
+          "ui_group": "Reusable outputs"
+        },
+        "matched_transcriptome_min_score": {
+          "advice": "",
+          "default": 0.85,
+          "description": "Score threshold for the optional matched-transcriptome asset.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "maxfuse",
+          "title": "Matched Transcriptome Min Score",
+          "type": "number",
+          "ui_group": "Reusable outputs"
+        }
+      },
+      "title": "MaxFuseConfig",
+      "type": "object"
+    },
+    "MaxFuseGeneListConfig": {
+      "description": "One optional gene-list file used to annotate MaxFuse DEG results.",
+      "properties": {
+        "path": {
+          "minLength": 1,
+          "title": "Path",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "format": {
+          "default": "auto",
+          "enum": [
+            "auto",
+            "wide",
+            "long"
+          ],
+          "title": "Format",
+          "type": "string"
+        },
+        "gene_column": {
+          "default": "gene",
+          "title": "Gene Column",
+          "type": "string"
+        },
+        "group_column": {
+          "default": "group",
+          "title": "Group Column",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "MaxFuseGeneListConfig",
+      "type": "object"
+    },
     "NapariSBTConfig": {
       "description": "Project defaults for cohort-first Napari experiments and cell features.",
       "properties": {
@@ -10512,6 +11370,14 @@
       "$ref": "#/$defs/RapidsProcessConfig",
       "advice": "",
       "description": "Configuration value for rapids.",
+      "level": "advanced",
+      "stage": "pipeline",
+      "ui_group": "Pipeline"
+    },
+    "maxfuse": {
+      "$ref": "#/$defs/MaxFuseConfig",
+      "advice": "",
+      "description": "Configuration value for maxfuse.",
       "level": "advanced",
       "stage": "pipeline",
       "ui_group": "Pipeline"

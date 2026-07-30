@@ -60,6 +60,14 @@ their original mask labels. The optional context layer contains the rest of
 the segmentation at low opacity. Annotation clicks on that context are ignored.
 Normal ROI navigation includes only ROIs with eligible cells.
 
+Multiple image folders are merged for each ROI. Supported layouts are
+`<folder>/<ROI>/<channel>.tiff`, `<folder>/<ROI>.tiff`, and flat
+`<folder>/<ROI>_<channel>.tiff`. Channel filenames are matched against
+`adata.var_names` and, when available, `adata.var["channel_name"]` and
+`adata.var["channel_label"]`. Duplicate channels from different folders remain
+available with their source folder appended; unmatched composites remain
+available as additional images.
+
 Experiments contain two to eight stable, mutually exclusive classes. Each has
 a display name, colour, numeric shortcut, and `keep` or `exclude` mask
 disposition. The Segmentation QC template creates `good` and `artifact`
@@ -121,9 +129,51 @@ always override predictions.
 
 The **Explore** tab provides cohort-aware ROI navigation, raw and extra image
 loading, RGB views, categorical/numeric AnnData overlays, and abundance-ranked
-population views. **Use this population as classification cohort** transfers
-the population selector back to Setup and requires a new preview and
-confirmation.
+population views. Previous/Next buttons follow the current ROI ordering.
+**Hide all**, **Show all**, and **Delete all** act on every Napari layer; loading
+the ROI again reconstructs the cohort and classification layers after deletion.
+New layers have opacity 1.0 by default, except for the deliberately dimmed
+full-segmentation context layer.
+
+Selected two-dimensional image channels can be loaded as independent greyscale
+layers or assigned, in displayed selection order, to repeating red, green,
+blue, cyan, yellow, and magenta colormaps. The three-channel RGB composite
+remains available. Image choices are stored by logical channel name rather
+than path, so the same recipe can be replayed against another ROI and missing
+channels are reported rather than substituted.
+
+Categorical overlays and separate population layers first look for Scanpy's
+`adata.uns["<observation>_colors"]` palette (with common mapping-style
+alternatives accepted) and otherwise use a stable fallback palette. Specific
+populations can be selected as individual contour layers. Variables in
+`adata.var_names` can also be loaded from cell-level `adata.X` values and
+mapped onto eligible mask objects as quantitative overlays.
+
+With **Reload the current Explore view when ROI changes** enabled, navigation
+reconstructs the same images, colormaps, observation overlay, population
+layers, and marker overlays for the new ROI. A view fingerprint tracks which
+ROIs have been rendered with exactly those settings: ROI selector entries are
+green when viewed and amber when not yet viewed. Changing any component creates
+a different review set.
+
+The **Layers re-added when the ROI changes** list is the explicit reload
+contract. It shows every replayable Explore layer, including its colormap,
+visibility, and opacity. Select one or more entries and use **Delete selected
+recipe items** to remove them from both the recipe and the current replayed
+view. **Update from current layers** rebuilds the recipe from supported layers
+currently present in Napari, capturing manual colormap, visibility, and opacity
+changes. Cohort, context, classification, manual-region, and unsupported
+derived layers are managed separately or reported as ignored rather than being
+silently added to the recipe.
+
+**Save current view for selected population** stores a population-specific
+verification recipe inside the experiment. Selecting that observation and
+population later automatically retrieves the recipe; the explicit load button
+does the same. Only these review recipes and their viewed-ROI sets are stored.
+This is not a general Napari workspace save/load mechanism.
+
+**Use this population as classification cohort** transfers the population
+selector back to Setup and requires a new preview and confirmation.
 
 The **Regions & Export** tab stores manual polygon regions and synchronizes
 their contained cell identities. It exports:
@@ -151,6 +201,7 @@ napari_sbt/<experiment>/
 │   ├── coverage_report.csv
 │   └── feature_manifest.json
 ├── labels/labels.parquet
+├── explore/review_state.json
 ├── models/
 ├── scores/scores.parquet
 ├── annotations/

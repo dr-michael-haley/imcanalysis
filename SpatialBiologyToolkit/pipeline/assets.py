@@ -176,6 +176,45 @@ def resolve_assets(
             count_limit=count_limit,
         )
     )
+    assets.append(
+        inspect_asset(
+            role="maxfuse_reference",
+            path=resolve_project_path(root, config.maxfuse.reference_adata_path),
+            kind="file",
+            lifecycle="required_input",
+            count_limit=count_limit,
+        )
+    )
+    assets.append(
+        inspect_asset(
+            role="maxfuse_target",
+            path=resolve_project_path(
+                root,
+                config.maxfuse.target_adata_path or config.general.anndata_path,
+            ),
+            kind="file",
+            lifecycle="required_input",
+            count_limit=count_limit,
+        )
+    )
+    assets.append(
+        inspect_asset(
+            role="maxfuse_feature_mapping",
+            path=resolve_project_path(root, config.maxfuse.feature_mapping_path),
+            kind="file",
+            lifecycle="required_input",
+            count_limit=count_limit,
+        )
+    )
+    assets.append(
+        inspect_asset(
+            role="maxfuse_assets",
+            path=resolve_project_path(root, config.maxfuse.asset_folder),
+            kind="directory",
+            lifecycle="generated_output",
+            count_limit=count_limit,
+        )
+    )
     return assets
 
 

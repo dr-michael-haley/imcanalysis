@@ -22,6 +22,7 @@ sections/segmentation
 sections/nimbus
 sections/batch_integration
 sections/rapids
+sections/maxfuse
 sections/cellvision
 sections/hyperstac
 sections/cox

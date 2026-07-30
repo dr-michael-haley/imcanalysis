@@ -22,6 +22,7 @@ from SpatialBiologyToolkit._napari_imc_normalization import (
 )
 from SpatialBiologyToolkit.pipeline.manifests import utc_now, write_json
 from SpatialBiologyToolkit.qc_classifier.io import (
+    build_image_channel_aliases,
     discover_mask_files,
     discover_roi_images,
     file_fingerprint,
@@ -239,6 +240,20 @@ def run_feature_build(
     image_folders = [
         _resolve_input_path(folder, input_root) for folder in manifest.images_folders
     ]
+    channel_aliases: dict[str, str] = {}
+    if manifest.anndata_path:
+        import anndata as ad
+
+        anndata_path = _resolve_input_path(manifest.anndata_path, input_root)
+        if anndata_path.is_file():
+            panel_adata = ad.read_h5ad(anndata_path, backed="r")
+            try:
+                channel_aliases = build_image_channel_aliases(
+                    panel_adata.var_names,
+                    panel_adata.var,
+                )
+            finally:
+                panel_adata.file.close()
     recipe = manifest.synthetic_features.model_copy(deep=True)
     if recipe.normalization_dict_path:
         recipe.normalization_dict_path = str(
@@ -260,7 +275,11 @@ def run_feature_build(
         if mask_path is None:
             failures.append({"ROI": roi, "error": "Eligible ROI has no mask file."})
             continue
-        discovered = discover_roi_images(image_folders, roi)
+        discovered = discover_roi_images(
+            image_folders,
+            roi,
+            channel_aliases=channel_aliases,
+        )
         requested = recipe.channels
         if requested:
             missing_channels = sorted(set(requested) - set(discovered))
