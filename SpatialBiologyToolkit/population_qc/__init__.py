@@ -1,9 +1,10 @@
 """Agent-friendly population labelling and quality-control tools.
 
-The package connects structural clustering evidence, marker expression,
-case/ROI representation, resolution stability, and targeted cell images.
-Candidate clustering and annotation functions may add reversible observation
-columns in memory; no function writes SpatialData or AnnData to disk.
+The package connects structural clustering evidence, MaxFuse atlas transfers,
+marker expression, case/ROI representation, resolution stability, and targeted
+cell images. Candidate clustering and annotation functions may add reversible
+observation columns in memory; no function writes SpatialData or AnnData to
+disk.
 """
 
 from .artifacts import (
@@ -23,9 +24,18 @@ from .clustering import (
 from .composition import summarize_population_representation
 from .context import inspect_population_data
 from .expression import compare_populations, profile_population
+from .maxfuse import (
+    inspect_maxfuse_inputs,
+    plot_maxfuse_label_heatmap,
+    plot_maxfuse_threshold_sensitivity,
+    summarize_maxfuse_evidence,
+)
 from .models import (
     CellSelectionResult,
     InMemoryClusteringResult,
+    MaxFuseEvidenceResult,
+    MaxFuseInputAudit,
+    MaxFuseSourceSpec,
     MarkerExpectation,
     MarkerExpectations,
     PlotResult,
@@ -66,6 +76,9 @@ from .stored import (
 __all__ = [
     "CellSelectionResult",
     "InMemoryClusteringResult",
+    "MaxFuseEvidenceResult",
+    "MaxFuseInputAudit",
+    "MaxFuseSourceSpec",
     "MarkerExpectation",
     "MarkerExpectations",
     "MANIFEST_COLUMNS",
@@ -88,12 +101,15 @@ __all__ = [
     "create_leiden_sweep",
     "discard_population_qc_columns",
     "inspect_population_data",
+    "inspect_maxfuse_inputs",
     "focused_population_summary",
     "has_stored_population_qc",
     "list_stored_population_qc",
     "load_stored_population_qc",
     "plot_clustering_qc",
     "plot_clustering_qc_panels",
+    "plot_maxfuse_label_heatmap",
+    "plot_maxfuse_threshold_sensitivity",
     "plot_marker_distributions",
     "plot_population_breakdown",
     "plot_population_cell_gallery",
@@ -107,5 +123,6 @@ __all__ = [
     "select_population_cell_panel",
     "select_population_cells",
     "subcluster_population",
+    "summarize_maxfuse_evidence",
     "summarize_population_representation",
 ]

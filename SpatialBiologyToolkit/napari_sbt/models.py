@@ -110,6 +110,7 @@ class SyntheticFeatureRecipe(BaseModel):
 
     channels: list[str] = Field(default_factory=list)
     mask_offset_px: int = Field(default=0, ge=-1000, le=1000)
+    allow_positive_offset_overlap: bool = False
     distribution_features: bool = True
     region_features: bool = True
     gradient_features: bool = False

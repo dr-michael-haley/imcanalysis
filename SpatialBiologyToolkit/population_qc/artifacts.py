@@ -330,6 +330,8 @@ class PopulationQCArtifactWriter:
         paths: dict[str, Path] = {}
         metadata: dict[str, Any] = {}
         for key, value in values.items():
+            if key.startswith("_"):
+                continue
             if isinstance(value, pd.DataFrame):
                 paths[key] = self.save_table(
                     value,

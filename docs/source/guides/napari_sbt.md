@@ -76,8 +76,10 @@ calculated IMC features.
 Synthetic extraction calculates rows only for eligible cells, but it keeps the
 original full segmentation in memory:
 
-- positive offsets use full-mask `expand_labels`, so a selected cell cannot
-  grow through an excluded neighbour;
+- positive offsets block at every segmented-cell boundary by default;
+- **Allow positive offsets to overlap other cells** independently expands each
+  eligible measurement region through neighbouring masks. In this mode a pixel
+  may contribute to multiple cells, which can be useful in dense tissue;
 - negative offsets erode selected objects without changing their identities;
 - background rings exclude every segmented object;
 - neighbourhood features describe the full tissue segmentation;

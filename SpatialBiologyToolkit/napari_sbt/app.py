@@ -259,6 +259,13 @@ class NapariSBTController:
         )
         self.offset_spin = QSpinBox()
         self.offset_spin.setRange(-1000, 1000)
+        self.offset_overlap_check = QCheckBox(
+            "Allow positive offsets to overlap other cells"
+        )
+        self.offset_overlap_check.setToolTip(
+            "Independently expands each eligible cell through neighbouring masks. "
+            "Pixels may contribute to more than one cell."
+        )
         self.background_ring_spin = QSpinBox()
         self.background_ring_spin.setRange(1, 100)
         self.background_ring_spin.setValue(5)
@@ -293,6 +300,7 @@ class NapariSBTController:
         feature_form.addRow("AnnData / CellVision sources", self.anndata_features_edit)
         feature_form.addRow("Channels", self.channels_edit)
         feature_form.addRow("Signed intensity-mask offset (px)", self.offset_spin)
+        feature_form.addRow("Positive-offset collisions", self.offset_overlap_check)
         feature_form.addRow("Background ring (px)", self.background_ring_spin)
         feature_form.addRow("Nimbus normalization JSON", self.normalization_edit)
         feature_form.addRow("Feature families", feature_checks)
@@ -934,6 +942,7 @@ class NapariSBTController:
             synthetic_features=SyntheticFeatureRecipe(
                 channels=channels,
                 mask_offset_px=self.offset_spin.value(),
+                allow_positive_offset_overlap=self.offset_overlap_check.isChecked(),
                 distribution_features=self.distribution_check.isChecked(),
                 region_features=self.region_check.isChecked(),
                 gradient_features=self.gradient_check.isChecked(),
@@ -969,6 +978,9 @@ class NapariSBTController:
         self.images_edit.setPlainText("\n".join(self.manifest.images_folders))
         self.extra_images_edit.setPlainText("\n".join(self.manifest.extra_images_folders))
         self.offset_spin.setValue(self.manifest.synthetic_features.mask_offset_px)
+        self.offset_overlap_check.setChecked(
+            self.manifest.synthetic_features.allow_positive_offset_overlap
+        )
         self.background_ring_spin.setValue(
             self.manifest.synthetic_features.background_ring_px
         )
@@ -1763,6 +1775,7 @@ class NapariSBTController:
                 if value.strip()
             ],
             mask_offset_px=self.offset_spin.value(),
+            allow_positive_offset_overlap=self.offset_overlap_check.isChecked(),
             distribution_features=self.distribution_check.isChecked(),
             region_features=self.region_check.isChecked(),
             gradient_features=self.gradient_check.isChecked(),

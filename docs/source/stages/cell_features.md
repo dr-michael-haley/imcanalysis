@@ -14,14 +14,17 @@ fragments are reused after interruption.
 ## Scientific context
 
 The output contains only eligible cells, but excluded neighbours remain part of
-the scientific context. Full-mask expansion prevents overlap, local background
-rings exclude every segmented cell, and neighbourhood features include the
-full tissue segmentation. Shape features describe original masks. Signed
-offsets change intensity measurement regions only.
+the scientific context. By default, full-mask expansion prevents overlap.
+The experiment recipe can instead enable positive-offset overlap: each eligible
+cell is then expanded independently through neighbouring masks, and a pixel may
+contribute to multiple cells. Local background rings still exclude every
+segmented cell, neighbourhood features still include the full tissue
+segmentation, and shape features still describe original masks. Signed offsets
+change intensity measurement regions only.
 
-Positive offsets use full-mask label expansion. Negative offsets erode eligible
-objects; objects that disappear retain their feature row with missing intensity
-values and a recorded warning. Within-ROI ranks compare eligible cells only.
+Negative offsets erode eligible objects; objects that disappear retain their
+feature row with missing intensity values and a recorded warning. Within-ROI
+ranks compare eligible cells only.
 
 ## Inputs
 

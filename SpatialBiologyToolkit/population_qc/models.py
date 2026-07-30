@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from math import isfinite
 from typing import Any
 
 import pandas as pd
@@ -336,6 +337,245 @@ class PlotResult:
     display_data: pd.DataFrame | None = None
 
 
+@dataclass(frozen=True)
+class MaxFuseSourceSpec:
+    """One MaxFuse reference and its transferred annotation fields.
+
+    ``path=None`` denotes columns already present in the selected AnnData table.
+    Label roles are explicit because state programmes must not be interpreted as
+    lineage labels.
+    """
+
+    name: str
+    score_column: str | None
+    label_columns: tuple[str, ...]
+    label_roles: Mapping[str, str] = field(default_factory=dict)
+    path: str | None = None
+    score_threshold: float | None = None
+    obs_name_column: str | None = None
+    join_keys: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        name = str(self.name).strip()
+        if not name:
+            raise ValueError("MaxFuse source name cannot be empty")
+        labels = _unique_strings(self.label_columns)
+        if not labels:
+            raise ValueError("A MaxFuse source must provide at least one label column")
+        roles = {
+            str(key): str(value).strip().lower()
+            for key, value in self.label_roles.items()
+        }
+        allowed_roles = {"lineage", "subtype", "state", "other"}
+        unknown_roles = sorted(set(roles.values()) - allowed_roles)
+        if unknown_roles:
+            raise ValueError(
+                "MaxFuse label roles must be lineage, subtype, state, or other; "
+                f"received {unknown_roles}"
+            )
+        unknown_columns = sorted(set(roles) - set(labels))
+        if unknown_columns:
+            raise ValueError(
+                "MaxFuse label_roles contains columns absent from label_columns: "
+                + ", ".join(unknown_columns)
+            )
+        threshold = self.score_threshold
+        if threshold is not None and not isfinite(float(threshold)):
+            raise ValueError("MaxFuse score_threshold must be finite or None")
+        object.__setattr__(self, "name", name)
+        object.__setattr__(
+            self,
+            "score_column",
+            None if self.score_column is None else str(self.score_column),
+        )
+        object.__setattr__(self, "label_columns", labels)
+        object.__setattr__(self, "label_roles", roles)
+        object.__setattr__(self, "path", None if self.path is None else str(self.path))
+        object.__setattr__(
+            self,
+            "score_threshold",
+            None if threshold is None else float(threshold),
+        )
+        object.__setattr__(
+            self,
+            "obs_name_column",
+            None if self.obs_name_column is None else str(self.obs_name_column),
+        )
+        object.__setattr__(self, "join_keys", _unique_strings(self.join_keys))
+
+    @classmethod
+    def from_value(
+        cls,
+        value: "MaxFuseSourceSpec | Mapping[str, Any]",
+    ) -> "MaxFuseSourceSpec":
+        """Normalize a source model or notebook-friendly mapping."""
+
+        if isinstance(value, cls):
+            return value
+        if not isinstance(value, Mapping):
+            raise TypeError("MaxFuse source specifications must be mappings or models")
+        return cls(**dict(value))
+
+
+@dataclass
+class MaxFuseInputAudit:
+    """Metadata and identity-alignment audit without population-label summaries."""
+
+    sources: pd.DataFrame
+    alignment_audit: pd.DataFrame
+    warnings: tuple[str, ...] = ()
+    parameters: dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def available(self) -> bool:
+        """Return whether at least one MaxFuse source was discovered."""
+
+        return not self.sources.empty
+
+    def to_agent_summary(self) -> dict[str, Any]:
+        """Return a JSON-compatible audit suitable for the priors notebook."""
+
+        return {
+            "available": self.available,
+            "sources": self.sources.to_dict(orient="records"),
+            "alignment_audit": self.alignment_audit.to_dict(orient="records"),
+            "warnings": list(self.warnings),
+            "parameters": self.parameters,
+        }
+
+
+@dataclass
+class MaxFuseEvidenceResult:
+    """Read-only MaxFuse label-transfer evidence aligned to one population key."""
+
+    population_key: str
+    sources: pd.DataFrame
+    alignment_audit: pd.DataFrame
+    source_summary: pd.DataFrame
+    population_summary: pd.DataFrame
+    label_distribution: pd.DataFrame
+    threshold_sensitivity: pd.DataFrame
+    warnings: tuple[str, ...] = ()
+    parameters: dict[str, Any] = field(default_factory=dict)
+    _cell_evidence: pd.DataFrame = field(
+        default_factory=pd.DataFrame,
+        repr=False,
+    )
+
+    @property
+    def available(self) -> bool:
+        """Return whether at least one MaxFuse source was discovered."""
+
+        return not self.sources.empty
+
+    def for_population(self, population: Any) -> dict[str, pd.DataFrame]:
+        """Return all MaxFuse summaries for one source population."""
+
+        target = str(population)
+
+        def focused(frame: pd.DataFrame) -> pd.DataFrame:
+            if frame.empty or "population" not in frame:
+                return frame.copy()
+            return frame.loc[frame["population"].astype(str).eq(target)].copy()
+
+        return {
+            "population_summary": focused(self.population_summary),
+            "label_distribution": focused(self.label_distribution),
+            "threshold_sensitivity": focused(self.threshold_sensitivity),
+        }
+
+    def for_cells(self, obs_names: Sequence[Any]) -> pd.DataFrame:
+        """Return source labels and scores for selected cells in long form."""
+
+        requested = list(dict.fromkeys(map(str, obs_names)))
+        if not requested:
+            return pd.DataFrame(
+                columns=[
+                    "obs_name",
+                    "source",
+                    "score",
+                    "score_threshold",
+                    "thresholded",
+                    "passes_threshold",
+                    "label_column",
+                    "label_role",
+                    "label",
+                ]
+            )
+        missing = [
+            value for value in requested if value not in self._cell_evidence.index
+        ]
+        if missing:
+            raise KeyError(
+                "Selected observation names are absent from the aligned MaxFuse evidence: "
+                + ", ".join(missing[:20])
+            )
+        rows: list[dict[str, Any]] = []
+        selected = self._cell_evidence.loc[requested]
+        for source in self.sources["source"].drop_duplicates().astype(str):
+            score_key = f"{source}::score"
+            scores = (
+                selected[score_key]
+                if score_key in selected
+                else pd.Series(index=selected.index, dtype=float)
+            )
+            source_frame = self.sources.loc[
+                self.sources["source"].astype(str).eq(source)
+            ]
+            raw_threshold = source_frame["score_threshold"].iloc[0]
+            threshold = None if pd.isna(raw_threshold) else float(raw_threshold)
+            for label_row in source_frame.itertuples(index=False):
+                label_key = f"{source}::{label_row.label_column}"
+                labels = selected[label_key]
+                for obs_name in requested:
+                    score = scores.get(obs_name, pd.NA)
+                    label = labels.get(obs_name, pd.NA)
+                    passes = (
+                        (pd.notna(score) or pd.notna(label))
+                        if threshold is None
+                        else (pd.notna(score) and float(score) >= threshold)
+                    )
+                    rows.append(
+                        {
+                            "obs_name": obs_name,
+                            "source": source,
+                            "score": score,
+                            "score_threshold": threshold,
+                            "thresholded": threshold is not None,
+                            "passes_threshold": bool(passes),
+                            "label_column": str(label_row.label_column),
+                            "label_role": str(label_row.label_role),
+                            "label": label,
+                        }
+                    )
+        return pd.DataFrame(rows)
+
+    def to_agent_summary(self, population: Any | None = None) -> dict[str, Any]:
+        """Return bounded, JSON-compatible MaxFuse evidence."""
+
+        if population is None:
+            population_summary = self.population_summary
+            distribution = self.label_distribution.loc[
+                self.label_distribution.get("rank", pd.Series(dtype=int)).eq(1)
+            ]
+        else:
+            focused = self.for_population(population)
+            population_summary = focused["population_summary"]
+            distribution = focused["label_distribution"]
+            if "rank" in distribution:
+                distribution = distribution.loc[distribution["rank"].eq(1)]
+        return {
+            "population_key": self.population_key,
+            "available": self.available,
+            "sources": self.sources.to_dict(orient="records"),
+            "alignment_audit": self.alignment_audit.to_dict(orient="records"),
+            "population_summary": population_summary.to_dict(orient="records"),
+            "top_labels": distribution.to_dict(orient="records"),
+            "warnings": list(self.warnings),
+            "parameters": self.parameters,
+        }
+
+
 @dataclass
 class InMemoryClusteringResult:
     """New candidate label columns created without writing to disk."""
@@ -384,6 +624,9 @@ class SubclusteringResult(InMemoryClusteringResult):
 __all__ = [
     "CellSelectionResult",
     "InMemoryClusteringResult",
+    "MaxFuseEvidenceResult",
+    "MaxFuseInputAudit",
+    "MaxFuseSourceSpec",
     "MarkerExpectation",
     "MarkerExpectations",
     "PlotResult",

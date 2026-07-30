@@ -10,7 +10,7 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from scipy.ndimage import binary_dilation, binary_erosion
+from scipy.ndimage import binary_dilation, binary_erosion, distance_transform_edt
 from scipy.spatial import cKDTree
 from skimage.measure import regionprops
 from skimage.segmentation import expand_labels
@@ -61,6 +61,24 @@ class RoiFeatureResult:
     table: pd.DataFrame
     warnings: list[str] = field(default_factory=list)
     vanished_object_ids: list[int] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _MeasurementRegion:
+    """Minimal regionprops-compatible view of one overlapping measurement mask."""
+
+    label: int
+    slice: tuple[slice, slice]
+    image: np.ndarray
+
+    @property
+    def bbox(self) -> tuple[int, int, int, int]:
+        return (
+            int(self.slice[0].start),
+            int(self.slice[1].start),
+            int(self.slice[0].stop),
+            int(self.slice[1].stop),
+        )
 
 
 def _finite(values: np.ndarray) -> np.ndarray:
@@ -261,11 +279,70 @@ def _measurement_labels(
     return labels, vanished
 
 
+def _overlapping_measurement_regions(
+    mask: np.ndarray,
+    eligible_ids: set[int],
+    offset_px: int,
+) -> dict[int, _MeasurementRegion]:
+    """Dilate each eligible object independently, permitting shared pixels."""
+
+    regions: dict[int, _MeasurementRegion] = {}
+    for region in regionprops(mask):
+        label = int(region.label)
+        if label not in eligible_ids:
+            continue
+        min_row, min_col, max_row, max_col = region.bbox
+        row_slice = slice(
+            max(0, min_row - offset_px),
+            min(mask.shape[0], max_row + offset_px),
+        )
+        col_slice = slice(
+            max(0, min_col - offset_px),
+            min(mask.shape[1], max_col + offset_px),
+        )
+        seed = mask[row_slice, col_slice] == label
+        expanded = distance_transform_edt(~seed) <= float(offset_px)
+        regions[label] = _MeasurementRegion(
+            label=label,
+            slice=(row_slice, col_slice),
+            image=expanded,
+        )
+    return regions
+
+
+def _measurement_regions(
+    mask: np.ndarray,
+    eligible_ids: set[int],
+    recipe: SyntheticFeatureRecipe,
+) -> tuple[dict[int, Any], list[int]]:
+    if recipe.mask_offset_px > 0 and recipe.allow_positive_offset_overlap:
+        return (
+            _overlapping_measurement_regions(
+                mask,
+                eligible_ids,
+                recipe.mask_offset_px,
+            ),
+            [],
+        )
+    measurement_labels, vanished = _measurement_labels(
+        mask,
+        eligible_ids,
+        recipe.mask_offset_px,
+    )
+    return (
+        {
+            int(region.label): region
+            for region in regionprops(measurement_labels)
+            if int(region.label) in eligible_ids
+        },
+        vanished,
+    )
+
+
 def _region_image_features(
     row: dict[str, Any],
     image: np.ndarray,
     full_mask: np.ndarray,
-    measurement_labels: np.ndarray,
     measurement_region,
     original_region,
     prefix: str,
@@ -328,8 +405,22 @@ def _region_image_features(
         max(0, min_col - ring_distance),
         min(full_mask.shape[1], max_col + ring_distance),
     )
-    local_measurement = measurement_labels[row_slice, col_slice]
-    object_mask = local_measurement == int(measurement_region.label)
+    object_mask = np.zeros(
+        (
+            int(row_slice.stop) - int(row_slice.start),
+            int(col_slice.stop) - int(col_slice.start),
+        ),
+        dtype=bool,
+    )
+    region_rows = slice(
+        int(measurement_region.slice[0].start) - int(row_slice.start),
+        int(measurement_region.slice[0].stop) - int(row_slice.start),
+    )
+    region_cols = slice(
+        int(measurement_region.slice[1].start) - int(col_slice.start),
+        int(measurement_region.slice[1].stop) - int(col_slice.start),
+    )
+    object_mask[region_rows, region_cols] = measurement_region.image.astype(bool)
     ring = binary_dilation(object_mask, iterations=ring_distance) & ~object_mask
     ring &= full_mask[row_slice, col_slice] == 0
     background = _finite(image[row_slice, col_slice][ring])
@@ -444,14 +535,11 @@ def build_roi_features(
                 f"match mask shape {mask.shape}; scientific images are not resized."
             )
 
-    measurement_labels, vanished = _measurement_labels(
-        mask, eligible_ids, recipe.mask_offset_px
+    measurement_regions, vanished = _measurement_regions(
+        mask,
+        eligible_ids,
+        recipe,
     )
-    measurement_regions = {
-        int(region.label): region
-        for region in regionprops(measurement_labels)
-        if int(region.label) in eligible_ids
-    }
     rows: list[dict[str, Any]] = []
     gradients = (
         {
@@ -469,6 +557,9 @@ def build_roi_features(
             "ObjectNumber": object_id,
             "CellID": f"{roi}_{object_id}",
             "measurement_mask_offset_px": int(recipe.mask_offset_px),
+            "measurement_allows_cell_overlap": bool(
+                recipe.allow_positive_offset_overlap
+            ),
             "measurement_region_vanished": measurement is None,
         }
         if recipe.shape_features:
@@ -490,7 +581,6 @@ def build_roi_features(
                         row,
                         np.asarray(image),
                         mask,
-                        measurement_labels,
                         measurement,
                         original,
                         prefix,
@@ -603,7 +693,11 @@ def build_feature_dictionary(table: pd.DataFrame) -> pd.DataFrame:
                 "Cohort or full-segmentation ROI context.",
                 True,
             )
-        elif column in {"measurement_mask_offset_px", "measurement_region_vanished"}:
+        elif column in {
+            "measurement_allows_cell_overlap",
+            "measurement_mask_offset_px",
+            "measurement_region_vanished",
+        }:
             category, description, usable = (
                 "measurement_metadata",
                 "Measurement-region construction metadata.",

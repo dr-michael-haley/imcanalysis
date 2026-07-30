@@ -149,6 +149,41 @@ def test_positive_offset_uses_full_segmentation_and_output_is_cohort_only():
     assert np.array_equal(expanded[mask == 2], mask[mask == 2])
 
 
+def test_positive_offset_can_explicitly_overlap_other_cells():
+    mask = _mask()
+    neighbour_signal = (mask == 2).astype(np.float32)
+    blocked = build_roi_features(
+        roi="r1",
+        full_mask=mask,
+        eligible_ids={1},
+        channel_images={"CD3": neighbour_signal},
+        recipe=SyntheticFeatureRecipe(
+            channels=["CD3"],
+            mask_offset_px=2,
+            region_features=False,
+            distribution_features=True,
+        ),
+    )
+    overlapping = build_roi_features(
+        roi="r1",
+        full_mask=mask,
+        eligible_ids={1},
+        channel_images={"CD3": neighbour_signal},
+        recipe=SyntheticFeatureRecipe(
+            channels=["CD3"],
+            mask_offset_px=2,
+            allow_positive_offset_overlap=True,
+            region_features=False,
+            distribution_features=True,
+        ),
+    )
+    assert blocked.table.loc[0, "channel::CD3::sum"] == 0
+    assert overlapping.table.loc[0, "channel::CD3::sum"] > 0
+    assert not blocked.table.loc[0, "measurement_allows_cell_overlap"]
+    assert overlapping.table.loc[0, "measurement_allows_cell_overlap"]
+    assert overlapping.table.loc[0, "roi_total_object_count"] == 3
+
+
 def test_negative_offset_records_vanished_cells_without_losing_rows():
     result = build_roi_features(
         roi="r1",

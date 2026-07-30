@@ -92,6 +92,60 @@ sweep columns. It never recalculates. If no compatible result is available,
 run the managed `popqc` pipeline deliberately or request user direction rather
 than launching the expensive analysis from an Agent notebook.
 
+## Incorporate existing MaxFuse transfers
+
+MaxFuse transfers may already be present in the selected table or supplied as
+an annotation-only H5AD/CSV sidecar. Audit identity alignment before inspecting
+population-label associations:
+
+```python
+from SpatialBiologyToolkit.population_qc import (
+    inspect_maxfuse_inputs,
+    plot_maxfuse_label_heatmap,
+    plot_maxfuse_threshold_sensitivity,
+    summarize_maxfuse_evidence,
+)
+
+maxfuse_paths = ("MaxFuse_IMC_label_transfers.h5ad",)
+maxfuse_audit = inspect_maxfuse_inputs(
+    sdata,
+    paths=maxfuse_paths,
+    require=True,
+)
+display(maxfuse_audit.sources)
+display(maxfuse_audit.alignment_audit)
+```
+
+Freeze independent marker/BioContext priors before calculating the
+population-to-atlas associations. MaxFuse is evidence derived from the measured
+cells, not an independent prior:
+
+```python
+maxfuse = summarize_maxfuse_evidence(
+    sdata,
+    population_key,
+    paths=maxfuse_paths,
+    require=True,
+)
+display(maxfuse.population_summary)
+
+threshold_plot = plot_maxfuse_threshold_sensitivity(maxfuse)
+lineage_plot = plot_maxfuse_label_heatmap(
+    maxfuse,
+    source="GBMSpace",
+    label_column="GBMSpace_annotation_coarse",
+)
+```
+
+External rows are aligned by unique observation identity, never position.
+Reordered and partially overlapping sidecars are supported and reported;
+duplicate identities or zero overlap are rejected. Keep matched-cell coverage
+separate from dominant-label fraction, do not average scores across references,
+and do not use a state/programme field to establish lineage. The MaxFuse score
+is a matching similarity, not a calibrated confidence probability. After cell
+selection, `maxfuse.for_cells(selection.cell_ids)` returns the transferred
+labels and scores for the gallery cells.
+
 ## Inspect deliberately selected cells
 
 ```python

@@ -148,6 +148,7 @@ def _normalise_feature_rows(features: pd.DataFrame) -> pd.DataFrame:
 def default_feature_columns(features: pd.DataFrame) -> list[str]:
     excluded = {
         "ObjectNumber",
+        "measurement_allows_cell_overlap",
         "measurement_region_vanished",
         "measurement_mask_offset_px",
     }
