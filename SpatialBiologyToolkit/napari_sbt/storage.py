@@ -164,16 +164,22 @@ def save_experiment(
             semantics_locked = existing.locked
             if paths.labels.exists():
                 stored_labels = read_dataframe(paths.labels)
-                semantics_locked = semantics_locked or (
-                    "state" in stored_labels
-                    and stored_labels["state"].astype(str).eq("confirmed").any()
+                semantics_locked = bool(
+                    semantics_locked
+                    or (
+                        "state" in stored_labels
+                        and stored_labels["state"]
+                        .astype(str)
+                        .eq("confirmed")
+                        .any()
+                    )
                 )
             if semantics_locked and current_semantics != existing_semantics:
                 raise ValueError(
                     "Class IDs, shortcuts, ordering, and mask dispositions are locked "
                     "after confirmed labels exist."
                 )
-            manifest.locked = semantics_locked
+            manifest.locked = bool(semantics_locked)
             previous_cosmetics = {
                 item.class_id: (item.name, item.color) for item in existing.classes
             }

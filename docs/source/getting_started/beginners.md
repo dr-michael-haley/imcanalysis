@@ -1,248 +1,173 @@
-# 🧪 SpatialBiologyToolkit – Absolute Beginner Guide (Explainers)
+# Complete beginner's guide
 
-This page explains the key ideas you’ll see throughout the repo (command line, conda, environments, notebooks, config files).
+SpatialBiologyToolkit is designed around a simple division of work:
 
-When you’re ready to actually install and run things, use one of these practical guides:
+1. Store a dataset as a toolkit project on an HPC cluster.
+2. Use the `sbt` command to check the project, plan a workflow, and submit jobs.
+3. Let SLURM run each scientific stage in the correct Conda environment.
+4. Read the reports and logs, then use the resulting data locally for interactive
+   analysis when needed.
 
-- Local setup (Jupyter, exploratory analysis): [local setup](local.md)
-- HPC setup (scripted pipeline via SLURM): [HPC setup](hpc.md)
+You do not need to become a Linux or Python expert before starting. The terms
+below are the ones used in the setup and pipeline guides.
 
----
+## Terminal and commands
 
-## 💻 The command line (Terminal)
-
-The **command line** (also called the *terminal* or *shell*) is a text-based interface where you type commands for your computer to execute. Instead of clicking buttons in a graphical interface, you write commands like `cd` (change directory) to navigate and run programs.
-
-It can look intimidating at first, but for most steps you’ll just copy/paste a few commands.
-
-Even if you mainly do analysis in notebooks, **running either locally or on HPC will unavoidably involve the command line** at least a little (e.g. creating/activating conda environments, launching Jupyter, and running/submitting pipeline commands).
-
-Common commands you’ll see:
-
-- `cd some/folder` = change directory
-- `ls` = list files (Linux/macOS)
-- `pwd` = print current folder
-
-On Windows you’ll often use **Anaconda Prompt**.
-
----
-
-## 🐍 Python distributions (Anaconda / Miniconda)
-
-To run Python and manage analysis tools, we recommend **Anaconda** (or Miniconda if you prefer a smaller install).
-
-### *💡 What is Anaconda?*
-
-Anaconda is a free and open-source platform that makes it easy to:
-- Run Python code
-- Manage software libraries and environments
-- Use scientific and data analysis tools
-
-Anaconda includes:
-- Python
-- Conda (a package and environment manager)
-- Many pre-installed packages commonly used for data science
-
-They include **conda**, which we use for environment management.
-
----
-
-## 📦 Conda environments
-
-A **conda environment** is an isolated set of Python + packages.
-
-Why environments matter:
-- Different projects need different package versions.
-- Environments stop projects from breaking each other.
-
-Typical workflow:
+A **terminal** (or shell) is a text interface to a computer. On an HPC cluster,
+you normally connect to a login node and type commands there. Three useful Linux
+commands are:
 
 ```bash
-conda env create -f some_environment.yml
-conda activate some_env
+pwd                 # show the current directory
+ls                  # list files and directories
+cd path/to/project  # change directory
 ```
 
----
+Commands are sensitive to spelling, spaces, and capital letters. A command in
+the documentation can usually be copied exactly, but replace placeholders such
+as `<project-name>` with your own value. Do not include the angle brackets.
 
-## 📦 Packages (and `pip` vs `conda`)
+The login node is for short management tasks. Scientific processing is sent to
+the cluster's compute nodes through SLURM; do not run a large pipeline stage
+directly on the login node.
 
-Packages are reusable libraries (like “apps” for Python).
+## Repository and Git
 
-- `conda install ...` installs packages from conda channels
-- `pip install ...` installs packages from PyPI
-
-Many environments use a mix of both.
-
----
-
-## 🧩 Editable installs (`pip install -e .`)
-
-This repo contains a Python package named `SpatialBiologyToolkit`.
-
-When you run this from the repo root:
+The **repository** is the `imcanalysis` directory containing the toolkit's code,
+environment definitions, and SLURM wrappers. Git downloads and updates it:
 
 ```bash
-pip install -e .
+git clone https://github.com/dr-michael-haley/imcanalysis.git
+git pull --ff-only
 ```
 
-You install the package in **editable** mode, meaning:
-- you can update the repo (`git pull`) and your environment will immediately use the updated code
-- you can run scripts like `python -m SpatialBiologyToolkit.scripts.<stage>`
+`clone` creates your first working copy. Later, `pull --ff-only` updates a clean
+copy without silently merging local changes. Run `git status --short` first; if
+it lists files you intentionally changed, preserve or commit them before asking
+Git to update the checkout.
 
----
+The repository and your **dataset projects** are different things. Keep the
+toolkit checkout at `~/imcanalysis` on HPC. Keep each dataset in its own project
+directory, usually on the cluster's project or scratch storage.
 
-## 🐙 GitHub repositories (what “clone” means)
+## Python, packages, and Conda environments
 
-This project lives in a GitHub repository (a folder of code + history).
+Python packages are reusable pieces of software. Different stages need
+different, sometimes incompatible package versions, so the toolkit uses
+separate **Conda environments**.
 
-- “Clone” means download a working copy to your machine.
-- “Pull” means update your working copy when the repo changes.
+There are two kinds of environment on HPC:
 
-You don’t need to be a git expert, but these two commands are common:
+- `sbt-cli` is small and contains the project-management command. It is safe to
+  use on the login node.
+- Scientific environments such as `imc_segmentation` and `imc_denoise` contain
+  the heavier analysis software. SLURM wrappers activate them on compute nodes.
+
+Activate the launcher environment with:
 
 ```bash
-git clone <repo-url>
-git pull
+conda activate sbt-cli
 ```
 
-### Updating code: HPC vs local
+The command prompt often shows `(sbt-cli)` while it is active. If `sbt` is not
+found, first check that this environment is active.
 
-- **On HPC (e.g. CSF3):** the pipeline launcher will try to **auto-update to the latest GitHub version** before submitting jobs (a safe `git pull --ff-only`). This helps ensure bugfixes land in your next run without you needing to remember to update.
-- **Locally:** if a bug is reported and fixed in the repo, you’ll usually update your local copy by going into the repo folder and running `git pull`.
+An **editable installation** connects an environment to the code in your Git
+checkout. Updating the checkout therefore updates the code used by the
+environment. The supplied setup commands create these editable links for you.
 
+## The `sbt` command
 
----
+`sbt` is the supported front door to the pipeline. It can:
 
-## 📓 Jupyter notebooks
+- create or adopt a dataset project;
+- validate configuration and required files;
+- list stages and reusable workflow modes;
+- show a plan without submitting anything;
+- submit jobs to SLURM;
+- find status, reports, and logs for recorded executions.
 
-Jupyter notebooks are interactive documents for analysis and exploration. They are usually the best place for:
+Useful read-only commands include:
 
-- bespoke / novel analyses
-- trying new ideas
-- making figures
+```bash
+sbt --help
+sbt stages list
+sbt modes list
+sbt project describe
+sbt plan segmentation
+sbt run segmentation --dry-run
+```
 
-Notebooks in this repo are described in the [tutorial index](../tutorials/index.md).
+The last command is a preview: it prints the planned SLURM submission but does
+not create a run or submit a job. `sbt run segmentation` without `--dry-run`
+does submit jobs.
 
-### *🖥 What are Jupyter Notebooks?*
+Older commands named `pl`, `pll`, and `pls` still exist for compatibility, but
+new users should use `sbt`.
 
-Jupyter Notebooks are interactive documents that let you:
-- Run Python code step by step
-- Display results instantly (tables, plots)
-- Add notes and explanations (like a computational lab book)
+## Projects and `config.yaml`
 
-They’re particularly useful when you move beyond the scripted pipeline into more bespoke analysis.
+A toolkit **project** is one dataset plus its configuration, scientific assets,
+and run history. A typical project contains:
 
-## 📓 Tips for using Jupyter Notebooks
+```text
+my_dataset/
+  config.yaml
+  IMC_files/
+  metadata/
+  .sbt/
+  outputs/
+```
 
-Jupyter Notebooks are a great way to run Python code step by step in your browser. If you're new to them, here are some best practices and common pitfalls.
+`config.yaml` records choices and paths. Most paths are relative to the project
+directory. `sbt project init` creates a new project with a compact config;
+`sbt project adopt --config config.yaml` records an existing project without
+moving its data.
 
-### ✅ Best Practices
+The `.sbt/` directory contains toolkit run records. The `outputs/` directory
+contains numbered, human-readable reports. Large reusable assets such as TIFFs,
+masks, and AnnData remain at their configured project paths.
 
-- **Run cells in order (unless you know what you are doing):**
-	Notebooks run code in “cells”. Always run cells from top to bottom in order. Skipping around can be useful for testing, but it can also cause confusing errors if earlier variables or imports haven’t been run.
+## HPC, SLURM, and jobs
 
-- **Save your work often:**
-	Jupyter auto-saves, but it’s still good to use `File > Save and Checkpoint` periodically.
+An HPC cluster is a shared collection of computers. **SLURM** is the scheduler
+that decides where and when requested work runs. A submitted unit of work is a
+**job**.
 
-- **Use Markdown cells for notes:**
-	Markdown cells are great for keeping track of what you did and why (like an electronic lab book).
+This changes the rhythm of analysis:
 
-- **Use small cells:**
-	Break code into manageable pieces. It’s easier to debug and easier to understand later.
+1. Validate and preview the work on the login node.
+2. Submit it to SLURM.
+3. Disconnect if you wish; the job continues on a compute node.
+4. Return later and inspect status, logs, and reports.
 
-- **Restart your kernel occasionally:**
-	`Kernel > Restart & Run All` is a great “sanity check” that your notebook works end-to-end.
+For example:
 
-### 🧠 What is the “kernel”?
+```bash
+sbt run segmentation --dry-run
+sbt run segmentation
+sbt status latest
+sbt logs latest
+sbt summary
+```
 
-In Jupyter Notebooks, the **kernel** is the computational engine that runs your Python code.
+## Local notebooks and Napari
 
-Here’s what you should know about kernels:
+Jupyter notebooks and Napari are useful after scripted processing for exploring
+data, reviewing images, testing ideas, and making bespoke figures. They are not
+the primary way to run the full pipeline.
 
-- **Each notebook has its own kernel:** if you open multiple notebooks, each one runs separately (but they can use the same conda environment).
-- **Restarting the kernel clears memory:** this removes all variables, functions, and imports you’ve defined. It’s like starting fresh.
-- **Kernel state matters:** the order you run cells affects what the kernel knows. If you run a cell that uses a variable before it’s defined, you’ll get an error.
+A Jupyter notebook runs code in a **kernel** backed by a selected environment.
+Run notebook cells from top to bottom, save regularly, and use **Restart and Run
+All** to check that a result does not depend on hidden state. Copy tutorial
+notebooks into your own analysis directory before editing them so a later Git
+update cannot conflict with your work.
 
-If things look “impossible”, restarting and running top-to-bottom often fixes it.
+## Where to go next
 
-### ⚠️ Common pitfalls
-
-- **Running cells out of order:** can cause `NameError` or missing variables.
-- **Forgetting to activate the right environment:** if you installed packages in one environment but launch Jupyter from another, imports may fail.
-- **Variables persist between cells:** deleting a cell doesn’t delete variables already in memory.
-- **Not knowing where you are in the filesystem:** notebooks run relative to the folder you started Jupyter in.
-
-### 🎓 Extra tips and shortcuts
-
-- You can run a cell by pressing **Shift + Enter**.
-- Press **Esc** then **M** to convert a code cell to Markdown.
-- Use `Tab` for auto-complete and suggestions.
-- Use `Shift + Tab` inside parentheses to see function hints.
-- Use the **"Help"** menu to explore Python and Jupyter tutorials.
-- Selecting a cell and pressing **A** will create a new cell above, and **B** will create one below.
-- Selecting a cell and pressing **D twice** will delete the cell.
-- You can select multiple cells by shift clicking.
-- You can rearrange the order of cells by drag and dropping them.
-
----
-
-## 🏢 What is an HPC cluster?
-
-An **HPC cluster** (High Performance Computing cluster) is a shared pool of powerful computers (many CPU cores, lots of RAM, often GPUs) that many users access remotely.
-
-In this project, the **University of Manchester CSF3** is an example of an HPC cluster you might use.
-
-Instead of running your analysis on your laptop, you *submit a job* to the cluster, and the cluster runs it for you when resources are available.
-
-### Why is HPC useful?
-
-- **Speed & scale:** you can process large IMC datasets and run heavy steps (segmentation, denoising, etc.) faster than on a typical workstation.
-- **Reliability for long jobs:** jobs can run for hours/days without being tied to your personal machine.
-- **Shared environments:** software and compute resources are managed in a more standardized way.
-
-### “Headless” scripts vs interactive notebooks
-
-- On HPC, the pipeline runs as **headless scripts**: no graphical interface, no clicking buttons, and usually no live plots.
-	- You submit jobs (often via a scheduler like SLURM).
-	- Progress is recorded in log files and output folders.
-	- This is ideal for repeatable, standard pipeline steps.
-
-- Locally, you’ll usually work **interactively** in **Jupyter notebooks**:
-	- you can run code step-by-step
-	- inspect intermediate results
-	- create figures and do bespoke analyses
-
----
-
-## 🗓️ What is SLURM?
-
-**SLURM** (Simple Linux Utility for Resource Management) is a **job scheduler** used on many HPC clusters (including CSF3).
-
-Its job is to:
-- accept requests to run computations ("jobs")
-- decide *when* and *where* those jobs run (based on available CPUs/RAM/GPUs and queue priorities)
-- track job status and record output
-
-When you use SLURM, you typically:
-- write a job script that describes the resources you need (time, memory, CPUs/GPUs)
-- submit it to the queue
-- read the log files it produces (stdout/stderr) to see progress and errors
-
-In this repo, most of that job management is **handled automatically by the pipeline tooling**: you run a pipeline command, and it submits the appropriate SLURM jobs and writes logs/outputs in the right places.
-
-This is why HPC pipelines often look “non-interactive”: you submit work, then inspect outputs and logs rather than watching a GUI.
-
----
-
-## 🖥️ HPC vs local (how they fit together)
-
-Most users will:
-
-1. Run the scripted pipeline on HPC to generate standard outputs (e.g. AnnData + QC)
-2. Switch to local notebooks for bespoke downstream analysis
-
-Over time, useful notebook workflows get migrated into scripts.
-
-If you want to start now:
-- Local: [local setup](local.md)
-- HPC: [HPC setup](hpc.md)
+- Follow [HPC setup](hpc.md) for the recommended installation and first dry run.
+- Use [Local analysis setup](local.md) only when you need notebooks, Napari, or
+  workstation-based analysis.
+- Read the [pipeline workflow](../pipeline/workflow.md) before selecting stages.
+- Use the [scientific guides](../stages/index.md) to understand what each stage
+  does and how to interpret its outputs.

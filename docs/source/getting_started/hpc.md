@@ -1,331 +1,272 @@
+# HPC setup
 
-# SpatialBiologyToolkit – HPC Setup (Scripted Pipeline)
+This is the recommended setup for SpatialBiologyToolkit. It installs a small
+`sbt` command environment on a Linux HPC login node and keeps the heavy
+scientific software in separate environments used by SLURM jobs.
 
-This guide is for running the **scripted pipeline on an HPC cluster** (via SLURM job scripts).
+If the terminal, Conda, or SLURM are unfamiliar, read the
+[complete beginner's guide](beginners.md) first.
 
-An example HPC cluster is **CSF3 (University of Manchester)**, which can be accessed for free by University of Manchester staff/students and typically has all the compute resources you will need for this pipeline.
+## What you will set up
 
-If you’re new to the command line / conda / notebooks, skim the beginner explainers first:
-- [new-user guide](beginners.md)
+By the end of this guide you will have:
 
-If you want to run analyses locally (Jupyter, bespoke downstream work), use:
-- [local setup](local.md)
+- the repository at `~/imcanalysis`;
+- a lightweight `sbt-cli` Conda environment;
+- the repository-managed scientific environments needed by the core pipeline;
+- a dataset project that can be validated and previewed before submission.
 
----
+The full pipeline requires Linux and SLURM. A local Windows or macOS environment
+is covered separately in [local analysis setup](local.md).
 
-## 1. Requirements
+## 1. Check the cluster prerequisites
 
-Before installing, ensure you have:
+Connect to your HPC login node and check for Git, Conda, and SLURM:
 
-- Access to an HPC login node (e.g. a CSF3 account).
+```bash
+git --version
+conda --version
+sbatch --version
+```
+
+If your cluster supplies Conda through an environment module, follow the local
+HPC instructions to load it. If Conda is not provided and user installations
+are allowed, follow Anaconda's official
+[Miniconda Linux installation guide](https://www.anaconda.com/docs/getting-started/miniconda/install/linux-install).
+Restart the shell after installation and confirm that `conda --version` works.
+
+You also need sufficient storage for the repository, environments, raw images,
+and generated assets. Dataset projects usually belong on project or scratch
+storage rather than in the repository.
 
 > [!TIP]
-> University of Manchester users can find account request forms and current
-> service guidance on the [Research Infrastructure help pages](https://ri.itservices.manchester.ac.uk/csf4/help/).
+> University of Manchester users should use the current
+> [Research Infrastructure CSF help](https://ri.itservices.manchester.ac.uk/csf3/)
+> for account, connection, storage, and cluster-module instructions.
 
-- Anaconda/Miniconda available in your CSF3 account (if it’s not already installed)
-	- Otherwise, install Miniconda/Anaconda into your home directory (see below).
-	- Quick check (should print a version):
+## 2. Clone the toolkit
 
-```
-conda --version
-```
-
-### 1.1 Install Miniconda (macOS/Linux)
-
-Follow the official instructions here:
-https://www.anaconda.com/docs/getting-started/miniconda/install#macos-linux-installation:to-download-a-different-version
-
-Quick CLI install (silent) if you prefer the terminal installer:
+The active SLURM wrappers retain a compatibility assumption that the toolkit is
+available at `~/imcanalysis`, so use that location:
 
 ```bash
-curl -L https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -o miniconda.sh
-bash miniconda.sh -b -p $HOME/miniconda3
-
-# Initialize your shell
-source "$HOME/miniconda3/bin/activate"
-conda init --all
-```
-
-### 1.2 Install conda-lock in base
-
-After installing Miniconda, install `conda-lock` in the base environment (required for environment management):
-
-```bash
-conda install --channel=conda-forge --name=base conda-lock
-```
-
-The `sbt env` commands always invoke this installation through
-`conda run -n base conda-lock`. Therefore, `conda-lock` does not need to be on
-the active scientific environment's `PATH`, and it should not be installed
-separately in every pipeline environment.
-
-- A clone of this repository inside your home directory:
-
-```
+cd "$HOME"
 git clone https://github.com/dr-michael-haley/imcanalysis.git
-cd ~/imcanalysis
+cd "$HOME/imcanalysis"
 ```
 
-If the repository is private, use the clone URL provided by the maintainer (or configure SSH access) so you are not prompted for credentials repeatedly.
-
----
-
-## 2. Install the helper commands (HPC)
-
-Run this once on a login node:
-
-```
-make install
-```
-
-This will:
-
-- Add `~/imcanalysis/Bash_scripts` to your PATH  
-- Install convenience aliases (e.g., `cds`)  
-- Create a secure config file (`~/.imc_config`)  
-- Load config automatically in `.bashrc` and `.profile`  
-- Make scripts executable  
-
-> Note: `make install` does **not** create the conda environments. Use `make envs` for that.
-
----
-
-## 2.1 Install the lightweight `sbt` launcher
-
-Create the login-node command environment separately from the scientific stage
-environments:
+If the repository already exists, do not clone it again. Check and update it:
 
 ```bash
-cd ~/imcanalysis
+cd "$HOME/imcanalysis"
+git status --short
+git pull --ff-only
+```
+
+If `git status --short` lists files you intentionally changed, preserve or
+commit them before pulling.
+
+## 3. Install the lightweight `sbt` launcher
+
+From the repository root, run:
+
+```bash
 bash install/bootstrap_sbt.sh
 conda activate sbt-cli
 sbt --help
 ```
 
-This environment contains only Python, Pydantic, PyYAML, Typer, and the editable
-toolkit package. The heavy analysis dependencies remain in the stage-specific
-environments used by the SLURM wrappers.
+`bootstrap_sbt.sh` creates `sbt-cli` when needed and installs the toolkit there
+in editable mode without the scientific dependency stack. It is safe to run
+again after an update.
 
-See the [`sbt` CLI and project guide](../pipeline/cli.md) for project adoption,
-planning, submission, status, and logs.
+If shell activation is unavailable in your cluster setup, the equivalent form
+is `conda run -n sbt-cli sbt --help`.
 
----
+## 4. Install the environment manager
 
-## 3. Create the pipeline conda environments
+The repository's exact scientific lockfiles are installed with `conda-lock`.
+Install it once in the Conda base environment:
 
-Validate and preview the fixed-name pipeline environments:
+```bash
+conda install --name base --channel conda-forge conda-lock
+```
+
+The toolkit calls it as `conda run -n base conda-lock`; it does not need to be
+installed in `sbt-cli` or in every scientific environment. The command follows
+the official [conda-lock installation guidance](https://conda.github.io/conda-lock/getting_started/).
+
+## 5. Validate and synchronize scientific environments
+
+Keep `sbt-cli` active, then inspect the environment registry and preview any
+changes:
 
 ```bash
 sbt env doctor
+sbt env list
 sbt env validate-spec --all
 sbt env sync --all --dry-run
 ```
 
-Then synchronize repository-managed environments from their lockfiles:
+Resolve any errors reported by `doctor` before continuing. When the preview is
+correct, create or update the repository-managed environments:
 
 ```bash
 sbt env sync --all
 ```
 
-`make envs` remains a convenience wrapper for the final command. Existing
-environments are never silently removed: inspect drift and use `--recreate`
-with confirmation when a fixed environment genuinely needs rebuilding.
+Synchronization installs exact Conda lockfiles, intentional pip extras, the
+editable toolkit overlay, and registered smoke tests. Existing environments are
+not silently replaced; use the explicit recreation options described in
+[fixed Conda environment management](../pipeline/environments.md) if drift
+requires a rebuild.
 
-Synchronization:
+The managed environments currently cover segmentation, denoising,
+CellPose-SAM, BioBatchNet, and CellCharter. RAPIDS, STARLING, scPortrait,
+HyPERSTAC, and MaxFuse are registered external environments and are not created
+by `sbt env sync --all`. You only need an external environment when selecting a
+stage that uses it; `sbt env list` shows the current names and management state.
 
-- creates repository-managed environments from exact lockfiles;
-- installs intentional `pip-extras.txt` packages afterward;
-- installs `SpatialBiologyToolkit` editable with `--no-deps`;
-- runs lightweight registered smoke tests;
-- writes an observed package snapshot outside the Git checkout.
+## 6. Create or adopt a dataset project
 
-Repository lockfiles cover:
-
-- `imc_segmentation`
-- `imc_denoise`
-- `imc_cellposesam`
-- `imc_biobatchnet`
-- `imc_cellcharter`
-
-The central mapping is `HPC_env_files/environments.yaml`. RAPIDS, STARLING,
-and scPortrait remain explicit external/pre-existing environments.
-
-See [fixed Conda environment management](../pipeline/environments.md) for
-comparison, capture, lock maintenance, recreation safeguards, and provenance.
-
----
-
-## 4. Configuration file: ~/.imc_config
-
-Generated during installation. Stores:
-
-- SLURM notification email  
-- OpenAI API key (optional)  
-
-Permissions are restricted:
-
-```
-chmod 600 ~/.imc_config
-```
-
-Example:
-
-```
-export IMC_EMAIL="your.email@domain.com"
-export OPENAI_API_KEY="sk-..."
-```
-
-Managed `sbt run` submissions resolve fixed environment names through the
-central registry. Existing `IMC_ENV_*` variables remain supported only as
-transitional fallbacks for direct invocation of SLURM wrappers.
-
----
-
-## 5. Updating the repo
-
-When repository updates arrive, run the combined update/setup target:
-
-```
-cd ~/imcanalysis
-make update
-```
-
-If environment specifications change, inspect and synchronize explicitly:
+Keep dataset projects outside the repository. For a new project:
 
 ```bash
-sbt env lock --all --check
+mkdir -p "$HOME/projects/my_dataset"
+cd "$HOME/projects/my_dataset"
+sbt project init
+```
+
+This creates a compact `config.yaml`, standard input directories, `.sbt/` run
+state, and the `outputs/` report index. Put the raw inputs in the paths shown by
+the config and adjust configuration values for the dataset.
+
+For an existing project that already has a `config.yaml`:
+
+```bash
+cd /path/to/existing_project
+sbt project adopt --config config.yaml
+```
+
+Adoption records the project without moving or rewriting scientific data. In
+either case, inspect it before planning:
+
+```bash
+sbt project describe
+sbt project assets
+sbt project validate --mode segmentation
+```
+
+The validation command reports missing inputs and does not submit work.
+
+## 7. Plan and preview the first run
+
+List the available workflows, inspect the segmentation plan, and preview the
+exact SLURM submission:
+
+```bash
+sbt modes list
+sbt plan segmentation
+sbt run segmentation --dry-run
+```
+
+Dry runs create no run record and submit no jobs. Fix missing-file,
+configuration, wrapper, or environment errors before proceeding. See the
+[pipeline workflow](../pipeline/workflow.md) for stage order and optional
+branches.
+
+## 8. Submit and monitor
+
+Submitting changes external cluster state, so run this only when the preview is
+correct:
+
+```bash
+sbt run segmentation
+```
+
+Inspect the recorded work with:
+
+```bash
+sbt status latest
+sbt logs latest
+sbt summary
+sbt report latest
+```
+
+Human-readable stage reports are written below the project's `outputs/`
+directory. Technical run records and log paths are stored below `.sbt/`.
+
+## 9. Optional email and AI credentials
+
+Core processing does not require an OpenAI key. Set these only if the selected
+workflow needs them:
+
+```bash
+export IMC_EMAIL="your.email@example.org"
+export OPENAI_API_KEY="your-key"
+```
+
+For persistent values, place the exports in a private file outside the Git
+repository and restrict it with `chmod 600`. Never put credentials in
+`config.yaml` or commit them to Git. The optional legacy shell installer can
+create `~/.imc_config`; its exact changes are documented in the
+[installation helper scripts reference](../reference/installation_helpers.md).
+
+## 10. Update an existing installation
+
+From a clean repository checkout:
+
+```bash
+cd "$HOME/imcanalysis"
+git status --short
+git pull --ff-only
+bash install/bootstrap_sbt.sh
+conda activate sbt-cli
+sbt env doctor
 sbt env sync --all --dry-run
 ```
 
----
+If the dry run reports required environment changes, apply them with
+`sbt env sync --all`. Because the toolkit is installed in editable mode,
+ordinary source updates are visible immediately; rerunning the bootstrap also
+refreshes command metadata safely.
 
-## 6. Uninstallation
+## Troubleshooting
 
-Clean removal:
+### `sbt: command not found`
 
-```
-make uninstall
-```
+Activate the launcher with `conda activate sbt-cli`, or run
+`conda run -n sbt-cli sbt --help`. If the environment does not exist, rerun
+`bash install/bootstrap_sbt.sh` from the repository root.
 
-Removes:
+### `conda-lock` is missing
 
-- PATH entries  
-- Aliases  
-- Config sourcing lines  
-- (Optionally) removes `~/.imc_config`  
+Run `conda install --name base --channel conda-forge conda-lock`, then repeat
+`sbt env doctor`.
 
----
+### `sbatch` is missing
 
-## 7. Directory Structure
+Confirm that you are on a SLURM login node and follow the cluster's module or
+login instructions. The end-to-end pipeline cannot be submitted from a normal
+Windows or macOS terminal.
 
-```
-imcanalysis/
-├── Bash_scripts/
-├── SLURM_scripts/
-├── install/
-│   ├── setup.sh
-│   ├── uninstall.sh
-│   └── common.sh
-├── Makefile
-└── README.md
-```
+### A wrapper is not executable
 
----
-
-## 8. Quick verification
-
-Reload environment:
-
-```
-source ~/.profile
-source ~/.bashrc
-```
-
-Check PATH:
-
-```
-which cds
-```
-
-Expected:
-
-```
-/home/<user>/imcanalysis/Bash_scripts/cds
-```
-
-Check config:
-
-```
-echo $IMC_EMAIL
-echo $OPENAI_API_KEY
-```
-
-List pipeline stages:
+From the repository root:
 
 ```bash
-pl --list
+chmod +x SLURM_scripts/*.sh
 ```
 
----
+### The repository is in a different directory
 
-## 9. Troubleshooting
+Planning can use `SBT_TOOLKIT_ROOT`, but some active wrappers still source files
+from `$HOME/imcanalysis`. Moving the checkout is therefore an advanced site
+configuration; the beginner setup should keep the documented location.
 
-### 9.1 `make: command not found`
-Load environment modules:
+### Do I need `make install`?
 
-```
-module load tools
-module load make
-```
-
-### 9.2 PATH / aliases not updating
-
-```bash
-source ~/.bashrc
-source ~/.profile
-```
-
-### 9.3 Permission denied running job scripts
-
-If you see `Permission denied` when running `pll` locally, your SLURM job scripts are not executable.
-
-Fix it with:
-
-```bash
-chmod +x ~/imcanalysis/SLURM_scripts/*.sh
-```
-
----
-
-## 10. Example usage
-
-```
-cds mydataset
-pl config prep denoise dnqc cellpose nimbus rapids starling aiinter vis reint slogs
-```
-
-You can run a single stage locally (useful for debugging):
-
-```bash
-pll config
-```
-
----
-
-## 11. Summary
-
-The `make install` system provides:
-
-- Reproducible HPC setup  
-- Automatic configuration management  
-- Clean uninstall  
-- Team-friendly workflows  
-- No manual PATH editing  
-
-We can extend the system with:
-
-- Cluster modulefiles  
-- Singularity containers  
-- Auto-activated conda envs  
-
+No. It installs the older `cds`, `pl`, `pll`, and `pls` shell conveniences and
+edits shell startup files, but it is not required for the `sbt` workflow. See
+the [installation helper scripts reference](../reference/installation_helpers.md)
+if you maintain a legacy setup.

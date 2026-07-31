@@ -1,157 +1,158 @@
-# 🧪 SpatialBiologyToolkit – Local Setup (Workstation / Laptop)
+# Local analysis setup
 
-This guide is for running **local analyses** on your own machine (typically via Jupyter notebooks), and for running/iterating on parts of the pipeline without an HPC.
+Use this setup for Jupyter notebooks, Napari, exploratory analysis, and bespoke
+figures on a Windows or macOS workstation. The reproducible end-to-end pipeline
+is designed for Linux HPC with SLURM; start with [HPC setup](hpc.md) when you
+need to process a full dataset.
 
-If you’re completely new to Python/conda/Jupyter, start with the beginner explainers first:
-- [new-user guide](beginners.md)
+## What you will set up
 
-If you want to run the scripted pipeline on an HPC cluster, use:
-- [HPC setup](hpc.md)
+- a local Conda environment named `sbt`;
+- an editable installation of `SpatialBiologyToolkit`;
+- Jupyter Lab running from your own analysis directory.
 
----
+The Windows and macOS environments are intentionally different. Use only the
+file for your platform.
 
-## ✅ What you will end up with
+## 1. Install Conda and Git
 
-- A conda environment containing the dependencies for local analysis
-- The `SpatialBiologyToolkit` package installed in editable mode
-- Jupyter Lab running in a folder containing the tutorials / your analysis files
-
----
-
-## 1) Install Anaconda / Miniconda
-
-Install Anaconda (or Miniconda) for your OS:
-- https://www.anaconda.com/products/distribution
-
----
-
-## 2) Get the repository
-
-Open a terminal (Anaconda Prompt on Windows) and run:
+Install Miniconda or Anaconda for your operating system using the official
+[Conda installation guidance](https://www.anaconda.com/docs/getting-started/miniconda/install).
+On Windows, run the commands below in **Anaconda Prompt**. Confirm that both
+tools are available:
 
 ```bash
-git clone <repo-url>
+conda --version
+git --version
+```
+
+## 2. Clone the repository
+
+Choose a directory for software checkouts, then run:
+
+```bash
+git clone https://github.com/dr-michael-haley/imcanalysis.git
 cd imcanalysis
 ```
 
-For this repository, `<repo-url>` is
-`https://github.com/dr-michael-haley/imcanalysis.git`.
+Downloading a GitHub ZIP can work for a one-off read, but a Git clone is
+recommended because it can be updated cleanly.
 
-If you don’t use git, you can download the repo as a ZIP from GitHub, extract it, then open a terminal in that folder.
+## 3. Create the local environment
 
----
-
-## 3) Create and activate the local environment
-
-Create the environment from the YAML. On Windows:
+On Windows:
 
 ```bash
 conda env create -f Local_envs/sbt_env.yml
 ```
 
-On macOS, use the portable specification instead:
+On Apple Silicon macOS:
 
 ```bash
 conda env create -f Local_envs/sbt_env_macos.yml
 ```
 
-The macOS environment intentionally omits CUDA and Windows runtime packages,
-along with the less portable R, Java/Bio-Formats, OpenCL, optional SpatialData
-I/O/viewer integrations, and most pip-only analysis extras from the Windows
-environment export. It includes a tested Apple Silicon combination of Napari,
-PySide6, TensorFlow for macOS, and the TensorFlow Metal plug-in. This combination
-requires macOS 12 or later and is not intended for Intel Macs.
-
-Activate the environment:
+Then activate the environment on either platform:
 
 ```bash
-# Windows
-conda activate sbt
-
-# macOS
 conda activate sbt
 ```
 
----
+`Local_envs/sbt_env.yml` is a detailed Windows environment export. The portable
+macOS specification is tested on Apple Silicon with macOS 12 or later. It uses
+a matched Napari, PySide6, TensorFlow for macOS, and TensorFlow Metal
+combination, and intentionally omits CUDA, Windows runtime packages, R,
+Java/Bio-Formats, OpenCL, optional SpatialData viewer integrations, and several
+less-portable extras. It is not intended for Intel Macs.
 
-## 4) Install the toolkit (editable)
+Environment solving and installation can take some time. If Conda reports a
+conflict, retain the full error rather than installing arbitrary replacement
+versions into the partly created environment.
 
-From the repo root (i.e. the `imcanalysis` folder), install the toolkit.
+## 4. Install the toolkit
 
-On Windows:
+The environment file already supplies the tested dependencies. From the
+repository root, install only the editable toolkit link rather than asking pip
+to resolve that stack again:
 
 ```bash
-pip install -e .
+python -m pip install --no-deps -e .
 ```
 
-On macOS, use the `nodl` install option so that the package installer does not
-replace the tested Apple TensorFlow packages with generic TensorFlow:
+Use the same command on Windows and macOS. `--no-deps` is important on macOS:
+it prevents generic pip packages from replacing the matched Apple TensorFlow
+and GUI packages or adding optional components deliberately omitted from the
+portable environment.
+
+Verify the package and command:
 
 ```bash
-python -m pip install -e ".[nodl]"
+python -c "import SpatialBiologyToolkit; print(SpatialBiologyToolkit.__file__)"
+sbt --help
 ```
 
-Confirm that Qt, TensorFlow, and UMAP import without crashing:
+On macOS, also confirm the matched GUI and numerical stack:
 
 ```bash
 python -c "from qtpy import API_NAME; import tensorflow as tf, umap; print(API_NAME, tf.__version__)"
 ```
 
----
+## 5. Start Jupyter Lab
 
-## 5) Install and run Jupyter
-
-Install Jupyter (if it’s not already in the environment):
+The macOS environment includes Jupyter Lab. If `jupyter lab --version` is not
+available in the Windows environment, install it into the active `sbt`
+environment:
 
 ```bash
-conda install jupyter
+conda install --channel conda-forge jupyterlab
 ```
 
-Start Jupyter Lab in the folder where you want to work:
-
-(You may need to use `cd` first to change into the folder where you want to save your analyses, or into a folder where you have copied the `Tutorials`.)
-
-For example:
+Create a separate directory for your work and start Jupyter there:
 
 ```bash
-cd path/to/my_analysis_folder
+cd path/to/my_analysis_directory
 jupyter lab
 ```
 
-A good first notebook is in:
-- the [tutorial index](../tutorials/index.md)
+Do not edit your own analysis directly inside the repository's `Tutorials/`
+directory. Copy any tutorial you want to adapt into your analysis directory;
+this keeps Git updates separate from your results and notebook changes. The
+[tutorial index](../tutorials/index.md) lists the maintained notebooks.
 
-⚠️ **Important:** avoid doing your own work directly inside the repo’s `Tutorials/` folder.
-If you edit those notebooks in-place and later run `git pull`, your changes may be overwritten or cause git conflicts.
+## 6. Update the local installation
 
-Instead, copy the tutorial notebook(s) into a separate “analysis” folder **outside** the repo (e.g. `C:/imc_analysis_projects/<project_name>/`) and work on the copies.
-
----
-
-## 6) Keeping your local copy up to date
-
-From inside the repo:
+Editable installation means ordinary source changes are picked up from the
+checkout. Update a clean checkout with:
 
 ```bash
-git pull
+cd path/to/imcanalysis
+git status --short
+git pull --ff-only
+conda activate sbt
 ```
 
-If the Python package code changed, reinstall editable (safe to repeat):
-
-```bash
-pip install -e .
-```
-
-If the environment dependencies changed, you may need to recreate the environment.
-
----
+If packaging metadata or command entry points changed, repeat the editable
+installation from step 4. If the environment specification changed, recreate
+or deliberately update the environment rather than mixing unreviewed package
+versions into it.
 
 ## Troubleshooting
 
-### macOS: `QtBindingsNotFoundError` or a crash while importing UMAP
+### `conda` is not found
 
-For an environment created from an older version of `sbt_env_macos.yml`, repair
-the Qt binding and replace generic TensorFlow with the tested Apple packages:
+On Windows, use Anaconda Prompt. On macOS, restart the terminal after installing
+and initializing Conda.
+
+### Jupyter cannot import `SpatialBiologyToolkit`
+
+Check that the notebook kernel belongs to the `sbt` environment. In a terminal,
+activate `sbt`, repeat the editable installation, then restart the notebook
+kernel.
+
+### macOS reports `QtBindingsNotFoundError` or crashes while importing UMAP
+
+For an environment created from an older `sbt_env_macos.yml`, repair the matched
+packages, then restart the Jupyter kernel:
 
 ```bash
 conda activate sbt
@@ -160,13 +161,8 @@ python -m pip install --upgrade pip setuptools wheel
 python -m pip install "numpy>=1.26,<2" "PySide6==6.9.1" "tensorflow-macos==2.16.2" "tensorflow-metal==1.2.0"
 ```
 
-Restart the Jupyter kernel after changing these packages.
+### Can I submit the pipeline locally?
 
-### Jupyter can’t import SpatialBiologyToolkit
-
-- Confirm you activated the env: `conda activate sbt`
-- Reinstall editable from the repo root: `pip install -e .`
-
-### “command not found: conda”
-
-You’re not in an Anaconda/Miniconda shell. On Windows, use **Anaconda Prompt**.
+The `sbt` command can perform lightweight inspection locally, but actual
+pipeline submission requires the repository's Linux SLURM environment and
+scientific stage environments. Use [HPC setup](hpc.md) for pipeline runs.

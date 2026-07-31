@@ -22,6 +22,7 @@ from .labels import validate_labels
 from .storage import feature_recipe_hash
 
 IDENTITY = ["ROI", "ObjectNumber"]
+HGB_MIN_SAMPLES_LEAF = 20
 
 
 def confirmed_labels_fingerprint(labels: pd.DataFrame) -> str:
@@ -53,6 +54,7 @@ def _estimator(model_type: str, random_state: int):
             HistGradientBoostingClassifier(
                 max_iter=250,
                 learning_rate=0.05,
+                min_samples_leaf=HGB_MIN_SAMPLES_LEAF,
                 random_state=random_state,
             ),
         )
@@ -235,6 +237,22 @@ def train_multiclass_classifier(
             f"Only {len(training)} confirmed examples are available; predictions "
             "may be unstable."
         )
+    if str(model_type or "").lower() in {
+        "hist_gradient_boosting",
+        "histgradientboosting",
+        "hgb",
+    }:
+        below_target = {
+            class_id: int(counts.get(class_id, 0))
+            for class_id in ordered_classes
+            if int(counts.get(class_id, 0)) < HGB_MIN_SAMPLES_LEAF
+        }
+        if below_target:
+            warnings.append(
+                "HistGradientBoosting uses min_samples_leaf="
+                f"{HGB_MIN_SAMPLES_LEAF}; classes below that practical confirmed-"
+                f"label target may produce constant probabilities: {below_target}."
+            )
     roi_class = pd.crosstab(training["ROI"], training["class_id"])
     missing_roi_pairs = int((roi_class == 0).sum().sum())
     if training["ROI"].nunique() > 1 and missing_roi_pairs:
@@ -426,6 +444,7 @@ def load_model_bundle(path: str | Path) -> ModelBundle:
 
 
 __all__ = [
+    "HGB_MIN_SAMPLES_LEAF",
     "ModelBundle",
     "TrainingResult",
     "confirmed_labels_fingerprint",

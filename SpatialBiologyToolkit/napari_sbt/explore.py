@@ -150,6 +150,10 @@ class ExploreViewRecipe(BaseModel):
     layer_colormaps: dict[str, str] = Field(default_factory=dict)
     layer_visibility: dict[str, bool] = Field(default_factory=dict)
     layer_opacities: dict[str, float] = Field(default_factory=dict)
+    layer_contours: dict[str, int] = Field(default_factory=dict)
+    layer_contrast_limits: dict[str, tuple[float, float]] = Field(
+        default_factory=dict
+    )
 
     @property
     def has_content(self) -> bool:
@@ -160,6 +164,8 @@ class ExploreViewRecipe(BaseModel):
             or self.marker_overlays
             or self.layer_visibility
             or self.layer_opacities
+            or self.layer_contours
+            or self.layer_contrast_limits
         )
 
     @property

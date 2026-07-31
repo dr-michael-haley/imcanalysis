@@ -3,9 +3,15 @@
 Stage-based entry points that can run locally or via the SLURM templates. They share `config_and_utils.py`, which loads `config.yaml` (override with `--config`) and supports inline overrides via `--override key.path=value`.
 
 ## How to run
-1. Work inside a dataset folder containing `config.yaml` and the expected subfolders (e.g. `IMC_files`, `metadata`, `QC`, masks, etc.).
-2. Submit on HPC with the `pl` helper (for example `pl prep denoise aiinter vis`) or call a single stage locally with `python -m SpatialBiologyToolkit.scripts.<module> --config config.yaml`.
-3. Use `pll <stage>` to run a stage locally while keeping the same stage aliases defined in `SLURM_scripts/pipeline.conf`.
+1. Initialize or adopt a dataset project containing `config.yaml` and the expected assets.
+2. Validate and preview a stage with `sbt plan <stage>` and `sbt run <stage> --dry-run`.
+3. Submit it on HPC with `sbt run <stage>`. Use direct
+   `python -m SpatialBiologyToolkit.scripts.<module> --config config.yaml`
+   invocation only for stage development or focused debugging.
+
+The older `pl` and `pll` entry points remain compatibility interfaces. They do
+not provide the project validation, dependency planning, run records, or
+structured report control of `sbt`.
 
 ## Notable stages
 - Setup and QC: `generate_config.py`, `check_files.py`, `check_panel_consistency.py`, `harmonize_filenames.py`, `recursive_rename.py`, `update_config.py`.

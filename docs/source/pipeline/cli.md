@@ -11,15 +11,29 @@ selected by the existing SLURM wrappers.
 
 ## Install the lightweight launcher
 
+On HPC, keep the repository at `~/imcanalysis` and use the maintained bootstrap:
+
 ```bash
-conda env create -f Local_envs/sbt_cli_env.yml
+cd "$HOME/imcanalysis"
+bash install/bootstrap_sbt.sh
 conda activate sbt-cli
-pip install --no-deps -e .
 sbt --help
 ```
 
-The editable install supplies `sbt` without installing the full scientific
-dependency stack into the launcher environment.
+The helper creates `sbt-cli` from `Local_envs/sbt_cli_env.yml` when necessary
+and refreshes the editable `--no-deps` installation. The equivalent manual
+commands are:
+
+```bash
+conda env create -f Local_envs/sbt_cli_env.yml
+conda activate sbt-cli
+python -m pip install --no-deps -e .
+```
+
+The editable installation supplies `sbt` without adding the scientific
+dependency stack to the launcher environment. `conda-lock` is a separate base
+environment prerequisite for `sbt env`; follow the complete
+[HPC setup](../getting_started/hpc.md) for a fresh cluster installation.
 
 ## Compact a legacy configuration
 

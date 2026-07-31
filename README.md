@@ -35,10 +35,10 @@ notebook work on Windows and macOS.
 
 ## Start here
 
-- If the command line, conda, or Jupyter are new to you, read the [new-user guide](https://imcanalysis.readthedocs.io/en/latest/getting_started/beginners.html).
+- If the command line, Conda, or SLURM are new to you, read the [complete beginner's guide](https://imcanalysis.readthedocs.io/en/latest/getting_started/beginners.html).
 - To understand what a stage does, why it is performed, and how to interpret its biological outputs, use the [scientific guides](https://imcanalysis.readthedocs.io/en/latest/stages/index.html).
 - For the recommended HPC-first workflow, use the [HPC setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/hpc.html), [`sbt` CLI guide](https://imcanalysis.readthedocs.io/en/latest/pipeline/cli.html), [pipeline workflow](https://imcanalysis.readthedocs.io/en/latest/pipeline/workflow.html), and [outputs/reporting guide](https://imcanalysis.readthedocs.io/en/latest/pipeline/reporting.html).
-- For notebooks and interactive exploration, use the [local setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/local.html) and [tutorial index](https://imcanalysis.readthedocs.io/en/latest/tutorials/index.html).
+- For notebooks and interactive exploration, use the [local analysis setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/local.html) and [tutorial index](https://imcanalysis.readthedocs.io/en/latest/tutorials/index.html).
 - For exact stage and config fields, use the generated [SLURM stage reference](https://imcanalysis.readthedocs.io/en/latest/pipeline/stages/index.html) and [configuration reference](https://imcanalysis.readthedocs.io/en/latest/reference/configuration/index.html).
 
 The usual pattern is to run compute-heavy, repeatable processing on HPC and
@@ -50,28 +50,34 @@ for interactive work.
 | Use case | Platform | Starting point |
 | --- | --- | --- |
 | Reproducible end-to-end pipeline | Linux HPC with SLURM | [HPC setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/hpc.html) |
-| Local analysis and notebooks | Windows | `Local_envs/sbt_env.yml` |
-| Local analysis and notebooks | macOS | `Local_envs/sbt_env_macos.yml` |
+| Local analysis and notebooks | Windows | [Local analysis setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/local.html) |
+| Local analysis and notebooks | Apple Silicon macOS | [Local analysis setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/local.html) |
 
-The portable macOS environment has been solver-verified for Apple Silicon and
-contains no architecture-specific pins. Intel macOS is expected to work but
-has not yet been solver-verified. It intentionally omits CUDA, Windows runtime
-packages, and several less-portable optional components; see the
-[local setup guide](https://imcanalysis.readthedocs.io/en/latest/getting_started/local.html)
+The portable macOS environment is tested on Apple Silicon with macOS 12 or
+later and is not intended for Intel Macs. It intentionally omits CUDA, Windows
+runtime packages, and several less-portable optional components; see the
+[local analysis setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/local.html)
 for the current compatibility details.
 
-Experienced conda users can create a local environment from the repository
-root:
+Experienced Conda users can create a local environment from the repository
+root. On Windows:
 
 ```bash
-# Windows
 conda env create -f Local_envs/sbt_env.yml
+```
 
-# macOS
+On Apple Silicon macOS:
+
+```bash
 conda env create -f Local_envs/sbt_env_macos.yml
+```
 
+Then install the editable toolkit link without re-resolving the environment's
+tested dependencies:
+
+```bash
 conda activate sbt
-pip install -e .
+python -m pip install --no-deps -e .
 ```
 
 Copy any notebooks you plan to edit out of `Tutorials/` and into your own

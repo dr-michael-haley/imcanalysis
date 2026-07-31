@@ -18,7 +18,7 @@ straight to :doc:`reference/index`.
    :maxdepth: 1
    :caption: Contents
 
-   🚀 Getting Started <getting_started/index>
+   Getting started <getting_started/index>
    🔬 Scientific Guides <stages/index>
    ⚙️ Pipeline <pipeline/index>
    🛠️ Technical Guides <guides/index>

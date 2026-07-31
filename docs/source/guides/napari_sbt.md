@@ -157,10 +157,62 @@ audited but do not train the model or become final assignments. Training
 requires at least two confirmed examples per class and warns when class/ROI
 coverage is weak.
 
+While the **Classify** tab is active, a left click anywhere in the viewer is
+resolved directly against the stored full mask and frozen cohort. The
+`classification_cohort` layer therefore does not need to be selected or
+visible; it is hidden by default so it does not obscure staining. The selected
+eligible cell is shown with a configurable outline.
+
+The **Click action** radio buttons control what a viewer click does using the
+currently selected class: **Select only**, **Set proposed on click**, or **Set
+confirmed on click**. Proposed-on-click is the default so cells can be labelled
+rapidly without repeatedly returning to a button, while confirmation remains
+an explicit choice. Class shortcuts continue to change the active class.
+
+The live label tally reports proposed and confirmed cells separately for every
+class. Only confirmed labels train the model. HistGradientBoosting uses 20
+samples per leaf, so the tally also shows progress towards a practical target
+of at least 20 confirmed cells per class. Starting HistGradientBoosting below
+that target displays a warning and offers Random Forest as the early-training
+alternative; the user may still choose to train anyway.
+
+Class selectors, the live tally, and active-learning queue entries use the
+class colours defined in Setup, so the same visual identity is retained across
+annotation, prediction review, and display layers.
+
+The **Model storage** row shows the exact files for the active experiment.
+`models/classifier_latest.joblib` contains the fitted imputer and classifier;
+`models/classifier_latest.json` contains its model ID, class order, feature set,
+training-label fingerprint, package versions, and other provenance. Retraining
+replaces these `classifier_latest` files rather than creating an implicit model
+inside the Napari workspace.
+
+Single-cell clicks update only the clicked object's proposed/confirmed pixels
+and the live tally. They no longer rebuild every labelled object in the ROI or
+run the full freshness calculation after every annotation. Label-table and
+audit writes remain synchronous, and the experiment manifest is rewritten only
+when the first confirmed label locks class semantics.
+
+Queue filters are applied automatically after scores exist. Changing the ROI,
+predicted class, review state, or minimum confidence immediately rebuilds the
+**Ambiguous unlabelled cells** list. **Apply queue filters / refresh** remains as
+an explicit refresh action. The **Queue result** line reports both the number
+shown (capped at 250) and the total number of cells matching the active filters.
+
+**Classifier display & cell-picking options** opens the compact legacy-style
+display panel. It independently controls visibility and opacity for the cohort,
+excluded context, confirmed, proposed, predicted, uncertainty/probability, and
+selected-cell layers. Label layers also expose contour width: zero displays
+filled cells, while positive widths show outlines. Proposed cells default to a
+two-pixel contour, and these settings are retained in the ROI reload recipe.
+
 HistGradientBoosting is the default model. Random Forest, XGBoost, and LightGBM
 are explicit alternatives. Scores contain the predicted class, every class
 probability, maximum probability, probability margin, and normalized entropy.
 Cells without usable features stay visible but are marked unscorable.
+The uncertainty/probability image layer masks all pixels outside scored cells,
+so its colormap never colours the tissue background; genuine zero-valued cell
+scores still use the colormap's lowest colour.
 
 The uncertainty queue ranks ambiguous unlabelled cohort cells. High-confidence
 cells can be bulk-added as proposals for one predicted class. Confirmed labels
@@ -199,19 +251,26 @@ a different review set.
 
 The **Layers re-added when the ROI changes** list is the explicit reload
 contract. It shows every replayable Explore layer, including its colormap,
-visibility, and opacity. Select one or more entries and use **Delete/reset
-selected recipe items** to remove Explore entries from both the recipe and the
-current replayed view; selecting a managed classifier entry resets its display
-settings to the defaults. **Update from current layers** rebuilds the recipe
-from supported layers currently present in Napari, capturing manual colormap,
-visibility, and opacity changes. The eligible cohort, excluded-cell context,
-confirmed, proposed, predicted, and uncertainty/probability layers are also
-shown explicitly. Their scientific data continue to be regenerated from masks,
-labels, and scores, but their visible/hidden state and opacity are captured and
-replayed. Changing the eye state in Napari updates the active recipe
+visibility, opacity, applicable contour width, and image contrast limits.
+Select one or more entries and use **Delete/reset selected recipe items** to
+remove Explore entries from both the recipe and the current replayed view;
+selecting a managed classifier entry resets its display settings to the
+defaults. **Update from current layers** rebuilds the recipe from supported
+layers currently present in Napari, capturing manual colormap, visibility,
+opacity, contour, and contrast-limit changes. The eligible cohort,
+excluded-cell context, confirmed, proposed, predicted, and
+uncertainty/probability layers are also shown explicitly. Their scientific data
+continue to be regenerated from masks, labels, and scores, but their display
+state is captured and replayed. Changing a tracked display property in Napari
+updates the active recipe
 immediately. Manual-region and unsupported derived layers remain separately
 managed or are reported as ignored rather than being silently added to the
 recipe.
+
+The first rendered contrast limits for each image layer are frozen into the
+recipe, even if the contrast slider is not touched. This prevents a channel
+from being automatically rescaled when the next ROI is loaded. Later manual
+contrast changes replace those stored limits.
 
 **Save current view for selected population** stores a population-specific
 verification recipe inside the experiment. Selecting that observation and

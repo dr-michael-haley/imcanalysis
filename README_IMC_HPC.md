@@ -1,4 +1,4 @@
-# HPC setup documentation moved
+# HPC setup moved
 
 The maintained guide is now in the Sphinx documentation:
 

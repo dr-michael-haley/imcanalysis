@@ -1,4 +1,4 @@
-# 📚 Reference
+# Reference
 
 Use the configuration reference when editing `config.yaml`, and the Python API
 when importing package functions in notebooks or new pipeline stages.
@@ -7,6 +7,7 @@ when importing package functions in notebooks or new pipeline stages.
 :maxdepth: 1
 
 package_overview
+installation_helpers
 configuration/usage
 configuration/index
 api/index
