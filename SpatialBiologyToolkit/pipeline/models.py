@@ -6,7 +6,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+DependencyPolicy = Literal["assets", "none", "all"]
 
 
 class PipelineModel(BaseModel):
@@ -24,6 +27,33 @@ class ProjectMetadata(PipelineModel):
     description: str | None = None
     notes_file: str = ".sbt/project_notes.md"
     toolkit: str = "Spatial Biology Toolkit"
+
+
+class RegisteredProject(PipelineModel):
+    name: str = Field(min_length=1)
+    path: Path
+    project_id: str
+
+
+class ProjectRegistry(PipelineModel):
+    schema_version: Literal[1] = 1
+    projects: list[RegisteredProject] = Field(default_factory=list)
+    default_project_id: str | None = None
+
+    @model_validator(mode="after")
+    def validate_projects(self) -> "ProjectRegistry":
+        paths = [str(item.path).casefold() for item in self.projects]
+        names = [item.name.casefold() for item in self.projects]
+        project_ids = [item.project_id for item in self.projects]
+        if len(paths) != len(set(paths)):
+            raise ValueError("Registered project paths must be unique.")
+        if len(names) != len(set(names)):
+            raise ValueError("Registered project names must be unique.")
+        if len(project_ids) != len(set(project_ids)):
+            raise ValueError("Registered project IDs must be unique.")
+        if self.default_project_id and self.default_project_id not in project_ids:
+            raise ValueError("The default project must be present in the registry.")
+        return self
 
 
 class ProjectAsset(PipelineModel):
@@ -87,6 +117,8 @@ class StageSpec(PipelineModel):
     depends_on: list[str] = Field(default_factory=list)
     groups: list[str] = Field(default_factory=list)
     requires_assets: list[str] = Field(default_factory=list)
+    advisory_assets: list[str] = Field(default_factory=list)
+    required_executions: dict[str, list[str]] = Field(default_factory=dict)
     produces_assets: list[str] = Field(default_factory=list)
     required_files: dict[str, list[str]] = Field(default_factory=dict)
     expected_outputs: list[str] = Field(default_factory=list)
@@ -107,11 +139,16 @@ class PlannedStage(PipelineModel):
     slurm_script: Path
     depends_on: list[str]
     requires_assets: list[str]
+    advisory_assets: list[str] = Field(default_factory=list)
     produces_assets: list[str]
     expected_outputs: list[str]
     script_exists: bool
     missing_assets: list[str] = Field(default_factory=list)
+    missing_advisory_assets: list[str] = Field(default_factory=list)
+    required_executions: dict[str, list[str]] = Field(default_factory=dict)
+    missing_executions: list[str] = Field(default_factory=list)
     missing_files: list[Path] = Field(default_factory=list)
+    skipped_upstream_stages: list[str] = Field(default_factory=list)
 
 
 class RunPlan(PipelineModel):
@@ -122,6 +159,7 @@ class RunPlan(PipelineModel):
     resolved_stages: list[PlannedStage]
     config_source: Path
     execution_backend: str = "slurm_scripts"
+    dependency_policy: DependencyPolicy = "assets"
     ready: bool
     errors: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -361,6 +399,7 @@ def model_data(value: BaseModel | dict[str, Any]) -> dict[str, Any]:
 
 
 __all__ = [
+    "DependencyPolicy",
     "AssetEffect",
     "AssetInventory",
     "ExecutionIndex",
@@ -377,8 +416,10 @@ __all__ = [
     "PlannedStage",
     "ProjectAsset",
     "ProjectMetadata",
+    "ProjectRegistry",
     "ProjectValidationReport",
     "RemovalAudit",
+    "RegisteredProject",
     "RenumberRecord",
     "RunManifest",
     "RunPlan",

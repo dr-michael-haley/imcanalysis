@@ -113,6 +113,57 @@ class ProjectAndPlanningTests(unittest.TestCase):
                 )
             )
 
+    def test_downstream_only_project_is_valid_and_uses_direct_assets(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "adopted-analysis"
+            context = initialize_project(root)
+            assets = {
+                asset.role: asset for asset in resolve_assets(context.config, root)
+            }
+            assets["anndata"].path.parent.mkdir(parents=True, exist_ok=True)
+            assets["anndata"].path.write_bytes(b"imported AnnData")
+
+            report = validate_project(context)
+            plan = build_run_plan(context, ["rapids"])
+
+            self.assertTrue(report.valid)
+            self.assertTrue(plan.ready, plan.errors)
+            self.assertEqual(
+                [stage.name for stage in plan.resolved_stages],
+                ["rapids"],
+            )
+            self.assertTrue(
+                any(
+                    "prep" in warning and "not scheduled" in warning
+                    for warning in plan.warnings
+                )
+            )
+            self.assertTrue(
+                any(
+                    item.name == "raw IMC source" and item.status == "warning"
+                    for item in report.optional_inputs
+                )
+            )
+
+    def test_asset_policy_adds_only_a_missing_direct_asset_producer(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "project"
+            context = initialize_project(root)
+            assets = {
+                asset.role: asset for asset in resolve_assets(context.config, root)
+            }
+            assets["denoised_images"].path.mkdir(parents=True, exist_ok=True)
+            (assets["denoised_images"].path / "DNA.tiff").write_bytes(b"x")
+
+            plan = build_run_plan(context, ["cellpose"])
+
+            self.assertTrue(plan.ready, plan.errors)
+            self.assertEqual(
+                [stage.name for stage in plan.resolved_stages],
+                ["cellpose"],
+            )
+            self.assertEqual(plan.resolved_stages[0].depends_on, [])
+
     def test_asset_inventory_uses_shallow_bounded_counts(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "project"
@@ -176,7 +227,9 @@ class ProjectAndPlanningTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "project"
             context = initialize_project(root)
-            assets = {asset.role: asset for asset in resolve_assets(context.config, root)}
+            assets = {
+                asset.role: asset for asset in resolve_assets(context.config, root)
+            }
 
             missing = build_run_plan(
                 context,
@@ -210,7 +263,10 @@ class ProjectAndPlanningTests(unittest.TestCase):
                 ["cellvision-full"],
             )
             self.assertTrue(
-                any("Dependency expansion is disabled" in item for item in ready.warnings)
+                any(
+                    "Automatic upstream producers are disabled" in item
+                    for item in ready.warnings
+                )
             )
 
 

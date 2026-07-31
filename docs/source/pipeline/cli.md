@@ -37,10 +37,11 @@ environment prerequisite for `sbt env`; follow the complete
 
 ## Optional project console
 
-The lightweight graphical Project Console exposes project-internal inspection,
-configuration editing, stage explanations, the asset register, readiness, run
-summaries, reports, bounded log tails, and notes. It intentionally has no job
-submission, scheduler-control, destructive, or scientific-data capability.
+The lightweight graphical Project Console is a multi-project cockpit for
+project-internal inspection, configuration editing, stage explanations, the
+asset register, asset-aware readiness, run summaries, reports, bounded log
+tails, and notes. It intentionally has no job submission, scheduler-control,
+destructive, or scientific-data capability.
 
 Install its separate Qt environment explicitly and launch it for an existing
 project:
@@ -51,7 +52,8 @@ sbt gui project --project /path/to/project
 ```
 
 See the complete [Project Console guide](../guides/project_console.md), including
-CSF3 `srun-x11`, config backup/audit behavior, and read-only mode.
+the central project registry, CSF3 `srun-x11`, config backup/audit behavior, and
+read-only mode.
 
 ## Compact a legacy configuration
 
@@ -139,6 +141,19 @@ After initialization or adoption, commands discover the project by walking
 upwards from nested subdirectories. Use `--project /path/to/project` to select
 an explicit root.
 
+Register projects for the graphical cockpit in the SBT-managed block inside
+`~/.imc_config`:
+
+```bash
+sbt project register --project /path/to/project --name "My cohort" --default
+sbt project list
+sbt project set-default "My cohort"
+sbt project unregister "My cohort"
+```
+
+These commands preserve existing credentials and unrelated shell settings.
+Unregistering never changes project files.
+
 ## Validate and inspect
 
 ```bash
@@ -152,9 +167,11 @@ sbt project assets --format yaml
 sbt project assets --format json
 ```
 
-Validation distinguishes required initial inputs, optional inputs, generated
-assets, human-facing reports, legacy output folders, and readiness for a
-requested stage or mode. Inspection uses only
+Project validation distinguishes structural requirements from optional source
+material, generated assets, human-facing reports, legacy output folders, and
+readiness for a requested stage or mode. A missing raw-IMC folder does not make
+an adopted downstream-only project structurally invalid; it makes `prep` not
+ready. Inspection uses only
 existence, file size, modification time, and bounded top-level counts. It does
 not load AnnData or images, recurse through large trees, or calculate checksums.
 
@@ -206,9 +223,34 @@ sbt plan segmentation --format yaml
 sbt plan segmentation --format json
 ```
 
-Planning validates the config, expands modes and dependencies, checks wrappers,
-simulates assets produced by earlier planned stages, and reports missing inputs
-before submission.
+Planning validates the config, expands modes, checks wrappers, simulates assets
+produced by earlier planned stages, and reports missing inputs before
+submission. Readiness uses the selected stage's direct blocking asset contract,
+not evidence that every conventional predecessor ran.
+
+Three concepts remain separate:
+
+- **required assets and managed executions** are direct, blocking stage inputs;
+- **advisory assets** are commonly useful context but never block execution;
+- **typical upstream stages** document conventional lineage and produce warnings
+  when skipped, but are not themselves readiness requirements.
+
+The default `assets` policy schedules an upstream producer only for a missing
+blocking asset. Existing external or adopted assets therefore allow the
+requested stage to run directly:
+
+```bash
+sbt plan rapids --project /path/to/imported-anndata-project
+sbt run rapids --project /path/to/imported-anndata-project --dry-run
+```
+
+Select another policy explicitly when needed:
+
+```bash
+sbt plan cellpose --dependency-policy assets  # default
+sbt plan cellpose --dependency-policy none    # selected stages only
+sbt plan cellpose --dependency-policy all     # complete conventional lineage
+```
 
 Preview exact `sbatch` arguments, dependency order, run paths, and exported SBT
 context:
@@ -243,19 +285,19 @@ required environment beforehand with `sbt env sync <key>`. `--dry-run` remains
 side-effect free: it validates and previews the workflow without checking or
 installing Conda environments.
 
-To submit only the explicitly requested stage when its upstream assets already
-exist, disable dependency expansion:
+`--no-deps` remains as a compatibility alias for `--dependency-policy none`:
 
 ```bash
 sbt run cellvision-cluster --no-deps --dry-run
 sbt run cellvision-cluster --no-deps
 ```
 
-`--no-deps` does not relax input validation. The command fails before submission
-when the selected stage's required assets are absent. Use the dry run first to
-confirm that the plan contains only the intended stage. When a mode or several
-stages are explicitly selected, dependencies between those selected stages are
-retained; only unselected upstream stages are omitted.
+Neither `none` nor `--no-deps` relaxes direct input validation. The command fails
+before submission when a blocking asset is absent. When a mode or several stages
+are explicitly selected, actual data dependencies between selected stages are
+retained. Independent selected stages are not chained merely because one appears
+earlier in the display; SLURM `afterok` edges are emitted only for actual plan
+dependencies.
 
 Each submitted run creates:
 

@@ -97,7 +97,9 @@ def _normalize_state(
 
 
 def _dependency_cannot_be_satisfied(reason: str) -> bool:
-    normalized = "".join(character for character in reason.upper() if character.isalnum())
+    normalized = "".join(
+        character for character in reason.upper() if character.isalnum()
+    )
     return "DEPENDENCYNEVERSATISFIED" in normalized
 
 
@@ -110,14 +112,17 @@ def _resolve_blocked_dependencies(
     by_job_id: dict[str, StageStatus] = {}
 
     for job, stage in zip(submitted.jobs, stages):
-        dependency = by_job_id.get(job.dependency_job_id or "")
-        if (
-            stage.status == "pending"
-            and dependency is not None
+        dependency_ids = (job.dependency_job_id or "").split(":")
+        failed_dependencies = [
+            dependency
+            for dependency_id in dependency_ids
+            if (dependency := by_job_id.get(dependency_id)) is not None
             and dependency.status in {"failed", "cancelled", "not_submitted", "blocked"}
-        ):
+        ]
+        if stage.status == "pending" and failed_dependencies:
+            dependency = failed_dependencies[0]
             dependency_detail = (
-                f"afterok dependency job {job.dependency_job_id} ended "
+                f"afterok dependency job {dependency.job_id} ended "
                 f"{dependency.status}; this job cannot start"
             )
             detail = ", ".join(

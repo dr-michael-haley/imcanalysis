@@ -39,8 +39,9 @@ lightweight smoke tests.
 | `maxfuse` | `imc_maxfuse` | External/pre-existing |
 
 Commands accept either the logical key or fixed name. External environments
-can be listed, shown and smoke-tested, but `sync`, `lock`, and `capture` refuse
-them until repository specifications are deliberately added.
+can be listed, shown, smoke-tested, and captured into observational
+compatibility bundles. `sync`, `lock`, and capture with `--write` refuse them
+until repository specifications are deliberately added.
 
 The stage mapping is also centralized:
 
@@ -183,6 +184,28 @@ perfectly reconstruct the original dependency intent:
 sbt env capture imc_cellcharter --dry-run
 sbt env capture imc_cellcharter --write
 ```
+
+External environments use the same command without `--write`:
+
+```bash
+sbt env capture rapids --dry-run --verbose
+sbt env capture starling --dry-run --verbose
+sbt env capture scportrait --dry-run --verbose
+```
+
+This produces an observational compatibility bundle under the SBT user state
+directory without changing the repository. The bundle contains a normalized
+from-history `environment.yml`, separated `pip-extras.txt`, the exact Conda and
+pip inventory in `environment.snapshot.json`, a self-describing
+`capture-plan.json`, and a candidate target-platform lock when lock generation
+succeeds. A lock-solver failure is recorded but does not discard the other
+external-environment evidence. VCS, editable, and local requirements remain
+explicitly flagged for review; use `--accept-vcs` only when retaining the
+observed VCS reference is intentional.
+
+Capture with `--write` remains unavailable for an external environment. After
+reviewing compatibility, add its repository specification deliberately and
+mark it managed before using the normal write, lock, or sync workflows.
 
 The command uses Conda's supported from-history export, normalises the fixed
 name, removes machine prefixes and nested pip entries, and retains the full

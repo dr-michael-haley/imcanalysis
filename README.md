@@ -86,8 +86,10 @@ analysis directory before starting Jupyter.
 ## Pipeline at a glance
 
 The lightweight `sbt` interface validates projects and configuration, plans
-dependencies, submits the existing SLURM wrappers, and records stage status,
-logs, outputs, and provenance. For example:
+from each stage's direct asset requirements, submits the existing SLURM
+wrappers, and records stage status, logs, outputs, and provenance. Conventional
+lineage is warned about but does not block adopted downstream-only projects
+whose required assets already exist. For example:
 
 ```bash
 sbt project adopt --config config.yaml

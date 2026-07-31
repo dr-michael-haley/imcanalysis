@@ -27,9 +27,12 @@ Submit the checkpointed workflow with:
 sbt run hyperstac
 ```
 
-Each alias can be requested directly. Dependencies are included by default; use
-`--no-deps` only when the required reusable assets or prior managed reports have
-already been validated. To run everything in one GPU allocation:
+Each alias can be requested directly. By default, SBT adds a conventional
+upstream producer only when a blocking reusable asset is absent. Existing
+validated assets permit the requested checkpoint to run directly while skipped
+lineage is reported as a warning. Use `--dependency-policy all` for the full
+checkpoint lineage or `--dependency-policy none` for explicit stages only. To
+run everything in one GPU allocation:
 
 ```bash
 sbt run hyperstac-full

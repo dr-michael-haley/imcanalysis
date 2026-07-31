@@ -261,10 +261,11 @@ submission, logs, and reports in more detail.
 
 ## 12. Optional graphical project console
 
-The Project Console is useful for explaining stages and config fields, editing
-config with validation and backups, reviewing configured assets and readiness,
-and reading recorded runs, reports, log tails, and notes. It cannot submit or
-control jobs and does not load scientific data.
+The Project Console is useful for switching among registered IMC projects,
+explaining stages and config fields, editing config with validation and backups,
+reviewing configured assets and asset-aware readiness, and reading recorded
+runs, reports, log tails, and notes. It cannot submit or control jobs and does
+not load scientific data.
 
 Install its separate lightweight Qt environment once:
 
@@ -273,18 +274,27 @@ cd "$HOME/imcanalysis"
 bash install/bootstrap_sbt_gui.sh
 ```
 
+Register projects once from any shell. The registry coexists with existing
+credentials in `~/.imc_config`:
+
+```bash
+sbt project register --project "$HOME/scratch/HyperionProject" --name "Hyperion" --default
+sbt project list
+```
+
 From the CSF3 login node, request a short X11-enabled interactive session and
-launch the existing project:
+launch the cockpit:
 
 ```bash
 srun-x11 -p interactive -t 30
 conda activate sbt-gui
-sbt gui project --project "$HOME/scratch/HyperionProject"
+sbt gui project
 ```
 
-Use `--read-only` when config and notes writes should be disabled. See the
-[Project Console guide](../guides/project_console.md) for recovery mode,
-configuration audits, and the exact capability boundary.
+Use `--read-only` when config, notes, and registry writes should be disabled.
+See the [Project Console guide](../guides/project_console.md) for portfolio
+switching, recovery mode, configuration audits, and the exact capability
+boundary.
 
 ## Updating SpatialBiologyToolkit
 

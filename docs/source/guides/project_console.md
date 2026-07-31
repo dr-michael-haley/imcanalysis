@@ -1,9 +1,11 @@
 # SBT Project Console
 
-The SBT Project Console is a lightweight graphical view of one existing SBT
-project. It explains stages, modes, and configuration fields; edits configuration
-with validation and backups; inspects the asset register and workflow readiness;
-and reads durable execution records, reports, log tails, and project notes.
+The SBT Project Console is a lightweight cockpit for initialized or adopted SBT
+projects. It explains stages, modes, and configuration fields; edits
+configuration with validation and backups; inspects the asset register and
+asset-aware workflow readiness; and reads durable execution records, reports,
+log tails, and project notes. A project selector and dedicated **Projects** page
+make the same application useful across a portfolio of IMC projects.
 
 The console deliberately cannot submit or control jobs. It does not call
 `sbatch`, `srun`, `squeue`, `sacct`, or `scancel`. It also does not load AnnData,
@@ -31,19 +33,58 @@ Each bootstrap creates or refreshes the fixed `sbt-gui` environment from
 no-dependency overlay. It contains Qt and YAML round-trip support, but no
 scientific environment.
 
+## Register the project portfolio
+
+Register each existing SBT project once:
+
+```bash
+sbt project register --project /path/to/first-project --name "First cohort" --default
+sbt project register --project /path/to/second-project --name "Second cohort"
+sbt project list
+```
+
+Only an initialized or adopted project containing `.sbt/project.yaml` can be
+registered. Registration does not validate scientific assets, move data, or
+change the project. This permits a temporarily incomplete or misconfigured
+project to remain visible for recovery.
+
+The portfolio is stored in an SBT-managed block inside `~/.imc_config` as the
+shell-compatible `SBT_PROJECTS_JSON` variable. The writer:
+
+- preserves `IMC_EMAIL`, `OPENAI_API_KEY`, comments, and all unrelated lines;
+- reads the registry variable as data and never sources or executes the file;
+- replaces only its own delimited block using an atomic write;
+- preserves the existing file mode, using mode `600` for a new file.
+
+Use the CLI or GUI rather than editing the compact JSON by hand:
+
+```bash
+sbt project set-default "Second cohort"
+sbt project unregister "First cohort"
+```
+
+Unregistering only forgets the central reference. No project files are deleted.
+Unavailable paths and project-identity mismatches remain visible in the
+**Projects** page until corrected or unregistered.
+
 ## Launch locally
 
-From an existing initialized or adopted project:
+Launch an explicit project:
 
 ```bash
 sbt gui project --project /path/to/project
 ```
 
-Use read-only mode when reviewing a project without permitting config or notes
-writes:
+When `--project` is omitted, project discovery first checks the current
+directory and its parents. Outside a project, the console opens the available
+registered default, or the first available registered project. Use the selector
+above every page or the **Projects** page to switch without restarting.
+
+Use read-only mode when reviewing without permitting config, notes, or central
+registry writes. Project switching remains available:
 
 ```bash
-sbt gui project --project /path/to/project --read-only
+sbt gui project --read-only
 ```
 
 If the active launcher does not contain Qt, `sbt` uses the fixed `sbt-gui`
@@ -58,11 +99,43 @@ the login node:
 ```bash
 srun-x11 -p interactive -t 30
 conda activate sbt-gui
-sbt gui project --project /path/to/project
+sbt gui project
 ```
 
-`-t 30` requests 30 minutes. Save config or notes explicitly before the
-interactive allocation ends or the network session is closed.
+`-t 30` requests 30 minutes. The application performs bounded filesystem reads
+and lightweight YAML/model validation, so a short interactive job is suitable.
+Save config or notes explicitly before the allocation ends or the network
+session is closed.
+
+## Readiness model
+
+Readiness deliberately separates three different ideas:
+
+1. **Blocking direct requirements** are the assets or managed prior reports the
+   selected scientific stage actually needs. Their absence makes that stage not
+   ready.
+2. **Advisory context assets** are commonly present and may aid interpretation,
+   but their absence never blocks execution.
+3. **Typical upstream stages** describe conventional provenance. Missing stages
+   are warned about, but are not proof that a direct asset is absent. Imported
+   AnnData, externally prepared masks, and adopted projects are first-class.
+
+The default **Asset-aware upstream selection** adds a conventional producer only
+when a blocking direct asset is missing. If the required asset already exists,
+the requested stage remains independently runnable and skipped lineage is shown
+as a warning. **Explicit stages only** never adds producers. **All conventional
+upstream stages** reproduces the full lineage when a deliberate rerun is wanted.
+
+For example, an adopted project with a configured AnnData file can be ready for
+`rapids`, `subcl`, or `vis` even when it has no raw MCD files and no recorded
+`prep` or `nimbus` execution. Conversely, `prep` itself still requires recognised
+raw MCD/TXT inputs, and `cellpose` still requires non-empty denoised images.
+Stages that consume prior SBT reports, such as `hyperstac-stability`, declare
+those managed execution folders as direct blocking requirements; asset-aware
+planning schedules only the missing report producers.
+
+Readiness inspection never creates a run record, checks Conda environments, or
+constructs a live scheduler query.
 
 ## Configuration safety
 
@@ -81,21 +154,26 @@ defaults. Saving performs all of the following:
 Resetting a field removes its explicit YAML key so the canonical model default
 is inherited. There is no autosave.
 
-If YAML syntax or Pydantic validation is already broken, the console opens in
-recovery mode. Other pages remain unavailable until the raw YAML editor validates
-and saves a repaired file with the same backup and audit protections.
+If YAML syntax or Pydantic validation is already broken, the console opens that
+project in recovery mode. Other project pages are unavailable until the raw YAML
+editor validates and saves a repaired file with the same backup and audit
+protections. The global project selector remains available so the user is not
+trapped in the broken project.
 
 ## Pages
 
-- **Dashboard** summarizes project identity, validation, assets, executions, and
-  the latest recorded status snapshot.
-- **Stages & modes** renders the typed registry and shared Markdown explainers.
+- **Projects** shows registered, unavailable, and currently unregistered
+  projects; opens, registers, defaults, or forgets portfolio entries.
+- **Dashboard** summarizes project identity, structural validation, assets,
+  executions, and the latest recorded status snapshot.
+- **Stages & modes** renders the typed registry, direct/advisory requirements,
+  typical lineage, and shared Markdown explainers.
 - **Configuration** provides stage/section-aware schema controls, search, level
   filters, advice, constraints, diff, backup, and audit.
-- **Assets** computes paths, lifecycle, presence, producer stages, and consumer
-  stages without recursively scanning the project.
-- **Readiness** expands dependencies and evaluates required assets without
-  constructing or running a submission command.
+- **Assets** computes paths, lifecycle, presence, producer stages, and blocking
+  consumer stages without recursively scanning the project.
+- **Readiness** compares the three upstream policies and displays blocking
+  inputs, advisory context, actual scheduler edges, and skipped lineage.
 - **Runs** reads execution identity, provenance, stage metrics, Markdown reports,
   resolved configuration snapshots, and bounded stdout/stderr tails.
 - **Notes** edits `.sbt/project_notes.md` with explicit save, concurrent-change

@@ -189,10 +189,12 @@ order:
 Matching component wrappers are
 `job_cellvision_extract.sh`, `job_cellvision_embed.sh`,
 `job_cellvision_cluster.sh`, and `job_cellvision_plot.sh`. These are independent
-planner stages, so a downstream component automatically includes its upstream
-CellVision dependencies. Use `--no-deps` to rerun only that component after its
-required reusable assets already exist. `cellvision-full` remains the single-job
-alternative.
+planner stages. The default asset-aware policy adds the nearest upstream
+CellVision producer only when a component's blocking reusable assets are absent.
+When those assets already exist, the component runs directly and skipped lineage
+is reported as a warning. Use `--dependency-policy all` for a deliberate full
+checkpoint rerun, or `--dependency-policy none` to prohibit automatic producers.
+`cellvision-full` remains the single-job alternative.
 
 The extraction adapter is based on the earlier local `scPortrait_to_IMC` helper
 behavior but is now repository-owned, multi-channel, population-aware, and tied

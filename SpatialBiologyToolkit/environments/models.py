@@ -213,9 +213,12 @@ class CapturePlan(EnvironmentModel):
     schema_version: Literal[1] = 1
     environment_key: str
     conda_name: str
+    managed: bool = True
     candidate_directory: Path
     environment_yml: str
     pip_extras: str
+    lockfile: Path | None = None
+    lock_generation_error: str | None = None
     review_requirements: list[str] = Field(default_factory=list)
     excluded_toolkit: str | None = None
     differences: dict[str, str] = Field(default_factory=dict)

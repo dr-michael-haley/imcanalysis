@@ -108,10 +108,15 @@ class RunControlTests(unittest.TestCase):
             )
             first_args, first_kwargs = runner.calls[0]
             second_args, _ = runner.calls[1]
+            third_args, _ = runner.calls[2]
+            fourth_args, _ = runner.calls[3]
             self.assertIn("--parsable", first_args)
             self.assertIn("--export=ALL", first_args)
             self.assertNotIn("--dependency=afterok:101", first_args)
             self.assertIn("--dependency=afterok:101", second_args)
+            self.assertIn("--dependency=afterok:102:101", third_args)
+            self.assertIn("--dependency=afterok:102", fourth_args)
+            self.assertNotIn("--dependency=afterok:103", fourth_args)
             exported = first_kwargs["env"]
             self.assertEqual(exported["SBT_PROJECT_ROOT"], str(context.root))
             self.assertEqual(
@@ -131,8 +136,32 @@ class RunControlTests(unittest.TestCase):
             self.assertEqual(exported["SBT_STAGE"], "prep")
             self.assertEqual(exported["SBT_ENVIRONMENT_KEY"], "segmentation")
             self.assertEqual(exported["SBT_CONDA_ENV"], "imc_segmentation")
+            self.assertEqual(exported["SBT_CONDA_ENV_SEGMENTATION"], "imc_segmentation")
+
+    def test_submission_uses_all_actual_dependencies_without_chaining_independent_stages(
+        self,
+    ):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context, plan = self._project_and_plan(
+                temp_dir,
+                ["debug", "config", "cox"],
+            )
+            stages = list(plan.resolved_stages)
+            stages[2] = stages[2].model_copy(update={"depends_on": ["debug", "config"]})
+            plan = plan.model_copy(update={"resolved_stages": stages})
+            run = create_run_record(context, plan, command="sbt run debug config cox")
+            runner = FakeSbatchRunner(["701", "702", "703"])
+
+            submitted = submit_run(context, plan, run, runner=runner)
+
             self.assertEqual(
-                exported["SBT_CONDA_ENV_SEGMENTATION"], "imc_segmentation"
+                [job.dependency_job_id for job in submitted.jobs],
+                [None, None, "701:702"],
+            )
+            self.assertNotIn("--dependency=", " ".join(runner.calls[1][0]))
+            self.assertIn(
+                "--dependency=afterok:701:702",
+                runner.calls[2][0],
             )
 
     def test_shared_scientific_config_parser_honors_sbt_config(self):
@@ -216,6 +245,9 @@ class RunControlTests(unittest.TestCase):
     def test_failed_afterok_dependency_marks_pending_stage_blocked(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             context, plan = self._project_and_plan(temp_dir, ["debug", "config"])
+            stages = list(plan.resolved_stages)
+            stages[1] = stages[1].model_copy(update={"depends_on": ["debug"]})
+            plan = plan.model_copy(update={"resolved_stages": stages})
             run = create_run_record(context, plan, command="sbt run debug config")
             submitted = submit_run(
                 context,
@@ -280,6 +312,48 @@ class RunControlTests(unittest.TestCase):
             )
             self.assertEqual(cancelled_report.stages[1].status, "cancelled")
             self.assertEqual(execution_summaries(context)[1].status, "cancelled")
+
+    def test_failed_member_of_multi_job_dependency_marks_stage_blocked(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context, plan = self._project_and_plan(
+                temp_dir,
+                ["debug", "config", "cox"],
+            )
+            stages = list(plan.resolved_stages)
+            stages[2] = stages[2].model_copy(update={"depends_on": ["debug", "config"]})
+            plan = plan.model_copy(update={"resolved_stages": stages})
+            run = create_run_record(context, plan, command="sbt run debug config cox")
+            submitted = submit_run(
+                context,
+                plan,
+                run,
+                runner=FakeSbatchRunner(["711", "712", "713"]),
+            )
+            self.assertEqual(submitted.jobs[2].dependency_job_id, "711:712")
+
+            def status_runner(arguments, **_kwargs):
+                if arguments[0] == "squeue":
+                    return subprocess.CompletedProcess(
+                        arguments,
+                        0,
+                        stdout="713|PENDING|cox|Dependency\n",
+                        stderr="",
+                    )
+                return subprocess.CompletedProcess(
+                    arguments,
+                    0,
+                    stdout=(
+                        "711|COMPLETED|debug|0:0\n"
+                        "712|FAILED|config|1:0\n"
+                        "713|PENDING|cox|0:0\n"
+                    ),
+                    stderr="",
+                )
+
+            report = inspect_run_status(context, run.run_dir, runner=status_runner)
+
+            self.assertEqual(report.stages[2].status, "blocked")
+            self.assertIn("dependency job 712 ended failed", report.stages[2].detail)
 
     def test_logs_resolve_recorded_paths_and_tail_without_tree_scan(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -380,7 +454,9 @@ class RunControlTests(unittest.TestCase):
             manager = FakeEnvironmentManager()
             submitted = SimpleNamespace(jobs=[])
             with (
-                patch("SpatialBiologyToolkit.cli.main._env_manager", return_value=manager),
+                patch(
+                    "SpatialBiologyToolkit.cli.main._env_manager", return_value=manager
+                ),
                 patch(
                     "SpatialBiologyToolkit.cli.main.submit_run",
                     return_value=submitted,
@@ -418,7 +494,9 @@ class RunControlTests(unittest.TestCase):
                 validate=lambda _key: SimpleNamespace(valid=True, issues=[]),
             )
             with (
-                patch("SpatialBiologyToolkit.cli.main._env_manager", return_value=manager),
+                patch(
+                    "SpatialBiologyToolkit.cli.main._env_manager", return_value=manager
+                ),
                 patch("SpatialBiologyToolkit.cli.main.submit_run") as submit_mock,
             ):
                 result = CliRunner().invoke(
@@ -438,7 +516,9 @@ class RunControlTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir) / "project"
             context = initialize_project(root)
-            assets = {asset.role: asset for asset in resolve_assets(context.config, root)}
+            assets = {
+                asset.role: asset for asset in resolve_assets(context.config, root)
+            }
             assets["anndata"].path.write_bytes(b"placeholder")
 
             manager = SimpleNamespace(
@@ -453,7 +533,9 @@ class RunControlTests(unittest.TestCase):
                 ]
             )
             with (
-                patch("SpatialBiologyToolkit.cli.main._env_manager", return_value=manager),
+                patch(
+                    "SpatialBiologyToolkit.cli.main._env_manager", return_value=manager
+                ),
                 patch("SpatialBiologyToolkit.cli.main.submit_run") as submit_mock,
             ):
                 result = CliRunner().invoke(
@@ -495,7 +577,9 @@ class RunControlTests(unittest.TestCase):
                 ),
             )
             with (
-                patch("SpatialBiologyToolkit.cli.main._env_manager", return_value=manager),
+                patch(
+                    "SpatialBiologyToolkit.cli.main._env_manager", return_value=manager
+                ),
                 patch("SpatialBiologyToolkit.cli.main.submit_run") as submit_mock,
             ):
                 result = CliRunner().invoke(
@@ -516,8 +600,7 @@ class RunControlTests(unittest.TestCase):
             root = Path(temp_dir) / "project"
             context = initialize_project(root)
             assets = {
-                asset.role: asset
-                for asset in resolve_assets(context.config, root)
+                asset.role: asset for asset in resolve_assets(context.config, root)
             }
             assets["anndata"].path.parent.mkdir(parents=True, exist_ok=True)
             assets["anndata"].path.write_bytes(b"placeholder")
@@ -563,7 +646,7 @@ class RunControlTests(unittest.TestCase):
                 )
 
             self.assertNotEqual(result.exit_code, 0)
-            self.assertIn("missing required project assets", result.stdout)
+            self.assertIn("missing blocking project assets", result.stdout)
             submit_mock.assert_not_called()
             self.assertEqual(list((root / ".sbt" / "runs").iterdir()), [])
 

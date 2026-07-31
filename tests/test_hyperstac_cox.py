@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
 from pathlib import Path
 
 import pandas as pd
@@ -15,6 +16,16 @@ from SpatialBiologyToolkit.cox_survival import (
     build_multi_source_case_table,
 )
 from SpatialBiologyToolkit.environments.registry import load_environment_registry
+from SpatialBiologyToolkit.pipeline.assets import resolve_assets
+from SpatialBiologyToolkit.pipeline.executions import (
+    execution_output_path,
+    preview_executions,
+    write_execution_index,
+)
+from SpatialBiologyToolkit.pipeline.models import ExecutionIndex
+from SpatialBiologyToolkit.pipeline.planner import build_run_plan
+from SpatialBiologyToolkit.pipeline.manifests import utc_now
+from SpatialBiologyToolkit.pipeline.project import initialize_project
 from SpatialBiologyToolkit.pipeline.registry import MODE_REGISTRY, STAGE_REGISTRY
 
 
@@ -101,7 +112,10 @@ class CoxMultiSourceTests(unittest.TestCase):
             )
         )
         self.assertTrue(
-            all(feature.startswith("clinical__") for feature in table.attrs["clinical_features"])
+            all(
+                feature.startswith("clinical__")
+                for feature in table.attrs["clinical_features"]
+            )
         )
         self.assertEqual(table["event"].tolist(), [True, False])
 
@@ -184,6 +198,10 @@ class HyperstacRegistryTests(unittest.TestCase):
             ["hyperstac-visualise", "cox"],
         )
         self.assertEqual(
+            set(STAGE_REGISTRY["hyperstac-stability"].required_executions),
+            {"hyperstac-visualise", "cox"},
+        )
+        self.assertEqual(
             MODE_REGISTRY["hyperstac"].stages[-2:],
             ["cox", "hyperstac-stability"],
         )
@@ -215,6 +233,69 @@ class HyperstacRegistryTests(unittest.TestCase):
             spec = STAGE_REGISTRY[stage]
             self.assertTrue((root / spec.slurm_script).is_file())
             self.assertTrue((root / spec.documentation_path).is_file())
+
+    def test_stability_requires_direct_managed_reports_not_complete_lineage(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            context = initialize_project(Path(temporary) / "project")
+            assets = {
+                asset.role: asset
+                for asset in resolve_assets(context.config, context.root)
+            }
+            assets["hyperstac_assets"].path.mkdir(parents=True, exist_ok=True)
+            for name in (
+                "imc_hyperstac_representations.h5ad",
+                "imc_hyperstac_patch_metrics.h5ad",
+            ):
+                (assets["hyperstac_assets"].path / name).write_bytes(b"x")
+
+            explicit = build_run_plan(
+                context,
+                ["hyperstac-stability"],
+                dependency_policy="none",
+            )
+            asset_aware = build_run_plan(context, ["hyperstac-stability"])
+
+            self.assertFalse(explicit.ready)
+            self.assertEqual(
+                explicit.resolved_stages[0].missing_executions,
+                ["hyperstac-visualise", "cox"],
+            )
+            self.assertTrue(asset_aware.ready, asset_aware.errors)
+            self.assertEqual(
+                [stage.name for stage in asset_aware.resolved_stages],
+                ["hyperstac-visualise", "cox", "hyperstac-stability"],
+            )
+
+            records = preview_executions(
+                context,
+                ["hyperstac-visualise", "cox"],
+                workflow_run_id="prior-managed-reports",
+            )
+            write_execution_index(
+                context,
+                ExecutionIndex(
+                    project_id=context.project_metadata.project_id,
+                    updated_at=utc_now(),
+                    executions=records,
+                ),
+            )
+            required_folders = (
+                (records[0], "files/hyperstac_visualisation"),
+                (records[1], "files/cox"),
+            )
+            for record, relative in required_folders:
+                (execution_output_path(context, record) / relative).mkdir(
+                    parents=True,
+                    exist_ok=True,
+                )
+
+            reuse = build_run_plan(context, ["hyperstac-stability"])
+
+            self.assertTrue(reuse.ready, reuse.errors)
+            self.assertEqual(
+                [stage.name for stage in reuse.resolved_stages],
+                ["hyperstac-stability"],
+            )
 
     def test_hyperstac_docs_reference_only_the_preprint_manuscript(self):
         root = Path(__file__).resolve().parents[1]

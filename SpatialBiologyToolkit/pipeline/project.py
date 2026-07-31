@@ -11,6 +11,7 @@ from typing import Iterable
 from SpatialBiologyToolkit.config import PipelineConfig, load_config
 
 from .assets import (
+    asset_is_ready,
     asset_map,
     count_raw_imc_files,
     inventory_assets,
@@ -352,24 +353,64 @@ def _required_file_paths(
 def stage_readiness(
     stage: StageSpec,
     assets: Iterable[ProjectAsset],
+    *,
+    context: ProjectContext | None = None,
 ) -> tuple[bool, list[str]]:
     mapped = asset_map(assets)
     messages: list[str] = []
     for role in stage.requires_assets:
         asset = mapped.get(role)
-        if asset is None or not asset.exists:
+        if asset is None or not asset_is_ready(asset):
             messages.append(f"Required asset '{role}' is missing.")
             continue
-        if asset.kind == "directory" and not asset.file_count:
-            messages.append(f"Required asset '{role}' exists but is empty.")
-        if role == "raw_imc_files" and count_raw_imc_files(asset.path) == 0:
-            messages.append(
-                "Raw IMC folder contains no recognized .mcd or .txt input files."
-            )
     for path in _required_file_paths(stage, mapped):
         if not path.is_file():
             messages.append(f"Required file is missing: {path}")
-    return not messages, messages
+    for required_stage, relative_paths in stage.required_executions.items():
+        if context is None or not execution_requirement_is_ready(
+            context,
+            required_stage,
+            relative_paths,
+        ):
+            messages.append(
+                f"Required managed execution '{required_stage}' is missing or incomplete."
+            )
+    for role in stage.advisory_assets:
+        asset = mapped.get(role)
+        if asset is None or not asset_is_ready(asset):
+            messages.append(
+                f"Advisory asset '{role}' is absent; this does not block the stage."
+            )
+    blocking = [message for message in messages if not message.startswith("Advisory")]
+    return not blocking, messages
+
+
+def execution_requirement_is_ready(
+    context: ProjectContext,
+    stage_name: str,
+    relative_paths: Iterable[str],
+) -> bool:
+    """Return whether a reusable managed execution satisfies a direct contract."""
+
+    from .executions import execution_output_path, load_execution_index
+
+    try:
+        records = load_execution_index(context, require_exists=True).executions
+    except (OSError, ValueError):
+        return False
+    required = tuple(relative_paths)
+    for record in reversed(records):
+        if record.stage != stage_name or record.status in {
+            "failed",
+            "cancelled",
+            "blocked",
+        }:
+            continue
+        output = execution_output_path(context, record)
+        paths = [output / relative for relative in required]
+        if output.is_dir() and all(path.exists() for path in paths):
+            return True
+    return False
 
 
 def validate_project(
@@ -406,19 +447,22 @@ def validate_project(
                 else "Run storage is missing; re-run project adoption or initialization."
             ),
         ),
-        ValidationItem(
-            name="raw IMC folder",
-            path=raw_asset.path,
-            status="ok" if raw_asset.exists else "missing",
-            message=(
-                f"{raw_count} recognized MCD/TXT input file(s)."
-                if raw_asset.exists
-                else "Configured raw IMC folder does not exist."
-            ),
-        ),
     ]
 
     optional = [
+        ValidationItem(
+            name="raw IMC source",
+            path=raw_asset.path,
+            status="ok" if raw_count else "warning",
+            message=(
+                f"{raw_count} recognized MCD/TXT input file(s)."
+                if raw_count
+                else (
+                    "No raw MCD/TXT inputs are present. This is valid for adopted "
+                    "or downstream-only projects; the prep stage itself is not ready."
+                )
+            ),
+        ),
         ValidationItem(
             name="metadata folder",
             path=metadata_asset.path,
@@ -475,7 +519,7 @@ def validate_project(
     stage_results: dict[str, bool] = {}
     readiness_messages: dict[str, list[str]] = {}
     for stage in stages:
-        ready, messages = stage_readiness(stage, assets)
+        ready, messages = stage_readiness(stage, assets, context=context)
         stage_results[stage.name] = ready
         readiness_messages[stage.name] = messages
 
@@ -534,6 +578,7 @@ __all__ = [
     "initialize_project",
     "load_project",
     "stage_readiness",
+    "execution_requirement_is_ready",
     "validate_project",
     "write_config_template",
 ]

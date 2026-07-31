@@ -74,9 +74,9 @@ def sbt_environment(
             environment_keys[0]
         ].conda_name
         for environment_key in environment_keys:
-            variable = "SBT_CONDA_ENV_" + re.sub(
-                r"[^A-Za-z0-9]", "_", environment_key
-            ).upper()
+            variable = (
+                "SBT_CONDA_ENV_" + re.sub(r"[^A-Za-z0-9]", "_", environment_key).upper()
+            )
             environment[variable] = environment_registry.environments[
                 environment_key
             ].conda_name
@@ -167,9 +167,14 @@ def preview_submission_commands(
     run: RunRecord,
 ) -> list[tuple[list[str], dict[str, str]]]:
     previews: list[tuple[list[str], dict[str, str]]] = []
-    previous = None
+    preview_job_ids: dict[str, str] = {}
     for index, stage in enumerate(plan.resolved_stages, start=1):
         fake_job_id = f"DRYRUN{index}"
+        dependency_ids = [
+            preview_job_ids[name]
+            for name in stage.depends_on
+            if name in preview_job_ids
+        ]
         previews.append(
             (
                 build_sbatch_command(
@@ -177,12 +182,12 @@ def preview_submission_commands(
                     run=run,
                     stage_name=stage.name,
                     script=stage.slurm_script,
-                    dependency_job_id=previous,
+                    dependency_job_id=":".join(dependency_ids) or None,
                 ),
                 sbt_environment(context, run, stage.name),
             )
         )
-        previous = fake_job_id
+        preview_job_ids[stage.name] = fake_job_id
     return previews
 
 
@@ -200,16 +205,22 @@ def submit_run(
         run_id=run.workflow_run_id,
         workflow_run_id=run.workflow_run_id,
     )
-    previous_job_id: str | None = None
+    submitted_job_ids: dict[str, str] = {}
     for stage in plan.resolved_stages:
         execution = run.execution_for_stage(stage.name)
         exported = sbt_environment(context, run, stage.name)
+        dependency_ids = [
+            submitted_job_ids[name]
+            for name in stage.depends_on
+            if name in submitted_job_ids
+        ]
+        dependency_job_id = ":".join(dependency_ids) or None
         command = build_sbatch_command(
             context=context,
             run=run,
             stage_name=stage.name,
             script=stage.slurm_script,
-            dependency_job_id=previous_job_id,
+            dependency_job_id=dependency_job_id,
         )
         process_environment = os.environ.copy()
         process_environment.update(exported)
@@ -238,7 +249,7 @@ def submit_run(
                     execution_id=execution.execution_id,
                     technical_run_id=execution.technical_run_id,
                     state="submission_failed",
-                    dependency_job_id=previous_job_id,
+                    dependency_job_id=dependency_job_id,
                     submitted_at=utc_now(),
                     command=command,
                     exported_environment=exported,
@@ -283,7 +294,7 @@ def submit_run(
                 technical_run_id=execution.technical_run_id,
                 state="submitted",
                 job_id=job_id,
-                dependency_job_id=previous_job_id,
+                dependency_job_id=dependency_job_id,
                 submitted_at=utc_now(),
                 command=command,
                 exported_environment=exported,
@@ -301,7 +312,7 @@ def submit_run(
 
         prepare_execution_output(context, run, updated_execution)
         _write_submission_state(context, run, submitted, overall_status="submitted")
-        previous_job_id = job_id
+        submitted_job_ids[stage.name] = job_id
 
     submitted.submission_complete = True
     _write_submission_state(context, run, submitted, overall_status="submitted")

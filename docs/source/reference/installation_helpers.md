@@ -45,6 +45,12 @@ duplicate lines. It does not install the `sbt` launcher or create scientific
 Conda environments. Its main purpose is to expose the legacy `cds`, `pl`,
 `pll`, and `pls` helpers.
 
+The same file can contain the SBT-managed `SBT_PROJECTS_JSON` block used by
+`sbt project register` and the Project Console. Registry updates preserve the
+installer's credential exports, comments, unrelated shell settings, and file
+mode; the file is parsed as data and is not sourced by SBT. Do not store a copy
+inside the Git checkout.
+
 Because the script edits several shell startup files and prompts for sensitive
 values, inspect it before use. Credentials must never be stored in the Git
 checkout or committed.

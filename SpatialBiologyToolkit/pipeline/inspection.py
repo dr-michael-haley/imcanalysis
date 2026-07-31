@@ -27,6 +27,7 @@ from .executions import (
 from .logs import resolve_run_logs, tail_text
 from .manifests import read_model
 from .models import (
+    DependencyPolicy,
     ExecutionRecord,
     ExecutionSummary,
     ProjectAsset,
@@ -41,9 +42,15 @@ from .planner import build_run_plan
 from .project import (
     PROJECT_MARKER,
     ProjectContext,
+    ProjectNotFoundError,
     discover_project_root,
     load_project,
     validate_project,
+)
+from .project_registry import (
+    default_registered_project,
+    load_project_registry,
+    registered_project_statuses,
 )
 from .registry import STAGES, toolkit_root
 from .runs import RESOLVED_CONFIG, STATUS_FILE, load_run_manifest, resolve_run_directory
@@ -115,11 +122,28 @@ def _configured_path(root: Path, metadata: ProjectMetadata) -> Path:
 def open_project_console(project: str | Path | None = None) -> ProjectOpenResult:
     """Open an existing project, falling back to config recovery mode."""
 
-    root = (
-        Path(project).expanduser().resolve(strict=False)
-        if project is not None
-        else discover_project_root()
-    )
+    if project is not None:
+        root = Path(project).expanduser().resolve(strict=False)
+    else:
+        try:
+            root = discover_project_root()
+        except ProjectNotFoundError as discovery_error:
+            registry = load_project_registry()
+            statuses = registered_project_statuses(registry)
+            available = {
+                status.project.project_id: status.project
+                for status in statuses
+                if status.available
+            }
+            preferred = default_registered_project(registry)
+            selected = (
+                available.get(preferred.project_id) if preferred is not None else None
+            )
+            if selected is None:
+                selected = next(iter(available.values()), None)
+            if selected is None:
+                raise discovery_error
+            root = selected.path
     marker = root / PROJECT_MARKER
     if not marker.is_file():
         raise FileNotFoundError(
@@ -222,10 +246,16 @@ def inspect_project(context: ProjectContext) -> ProjectSnapshot:
 def inspect_readiness(
     context: ProjectContext,
     targets: Iterable[str],
+    *,
+    dependency_policy: DependencyPolicy = "assets",
 ) -> RunPlan:
     """Return backend-neutral readiness without creating run records."""
 
-    return build_run_plan(context, targets)
+    return build_run_plan(
+        context,
+        targets,
+        dependency_policy=dependency_policy,
+    )
 
 
 def stage_documentation(stage: StageSpec) -> str:

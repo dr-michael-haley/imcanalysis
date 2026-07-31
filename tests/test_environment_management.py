@@ -351,6 +351,55 @@ class CaptureAndProvenanceTests(EnvironmentFixture):
         self.assertIsNotNone(plan.excluded_toolkit)
         self.assertTrue((plan.candidate_directory / "conda-linux-64.lock").is_file())
 
+    def test_external_capture_creates_observational_bundle_but_refuses_write(self):
+        registry = yaml.safe_load(self.registry_path.read_text(encoding="utf-8"))
+        registry["environments"]["test"]["managed"] = False
+        registry["environments"]["test"].pop("specification_directory")
+        self.registry_path.write_text(
+            yaml.safe_dump(registry, sort_keys=False), encoding="utf-8"
+        )
+        manager, _ = self.manager()
+
+        plan = manager.capture("test")
+
+        self.assertFalse(plan.managed)
+        self.assertTrue((plan.candidate_directory / "environment.yml").is_file())
+        self.assertTrue((plan.candidate_directory / "pip-extras.txt").is_file())
+        self.assertTrue(
+            (plan.candidate_directory / "environment.snapshot.json").is_file()
+        )
+        self.assertTrue((plan.candidate_directory / "capture-plan.json").is_file())
+        self.assertTrue((plan.candidate_directory / "conda-linux-64.lock").is_file())
+        self.assertIsNone(plan.lock_generation_error)
+        self.assertEqual(
+            plan.differences["environment.yml"],
+            "no repository specification to compare",
+        )
+        with self.assertRaisesRegex(ValueError, "without --write"):
+            manager.capture("test", write=True)
+
+    def test_external_capture_retains_inventory_when_candidate_lock_fails(self):
+        registry = yaml.safe_load(self.registry_path.read_text(encoding="utf-8"))
+        registry["environments"]["test"]["managed"] = False
+        registry["environments"]["test"].pop("specification_directory")
+        self.registry_path.write_text(
+            yaml.safe_dump(registry, sort_keys=False), encoding="utf-8"
+        )
+        manager, _ = self.manager()
+
+        def fail_lock(*args, **kwargs):
+            raise RuntimeError("solver conflict")
+
+        manager._generate_lock = fail_lock  # type: ignore[method-assign]
+        plan = manager.capture("test")
+
+        self.assertIsNone(plan.lockfile)
+        self.assertEqual(plan.lock_generation_error, "solver conflict")
+        self.assertTrue(
+            (plan.candidate_directory / "environment.snapshot.json").is_file()
+        )
+        self.assertIn("generation failed", plan.differences["conda-linux-64.lock"])
+
     def test_lock_check_does_not_replace_committed_lock(self):
         manager, _ = self.manager()
         lock = self.root / "HPC_env_files" / "test_env" / "conda-linux-64.lock"

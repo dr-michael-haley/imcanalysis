@@ -204,18 +204,10 @@ STAGE_MODULES: dict[str, tuple[str, ...]] = {
     "nimbus": ("SpatialBiologyToolkit.scripts.segmentation_nimbus",),
     "bint": ("SpatialBiologyToolkit.scripts.basic_process_batch_integration",),
     "rapids": ("SpatialBiologyToolkit.scripts.basic_process_rapids",),
-    "cellvision-extract": (
-        "SpatialBiologyToolkit.scripts.cellvision_extract",
-    ),
-    "cellvision-embed": (
-        "SpatialBiologyToolkit.scripts.cellvision_embed",
-    ),
-    "cellvision-cluster": (
-        "SpatialBiologyToolkit.scripts.cellvision_cluster",
-    ),
-    "cellvision-plot": (
-        "SpatialBiologyToolkit.scripts.cellvision_plot",
-    ),
+    "cellvision-extract": ("SpatialBiologyToolkit.scripts.cellvision_extract",),
+    "cellvision-embed": ("SpatialBiologyToolkit.scripts.cellvision_embed",),
+    "cellvision-cluster": ("SpatialBiologyToolkit.scripts.cellvision_cluster",),
+    "cellvision-plot": ("SpatialBiologyToolkit.scripts.cellvision_plot",),
     "cellvision-full": (
         "SpatialBiologyToolkit.scripts.cellvision_extract",
         "SpatialBiologyToolkit.scripts.cellvision_embed",
@@ -244,23 +236,13 @@ STAGE_MODULES: dict[str, tuple[str, ...]] = {
     "slogs": ("SpatialBiologyToolkit.scripts.slurmlogs",),
     "rebuildmeta": ("SpatialBiologyToolkit.scripts.rebuild_metadata",),
     "popqc": ("SpatialBiologyToolkit.scripts.population_embedding_qc",),
-    "hyperstac-preprocess": (
-        "SpatialBiologyToolkit.scripts.hyperstac_preprocess",
-    ),
+    "hyperstac-preprocess": ("SpatialBiologyToolkit.scripts.hyperstac_preprocess",),
     "hyperstac-model": ("SpatialBiologyToolkit.scripts.hyperstac_model",),
-    "hyperstac-permutation": (
-        "SpatialBiologyToolkit.scripts.hyperstac_permutation",
-    ),
-    "hyperstac-visualise": (
-        "SpatialBiologyToolkit.scripts.hyperstac_visualise",
-    ),
+    "hyperstac-permutation": ("SpatialBiologyToolkit.scripts.hyperstac_permutation",),
+    "hyperstac-visualise": ("SpatialBiologyToolkit.scripts.hyperstac_visualise",),
     "cox": ("SpatialBiologyToolkit.scripts.cox_survival",),
-    "hyperstac-stability": (
-        "SpatialBiologyToolkit.scripts.hyperstac_stability",
-    ),
-    "hyperstac-full": (
-        "SpatialBiologyToolkit.scripts.hyperstac_full",
-    ),
+    "hyperstac-stability": ("SpatialBiologyToolkit.scripts.hyperstac_stability",),
+    "hyperstac-full": ("SpatialBiologyToolkit.scripts.hyperstac_full",),
     "cellfeat": ("SpatialBiologyToolkit.scripts.cell_features",),
     "maxfuse": ("SpatialBiologyToolkit.scripts.maxfuse_matching",),
     "spatialdata": ("SpatialBiologyToolkit.scripts.spatialdata_builder",),
@@ -308,6 +290,36 @@ STAGE_CONFIG_SECTIONS: dict[str, tuple[str, ...]] = {
     "spatialdata": ("general", "spatialdata"),
 }
 
+# Non-blocking context that is common in a conventional end-to-end project but
+# is not required by the scientific stage itself. These roles are deliberately
+# advisory so imported or externally curated AnnData remains first-class.
+STAGE_ADVISORY_ASSETS: dict[str, tuple[str, ...]] = {
+    name: ("metadata",)
+    for name in (
+        "vis",
+        "bint",
+        "rapids",
+        "bbn",
+        "subcl",
+        "cchar",
+        "starling",
+        "aiinter",
+        "reint",
+        "pairsp",
+        "nxsp",
+        "remap",
+        "slogs",
+        "popqc",
+        "maxfuse",
+    )
+}
+STAGE_ADVISORY_ASSETS.update(
+    {
+        "scport": ("anndata",),
+        "cellfeat": ("anndata",),
+    }
+)
+
 
 def _stage(
     name: str,
@@ -319,6 +331,7 @@ def _stage(
     requires: tuple[str, ...] = (),
     produces: tuple[str, ...] = (),
     required_files: dict[str, list[str]] | None = None,
+    required_executions: dict[str, list[str]] | None = None,
     outputs: tuple[str, ...] = (),
     notes: tuple[str, ...] = (),
 ) -> StageSpec:
@@ -337,8 +350,10 @@ def _stage(
         depends_on=list(depends_on),
         groups=list(groups),
         requires_assets=list(requires),
+        advisory_assets=list(STAGE_ADVISORY_ASSETS.get(name, ())),
         produces_assets=list(produces),
         required_files=required_files or {},
+        required_executions=required_executions or {},
         expected_outputs=list(outputs),
         log_patterns=[
             f"{{run_dir}}/logs/{name}_%j.out",
@@ -440,10 +455,10 @@ STAGES: tuple[StageSpec, ...] = (
         groups=("cellvision",),
         requires=("anndata", "cellvision_assets"),
         produces=("cellvision_assets",),
-        required_files={
-            "cellvision_assets": ["cellvision_embeddings.h5ad"]
-        },
-        outputs=("Joint morphology/intensity graph, RAPIDS UMAP/Leiden CellVision AnnData",),
+        required_files={"cellvision_assets": ["cellvision_embeddings.h5ad"]},
+        outputs=(
+            "Joint morphology/intensity graph, RAPIDS UMAP/Leiden CellVision AnnData",
+        ),
     ),
     _stage(
         "cellvision-plot",
@@ -459,7 +474,9 @@ STAGES: tuple[StageSpec, ...] = (
                 "cellvision_clustered.h5ad",
             ]
         },
-        outputs=("UMAP, explanation-QC, confusion, projection, and cell-gallery report",),
+        outputs=(
+            "UMAP, explanation-QC, confusion, projection, and cell-gallery report",
+        ),
     ),
     _stage(
         "cellvision-full",
@@ -705,7 +722,10 @@ STAGES: tuple[StageSpec, ...] = (
                 "model/encoder.weights.h5",
             ]
         },
-        outputs=("Permutation sensitivity AnnData", "condition and patch sensitivity tables"),
+        outputs=(
+            "Permutation sensitivity AnnData",
+            "condition and patch sensitivity tables",
+        ),
     ),
     _stage(
         "hyperstac-visualise",
@@ -727,7 +747,7 @@ STAGES: tuple[StageSpec, ...] = (
             "optional spatial maps and perturbation overlays",
         ),
         notes=(
-            "Use --no-deps to regenerate reports from already validated HyPERSTAC assets.",
+            "Existing validated HyPERSTAC assets allow this report stage to run without scheduling its conventional producer.",
         ),
     ),
     _stage(
@@ -753,6 +773,10 @@ STAGES: tuple[StageSpec, ...] = (
         depends_on=("hyperstac-visualise", "cox"),
         groups=("hyperstac",),
         requires=("hyperstac_assets",),
+        required_executions={
+            "hyperstac-visualise": ["files/hyperstac_visualisation"],
+            "cox": ["files/cox"],
+        },
         produces=("human_outputs",),
         outputs=(
             "Cross-Leiden environment and marker stability tables",
@@ -760,7 +784,7 @@ STAGES: tuple[StageSpec, ...] = (
             "per-clustering HTML reports",
         ),
         notes=(
-            "Use --no-deps to rebuild stability from existing managed HyPERSTAC visualisation and Cox executions.",
+            "Existing managed HyPERSTAC visualisation and Cox assets allow this stage to run without scheduling their conventional producers.",
         ),
     ),
     _stage(
@@ -946,7 +970,9 @@ def get_mode(name: str) -> ModeSpec:
 
 def resolve_stage_selector(value: str) -> StageSpec:
     """Resolve an alias, output slug, or display name to one stage type."""
-    normalized = "".join(character for character in value.lower() if character.isalnum())
+    normalized = "".join(
+        character for character in value.lower() if character.isalnum()
+    )
     matches = [
         stage
         for stage in STAGES

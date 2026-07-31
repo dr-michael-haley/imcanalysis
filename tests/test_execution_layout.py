@@ -142,15 +142,13 @@ class ExecutionLayoutTests(unittest.TestCase):
             )
             self.assertEqual(
                 [job.dependency_job_id for job in submitted.jobs],
-                [None, "401"],
+                [None, None],
             )
             self.assertEqual(
                 {item.workflow_run_id for item in run.executions},
                 {run.workflow_run_id},
             )
-            self.assertEqual(
-                len({item.technical_run_id for item in run.executions}), 2
-            )
+            self.assertEqual(len({item.technical_run_id for item in run.executions}), 2)
             self.assertNotIn("401", {item.technical_run_id for item in run.executions})
 
     def test_partial_submission_retains_failed_and_blocked_execution_records(self):
@@ -265,10 +263,14 @@ class ExecutionLayoutTests(unittest.TestCase):
             self.assertEqual(manifest.technical_run_id, second.technical_run_id)
             self.assertTrue(first_run.run_dir.is_dir())
             self.assertTrue(second_run.run_dir.is_dir())
-            self.assertFalse((context.root / "outputs" / "001_Environment_Diagnostics").exists())
+            self.assertFalse(
+                (context.root / "outputs" / "001_Environment_Diagnostics").exists()
+            )
             audits = list((context.root / ".sbt" / "audit" / "removals").glob("*.yaml"))
             self.assertEqual(len(audits), 1)
-            self.assertEqual(read_yaml(audits[0])["renumbered"][0]["new_execution_id"], 1)
+            self.assertEqual(
+                read_yaml(audits[0])["renumbered"][0]["new_execution_id"], 1
+            )
             summary = CliRunner().invoke(
                 app, ["summary", "--project", str(context.root)]
             )
@@ -341,7 +343,10 @@ class ExecutionLayoutTests(unittest.TestCase):
                 workflow_run_id=workflow_id,
             )
             update_execution(
-                context, prep.technical_run_id, status="completed", asset_effect="created"
+                context,
+                prep.technical_run_id,
+                status="completed",
+                asset_effect="created",
             )
             update_execution(context, denoise.technical_run_id, status="completed")
 
@@ -430,7 +435,9 @@ class ExecutionLayoutTests(unittest.TestCase):
                 status="completed",
                 asset_effect="created",
             )
-            masks = asset_map(resolve_assets(context.config, context.root))["masks"].path
+            masks = asset_map(resolve_assets(context.config, context.root))[
+                "masks"
+            ].path
             masks.mkdir(parents=True)
             created = masks / "mask.tiff"
             created.write_bytes(b"mask")

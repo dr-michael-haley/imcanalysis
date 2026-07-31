@@ -1079,8 +1079,12 @@ class EnvironmentManager:
         verbose: bool = False,
     ) -> CapturePlan:
         key, definition = self.resolve(selector)
-        if not definition.managed:
-            raise ValueError(f"Environment {key!r} is externally managed.")
+        if write and not definition.managed:
+            raise ValueError(
+                f"Environment {key!r} is externally managed; capture it without --write "
+                "to create an observational compatibility bundle. Promote it to a "
+                "repository-managed specification before writing repository files."
+            )
         if not self.conda:
             raise RuntimeError("Conda executable was not found on PATH.")
         if definition.conda_name not in self._environment_inventory():
@@ -1157,37 +1161,67 @@ class EnvironmentManager:
             capture_directory / "environment.snapshot.json",
             snapshot.model_dump_json(indent=2) + "\n",
         )
+        lock_generation_error: str | None = None
         try:
             self._generate_lock(
                 candidate_yml, candidate_lock, definition.platform, verbose=verbose
             )
         except RuntimeError as exc:
-            raise RuntimeError(
-                f"Lock generation failed; candidates retained in {capture_directory}: {exc}"
-            ) from exc
+            if definition.managed:
+                raise RuntimeError(
+                    f"Lock generation failed; candidates retained in {capture_directory}: {exc}"
+                ) from exc
+            lock_generation_error = str(exc)
         paths = self.paths(key, definition)
-        assert paths.environment_yml and paths.pip_extras and paths.lockfile and paths.observed_snapshot
-        differences = {
-            "environment.yml": self._diff_file(paths.environment_yml, environment_text),
-            "pip-extras.txt": self._diff_file(paths.pip_extras, pip_text),
-            paths.lockfile.name: (
+        differences: dict[str, str] = {}
+        if paths.environment_yml:
+            differences["environment.yml"] = self._diff_file(
+                paths.environment_yml, environment_text
+            )
+        else:
+            differences["environment.yml"] = "no repository specification to compare"
+        if paths.pip_extras:
+            differences["pip-extras.txt"] = self._diff_file(
+                paths.pip_extras, pip_text
+            )
+        else:
+            differences["pip-extras.txt"] = "no repository specification to compare"
+        lock_name = candidate_lock.name
+        if lock_generation_error:
+            differences[lock_name] = (
+                "candidate lock generation failed; exact installed packages remain in "
+                "environment.snapshot.json"
+            )
+        elif paths.lockfile and paths.lockfile.is_file():
+            differences[lock_name] = (
                 "unchanged"
-                if paths.lockfile.is_file()
-                and paths.lockfile.read_bytes() == candidate_lock.read_bytes()
+                if paths.lockfile.read_bytes() == candidate_lock.read_bytes()
                 else "generated lockfile differs"
-            ),
-        }
+            )
+        else:
+            differences[lock_name] = "no repository lock to compare; candidate generated"
         plan = CapturePlan(
             environment_key=key,
             conda_name=definition.conda_name,
+            managed=definition.managed,
             candidate_directory=capture_directory,
             environment_yml=environment_text,
             pip_extras=pip_text,
+            lockfile=candidate_lock if candidate_lock.is_file() else None,
+            lock_generation_error=lock_generation_error,
             review_requirements=sorted(set(review), key=str.casefold),
             excluded_toolkit=excluded_toolkit,
             differences=differences,
         )
+        atomic_write_text(
+            capture_directory / "capture-plan.json",
+            plan.model_dump_json(indent=2) + "\n",
+        )
         if write:
+            assert paths.environment_yml
+            assert paths.pip_extras
+            assert paths.lockfile
+            assert paths.observed_snapshot
             if plan.review_requirements:
                 raise RuntimeError(
                     "Capture contains local/editable/VCS requirements requiring manual review; "

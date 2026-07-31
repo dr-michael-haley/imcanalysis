@@ -10,6 +10,29 @@ Python stage registry and the metadata in each wrapper. Documentation checks
 also verify that the legacy `SLURM_scripts/pipeline.conf` mapping remains an
 exact compatibility mirror.
 
+## Readiness is asset-based
+
+The suggested order below is conventional provenance, not a universal gate.
+Each stage has its own direct blocking assets. If those assets already exist at
+the configured paths, SBT can plan that stage without requiring evidence that
+all earlier stages ran. This is important for adopted projects, external masks,
+and AnnData received from collaborators.
+
+SBT still reports skipped conventional lineage and missing advisory context as
+warnings. The default `assets` dependency policy adds an upstream producer only
+when a direct blocking asset is absent. Use `--dependency-policy all` to force a
+complete conventional rerun, or `--dependency-policy none` for only explicitly
+selected stages. In every policy, missing blocking assets remain errors.
+
+For example, this can be ready with only a configured AnnData file:
+
+```bash
+sbt plan rapids --project /path/to/adopted-project
+```
+
+Raw MCD inputs are required by `prep`, but are not a global requirement for the
+project or for AnnData-only downstream stages.
+
 ## Suggested run order
 
 The normal Nimbus workflow is:
@@ -66,7 +89,7 @@ List every registered stage and its wrapper metadata:
 sbt stages list
 ```
 
-Preview a dependency chain without submitting jobs:
+Preview an asset-aware plan without submitting jobs:
 
 ```bash
 sbt run segmentation --dry-run

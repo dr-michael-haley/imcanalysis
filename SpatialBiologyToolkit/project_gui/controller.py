@@ -18,12 +18,23 @@ from SpatialBiologyToolkit.pipeline.inspection import (
     stage_documentation,
 )
 from SpatialBiologyToolkit.pipeline.models import (
+    DependencyPolicy,
     ExecutionSummary,
     ModeSpec,
+    ProjectRegistry,
+    RegisteredProject,
     RunPlan,
     StageSpec,
 )
 from SpatialBiologyToolkit.pipeline.notes import ProjectNotesSession
+from SpatialBiologyToolkit.pipeline.project_registry import (
+    RegisteredProjectStatus,
+    load_project_registry,
+    register_project,
+    registered_project_statuses,
+    set_default_project,
+    unregister_project,
+)
 from SpatialBiologyToolkit.pipeline.registry import MODES, STAGES, get_mode, get_stage
 
 
@@ -115,8 +126,58 @@ class ProjectConsoleController:
             return sections
         return set()
 
-    def readiness(self, target: str) -> RunPlan:
-        return inspect_readiness(self.effective_context(), [target])
+    def readiness(
+        self,
+        target: str,
+        *,
+        dependency_policy: DependencyPolicy = "assets",
+    ) -> RunPlan:
+        return inspect_readiness(
+            self.effective_context(),
+            [target],
+            dependency_policy=dependency_policy,
+        )
+
+    def project_registry(self) -> ProjectRegistry:
+        return load_project_registry()
+
+    def registered_projects(self) -> list[RegisteredProjectStatus]:
+        return registered_project_statuses(self.project_registry())
+
+    def register_current(
+        self,
+        *,
+        name: str | None = None,
+        make_default: bool = False,
+    ) -> RegisteredProject:
+        _registry, registered = register_project(
+            self.opened.root,
+            name=name,
+            make_default=make_default,
+        )
+        return registered
+
+    def register_path(
+        self,
+        project: str | Path,
+        *,
+        name: str | None = None,
+        make_default: bool = False,
+    ) -> RegisteredProject:
+        _registry, registered = register_project(
+            project,
+            name=name,
+            make_default=make_default,
+        )
+        return registered
+
+    def unregister(self, reference: str | Path) -> RegisteredProject:
+        _registry, removed = unregister_project(reference)
+        return removed
+
+    def set_default(self, reference: str | Path) -> RegisteredProject:
+        _registry, selected = set_default_project(reference)
+        return selected
 
     def executions(self) -> tuple[ExecutionSummary, ...]:
         return self.snapshot.executions if self.snapshot else ()

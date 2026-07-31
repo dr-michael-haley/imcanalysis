@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QSplitter,
     QStackedWidget,
@@ -74,6 +75,15 @@ def _markdown_browser() -> QTextBrowser:
     return browser
 
 
+def _page_title(text: str) -> QLabel:
+    """Return a compact heading that never consumes page stretch."""
+
+    label = QLabel(f"<h1>{text}</h1>")
+    label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    return label
+
+
 def _format_value(value: Any) -> str:
     if value is None:
         return "null"
@@ -113,13 +123,218 @@ class DiffDialog(QDialog):
         layout.addWidget(buttons)
 
 
+class ProjectsPage(QWidget):
+    """Central cockpit for projects registered in the user's .imc_config."""
+
+    HEADERS = ["Default", "Project", "Status", "Path", "Issue"]
+
+    def __init__(
+        self,
+        controller: ProjectConsoleController,
+        open_project: Callable[[Path], None],
+        registry_changed: Callable[[], None],
+    ):
+        super().__init__()
+        self.controller = controller
+        self.open_project = open_project
+        self.registry_changed = registry_changed
+        layout = QVBoxLayout(self)
+        layout.addWidget(_page_title("IMC project cockpit"))
+        introduction = QLabel(
+            "Projects are registered centrally in ~/.imc_config. Switching only "
+            "changes the project being viewed; it never submits or controls jobs."
+        )
+        introduction.setWordWrap(True)
+        layout.addWidget(introduction)
+        self.table = QTableWidget()
+        self.table.setColumnCount(len(self.HEADERS))
+        self.table.setHorizontalHeaderLabels(self.HEADERS)
+        self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.doubleClicked.connect(self.open_selected)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.table, 1)
+        controls = QHBoxLayout()
+        open_button = QPushButton("Open selected")
+        open_button.clicked.connect(self.open_selected)
+        browse_button = QPushButton("Browse and register…")
+        browse_button.clicked.connect(self.browse_and_register)
+        register_button = QPushButton("Register current")
+        register_button.clicked.connect(self.register_current)
+        default_button = QPushButton("Set selected as default")
+        default_button.clicked.connect(self.make_default)
+        forget_button = QPushButton("Forget selected")
+        forget_button.clicked.connect(self.forget_selected)
+        for button in (
+            browse_button,
+            register_button,
+            default_button,
+            forget_button,
+        ):
+            button.setEnabled(not controller.read_only)
+        refresh_button = QPushButton("Refresh")
+        refresh_button.clicked.connect(self.refresh)
+        for button in (
+            open_button,
+            browse_button,
+            register_button,
+            default_button,
+            forget_button,
+            refresh_button,
+        ):
+            controls.addWidget(button)
+        controls.addStretch()
+        layout.addLayout(controls)
+        self.status = QLabel("")
+        layout.addWidget(self.status)
+        self.refresh()
+
+    def _selection(self) -> tuple[Path, str | None] | None:
+        row = self.table.currentRow()
+        if row < 0:
+            return None
+        item = self.table.item(row, 1)
+        if item is None:
+            return None
+        path = item.data(Qt.ItemDataRole.UserRole)
+        project_id = item.data(Qt.ItemDataRole.UserRole + 1)
+        return Path(str(path)), str(project_id) if project_id else None
+
+    def refresh(self) -> None:
+        try:
+            registry = self.controller.project_registry()
+            statuses = self.controller.registered_projects()
+        except Exception as exc:  # noqa: BLE001 - display registry parse failures
+            self.table.setRowCount(0)
+            self.status.setText(str(exc))
+            return
+        rows = list(statuses)
+        registered_paths = {item.project.path for item in rows}
+        current_unregistered = self.controller.opened.root not in registered_paths
+        self.table.setRowCount(len(rows) + int(current_unregistered))
+        current_row = 0
+        for row, status in enumerate(rows):
+            project = status.project
+            values = [
+                "yes" if registry.default_project_id == project.project_id else "",
+                project.name,
+                "available" if status.available else "unavailable",
+                str(project.path),
+                status.issue or "",
+            ]
+            for column, value in enumerate(values):
+                cell = QTableWidgetItem(value)
+                if column == 1:
+                    cell.setData(Qt.ItemDataRole.UserRole, str(project.path))
+                    cell.setData(Qt.ItemDataRole.UserRole + 1, project.project_id)
+                self.table.setItem(row, column, cell)
+            if project.path == self.controller.opened.root:
+                current_row = row
+        if current_unregistered:
+            row = len(rows)
+            values = [
+                "",
+                self.controller.opened.metadata.title
+                or self.controller.opened.root.name,
+                "current; not registered",
+                str(self.controller.opened.root),
+                "Use Register current to add it to this cockpit.",
+            ]
+            for column, value in enumerate(values):
+                cell = QTableWidgetItem(value)
+                if column == 1:
+                    cell.setData(
+                        Qt.ItemDataRole.UserRole,
+                        str(self.controller.opened.root),
+                    )
+                self.table.setItem(row, column, cell)
+            current_row = row
+        self.table.selectRow(current_row)
+        self.table.resizeColumnsToContents()
+        self.status.setText(f"{len(rows)} registered project(s)")
+
+    def open_selected(self, *_args) -> None:
+        selected = self._selection()
+        if selected is not None:
+            self.open_project(selected[0])
+
+    def browse_and_register(self) -> None:
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Choose an initialized or adopted SBT project",
+            str(self.controller.opened.root.parent),
+        )
+        if not selected:
+            return
+        try:
+            registered = self.controller.register_path(selected)
+        except Exception as exc:  # noqa: BLE001 - user-facing registry failure
+            QMessageBox.critical(self, APP_TITLE, str(exc))
+            return
+        self.registry_changed()
+        self.refresh()
+        self.status.setText(f"Registered {registered.name}.")
+
+    def register_current(self) -> None:
+        try:
+            registered = self.controller.register_current()
+        except Exception as exc:  # noqa: BLE001 - user-facing registry failure
+            QMessageBox.critical(self, APP_TITLE, str(exc))
+            return
+        self.registry_changed()
+        self.refresh()
+        self.status.setText(f"Registered {registered.name}.")
+
+    def make_default(self) -> None:
+        selected = self._selection()
+        if selected is None or selected[1] is None:
+            QMessageBox.information(
+                self,
+                APP_TITLE,
+                "Register this project before making it the default.",
+            )
+            return
+        try:
+            project = self.controller.set_default(selected[1])
+        except Exception as exc:  # noqa: BLE001 - user-facing registry failure
+            QMessageBox.critical(self, APP_TITLE, str(exc))
+            return
+        self.registry_changed()
+        self.refresh()
+        self.status.setText(f"Default project: {project.name}.")
+
+    def forget_selected(self) -> None:
+        selected = self._selection()
+        if selected is None or selected[1] is None:
+            QMessageBox.information(self, APP_TITLE, "This project is not registered.")
+            return
+        if (
+            QMessageBox.question(
+                self,
+                APP_TITLE,
+                "Forget this project from ~/.imc_config? Project files are not changed.",
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
+            return
+        try:
+            removed = self.controller.unregister(selected[1])
+        except Exception as exc:  # noqa: BLE001 - user-facing registry failure
+            QMessageBox.critical(self, APP_TITLE, str(exc))
+            return
+        self.registry_changed()
+        self.refresh()
+        self.status.setText(f"Forgot {removed.name}; project files were untouched.")
+
+
 class DashboardPage(QWidget):
     def __init__(self, controller: ProjectConsoleController):
         super().__init__()
         self.controller = controller
         layout = QVBoxLayout(self)
         header = QHBoxLayout()
-        title = QLabel("<h1>Project dashboard</h1>")
+        title = _page_title("Project dashboard")
         header.addWidget(title)
         header.addStretch()
         refresh = QPushButton("Refresh")
@@ -127,7 +342,7 @@ class DashboardPage(QWidget):
         header.addWidget(refresh)
         layout.addLayout(header)
         self.browser = _markdown_browser()
-        layout.addWidget(self.browser)
+        layout.addWidget(self.browser, 1)
         self.render_snapshot()
 
     def refresh(self) -> None:
@@ -188,7 +403,7 @@ class CataloguePage(QWidget):
         super().__init__()
         self.controller = controller
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("<h1>Stages and modes</h1>"))
+        layout.addWidget(_page_title("Stages and modes"))
         controls = QHBoxLayout()
         self.kind = QComboBox()
         self.kind.addItems(["Stages", "Modes"])
@@ -203,7 +418,8 @@ class CataloguePage(QWidget):
         splitter.addWidget(self.items)
         splitter.addWidget(self.detail)
         splitter.setStretchFactor(1, 1)
-        layout.addWidget(splitter)
+        splitter.setSizes([320, 980])
+        layout.addWidget(splitter, 1)
         self.kind.currentTextChanged.connect(self.populate)
         self.search.textChanged.connect(self.populate)
         self.items.currentItemChanged.connect(self.show_selected)
@@ -260,8 +476,10 @@ class CataloguePage(QWidget):
             "",
             f"- **Alias:** `{stage.name}`",
             f"- **Output slug:** `{stage.output_slug}`",
-            f"- **Dependencies:** {', '.join(f'`{item}`' for item in stage.depends_on) or '-'}",
-            f"- **Requires assets:** {', '.join(f'`{item}`' for item in stage.requires_assets) or '-'}",
+            f"- **Typical upstream stages (advisory):** {', '.join(f'`{item}`' for item in stage.depends_on) or '-'}",
+            f"- **Required assets (blocking):** {', '.join(f'`{item}`' for item in stage.requires_assets) or '-'}",
+            f"- **Expected context assets (advisory):** {', '.join(f'`{item}`' for item in stage.advisory_assets) or '-'}",
+            f"- **Required managed executions (blocking):** {', '.join(f'`{item}`' for item in stage.required_executions) or '-'}",
             f"- **Produces assets:** {', '.join(f'`{item}`' for item in stage.produces_assets) or '-'}",
             f"- **Config sections:** {', '.join(f'`{item}`' for item in stage.config_sections) or '-'}",
             f"- **Environment keys:** {', '.join(f'`{item}`' for item in stage.environment_keys) or '-'}",
@@ -289,6 +507,10 @@ class FieldEditor(QFrame):
         self.on_reset = on_reset
         self.on_validity = on_validity
         self._yaml_timer: QTimer | None = None
+        self.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Maximum,
+        )
         self.setFrameShape(QFrame.Shape.StyledPanel)
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
@@ -436,7 +658,7 @@ class ConfigurationPage(QWidget):
         self.specs_dirty = False
         self.invalid_paths: set[str] = set()
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("<h1>Configuration</h1>"))
+        layout.addWidget(_page_title("Configuration"))
         controls = QHBoxLayout()
         self.scope = QComboBox()
         self.scope.addItem("All config sections", None)
@@ -471,7 +693,8 @@ class ConfigurationPage(QWidget):
         splitter.addWidget(self.sections)
         splitter.addWidget(scroll)
         splitter.setStretchFactor(1, 1)
-        layout.addWidget(splitter)
+        splitter.setSizes([260, 1040])
+        layout.addWidget(splitter, 1)
         self.status = QLabel("")
         layout.addWidget(self.status)
         self.search.textChanged.connect(self.populate_sections)
@@ -576,6 +799,10 @@ class ConfigurationPage(QWidget):
                 groups.setdefault(spec.ui_group, []).append(spec)
         for group_name, fields in groups.items():
             group = QGroupBox(group_name)
+            group.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Maximum,
+            )
             group_layout = QVBoxLayout(group)
             for spec in fields:
                 group_layout.addWidget(
@@ -672,7 +899,7 @@ class AssetsPage(QWidget):
         self.controller = controller
         layout = QVBoxLayout(self)
         header = QHBoxLayout()
-        header.addWidget(QLabel("<h1>Asset register</h1>"))
+        header.addWidget(_page_title("Asset register"))
         header.addStretch()
         refresh = QPushButton("Refresh")
         refresh.clicked.connect(self.refresh)
@@ -689,7 +916,7 @@ class AssetsPage(QWidget):
         self.table.setHorizontalHeaderLabels(self.HEADERS)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
-        layout.addWidget(self.table)
+        layout.addWidget(self.table, 1)
         self.render_snapshot()
 
     def refresh(self) -> None:
@@ -732,7 +959,7 @@ class ReadinessPage(QWidget):
         super().__init__()
         self.controller = controller
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("<h1>Workflow readiness</h1>"))
+        layout.addWidget(_page_title("Workflow readiness"))
         notice = QLabel(
             "Inspection only: dependencies and assets are evaluated, but the Project "
             "Console has no submission capability."
@@ -745,32 +972,47 @@ class ReadinessPage(QWidget):
             self.target.addItem(f"Mode: {mode.name}", mode.name)
         for stage in controller.stages():
             self.target.addItem(f"Stage: {stage.display_name}", stage.name)
+        self.policy = QComboBox()
+        self.policy.addItem("Asset-aware upstream selection", "assets")
+        self.policy.addItem("Explicit stages only", "none")
+        self.policy.addItem("All conventional upstream stages", "all")
         inspect = QPushButton("Inspect readiness")
         inspect.clicked.connect(self.refresh)
         controls.addWidget(self.target)
+        controls.addWidget(self.policy)
         controls.addWidget(inspect)
         layout.addLayout(controls)
         self.browser = _markdown_browser()
-        layout.addWidget(self.browser)
+        layout.addWidget(self.browser, 1)
         self.refresh()
 
     def refresh(self) -> None:
-        plan = self.controller.readiness(str(self.target.currentData()))
+        plan = self.controller.readiness(
+            str(self.target.currentData()),
+            dependency_policy=str(self.policy.currentData()),
+        )
         lines = [
             f"# {'Ready' if plan.ready else 'Not ready'}",
             "",
             f"Requested: {', '.join(f'`{item}`' for item in plan.requested)}",
+            f"Upstream policy: **{plan.dependency_policy}**",
             "",
-            "## Dependency order",
+            "## Planned stages",
             "",
         ]
         for index, stage in enumerate(plan.resolved_stages, 1):
             lines.extend(
                 [
                     f"{index}. **{stage.name}** — {stage.description}",
-                    f"   - Requires: {', '.join(stage.requires_assets) or '-'}",
+                    f"   - Runs after: {', '.join(stage.depends_on) or '-'}",
+                    f"   - Blocking assets: {', '.join(stage.requires_assets) or '-'}",
                     f"   - Produces: {', '.join(stage.produces_assets) or '-'}",
-                    f"   - Missing: {', '.join(stage.missing_assets) or '-'}",
+                    f"   - Missing blocking assets: {', '.join(stage.missing_assets) or '-'}",
+                    f"   - Advisory assets: {', '.join(stage.advisory_assets) or '-'}",
+                    f"   - Missing advisory assets: {', '.join(stage.missing_advisory_assets) or '-'}",
+                    f"   - Required managed executions: {', '.join(stage.required_executions) or '-'}",
+                    f"   - Missing managed executions: {', '.join(stage.missing_executions) or '-'}",
+                    f"   - Conventional upstream stages skipped: {', '.join(stage.skipped_upstream_stages) or '-'}",
                 ]
             )
         if plan.errors:
@@ -796,7 +1038,7 @@ class ExecutionsPage(QWidget):
         self.controller = controller
         layout = QVBoxLayout(self)
         header = QHBoxLayout()
-        header.addWidget(QLabel("<h1>Runs and executions</h1>"))
+        header.addWidget(_page_title("Runs and executions"))
         header.addStretch()
         refresh = QPushButton("Refresh")
         refresh.clicked.connect(self.refresh)
@@ -822,7 +1064,8 @@ class ExecutionsPage(QWidget):
         splitter.addWidget(self.table)
         splitter.addWidget(self.tabs)
         splitter.setStretchFactor(1, 1)
-        layout.addWidget(splitter)
+        splitter.setSizes([520, 820])
+        layout.addWidget(splitter, 1)
         self.table.currentCellChanged.connect(self.show_selected)
         self.render_snapshot()
 
@@ -934,14 +1177,14 @@ class NotesPage(QWidget):
         self.controller = controller
         self.dirty = False
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("<h1>Project notes</h1>"))
+        layout.addWidget(_page_title("Project notes"))
         self.editor = QPlainTextEdit()
         self.editor.setPlainText(
             controller.notes.source_text if controller.notes else ""
         )
         self.editor.setReadOnly(controller.read_only)
         self.editor.textChanged.connect(self._changed)
-        layout.addWidget(self.editor)
+        layout.addWidget(self.editor, 1)
         buttons = QHBoxLayout()
         self.status = QLabel("")
         buttons.addWidget(self.status)
@@ -1001,7 +1244,7 @@ class HelpPage(QWidget):
                 [
                     "# About the SBT Project Console",
                     "",
-                    "A lightweight view of one existing Spatial Biology Toolkit project.",
+                    "A lightweight cockpit for registered Spatial Biology Toolkit projects.",
                     "",
                     f"- **Mode:** {mode}",
                     f"- **Project:** `{controller.opened.root}`",
@@ -1012,8 +1255,9 @@ class HelpPage(QWidget):
                     "## What this application can do",
                     "",
                     "- Explain stages, modes and configuration fields.",
+                    "- Register projects centrally and switch between them.",
                     "- Validate and safely edit configuration.",
-                    "- Inspect configured assets and workflow readiness.",
+                    "- Inspect blocking assets, advisory context and asset-aware readiness.",
                     "- Read durable execution records, reports and bounded log tails.",
                     "- Edit project notes explicitly.",
                     "",
@@ -1021,7 +1265,7 @@ class HelpPage(QWidget):
                 ]
             )
         )
-        layout.addWidget(browser)
+        layout.addWidget(browser, 1)
 
 
 class RecoveryPage(QWidget):
@@ -1035,7 +1279,7 @@ class RecoveryPage(QWidget):
         self.on_recovered = on_recovered
         self.dirty = False
         layout = QVBoxLayout(self)
-        layout.addWidget(QLabel("<h1>Configuration recovery mode</h1>"))
+        layout.addWidget(_page_title("Configuration recovery mode"))
         message = QLabel(
             "The project marker was found, but its configuration could not be validated. "
             "Other project pages are disabled until the YAML is repaired."
@@ -1050,7 +1294,7 @@ class RecoveryPage(QWidget):
         self.editor.setReadOnly(controller.read_only)
         if not controller.read_only:
             self.editor.textChanged.connect(self._changed)
-        layout.addWidget(self.editor)
+        layout.addWidget(self.editor, 1)
         buttons = QHBoxLayout()
         validate = QPushButton("Validate")
         validate.clicked.connect(self.validate)
@@ -1103,36 +1347,189 @@ class ProjectConsoleWindow(QMainWindow):
     def __init__(self, controller: ProjectConsoleController):
         super().__init__()
         self.controller = controller
+        self.projects_page: ProjectsPage | None = None
+        self.project_combo: QComboBox | None = None
         self.notes_page: NotesPage | None = None
         self.recovery_page: RecoveryPage | None = None
         self.dashboard_page: DashboardPage | None = None
         self.assets_page: AssetsPage | None = None
         self.readiness_page: ReadinessPage | None = None
         self.executions_page: ExecutionsPage | None = None
-        self.setWindowTitle(
-            f"{APP_TITLE} — {controller.opened.metadata.title or controller.opened.root.name}"
-        )
+        self._update_window_title()
         self.resize(1450, 900)
         self.build()
 
+    def _update_window_title(self) -> None:
+        project_name = (
+            self.controller.opened.metadata.title or self.controller.opened.root.name
+        )
+        self.setWindowTitle(f"{APP_TITLE} — {project_name}")
+
+    def _project_bar(self) -> QFrame:
+        bar = QFrame()
+        bar.setFrameShape(QFrame.Shape.StyledPanel)
+        bar.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(8, 4, 8, 4)
+        layout.addWidget(QLabel("<b>Project</b>"))
+        self.project_combo = QComboBox()
+        self.project_combo.setMinimumWidth(420)
+        layout.addWidget(self.project_combo, 1)
+        browse = QPushButton("Open another…")
+        browse.clicked.connect(self.browse_project)
+        register = QPushButton("Register current")
+        register.clicked.connect(self.register_current_project)
+        register.setEnabled(not self.controller.read_only)
+        layout.addWidget(browse)
+        layout.addWidget(register)
+        self.populate_project_switcher()
+        self.project_combo.currentIndexChanged.connect(self.project_selected)
+        return bar
+
+    def populate_project_switcher(self) -> None:
+        if self.project_combo is None:
+            return
+        combo = self.project_combo
+        combo.blockSignals(True)
+        combo.clear()
+        current_found = False
+        try:
+            registry = self.controller.project_registry()
+            statuses = self.controller.registered_projects()
+        except Exception as exc:  # noqa: BLE001 - keep current project usable
+            registry = None
+            statuses = []
+            combo.setToolTip(str(exc))
+        for status in statuses:
+            project = status.project
+            prefix = (
+                "★ "
+                if registry and registry.default_project_id == project.project_id
+                else ""
+            )
+            suffix = " [unavailable]" if not status.available else ""
+            combo.addItem(
+                f"{prefix}{project.name} — {project.path}{suffix}",
+                str(project.path),
+            )
+            if project.path == self.controller.opened.root:
+                combo.setCurrentIndex(combo.count() - 1)
+                current_found = True
+        if not current_found:
+            combo.addItem(
+                (
+                    f"{self.controller.opened.metadata.title or self.controller.opened.root.name} "
+                    f"— {self.controller.opened.root} [not registered]"
+                ),
+                str(self.controller.opened.root),
+            )
+            combo.setCurrentIndex(combo.count() - 1)
+        combo.blockSignals(False)
+
+    def project_selected(self, index: int) -> None:
+        if self.project_combo is None or index < 0:
+            return
+        selected = self.project_combo.itemData(index)
+        if selected:
+            self.switch_project(Path(str(selected)))
+
+    def browse_project(self) -> None:
+        selected = QFileDialog.getExistingDirectory(
+            self,
+            "Choose an existing SBT project",
+            str(self.controller.opened.root.parent),
+        )
+        if selected:
+            self.switch_project(Path(selected))
+
+    def register_current_project(self) -> None:
+        try:
+            registered = self.controller.register_current()
+        except Exception as exc:  # noqa: BLE001 - user-facing registry failure
+            QMessageBox.critical(self, APP_TITLE, str(exc))
+            return
+        self.refresh_registry_views()
+        self.statusBar().showMessage(f"Registered project: {registered.name}")
+
+    def refresh_registry_views(self) -> None:
+        self.populate_project_switcher()
+        if self.projects_page is not None:
+            self.projects_page.refresh()
+
+    def _has_dirty_work(self) -> bool:
+        return bool(
+            (self.controller.editor and self.controller.editor.dirty)
+            or (self.notes_page and self.notes_page.dirty)
+            or (self.recovery_page and self.recovery_page.dirty)
+        )
+
+    def switch_project(self, project: Path) -> None:
+        resolved = project.expanduser().resolve(strict=False)
+        if resolved == self.controller.opened.root:
+            return
+        if self._has_dirty_work() and (
+            QMessageBox.question(
+                self,
+                APP_TITLE,
+                "Discard unsaved configuration or note changes and switch project?",
+            )
+            != QMessageBox.StandardButton.Yes
+        ):
+            self.populate_project_switcher()
+            return
+        try:
+            controller = ProjectConsoleController.open(
+                resolved,
+                read_only=self.controller.read_only,
+            )
+        except Exception as exc:  # noqa: BLE001 - user-facing project failure
+            QMessageBox.critical(self, APP_TITLE, str(exc))
+            self.populate_project_switcher()
+            return
+        self.controller = controller
+        self.notes_page = None
+        self._update_window_title()
+        self.build()
+
     def build(self) -> None:
+        self.projects_page = None
+        self.dashboard_page = None
+        self.assets_page = None
+        self.readiness_page = None
+        self.executions_page = None
+        central = QWidget()
+        outer_layout = QVBoxLayout(central)
+        outer_layout.setContentsMargins(6, 6, 6, 6)
+        outer_layout.setSpacing(6)
+        outer_layout.addWidget(self._project_bar())
         if self.controller.recovery_mode:
             self.recovery_page = RecoveryPage(
                 self.controller, self.rebuild_after_recovery
             )
-            self.setCentralWidget(self.recovery_page)
+            outer_layout.addWidget(self.recovery_page, 1)
+            self.setCentralWidget(central)
             self.statusBar().showMessage("Configuration recovery mode")
             return
         self.recovery_page = None
-        central = QWidget()
-        layout = QHBoxLayout(central)
+        body = QWidget()
+        layout = QHBoxLayout(body)
+        layout.setContentsMargins(0, 0, 0, 0)
         navigation = QListWidget()
         stack = QStackedWidget()
+        self.projects_page = ProjectsPage(
+            self.controller,
+            self.switch_project,
+            self.refresh_registry_views,
+        )
         self.dashboard_page = DashboardPage(self.controller)
         self.assets_page = AssetsPage(self.controller)
         self.readiness_page = ReadinessPage(self.controller)
         self.executions_page = ExecutionsPage(self.controller)
         pages: list[tuple[str, QWidget]] = [
+            ("Projects", self.projects_page),
             ("Dashboard", self.dashboard_page),
             ("Stages & modes", CataloguePage(self.controller)),
             (
@@ -1153,6 +1550,7 @@ class ProjectConsoleWindow(QMainWindow):
         navigation.setCurrentRow(0)
         layout.addWidget(navigation)
         layout.addWidget(stack, 1)
+        outer_layout.addWidget(body, 1)
         self.setCentralWidget(central)
         mode = (
             "read-only" if self.controller.read_only else "config/notes writes enabled"
@@ -1185,10 +1583,7 @@ class ProjectConsoleWindow(QMainWindow):
         self.statusBar().showMessage("Project views refreshed · scheduler disabled")
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt API
-        dirty_config = bool(self.controller.editor and self.controller.editor.dirty)
-        dirty_notes = bool(self.notes_page and self.notes_page.dirty)
-        dirty_recovery = bool(self.recovery_page and self.recovery_page.dirty)
-        if dirty_config or dirty_notes or dirty_recovery:
+        if self._has_dirty_work():
             answer = QMessageBox.question(
                 self,
                 APP_TITLE,

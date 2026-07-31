@@ -17,7 +17,10 @@ from pydantic import BaseModel
 
 from SpatialBiologyToolkit.config import load_config, write_compact_config
 from SpatialBiologyToolkit.config.export import write_resolved_config
-from SpatialBiologyToolkit.environments import EnvironmentManager, load_environment_registry
+from SpatialBiologyToolkit.environments import (
+    EnvironmentManager,
+    load_environment_registry,
+)
 from SpatialBiologyToolkit.environments.models import EnvironmentSummary
 from SpatialBiologyToolkit.pipeline.asset_cleanup import (
     apply_asset_cleanup,
@@ -56,6 +59,15 @@ from SpatialBiologyToolkit.pipeline.project import (
     validate_project,
     write_config_template,
 )
+from SpatialBiologyToolkit.pipeline.project_registry import (
+    default_registered_project,
+    imc_config_path,
+    load_project_registry,
+    register_project,
+    registered_project_statuses,
+    set_default_project,
+    unregister_project,
+)
 from SpatialBiologyToolkit.pipeline.registry import (
     MODES,
     STAGES,
@@ -92,6 +104,12 @@ class SummaryFormat(str, Enum):
     json = "json"
 
 
+class DependencyPolicyOption(str, Enum):
+    assets = "assets"
+    none = "none"
+    all = "all"
+
+
 REPOSITORY_URL = "https://github.com/dr-michael-haley/imcanalysis"
 DOCUMENTATION_URL = "https://imcanalysis.readthedocs.io/en/latest/"
 
@@ -106,12 +124,18 @@ app = typer.Typer(
     no_args_is_help=False,
     pretty_exceptions_show_locals=False,
 )
-config_app = typer.Typer(help="Validate, compact, and export typed pipeline configuration.")
+config_app = typer.Typer(
+    help="Validate, compact, and export typed pipeline configuration."
+)
 project_app = typer.Typer(help="Initialize, adopt, validate, and inspect SBT projects.")
 stages_app = typer.Typer(help="List and explain registered pipeline stages.")
 modes_app = typer.Typer(help="List and explain named workflow modes.")
-env_app = typer.Typer(help="Validate, compare, capture, and synchronize fixed Conda environments.")
-gui_app = typer.Typer(help="Launch optional interactive desktop applications in subprocesses.")
+env_app = typer.Typer(
+    help="Validate, compare, capture, and synchronize fixed Conda environments."
+)
+gui_app = typer.Typer(
+    help="Launch optional interactive desktop applications in subprocesses."
+)
 app.add_typer(config_app, name="config")
 app.add_typer(project_app, name="project")
 app.add_typer(stages_app, name="stages")
@@ -122,10 +146,7 @@ app.add_typer(gui_app, name="gui")
 
 def _project_gui_bootstrap_hint() -> str:
     if sys.platform == "win32":
-        return (
-            "powershell -ExecutionPolicy Bypass -File "
-            "install/bootstrap_sbt_gui.ps1"
-        )
+        return "powershell -ExecutionPolicy Bypass -File install/bootstrap_sbt_gui.ps1"
     return "bash install/bootstrap_sbt_gui.sh"
 
 
@@ -193,7 +214,9 @@ def gui_project_command(
 @gui_app.command("napari")
 def gui_napari_command(
     project: Path | None = typer.Option(
-        None, "--project", help="Optional SBT project root used to resolve config defaults."
+        None,
+        "--project",
+        help="Optional SBT project root used to resolve config defaults.",
     ),
     experiment: Path | None = typer.Option(
         None, "--experiment", help="Existing napari_sbt experiment folder or manifest."
@@ -278,15 +301,19 @@ def _print_plan(plan) -> None:
     typer.echo(f"Project: {plan.project_root}")
     typer.echo(f"Config:  {plan.config_source}")
     typer.echo(f"Backend: {plan.execution_backend}")
+    typer.echo(f"Upstream policy: {plan.dependency_policy}")
     typer.echo("")
     typer.echo("Submission order")
     for index, stage in enumerate(plan.resolved_stages, start=1):
         dependencies = ", ".join(stage.depends_on) or "-"
         requires = ", ".join(stage.requires_assets) or "-"
+        advisory = ", ".join(stage.advisory_assets) or "-"
+        managed = ", ".join(stage.required_executions) or "-"
         produces = ", ".join(stage.produces_assets) or "-"
         typer.echo(
-            f"  {index:>2}. {stage.name:<12} deps={dependencies} "
-            f"requires={requires} produces={produces}"
+            f"  {index:>2}. {stage.name:<12} after={dependencies} "
+            f"blocking={requires} managed={managed} advisory={advisory} "
+            f"produces={produces}"
         )
         typer.echo(f"      script: {stage.slurm_script}")
     if plan.warnings:
@@ -466,6 +493,9 @@ def project_init(
     typer.echo(f"Project ID: {context.project_metadata.project_id}")
     typer.echo(f"Config: {context.config_path}")
     typer.echo(f"Raw inputs: {resolve_assets(context.config, context.root)[0].path}")
+    typer.echo(
+        "Register for the Project Console: sbt project register --project " + str(root)
+    )
 
 
 @project_app.command("adopt")
@@ -493,6 +523,102 @@ def project_adopt(
             typer.echo(f"  - {path}")
     else:
         typer.echo("No unexpected top-level paths identified.")
+    typer.echo("")
+    typer.echo(
+        "Register for the Project Console: sbt project register --project " + str(root)
+    )
+
+
+@project_app.command("list")
+def project_list_registered(
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+) -> None:
+    """List projects registered centrally in ~/.imc_config."""
+
+    try:
+        registry = load_project_registry()
+        statuses = registered_project_statuses(registry)
+    except Exception as exc:
+        _fail(exc)
+    if output_format != OutputFormat.text:
+        _emit_machine(
+            {
+                "registry_path": str(imc_config_path()),
+                "registry": registry.model_dump(mode="json"),
+                "statuses": [
+                    {
+                        **item.project.model_dump(mode="json"),
+                        "available": item.available,
+                        "issue": item.issue,
+                    }
+                    for item in statuses
+                ],
+            },
+            output_format,
+        )
+        return
+    typer.echo(f"Registry: {imc_config_path()}")
+    if not statuses:
+        typer.echo("No projects are registered.")
+        return
+    default = default_registered_project(registry)
+    for item in statuses:
+        marker = (
+            "*" if default and item.project.project_id == default.project_id else " "
+        )
+        state = "available" if item.available else "unavailable"
+        typer.echo(f"{marker} {item.project.name:<24} {state:<11} {item.project.path}")
+        if item.issue:
+            typer.echo(f"    {item.issue}")
+
+
+@project_app.command("register")
+def project_register(
+    project: Path | None = typer.Option(None, "--project"),
+    name: str | None = typer.Option(None, "--name"),
+    make_default: bool = typer.Option(False, "--default"),
+) -> None:
+    """Register an initialized/adopted project in ~/.imc_config."""
+
+    root = project or Path.cwd()
+    try:
+        _registry, registered = register_project(
+            root,
+            name=name,
+            make_default=make_default,
+        )
+    except Exception as exc:
+        _fail(exc)
+    typer.echo(f"Registered project: {registered.name}")
+    typer.echo(f"Path: {registered.path}")
+    typer.echo(f"Registry: {imc_config_path()}")
+
+
+@project_app.command("unregister")
+def project_unregister(
+    reference: str = typer.Argument(..., help="Registered name, project ID, or path."),
+) -> None:
+    """Remove one project from the central registry without touching its files."""
+
+    try:
+        _registry, removed = unregister_project(reference)
+    except Exception as exc:
+        _fail(exc)
+    typer.echo(f"Unregistered project: {removed.name}")
+    typer.echo("No project files were changed.")
+
+
+@project_app.command("set-default")
+def project_set_default(
+    reference: str = typer.Argument(..., help="Registered name, project ID, or path."),
+) -> None:
+    """Select the project opened outside a project directory by default."""
+
+    try:
+        _registry, selected = set_default_project(reference)
+    except Exception as exc:
+        _fail(exc)
+    typer.echo(f"Default Project Console project: {selected.name} [{selected.path}]")
 
 
 @project_app.command("validate")
@@ -786,6 +912,18 @@ def stages_explain(
     typer.echo(f"Environment keys: {', '.join(spec.environment_keys) or '-'}")
     typer.echo(f"Fixed Conda names: {', '.join(environment_names) or '-'}")
     typer.echo(f"Documentation: {documentation}")
+    typer.echo(
+        f"Typical upstream stages (advisory): {', '.join(spec.depends_on) or '-'}"
+    )
+    typer.echo(f"Required assets (blocking): {', '.join(spec.requires_assets) or '-'}")
+    typer.echo(
+        f"Expected context assets (advisory): {', '.join(spec.advisory_assets) or '-'}"
+    )
+    typer.echo(
+        "Required managed executions (blocking): "
+        f"{', '.join(spec.required_executions) or '-'}"
+    )
+    typer.echo(f"Produced assets: {', '.join(spec.produces_assets) or '-'}")
     typer.echo("")
     if documentation.is_file():
         typer.echo(documentation.read_text(encoding="utf-8"))
@@ -877,9 +1015,7 @@ def _ensure_run_environments(stage_names: list[str]) -> None:
         if validation.valid:
             continue
         errors = [
-            issue.message
-            for issue in validation.issues
-            if issue.severity == "error"
+            issue.message for issue in validation.issues if issue.severity == "error"
         ]
         detail = "; ".join(errors) or "the specification did not validate"
         invalid_specifications.append(f"  - {row.key}: {detail}")
@@ -911,22 +1047,21 @@ def _ensure_run_environments(stage_names: list[str]) -> None:
         typer.echo(f"Installed and smoke-tested {row.conda_name}.")
 
     remaining = [
-        row
-        for row in manager.required_for_stages(stage_names)
-        if not row.exists
+        row for row in manager.required_for_stages(stage_names) if not row.exists
     ]
     if remaining:
         raise RuntimeError(
             "Environment installation finished, but these environments are still "
-            "not visible to Conda: "
-            + ", ".join(row.conda_name for row in remaining)
+            "not visible to Conda: " + ", ".join(row.conda_name for row in remaining)
         )
 
 
 @env_app.command("list")
 def env_list(
     output_format: SummaryFormat = typer.Option(SummaryFormat.table, "--format"),
-    compare: bool = typer.Option(False, "--compare", help="Inspect live package drift (slower)."),
+    compare: bool = typer.Option(
+        False, "--compare", help="Inspect live package drift (slower)."
+    ),
     toolkit: Path | None = typer.Option(None, "--toolkit-root"),
 ) -> None:
     """List registry environments, fixed names, availability, and stage use."""
@@ -937,7 +1072,9 @@ def env_list(
     if output_format != SummaryFormat.table:
         _env_machine(rows, output_format)
         return
-    typer.echo(f"{'Key':<16} {'Conda name':<22} {'Managed':<8} {'Exists':<8} {'Drift':<9} Stages")
+    typer.echo(
+        f"{'Key':<16} {'Conda name':<22} {'Managed':<8} {'Exists':<8} {'Drift':<9} Stages"
+    )
     for row in rows:
         exists = "unknown" if row.exists is None else "yes" if row.exists else "no"
         typer.echo(
@@ -965,7 +1102,9 @@ def env_show(
     typer.echo(f"Conda name: {detail['conda_name']}")
     typer.echo(f"Management: {'repository' if detail['managed'] else 'external'}")
     typer.echo(f"Platform: {detail['platform']}")
-    typer.echo(f"Exists: {detail['exists'] if detail['exists'] is not None else 'unknown'}")
+    typer.echo(
+        f"Exists: {detail['exists'] if detail['exists'] is not None else 'unknown'}"
+    )
     typer.echo(f"Prefix: {detail['prefix'] or '-'}")
     typer.echo(f"Stages: {', '.join(detail['stages']) or '-'}")
     typer.echo(f"Toolkit overlay: {detail['toolkit_overlay']}")
@@ -994,7 +1133,13 @@ def env_doctor(
         _emit_machine(report, output_format)
     else:
         for check in report.checks:
-            marker = "OK" if check.status == "ok" else "WARN" if check.status == "warning" else "FAIL"
+            marker = (
+                "OK"
+                if check.status == "ok"
+                else "WARN"
+                if check.status == "warning"
+                else "FAIL"
+            )
             typer.echo(f"[{marker}] {check.name}: {check.detail}")
     if not report.healthy:
         raise typer.Exit(2)
@@ -1002,7 +1147,9 @@ def env_doctor(
 
 @env_app.command("validate-spec")
 def env_validate_spec(
-    environment: str | None = typer.Argument(None, help="Logical key or fixed Conda name."),
+    environment: str | None = typer.Argument(
+        None, help="Logical key or fixed Conda name."
+    ),
     all_: bool = typer.Option(False, "--all"),
     output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
     toolkit: Path | None = typer.Option(None, "--toolkit-root"),
@@ -1044,7 +1191,9 @@ def _print_comparison(comparison) -> None:
 
 @env_app.command("compare")
 def env_compare(
-    environment: str | None = typer.Argument(None, help="Logical key or fixed Conda name."),
+    environment: str | None = typer.Argument(
+        None, help="Logical key or fixed Conda name."
+    ),
     all_: bool = typer.Option(False, "--all"),
     output_format: SummaryFormat = typer.Option(SummaryFormat.table, "--format"),
     toolkit: Path | None = typer.Option(None, "--toolkit-root"),
@@ -1070,9 +1219,13 @@ def env_compare(
 
 @env_app.command("lock")
 def env_lock(
-    environment: str | None = typer.Argument(None, help="Logical key or fixed Conda name."),
+    environment: str | None = typer.Argument(
+        None, help="Logical key or fixed Conda name."
+    ),
     all_: bool = typer.Option(False, "--all"),
-    check: bool = typer.Option(False, "--check", help="Compare a temporary generated lock only."),
+    check: bool = typer.Option(
+        False, "--check", help="Compare a temporary generated lock only."
+    ),
     verbose: bool = typer.Option(False, "--verbose"),
     toolkit: Path | None = typer.Option(None, "--toolkit-root"),
 ) -> None:
@@ -1083,7 +1236,9 @@ def env_lock(
         stale = False
         for key, definition in selected:
             if not definition.managed:
-                typer.echo(f"Skipping external environment {key} ({definition.conda_name}).")
+                typer.echo(
+                    f"Skipping external environment {key} ({definition.conda_name})."
+                )
                 continue
             current, command = manager.lock(key, check=check, verbose=verbose)
             typer.echo(
@@ -1118,11 +1273,17 @@ def _print_sync_plan(plan) -> None:
 
 @env_app.command("sync")
 def env_sync(
-    environment: str | None = typer.Argument(None, help="Logical key or fixed Conda name."),
+    environment: str | None = typer.Argument(
+        None, help="Logical key or fixed Conda name."
+    ),
     all_: bool = typer.Option(False, "--all"),
     dry_run: bool = typer.Option(False, "--dry-run"),
-    recreate: bool = typer.Option(False, "--recreate", help="Allow fixed-name recreation when drift exists."),
-    yes: bool = typer.Option(False, "--yes", help="Confirm requested recreation non-interactively."),
+    recreate: bool = typer.Option(
+        False, "--recreate", help="Allow fixed-name recreation when drift exists."
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", help="Confirm requested recreation non-interactively."
+    ),
     verbose: bool = typer.Option(False, "--verbose"),
     toolkit: Path | None = typer.Option(None, "--toolkit-root"),
 ) -> None:
@@ -1132,7 +1293,9 @@ def env_sync(
         selected = manager.select(environment, all_environments=all_)
         for key, definition in selected:
             if not definition.managed:
-                typer.echo(f"Skipping external environment {key} ({definition.conda_name}).")
+                typer.echo(
+                    f"Skipping external environment {key} ({definition.conda_name})."
+                )
                 continue
             plan = manager.sync_plan(key)
             _print_sync_plan(plan)
@@ -1167,8 +1330,16 @@ def env_sync(
 @env_app.command("capture")
 def env_capture(
     environment: str = typer.Argument(..., help="Logical key or fixed Conda name."),
-    dry_run: bool = typer.Option(False, "--dry-run"),
-    write: bool = typer.Option(False, "--write"),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Create candidates without changing repository files (the default).",
+    ),
+    write: bool = typer.Option(
+        False,
+        "--write",
+        help="Update a repository-managed specification; unavailable for external environments.",
+    ),
     accept_vcs: bool = typer.Option(
         False,
         "--accept-vcs",
@@ -1177,7 +1348,7 @@ def env_capture(
     verbose: bool = typer.Option(False, "--verbose"),
     toolkit: Path | None = typer.Option(None, "--toolkit-root"),
 ) -> None:
-    """Capture a live environment into reviewed repository candidates."""
+    """Capture a live environment into a reviewed compatibility bundle."""
     if dry_run and write:
         _fail("Choose --dry-run or --write, not both.")
     try:
@@ -1187,7 +1358,13 @@ def env_capture(
     except Exception as exc:
         _fail(exc)
     typer.echo(f"Environment: {plan.environment_key} ({plan.conda_name})")
+    typer.echo(f"Management: {'repository-managed' if plan.managed else 'external'}")
     typer.echo(f"Candidate files: {plan.candidate_directory}")
+    if plan.lockfile:
+        typer.echo(f"Candidate lock: {plan.lockfile}")
+    elif plan.lock_generation_error:
+        typer.echo("Candidate lock: not generated")
+        typer.echo(f"Lock error: {plan.lock_generation_error}")
     for name, difference in plan.differences.items():
         typer.echo(f"\nProposed {name} changes:")
         typer.echo(difference)
@@ -1198,12 +1375,22 @@ def env_capture(
         typer.echo(f"  {item}")
     if not plan.review_requirements:
         typer.echo("  none")
-    typer.echo("Repository files updated." if write else "Dry run: repository files were not modified.")
+    if write:
+        typer.echo("Repository files updated.")
+    elif plan.managed:
+        typer.echo("Dry run: repository files were not modified.")
+    else:
+        typer.echo(
+            "Observational capture: repository files were not modified; external "
+            "environments cannot be captured with --write."
+        )
 
 
 @env_app.command("test")
 def env_test(
-    environment: str | None = typer.Argument(None, help="Logical key or fixed Conda name."),
+    environment: str | None = typer.Argument(
+        None, help="Logical key or fixed Conda name."
+    ),
     all_: bool = typer.Option(False, "--all"),
     output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
     verbose: bool = typer.Option(False, "--verbose"),
@@ -1243,11 +1430,23 @@ def plan_command(
     targets: list[str] = typer.Argument(..., help="Stage aliases or workflow modes."),
     project: Path | None = typer.Option(None, "--project"),
     config: Path | None = typer.Option(None, "--config"),
+    dependency_policy: DependencyPolicyOption = typer.Option(
+        DependencyPolicyOption.assets,
+        "--dependency-policy",
+        help=(
+            "Upstream selection: assets adds producers only for missing blocking "
+            "assets; none uses explicit stages; all includes conventional lineage."
+        ),
+    ),
     output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
 ) -> None:
     try:
         context = _project(project, config)
-        plan = build_run_plan(context, targets)
+        plan = build_run_plan(
+            context,
+            targets,
+            dependency_policy=dependency_policy.value,
+        )
     except Exception as exc:
         _fail(exc)
     if output_format == OutputFormat.text:
@@ -1267,13 +1466,18 @@ def run_command(
     project: Path | None = typer.Option(None, "--project"),
     config: Path | None = typer.Option(None, "--config"),
     dry_run: bool = typer.Option(False, "--dry-run"),
+    dependency_policy: DependencyPolicyOption = typer.Option(
+        DependencyPolicyOption.assets,
+        "--dependency-policy",
+        help=(
+            "Upstream selection: assets adds producers only for missing blocking "
+            "assets; none uses explicit stages; all includes conventional lineage."
+        ),
+    ),
     no_deps: bool = typer.Option(
         False,
         "--no-deps",
-        help=(
-            "Submit only explicitly selected stages; require their upstream assets "
-            "to exist instead of scheduling dependency stages."
-        ),
+        help=("Compatibility alias for --dependency-policy none."),
     ),
     reason: str | None = typer.Option(
         None,
@@ -1286,12 +1490,15 @@ def run_command(
         help="Optional repeatable run note recorded in run and stage reports.",
     ),
 ) -> None:
+    if no_deps and dependency_policy != DependencyPolicyOption.assets:
+        _fail("--no-deps cannot be combined with --dependency-policy.")
+    selected_policy = DependencyPolicyOption.none if no_deps else dependency_policy
     try:
         context = _project(project, config)
         plan = build_run_plan(
             context,
             targets,
-            include_dependencies=not no_deps,
+            dependency_policy=selected_policy.value,
         )
     except Exception as exc:
         _fail(exc)
@@ -1408,14 +1615,14 @@ def status_command(
             {
                 "schema_version": 1,
                 "execution": selected.model_dump(mode="json"),
-                "status": stage_status.model_dump(mode="json") if stage_status else None,
+                "status": stage_status.model_dump(mode="json")
+                if stage_status
+                else None,
             },
             output_format,
         )
         return
-    typer.echo(
-        f"Execution {selected.execution_label} — {selected.stage_display_name}"
-    )
+    typer.echo(f"Execution {selected.execution_label} — {selected.stage_display_name}")
     typer.echo(f"Status: {selected.status}")
     typer.echo(f"SLURM job: {selected.slurm_job_id or '-'}")
     if stage_status and stage_status.detail:
@@ -1617,8 +1824,7 @@ def remove_command(
         _fail(exc)
     risky = selected.asset_effect != "none"
     typer.echo(
-        f"Remove execution {selected.execution_label} — "
-        f"{selected.stage_display_name}?"
+        f"Remove execution {selected.execution_label} — {selected.stage_display_name}?"
     )
     typer.echo("")
     typer.echo(f"Status: {selected.status}")
@@ -1687,8 +1893,7 @@ def remove_command(
     if asset_plan.removable and not yes:
         typer.echo("")
         response = typer.prompt(
-            "Type 'yes' to remove the eligible unused assets; "
-            "anything else keeps them",
+            "Type 'yes' to remove the eligible unused assets; anything else keeps them",
             default="",
             show_default=False,
         )
