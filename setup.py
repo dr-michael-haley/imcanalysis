@@ -4,6 +4,7 @@ setup(
     name="SpatialBiologyToolkit",
     version="0.1",
     packages=find_packages(),
+    package_data={"SpatialBiologyToolkit.napari_sbt": ["help/*.md"]},
 
     install_requires=[
         # ---- Core ----
@@ -72,11 +73,19 @@ setup(
             "pydantic>=2.4,<3",
             "typer>=0.12,<1",
         ],
+        "gui": [
+            "pyyaml>=6",
+            "pydantic>=2.4,<3",
+            "typer>=0.12,<1",
+            "PySide6>=6.7,<7",
+            "ruamel.yaml>=0.18,<1",
+        ],
     },
 
     entry_points={
         "console_scripts": [
             "sbt=SpatialBiologyToolkit.cli.main:app",
+            "sbt-project-gui=SpatialBiologyToolkit.project_gui.__main__:main",
             "napari-sbt=SpatialBiologyToolkit.napari_sbt.__main__:main",
         ],
     },

@@ -32,6 +32,7 @@ from SpatialBiologyToolkit.qc_classifier.io import (
 from .cohort import eligible_ids_by_roi, validate_frozen_cohort
 from .feature_sources import combine_feature_sources, load_feature_source
 from .features import build_feature_dictionary, build_roi_features
+from .feature_refinement import refine_trial_features
 from .models import FeatureSource, SyntheticFeatureRecipe
 from .storage import (
     feature_recipe_hash,
@@ -50,7 +51,9 @@ class FeatureBuildResult:
     failed_rois: Path
     manifest: Path
     eligible_cells: int
+    target_eligible_cells: int
     represented_rois: int
+    target_represented_rois: int
     skipped_rois: int
     feature_count: int
     erosion_losses: int
@@ -61,6 +64,28 @@ class FeatureBuildResult:
 
 class FeatureBuildCancelled(RuntimeError):
     """Raised after safely preserving completed ROI fragments."""
+
+
+def _feature_build_cohort(manifest, cohort: pd.DataFrame) -> pd.DataFrame:
+    """Return the execution subset without changing the frozen scientific cohort."""
+
+    if manifest.experiment_mode != "feature_discovery_trial":
+        return cohort.copy()
+    trial = manifest.feature_trial
+    if trial is None or not trial.selected_rois:
+        raise ValueError("The feature-discovery trial has no selected ROIs.")
+    available = set(cohort["ROI"].astype(str))
+    missing = sorted(set(trial.selected_rois) - available)
+    if missing:
+        raise ValueError(
+            "Trial ROIs are absent from the frozen cohort: " + ", ".join(missing)
+        )
+    selected = cohort.loc[
+        cohort["ROI"].astype(str).isin(trial.selected_rois)
+    ].copy()
+    if selected.empty:
+        raise ValueError("The selected trial ROIs contain no eligible cells.")
+    return selected
 
 
 def _emit(event: dict) -> None:
@@ -227,7 +252,8 @@ def validate_feature_sources(
 
     notify = progress or _emit
     manifest, paths = load_experiment(experiment)
-    cohort = read_dataframe(paths.root / manifest.cell_scope.snapshot_path)
+    frozen_cohort = read_dataframe(paths.root / manifest.cell_scope.snapshot_path)
+    cohort = _feature_build_cohort(manifest, frozen_cohort)
     input_root = (
         Path(manifest.project_root).expanduser().resolve(strict=False)
         if manifest.project_root
@@ -252,6 +278,7 @@ def validate_feature_sources(
             "event": "source_validation_started",
             "source_count": len(sources),
             "eligible_cells": len(cohort),
+            "target_eligible_cells": len(frozen_cohort),
             "orchestrator_pid": os.getpid(),
         }
     )
@@ -301,6 +328,7 @@ def validate_feature_sources(
         "experiment_id": manifest.experiment_id,
         "experiment_revision": manifest.revision,
         "eligible_cells": len(cohort),
+        "target_eligible_cells": len(frozen_cohort),
         "valid_sources": sum(row["status"] == "valid" for row in results),
         "invalid_sources": sum(row["status"] == "invalid" for row in results),
         "sources": results,
@@ -332,8 +360,9 @@ def run_feature_build(
     started = time.monotonic()
     notify = progress or _emit
     manifest, paths = load_experiment(experiment)
-    cohort = read_dataframe(paths.root / manifest.cell_scope.snapshot_path)
-    validate_frozen_cohort(cohort, manifest.cell_scope)
+    frozen_cohort = read_dataframe(paths.root / manifest.cell_scope.snapshot_path)
+    validate_frozen_cohort(frozen_cohort, manifest.cell_scope)
+    cohort = _feature_build_cohort(manifest, frozen_cohort)
     eligible = eligible_ids_by_roi(cohort)
     input_root = (
         Path(manifest.project_root).expanduser().resolve(strict=False)
@@ -454,7 +483,9 @@ def run_feature_build(
         {
             "event": "build_started",
             "eligible_cells": len(cohort),
+            "target_eligible_cells": len(frozen_cohort),
             "represented_rois": len(eligible),
+            "target_represented_rois": manifest.cell_scope.represented_roi_count,
             "pending_rois": len(tasks),
             "resumed_rois": skipped_rois,
             "workers": worker_count,
@@ -611,6 +642,7 @@ def run_feature_build(
         {
             "columns": combined.feature_columns,
             "cohort": manifest.cell_scope.snapshot_sha256,
+            "build_rois": sorted(eligible),
             "recipe": recipe.model_dump(mode="json"),
         }
     )
@@ -628,7 +660,9 @@ def run_feature_build(
         "missing_coverage_tables": missing_coverage_paths,
         "feature_set_id": feature_set_id,
         "eligible_cells": len(cohort),
+        "target_eligible_cells": len(frozen_cohort),
         "represented_rois": len(eligible),
+        "target_represented_rois": manifest.cell_scope.represented_roi_count,
         "completed_rois": len(completed),
         "resumed_rois": skipped_rois,
         "failures": len(failures),
@@ -639,6 +673,11 @@ def run_feature_build(
         "completed_at": utc_now().isoformat(),
     }
     manifest.active_feature_set_id = feature_set_id
+    if (
+        manifest.experiment_mode == "feature_discovery_trial"
+        and manifest.feature_trial is not None
+    ):
+        manifest.feature_trial.status = "features_built"
     from .storage import save_experiment
 
     save_experiment(manifest, paths.root, audit_action="feature_build_completed")
@@ -651,7 +690,9 @@ def run_feature_build(
         failed_rois=failed_path,
         manifest=manifest_path,
         eligible_cells=len(cohort),
+        target_eligible_cells=len(frozen_cohort),
         represented_rois=len(eligible),
+        target_represented_rois=manifest.cell_scope.represented_roi_count,
         skipped_rois=skipped_rois,
         feature_count=len(combined.feature_columns),
         erosion_losses=erosion_losses,
@@ -659,6 +700,85 @@ def run_feature_build(
         elapsed_seconds=elapsed,
         warnings=warnings,
     )
+
+
+def run_feature_refinement(
+    experiment: str | Path,
+    *,
+    maximum_candidate_features: int = 150,
+    recommendation_count: int = 30,
+    permutation_repeats: int = 5,
+    maximum_missing_fraction: float = 0.30,
+    correlation_threshold: float = 0.95,
+    progress: Callable[[dict], None] | None = None,
+) -> dict:
+    """Run grouped trial evaluation and persist reusable recommendation tables."""
+
+    notify = progress or _emit
+    manifest, paths = load_experiment(experiment)
+    if manifest.experiment_mode != "feature_discovery_trial":
+        raise ValueError(
+            "Feature refinement is available only for a feature-discovery trial."
+        )
+    if not paths.feature_table.is_file():
+        raise FileNotFoundError(
+            "Build the representative-ROI feature table before refinement."
+        )
+    if not paths.labels.is_file():
+        raise FileNotFoundError(
+            "Confirm labelled cells in the trial ROIs before refinement."
+        )
+    notify(
+        {
+            "event": "refinement_started",
+            "trial_rois": manifest.feature_trial.selected_rois,
+            "maximum_candidate_features": maximum_candidate_features,
+            "recommendation_count": recommendation_count,
+        }
+    )
+    result = refine_trial_features(
+        read_dataframe(paths.feature_table),
+        read_dataframe(paths.labels),
+        class_ids=[item.class_id for item in manifest.classes],
+        maximum_candidate_features=maximum_candidate_features,
+        recommendation_count=recommendation_count,
+        permutation_repeats=permutation_repeats,
+        maximum_missing_fraction=maximum_missing_fraction,
+        correlation_threshold=correlation_threshold,
+        progress=notify,
+    )
+    ranking_path = write_dataframe(paths.feature_ranking, result.ranking)
+    metrics_path = write_dataframe(paths.refinement_metrics, result.fold_metrics)
+    summary = {
+        **result.summary,
+        "experiment_id": manifest.experiment_id,
+        "experiment_revision": manifest.revision,
+        "feature_set_id": manifest.active_feature_set_id,
+        "feature_ranking": str(ranking_path),
+        "fold_metrics": str(metrics_path),
+        "completed_at": utc_now().isoformat(),
+    }
+    summary_path = write_json(paths.refinement_summary, summary)
+    manifest.feature_trial.status = "refined"
+    manifest.feature_trial.refinement_report_path = str(
+        summary_path.relative_to(paths.root)
+    )
+    manifest.feature_trial.recommended_model_features = (
+        result.recommended_features
+    )
+    from .storage import save_experiment
+
+    save_experiment(manifest, paths.root, audit_action="feature_refinement_completed")
+    notify(
+        {
+            "event": "refinement_completed",
+            "recommended_feature_count": len(result.recommended_features),
+            "mean_balanced_accuracy": summary["mean_balanced_accuracy"],
+            "mean_macro_f1": summary["mean_macro_f1"],
+            "summary": str(summary_path),
+        }
+    )
+    return summary
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -669,6 +789,13 @@ def build_parser() -> argparse.ArgumentParser:
     features.add_argument("--workers", type=int, default=None)
     validate_sources = subparsers.add_parser("validate-sources")
     validate_sources.add_argument("--experiment", required=True)
+    refine = subparsers.add_parser("refine")
+    refine.add_argument("--experiment", required=True)
+    refine.add_argument("--maximum-candidate-features", type=int, default=150)
+    refine.add_argument("--recommendation-count", type=int, default=30)
+    refine.add_argument("--permutation-repeats", type=int, default=5)
+    refine.add_argument("--maximum-missing-fraction", type=float, default=0.30)
+    refine.add_argument("--correlation-threshold", type=float, default=0.95)
     return parser
 
 
@@ -695,6 +822,24 @@ def main(argv: list[str] | None = None) -> int:
                 }
             )
             return 1
+    elif args.command == "refine":
+        try:
+            run_feature_refinement(
+                args.experiment,
+                maximum_candidate_features=args.maximum_candidate_features,
+                recommendation_count=args.recommendation_count,
+                permutation_repeats=args.permutation_repeats,
+                maximum_missing_fraction=args.maximum_missing_fraction,
+                correlation_threshold=args.correlation_threshold,
+            )
+        except Exception as exc:  # noqa: BLE001 - structured subprocess failure
+            _emit(
+                {
+                    "event": "refinement_failed",
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+            return 1
     return 0
 
 
@@ -707,5 +852,6 @@ __all__ = [
     "FeatureBuildResult",
     "main",
     "run_feature_build",
+    "run_feature_refinement",
     "validate_feature_sources",
 ]

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import shutil
 import subprocess
 import sys
 from enum import Enum
@@ -116,6 +118,76 @@ app.add_typer(stages_app, name="stages")
 app.add_typer(modes_app, name="modes")
 app.add_typer(env_app, name="env")
 app.add_typer(gui_app, name="gui")
+
+
+def _project_gui_bootstrap_hint() -> str:
+    if sys.platform == "win32":
+        return (
+            "powershell -ExecutionPolicy Bypass -File "
+            "install/bootstrap_sbt_gui.ps1"
+        )
+    return "bash install/bootstrap_sbt_gui.sh"
+
+
+def _project_gui_command(environment_name: str) -> list[str]:
+    module = "SpatialBiologyToolkit.project_gui"
+    if importlib.util.find_spec("PySide6") is not None:
+        return [sys.executable, "-m", module]
+    conda = shutil.which("conda")
+    if conda is None:
+        raise RuntimeError(
+            "PySide6 is unavailable and Conda was not found. From the toolkit "
+            f"checkout run '{_project_gui_bootstrap_hint()}'."
+        )
+    return [
+        conda,
+        "run",
+        "--no-capture-output",
+        "-n",
+        environment_name,
+        "python",
+        "-m",
+        module,
+    ]
+
+
+@gui_app.command("project")
+def gui_project_command(
+    project: Path | None = typer.Option(
+        None,
+        "--project",
+        help="Existing SBT project root; discovery is used when omitted.",
+    ),
+    read_only: bool = typer.Option(
+        False,
+        "--read-only",
+        help="Disable configuration and project-notes writes.",
+    ),
+    gui_environment: str = typer.Option(
+        "sbt-gui",
+        "--gui-environment",
+        help="Fixed Conda environment used when PySide6 is not in the launcher.",
+        hidden=True,
+    ),
+) -> None:
+    """Launch the lightweight project console with no scheduler capability."""
+
+    try:
+        command = _project_gui_command(gui_environment)
+    except Exception as exc:
+        _fail(exc)
+    if project is not None:
+        command.extend(["--project", str(project)])
+    if read_only:
+        command.append("--read-only")
+    completed = subprocess.run(command, check=False)
+    if completed.returncode:
+        typer.echo(
+            "Project Console failed to start. Install or refresh it with "
+            f"'{_project_gui_bootstrap_hint()}'.",
+            err=True,
+        )
+        raise typer.Exit(completed.returncode)
 
 
 @gui_app.command("napari")

@@ -259,6 +259,33 @@ Use `--help` whenever you are unsure about a command. The complete
 [`sbt` CLI guide](../pipeline/cli.md) describes project checks, planning,
 submission, logs, and reports in more detail.
 
+## 12. Optional graphical project console
+
+The Project Console is useful for explaining stages and config fields, editing
+config with validation and backups, reviewing configured assets and readiness,
+and reading recorded runs, reports, log tails, and notes. It cannot submit or
+control jobs and does not load scientific data.
+
+Install its separate lightweight Qt environment once:
+
+```bash
+cd "$HOME/imcanalysis"
+bash install/bootstrap_sbt_gui.sh
+```
+
+From the CSF3 login node, request a short X11-enabled interactive session and
+launch the existing project:
+
+```bash
+srun-x11 -p interactive -t 30
+conda activate sbt-gui
+sbt gui project --project "$HOME/scratch/HyperionProject"
+```
+
+Use `--read-only` when config and notes writes should be disabled. See the
+[Project Console guide](../guides/project_console.md) for recovery mode,
+configuration audits, and the exact capability boundary.
+
 ## Updating SpatialBiologyToolkit
 
 From a clean toolkit checkout:

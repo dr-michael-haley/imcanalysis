@@ -17,7 +17,11 @@ Repository = "https://github.com/dr-michael-haley/imcanalysis"
 
 [project.scripts]
 sbt = "SpatialBiologyToolkit.cli.main:app"
+sbt-project-gui = "SpatialBiologyToolkit.project_gui.__main__:main"
 napari-sbt = "SpatialBiologyToolkit.napari_sbt.__main__:main"
 
 [tool.setuptools.packages.find]
 include = ["SpatialBiologyToolkit*"]
+
+[tool.setuptools.package-data]
+"SpatialBiologyToolkit.napari_sbt" = ["help/*.md"]

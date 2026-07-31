@@ -55,6 +55,13 @@ It also renders a cohort-only mask for inspection. Confirming the preview
 stores a frozen identity snapshot in the experiment. A later change in AnnData
 membership does not silently change the experiment; create a revision.
 
+Setup also offers a **Feature Discovery Trial**. The complete cohort remains
+frozen as the scientific target, while an independently stored trial scope
+limits initial feature extraction, navigation, training, and scoring to a
+configurable number of representative ROIs. ROIs can be selected manually or
+suggested by eligible-cell abundance. The interface continually reports trial
+cells and ROIs separately from the full target cohort.
+
 The primary classification layer contains only eligible objects and preserves
 their original mask labels. The optional context layer contains the rest of
 the segmentation at low opacity. Annotation clicks on that context are ignored.
@@ -143,6 +150,29 @@ count, completed/failed/pending ROI counts, the most recent ROI result, and the
 final fragment/source-combination phase. A heartbeat is emitted approximately
 every two seconds while ROI work is outstanding, so a long-running ROI can be
 distinguished from a dead process.
+
+## Feature-discovery trials and refinement
+
+The dedicated **🧪 Feature Refinement** tab evaluates broad trial features after
+confirmed class labels have been collected. It uses leave-one-ROI-out splits,
+performs candidate screening inside each training fold, compares elastic-net
+logistic regression with Random Forest, and calculates permutation importance
+only on held-out ROI cells. Results report balanced accuracy, macro-F1,
+missingness, correlation redundancy, and the stability of positive importance
+across fold/model evaluations.
+
+The ranked table is checkable: the automated compact recommendation can be
+restored, or changed using biological knowledge. Checked features can be used
+immediately by the trial classifier. Promotion creates the next experiment
+revision for the complete frozen cohort, records the trial results and checked
+model inputs as provenance, reduces the extraction recipe to their required
+synthetic measurements and imported columns, and requires a new full feature
+build before training or scoring. Three trial ROIs support preliminary
+evaluation; five or more representative ROIs are preferable when feasible.
+
+Every workflow tab includes **Help for this tab**. These dialogs and the
+[`napari_sbt` interface help](napari_sbt_help.md) documentation read the same
+packaged Markdown sources.
 
 For large datasets, configure the active experiment and run:
 
@@ -307,6 +337,10 @@ napari_sbt/<experiment>/
 │   ├── coverage_report.csv
 │   ├── source_validation.json
 │   └── feature_manifest.json
+├── feature_refinement/
+│   ├── feature_ranking.csv
+│   ├── fold_metrics.csv
+│   └── summary.json
 ├── labels/labels.parquet
 ├── explore/review_state.json
 ├── models/

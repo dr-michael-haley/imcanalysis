@@ -24,6 +24,7 @@ from SpatialBiologyToolkit.qc_classifier.io import (
 from .classifier import (
     HGB_MIN_SAMPLES_LEAF,
     confirmed_labels_fingerprint,
+    feature_set_hash,
     high_confidence_queue,
     save_model_bundle,
     score_cohort,
@@ -57,10 +58,12 @@ from .feature_catalog import (
     FEATURE_FAMILY_CATALOG,
     FEATURE_FAMILY_DESCRIPTIONS,
 )
+from .feature_refinement import compact_synthetic_recipe
 from .labels import confirm_proposed, empty_labels, set_label, validate_labels
 from .models import (
     ClassificationClass,
     ExperimentManifest,
+    FeatureDiscoveryTrial,
     FeatureSource,
     SyntheticFeatureRecipe,
     segmentation_qc_classes,
@@ -170,6 +173,8 @@ class NapariSBTController:
             QCheckBox,
             QColorDialog,
             QComboBox,
+            QDialog,
+            QDialogButtonBox,
             QDoubleSpinBox,
             QFileDialog,
             QFormLayout,
@@ -189,6 +194,7 @@ class NapariSBTController:
             QTableWidget,
             QTableWidgetItem,
             QTabWidget,
+            QTextBrowser,
             QTextEdit,
             QTreeWidget,
             QTreeWidgetItem,
@@ -200,10 +206,13 @@ class NapariSBTController:
         self.QMessageBox = QMessageBox
         self.QFileDialog = QFileDialog
         self.QColorDialog = QColorDialog
+        self.QDialog = QDialog
+        self.QDialogButtonBox = QDialogButtonBox
         self.QColor = QColor
         self.QIcon = QIcon
         self.QPixmap = QPixmap
         self.QTableWidgetItem = QTableWidgetItem
+        self.QTextBrowser = QTextBrowser
         self.QTreeWidgetItem = QTreeWidgetItem
         self.viewer = viewer
         self.project_root = (
@@ -225,11 +234,14 @@ class NapariSBTController:
         self.current_selected_object: int | None = None
         self.feature_process = None
         self.source_validation_process = None
+        self.refinement_process = None
+        self.refinement_cancel_requested = False
         self.feature_build_started_at: float | None = None
         self.feature_last_event_at: float | None = None
         self.feature_progress_state: dict[str, int | float | str] = {}
         self._feature_output_buffer = ""
         self._source_validation_output_buffer = ""
+        self._refinement_output_buffer = ""
         self.reviewed_rois: set[str] = set()
         self._class_shortcuts: list[str] = []
         self.current_image_paths: dict[str, Path] = {}
@@ -244,6 +256,9 @@ class NapariSBTController:
         self.classifier_visibility_controls: dict[str, object] = {}
         self.classifier_opacity_controls: dict[str, object] = {}
         self.classifier_contour_controls: dict[str, object] = {}
+        self._retained_feature_source_columns: dict[
+            tuple[str, str, str, str], list[str]
+        ] = {}
 
         self.root = QWidget()
         self.feature_health_timer = QTimer(self.root)
@@ -256,7 +271,17 @@ class NapariSBTController:
         self.tabs = QTabWidget()
         root_layout.addWidget(self.tabs)
 
-        def add_tab(widget, title: str) -> None:
+        def add_tab(widget, title: str, help_topic: str) -> None:
+            help_row = QHBoxLayout()
+            help_row.addStretch(1)
+            help_button = QPushButton("❓ Help for this tab")
+            help_button.clicked.connect(
+                lambda _checked=False, topic=help_topic, tab_title=title: (
+                    self.show_tab_help(topic, tab_title)
+                )
+            )
+            help_row.addWidget(help_button)
+            widget.layout().insertLayout(0, help_row)
             scroll = QScrollArea()
             scroll.setWidgetResizable(True)
             scroll.setWidget(widget)
@@ -312,7 +337,40 @@ class NapariSBTController:
         scope_grid.addWidget(self.preview_text, 4, 0, 1, 3)
         setup_layout.addWidget(scope_group)
 
-        class_group = QGroupBox("2. Mutually exclusive classes (2–8)")
+        trial_group = QGroupBox("2. Experiment mode and feature-discovery ROIs")
+        trial_form = QFormLayout(trial_group)
+        self.experiment_mode_combo = QComboBox()
+        self.experiment_mode_combo.addItem("Full experiment", "full")
+        self.experiment_mode_combo.addItem(
+            "Feature Discovery Trial", "feature_discovery_trial"
+        )
+        self.trial_roi_count_spin = QSpinBox()
+        self.trial_roi_count_spin.setRange(2, 10000)
+        self.trial_roi_count_spin.setValue(3)
+        self.trial_roi_strategy_combo = QComboBox()
+        self.trial_roi_strategy_combo.addItem(
+            "Largest eligible-cell ROIs", "largest"
+        )
+        self.trial_roi_strategy_combo.addItem("Choose manually", "manual")
+        self.trial_roi_list = QListWidget()
+        self.trial_roi_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.trial_roi_list.setMaximumHeight(145)
+        self.trial_roi_summary = QLabel(
+            "Preview the cohort to choose representative trial ROIs."
+        )
+        self.trial_roi_summary.setWordWrap(True)
+        self.suggest_trial_rois_button = QPushButton(
+            "Select suggested representative ROIs"
+        )
+        trial_form.addRow("Workflow", self.experiment_mode_combo)
+        trial_form.addRow("Number of trial ROIs", self.trial_roi_count_spin)
+        trial_form.addRow("ROI selection", self.trial_roi_strategy_combo)
+        trial_form.addRow("Representative ROIs", self.trial_roi_list)
+        trial_form.addRow("", self.suggest_trial_rois_button)
+        trial_form.addRow("Trial scope", self.trial_roi_summary)
+        setup_layout.addWidget(trial_group)
+
+        class_group = QGroupBox("3. Mutually exclusive classes (2–8)")
         class_layout = QVBoxLayout(class_group)
         self.class_table = QTableWidget(0, 5)
         self.class_table.setHorizontalHeaderLabels(
@@ -338,7 +396,7 @@ class NapariSBTController:
         setup_actions.addWidget(self.create_button)
         setup_actions.addWidget(self.load_experiment_button)
         setup_layout.addLayout(setup_actions)
-        add_tab(setup, "⚙ Setup")
+        add_tab(setup, "⚙ Setup", "setup")
 
         # Feature Building
         feature_builder = QWidget()
@@ -552,7 +610,153 @@ class NapariSBTController:
         ):
             feature_actions.addWidget(widget)
         feature_builder_layout.addLayout(feature_actions)
-        add_tab(feature_builder, "🧬 Feature Building")
+        add_tab(feature_builder, "🧬 Feature Building", "feature_building")
+
+        # Feature Refinement
+        refinement = QWidget()
+        refinement_layout = QVBoxLayout(refinement)
+        refinement_intro = QLabel(
+            "Use confirmed labels from representative trial ROIs to identify a "
+            "compact, stable feature set. Evaluation holds out complete ROIs; it "
+            "never uses a random cell-level split."
+        )
+        refinement_intro.setWordWrap(True)
+        refinement_layout.addWidget(refinement_intro)
+
+        readiness_group = QGroupBox("1. Trial readiness")
+        readiness_layout = QVBoxLayout(readiness_group)
+        self.refinement_scope_label = QLabel(
+            "Create or load a Feature Discovery Trial first."
+        )
+        self.refinement_scope_label.setWordWrap(True)
+        self.refinement_class_table = QTableWidget(0, 4)
+        self.refinement_class_table.setHorizontalHeaderLabels(
+            ["Class", "Confirmed", "Represented ROIs", "Readiness"]
+        )
+        self.refinement_class_table.setEditTriggers(
+            QAbstractItemView.NoEditTriggers
+        )
+        self.refinement_class_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.Stretch
+        )
+        self.refinement_class_table.setMaximumHeight(190)
+        readiness_layout.addWidget(self.refinement_scope_label)
+        readiness_layout.addWidget(self.refinement_class_table)
+        refinement_layout.addWidget(readiness_group)
+
+        refine_controls_group = QGroupBox("2. Grouped evaluation settings")
+        refine_controls = QFormLayout(refine_controls_group)
+        self.refine_candidate_spin = QSpinBox()
+        self.refine_candidate_spin.setRange(10, 2000)
+        self.refine_candidate_spin.setValue(150)
+        self.refine_recommendation_spin = QSpinBox()
+        self.refine_recommendation_spin.setRange(2, 500)
+        self.refine_recommendation_spin.setValue(30)
+        self.refine_repeats_spin = QSpinBox()
+        self.refine_repeats_spin.setRange(1, 25)
+        self.refine_repeats_spin.setValue(5)
+        self.refine_missing_spin = QDoubleSpinBox()
+        self.refine_missing_spin.setRange(0, 1)
+        self.refine_missing_spin.setSingleStep(0.05)
+        self.refine_missing_spin.setValue(0.30)
+        self.refine_missing_spin.setDecimals(2)
+        self.refine_correlation_spin = QDoubleSpinBox()
+        self.refine_correlation_spin.setRange(0.50, 0.999)
+        self.refine_correlation_spin.setSingleStep(0.01)
+        self.refine_correlation_spin.setValue(0.95)
+        self.refine_correlation_spin.setDecimals(3)
+        refine_controls.addRow(
+            "Maximum training-fold candidate features",
+            self.refine_candidate_spin,
+        )
+        refine_controls.addRow(
+            "Requested compact recommendation", self.refine_recommendation_spin
+        )
+        refine_controls.addRow(
+            "Held-out permutation repeats", self.refine_repeats_spin
+        )
+        refine_controls.addRow(
+            "Maximum allowed missing fraction", self.refine_missing_spin
+        )
+        refine_controls.addRow(
+            "Redundancy correlation threshold", self.refine_correlation_spin
+        )
+        refinement_layout.addWidget(refine_controls_group)
+
+        refinement_progress_group = QGroupBox("3. Analysis progress")
+        refinement_progress_layout = QVBoxLayout(refinement_progress_group)
+        self.refinement_progress_bar = QProgressBar()
+        self.refinement_progress_bar.setRange(0, 100)
+        self.refinement_progress_bar.setFormat("Not started")
+        self.refinement_progress_label = QLabel("Refinement process: idle")
+        self.refinement_progress_label.setWordWrap(True)
+        self.refinement_log = QTextEdit()
+        self.refinement_log.setReadOnly(True)
+        self.refinement_log.setMaximumHeight(140)
+        refinement_progress_layout.addWidget(self.refinement_progress_bar)
+        refinement_progress_layout.addWidget(self.refinement_progress_label)
+        refinement_progress_layout.addWidget(self.refinement_log)
+        refinement_actions = QHBoxLayout()
+        self.run_refinement_button = QPushButton(
+            "Run leave-one-ROI-out feature refinement"
+        )
+        self.cancel_refinement_button = QPushButton("Cancel refinement")
+        self.cancel_refinement_button.setEnabled(False)
+        self.refresh_refinement_button = QPushButton("Reload saved results")
+        refinement_actions.addWidget(self.run_refinement_button)
+        refinement_actions.addWidget(self.cancel_refinement_button)
+        refinement_actions.addWidget(self.refresh_refinement_button)
+        refinement_progress_layout.addLayout(refinement_actions)
+        refinement_layout.addWidget(refinement_progress_group)
+
+        refinement_results_group = QGroupBox("4. Recommended feature set")
+        refinement_results_layout = QVBoxLayout(refinement_results_group)
+        self.refinement_metrics_label = QLabel("No refinement results yet.")
+        self.refinement_metrics_label.setWordWrap(True)
+        self.refinement_results_table = QTableWidget(0, 8)
+        self.refinement_results_table.setHorizontalHeaderLabels(
+            [
+                "Rank",
+                "Feature",
+                "Source",
+                "Family",
+                "Importance",
+                "Stability",
+                "Missing",
+                "Use",
+            ]
+        )
+        self.refinement_results_table.setEditTriggers(
+            QAbstractItemView.NoEditTriggers
+        )
+        self.refinement_results_table.setSelectionBehavior(
+            QAbstractItemView.SelectRows
+        )
+        self.refinement_results_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeToContents
+        )
+        self.refinement_results_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.Stretch
+        )
+        self.refinement_results_table.setMinimumHeight(300)
+        recommendation_actions = QHBoxLayout()
+        self.select_recommended_button = QPushButton(
+            "Restore recommended checks"
+        )
+        self.apply_model_features_button = QPushButton(
+            "Use checked features for trial classifier"
+        )
+        self.promote_trial_button = QPushButton(
+            "Promote checked features to full experiment revision"
+        )
+        recommendation_actions.addWidget(self.select_recommended_button)
+        recommendation_actions.addWidget(self.apply_model_features_button)
+        recommendation_actions.addWidget(self.promote_trial_button)
+        refinement_results_layout.addWidget(self.refinement_metrics_label)
+        refinement_results_layout.addWidget(self.refinement_results_table)
+        refinement_results_layout.addLayout(recommendation_actions)
+        refinement_layout.addWidget(refinement_results_group)
+        add_tab(refinement, "🧪 Feature Refinement", "feature_refinement")
 
         # Explore
         explore = QWidget()
@@ -689,7 +893,7 @@ class NapariSBTController:
         image_layout.addWidget(self.channel_list)
         image_layout.addLayout(image_actions)
         explore_layout.addWidget(image_group)
-        add_tab(explore, "🔬 Explore")
+        add_tab(explore, "🔬 Explore", "explore")
 
         # Classify
         classify = QWidget()
@@ -830,7 +1034,7 @@ class NapariSBTController:
         model_form.addRow("Probability class", self.probability_class_combo)
         model_form.addRow("", self.show_probability_button)
         classify_layout.addWidget(model_group)
-        add_tab(classify, "🏷 Classify")
+        add_tab(classify, "🏷 Classify", "classify")
         self.classify_tab_index = self.tabs.count() - 1
 
         # Regions & Export
@@ -860,7 +1064,7 @@ class NapariSBTController:
         export_form.addRow("", self.export_cohort_masks_button)
         export_form.addRow("", self.export_clean_masks_button)
         regions_layout.addWidget(export_group)
-        add_tab(regions, "🗺 Regions & Export")
+        add_tab(regions, "🗺 Regions & Export", "regions_export")
 
         # Layers & Status
         layers = QWidget()
@@ -903,7 +1107,7 @@ class NapariSBTController:
         self.refresh_status_button = QPushButton("Refresh experiment freshness status")
         layers_layout.addWidget(self.refresh_status_button)
         layers_layout.addWidget(self.status_text)
-        add_tab(layers, "🎨 Layers & Status")
+        add_tab(layers, "🎨 Layers & Status", "layers_status")
         self.tabs.setStyleSheet(
             """
             QTabBar::tab {
@@ -919,6 +1123,7 @@ class NapariSBTController:
             QTabBar::tab:nth-child(4) { background: #fce7f3; }
             QTabBar::tab:nth-child(5) { background: #ede9fe; }
             QTabBar::tab:nth-child(6) { background: #e0f2fe; }
+            QTabBar::tab:nth-child(7) { background: #f1f5f9; }
             QTabBar::tab:selected {
                 font-weight: bold;
                 border: 2px solid #5f6368;
@@ -937,6 +1142,7 @@ class NapariSBTController:
             "#b45309",
             "#be185d",
             "#0369a1",
+            "#475569",
         )
         for index, colour in enumerate(tab_text_colours):
             self.tabs.tabBar().setTabTextColor(index, self.QColor(colour))
@@ -960,6 +1166,21 @@ class NapariSBTController:
         self.obs_combo.currentTextChanged.connect(self._guard(self.refresh_scope_values))
         self.scope_combo.currentIndexChanged.connect(self._update_scope_widget_state)
         self.preview_button.clicked.connect(self._guard(self.preview_cohort))
+        self.experiment_mode_combo.currentIndexChanged.connect(
+            self._update_experiment_mode_state
+        )
+        self.trial_roi_strategy_combo.currentIndexChanged.connect(
+            self._update_experiment_mode_state
+        )
+        self.trial_roi_count_spin.valueChanged.connect(
+            self._guard(self._trial_roi_count_changed)
+        )
+        self.trial_roi_list.itemSelectionChanged.connect(
+            self._update_trial_roi_summary
+        )
+        self.suggest_trial_rois_button.clicked.connect(
+            self._guard(self.suggest_trial_rois)
+        )
         self.qc_template_button.clicked.connect(
             lambda: self._set_class_rows(segmentation_qc_classes())
         )
@@ -1000,6 +1221,24 @@ class NapariSBTController:
                 "Managed build: set napari_sbt.active_experiment in config.yaml, "
                 "then run `sbt run cellfeat` (8 CPUs, 64 GB, 24 hours)."
             )
+        )
+        self.run_refinement_button.clicked.connect(
+            self._guard(self.start_feature_refinement)
+        )
+        self.cancel_refinement_button.clicked.connect(
+            self.cancel_feature_refinement
+        )
+        self.refresh_refinement_button.clicked.connect(
+            self._guard(self.load_refinement_results)
+        )
+        self.select_recommended_button.clicked.connect(
+            self._guard(self.restore_recommended_feature_checks)
+        )
+        self.apply_model_features_button.clicked.connect(
+            self._guard(self.apply_checked_model_features)
+        )
+        self.promote_trial_button.clicked.connect(
+            self._guard(self.promote_feature_trial)
         )
         self.roi_combo.currentTextChanged.connect(
             self._guard(self.load_roi, pass_signal_args=True)
@@ -1108,6 +1347,7 @@ class NapariSBTController:
         self.mask_layer_button.clicked.connect(self._guard(self.mask_selected_image))
         self.refresh_status_button.clicked.connect(self._guard(self.refresh_status))
         self._update_scope_widget_state()
+        self._update_experiment_mode_state()
 
     def _guard(self, callback, *, pass_signal_args: bool = False):
         def wrapped(*args, **kwargs):
@@ -1127,6 +1367,27 @@ class NapariSBTController:
     def set_status(self, message: str) -> None:
         self.status_text.append(str(message))
         self.scope_label.setToolTip(str(message))
+
+    def show_tab_help(self, topic: str, title: str) -> None:
+        """Show documentation-backed help for one workflow tab."""
+
+        help_path = Path(__file__).with_name("help") / f"{topic}.md"
+        if not help_path.is_file():
+            raise FileNotFoundError(f"Tab help is missing: {help_path}")
+        dialog = self.QDialog(self.root)
+        dialog.setWindowTitle(f"napari_sbt help — {title}")
+        dialog.resize(820, 680)
+        from qtpy.QtWidgets import QVBoxLayout
+
+        layout = QVBoxLayout(dialog)
+        browser = self.QTextBrowser(dialog)
+        browser.setOpenExternalLinks(True)
+        browser.setMarkdown(help_path.read_text(encoding="utf-8"))
+        buttons = self.QDialogButtonBox(self.QDialogButtonBox.Close, parent=dialog)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(browser)
+        layout.addWidget(buttons)
+        dialog.exec()
 
     def _set_classification_enabled(self, enabled: bool) -> None:
         for widget in (
@@ -1150,6 +1411,91 @@ class NapariSBTController:
         selected = self.scope_combo.currentData() == "obs_values"
         self.obs_combo.setEnabled(selected)
         self.value_list.setEnabled(selected)
+
+    def _update_experiment_mode_state(self, *_args) -> None:
+        trial_mode = (
+            self.experiment_mode_combo.currentData() == "feature_discovery_trial"
+        )
+        manual = self.trial_roi_strategy_combo.currentData() == "manual"
+        self.trial_roi_count_spin.setEnabled(trial_mode)
+        self.trial_roi_strategy_combo.setEnabled(trial_mode)
+        self.trial_roi_list.setEnabled(trial_mode and manual)
+        self.suggest_trial_rois_button.setEnabled(trial_mode)
+        if trial_mode and not manual and self.trial_roi_list.count():
+            self.suggest_trial_rois()
+        self._update_trial_roi_summary()
+
+    def _trial_roi_count_changed(self) -> None:
+        if self.trial_roi_strategy_combo.currentData() == "largest":
+            self.suggest_trial_rois()
+        else:
+            self._update_trial_roi_summary()
+
+    def _populate_trial_roi_list(
+        self,
+        per_roi_counts: pd.DataFrame,
+        *,
+        selected_rois: Iterable[str] = (),
+    ) -> None:
+        from qtpy.QtWidgets import QListWidgetItem
+
+        selected = {str(roi) for roi in selected_rois}
+        available_roi_count = len(per_roi_counts)
+        self.trial_roi_count_spin.blockSignals(True)
+        self.trial_roi_count_spin.setMaximum(max(2, available_roi_count))
+        if available_roi_count >= 2 and (
+            self.trial_roi_count_spin.value() > available_roi_count
+        ):
+            self.trial_roi_count_spin.setValue(available_roi_count)
+        self.trial_roi_count_spin.blockSignals(False)
+        self.trial_roi_list.blockSignals(True)
+        self.trial_roi_list.clear()
+        for row in per_roi_counts.itertuples(index=False):
+            item = QListWidgetItem(
+                f"{row.ROI} — {int(row.eligible_cells):,} eligible cells"
+            )
+            item.setData(self.Qt.UserRole, str(row.ROI))
+            self.trial_roi_list.addItem(item)
+            item.setSelected(str(row.ROI) in selected)
+        self.trial_roi_list.blockSignals(False)
+        self._update_trial_roi_summary()
+
+    def selected_trial_rois(self) -> list[str]:
+        return [
+            str(item.data(self.Qt.UserRole) or item.text())
+            for item in self.trial_roi_list.selectedItems()
+        ]
+
+    def suggest_trial_rois(self) -> None:
+        if self.trial_roi_list.count() == 0:
+            self._update_trial_roi_summary()
+            return
+        requested = self.trial_roi_count_spin.value()
+        self.trial_roi_list.blockSignals(True)
+        for index in range(self.trial_roi_list.count()):
+            self.trial_roi_list.item(index).setSelected(index < requested)
+        self.trial_roi_list.blockSignals(False)
+        self._update_trial_roi_summary()
+
+    def _update_trial_roi_summary(self) -> None:
+        if self.experiment_mode_combo.currentData() != "feature_discovery_trial":
+            self.trial_roi_summary.setText(
+                "Full mode: features, training and scoring use every eligible ROI."
+            )
+            return
+        selected = self.selected_trial_rois()
+        cells = 0
+        if self.preview is not None and selected:
+            cells = int(
+                self.preview.eligible_cells["ROI"].astype(str).isin(selected).sum()
+            )
+        requested = self.trial_roi_count_spin.value()
+        readiness = "ready" if len(selected) == requested else "selection incomplete"
+        self.trial_roi_summary.setText(
+            f"{len(selected)}/{requested} trial ROIs selected; {cells:,} eligible "
+            f"trial cells ({readiness}). The full cohort remains frozen as the "
+            "eventual classification target."
+        )
 
     def load_anndata_selectors(self) -> None:
         import anndata as ad
@@ -1261,6 +1607,19 @@ class NapariSBTController:
             + self.preview.per_roi_counts.to_string(index=False)
         )
         self.preview_text.setPlainText(text)
+        previous_trial_rois = self.selected_trial_rois()
+        self._populate_trial_roi_list(
+            self.preview.per_roi_counts,
+            selected_rois=previous_trial_rois,
+        )
+        if (
+            self.experiment_mode_combo.currentData() == "feature_discovery_trial"
+            and (
+                self.trial_roi_strategy_combo.currentData() == "largest"
+                or not previous_trial_rois
+            )
+        ):
+            self.suggest_trial_rois()
         first_roi = str(self.preview.eligible_cells.iloc[0]["ROI"])
         if first_roi in masks:
             restricted = cohort_mask(
@@ -1364,9 +1723,13 @@ class NapariSBTController:
             else:
                 path = line
                 source_id = Path(path).stem
-            sources.append(
-                FeatureSource(source_id=source_id.strip(), kind="table", path=path.strip())
+            source = FeatureSource(
+                source_id=source_id.strip(), kind="table", path=path.strip()
             )
+            source.selected_columns = self._retained_feature_source_columns.get(
+                self._feature_source_signature(source), []
+            )
+            sources.append(source)
         for line in _split_paths(self.anndata_features_edit.toPlainText()):
             if "=" in line:
                 source_id, specification = line.split("=", 1)
@@ -1377,15 +1740,26 @@ class NapariSBTController:
                 path, representation = specification.rsplit("::", 1)
             else:
                 path, representation = specification, "X"
-            sources.append(
-                FeatureSource(
-                    source_id=source_id.strip(),
-                    kind="anndata",
-                    path=path.strip(),
-                    representation=representation.strip(),
-                )
+            source = FeatureSource(
+                source_id=source_id.strip(),
+                kind="anndata",
+                path=path.strip(),
+                representation=representation.strip(),
             )
+            source.selected_columns = self._retained_feature_source_columns.get(
+                self._feature_source_signature(source), []
+            )
+            sources.append(source)
         return sources
+
+    @staticmethod
+    def _feature_source_signature(source: FeatureSource) -> tuple[str, str, str, str]:
+        return (
+            source.source_id,
+            source.kind,
+            str(source.path or ""),
+            str(source.representation or ""),
+        )
 
     def refresh_feature_channel_choices(self) -> None:
         selected = set(self.selected_feature_channels())
@@ -1553,13 +1927,37 @@ class NapariSBTController:
 
     def create_experiment(self) -> None:
         preview = self.preview_cohort()
+        experiment_mode = str(self.experiment_mode_combo.currentData())
+        feature_trial = None
+        if experiment_mode == "feature_discovery_trial":
+            selected_rois = self.selected_trial_rois()
+            requested = self.trial_roi_count_spin.value()
+            if len(selected_rois) != requested:
+                raise ValueError(
+                    f"Select exactly {requested} representative trial ROIs; "
+                    f"currently selected: {len(selected_rois)}."
+                )
+            feature_trial = FeatureDiscoveryTrial(
+                roi_selection=str(self.trial_roi_strategy_combo.currentData()),
+                roi_count=requested,
+                selected_rois=selected_rois,
+            )
+            trial_cells = int(
+                preview.eligible_cells["ROI"].astype(str).isin(selected_rois).sum()
+            )
+            trial_text = (
+                f" Feature extraction and initial classification will use "
+                f"{trial_cells:,} cells in {requested} trial ROIs."
+            )
+        else:
+            trial_text = ""
         reply = self.QMessageBox.question(
             self.root,
             "Freeze cohort",
             (
                 f"Freeze {preview.eligible_cell_count:,} eligible identities across "
                 f"{preview.represented_roi_count} ROIs? Later membership changes "
-                "require an explicit experiment revision."
+                f"require an explicit experiment revision.{trial_text}"
             ),
         )
         if reply != self.QMessageBox.Yes:
@@ -1601,6 +1999,8 @@ class NapariSBTController:
             object_id_obs=self.object_obs_edit.text().strip(),
             cell_scope=scope,
             classes=self.class_definitions(),
+            experiment_mode=experiment_mode,
+            feature_trial=feature_trial,
             feature_sources=self.feature_sources(),
             synthetic_features=self.synthetic_recipe_from_controls(),
             annotated_adata_path=self.annotated_path_edit.text().strip(),
@@ -1619,12 +2019,26 @@ class NapariSBTController:
 
     def load_existing_experiment(self, path: Path) -> None:
         self.manifest, self.paths = load_experiment(path)
+        self.model_bundle = None
         self.experiment_edit.setText(str(self.paths.root))
         self.name_edit.setText(self.manifest.name)
         self.anndata_edit.setText(_path_text(self.manifest.anndata_path))
         self.masks_edit.setText(self.manifest.masks_folder)
         self.roi_obs_edit.setText(self.manifest.roi_obs)
         self.object_obs_edit.setText(self.manifest.object_id_obs)
+        self.experiment_mode_combo.setCurrentIndex(
+            self.experiment_mode_combo.findData(self.manifest.experiment_mode)
+        )
+        if self.manifest.feature_trial is not None:
+            self.trial_roi_count_spin.setMaximum(10000)
+            self.trial_roi_count_spin.setValue(
+                self.manifest.feature_trial.roi_count
+            )
+            self.trial_roi_strategy_combo.setCurrentIndex(
+                self.trial_roi_strategy_combo.findData(
+                    self.manifest.feature_trial.roi_selection
+                )
+            )
         self.images_edit.setPlainText("\n".join(self.manifest.images_folders))
         self.extra_images_edit.setPlainText("\n".join(self.manifest.extra_images_folders))
         self.offset_spin.setValue(self.manifest.synthetic_features.mask_offset_px)
@@ -1676,24 +2090,51 @@ class NapariSBTController:
                     self.Qt.Checked if name in selected_names else self.Qt.Unchecked,
                 )
         self.feature_tree.blockSignals(False)
+        self._retained_feature_source_columns = {
+            self._feature_source_signature(source): list(source.selected_columns)
+            for source in self.manifest.feature_sources
+            if source.enabled
+        }
         self.feature_tables_edit.setPlainText(
             "\n".join(
                 f"{source.source_id}={source.path}"
                 for source in self.manifest.feature_sources
-                if source.kind == "table"
+                if source.kind == "table" and source.enabled
             )
         )
         self.anndata_features_edit.setPlainText(
             "\n".join(
                 f"{source.source_id}={source.path}::{source.representation or 'X'}"
                 for source in self.manifest.feature_sources
-                if source.kind == "anndata"
+                if source.kind == "anndata" and source.enabled
             )
         )
         self._set_class_rows(self.manifest.classes)
         self.cohort = read_dataframe(
             self.paths.root / self.manifest.cell_scope.snapshot_path
         )
+        per_roi_counts = (
+            self.cohort.groupby("ROI", observed=True)
+            .size()
+            .rename("eligible_cells")
+            .reset_index()
+            .sort_values(["eligible_cells", "ROI"], ascending=[False, True])
+            .reset_index(drop=True)
+        )
+        self.preview = CohortPreview(
+            eligible_cells=self.cohort,
+            total_cell_count=self.manifest.cell_scope.total_cell_count,
+            per_roi_counts=per_roi_counts,
+        )
+        self._populate_trial_roi_list(
+            per_roi_counts,
+            selected_rois=(
+                self.manifest.feature_trial.selected_rois
+                if self.manifest.feature_trial is not None
+                else ()
+            ),
+        )
+        self._update_experiment_mode_state()
         if self.paths.labels.exists():
             self.labels = validate_labels(
                 read_dataframe(self.paths.labels),
@@ -1702,8 +2143,40 @@ class NapariSBTController:
             )
         else:
             self.labels = empty_labels()
-        if self.paths.scores.exists():
-            self.scores = read_dataframe(self.paths.scores)
+        self.scores = pd.DataFrame()
+        if self.paths.scores.exists() and self.manifest.active_feature_set_id:
+            candidate_scores = read_dataframe(self.paths.scores)
+            metadata_path = self.paths.models / "classifier_latest.json"
+            try:
+                model_metadata = (
+                    json.loads(metadata_path.read_text(encoding="utf-8"))
+                    if metadata_path.is_file()
+                    else {}
+                )
+            except (OSError, json.JSONDecodeError):
+                model_metadata = {}
+            scores_are_current = bool(
+                not candidate_scores.empty
+                and "feature_set_id" in candidate_scores
+                and "model_id" in candidate_scores
+                and candidate_scores["feature_set_id"]
+                .fillna("")
+                .eq(self.manifest.active_feature_set_id)
+                .all()
+                and candidate_scores["model_id"]
+                .astype(str)
+                .eq(str(model_metadata.get("model_id")))
+                .all()
+                and model_metadata.get("labels_fingerprint")
+                == confirmed_labels_fingerprint(self.labels)
+                and (
+                    not self.manifest.active_model_features
+                    or model_metadata.get("feature_set_hash")
+                    == feature_set_hash(self.manifest.active_model_features)
+                )
+            )
+            if scores_are_current:
+                self.scores = candidate_scores
         reviewed_path = self.paths.labels.parent / "reviewed_rois.json"
         if reviewed_path.exists():
             self.reviewed_rois = set(
@@ -1744,16 +2217,35 @@ class NapariSBTController:
             f"{self.manifest.revision}."
         )
         self.refresh_status()
+        self.load_refinement_results(silent=True)
 
     def _update_scope_text(self) -> None:
         if self.manifest is None:
             self.scope_label.setText("No experiment: classification is disabled.")
             return
+        mode_text = ""
+        if (
+            self.manifest.experiment_mode == "feature_discovery_trial"
+            and self.manifest.feature_trial is not None
+        ):
+            trial_cells = int(
+                self.cohort["ROI"]
+                .astype(str)
+                .isin(self.manifest.feature_trial.selected_rois)
+                .sum()
+            )
+            mode_text = (
+                f" — TRIAL: {trial_cells:,} cells in "
+                f"{len(self.manifest.feature_trial.selected_rois)} selected ROIs"
+            )
+        elif self.manifest.feature_trial is not None:
+            mode_text = " — full experiment promoted from a feature trial"
         self.scope_label.setText(
             f"{self.manifest.cell_scope.eligible_cell_count:,} eligible cells / "
             f"{self.manifest.cell_scope.total_cell_count:,} total cells across "
             f"{self.manifest.cell_scope.represented_roi_count} ROIs — "
             f"experiment {self.manifest.name!r} r{self.manifest.revision}"
+            f"{mode_text}"
         )
 
     def refresh_class_controls(self) -> None:
@@ -1772,10 +2264,14 @@ class NapariSBTController:
                     icon, definition.name, definition.class_id
                 )
             self.queue_roi_combo.clear()
-            self.queue_roi_combo.addItem("All eligible ROIs", None)
-            self.queue_roi_combo.addItems(
-                sorted(self.cohort["ROI"].astype(str).unique())
-            )
+            self.queue_roi_combo.addItem("All current experiment ROIs", None)
+            queue_rois = sorted(self.cohort["ROI"].astype(str).unique())
+            if (
+                self.manifest.experiment_mode == "feature_discovery_trial"
+                and self.manifest.feature_trial is not None
+            ):
+                queue_rois = list(self.manifest.feature_trial.selected_rois)
+            self.queue_roi_combo.addItems(queue_rois)
         finally:
             self._updating_queue_controls = False
         for shortcut in self._class_shortcuts:
@@ -1838,6 +2334,8 @@ class NapariSBTController:
         self.model_storage_label.setText(
             f"{current_model}{state}: {model_path}\n"
             f"Provenance: {metadata_path}\n"
+            f"Active model inputs: "
+            f"{len(self.manifest.active_model_features) or 'all numeric features'}\n"
             "The Joblib file contains the fitted imputer and classifier. "
             "Retraining replaces the latest model; the JSON records "
             "its model ID, classes, features, label fingerprint, and versions."
@@ -1883,8 +2381,16 @@ class NapariSBTController:
         if self.manifest is None:
             return
         eligible_rois = sorted(self.cohort["ROI"].astype(str).unique())
+        if (
+            self.manifest.experiment_mode == "feature_discovery_trial"
+            and self.manifest.feature_trial is not None
+        ):
+            eligible_rois = list(self.manifest.feature_trial.selected_rois)
         rois = eligible_rois
-        if self.show_empty_rois.isChecked():
+        if (
+            self.show_empty_rois.isChecked()
+            and self.manifest.experiment_mode != "feature_discovery_trial"
+        ):
             all_rois = set(discover_mask_files(self.manifest.masks_folder))
             rois = sorted(all_rois | set(eligible_rois))
         current = self.roi_combo.currentText()
@@ -3620,6 +4126,11 @@ class NapariSBTController:
             .sort_values(ascending=False)
         )
         eligible = set(self.cohort["ROI"].astype(str))
+        if (
+            self.manifest.experiment_mode == "feature_discovery_trial"
+            and self.manifest.feature_trial is not None
+        ):
+            eligible &= set(self.manifest.feature_trial.selected_rois)
         ranked = [str(roi) for roi in counts.index if str(roi) in eligible]
         self.roi_combo.blockSignals(True)
         self.roi_combo.clear()
@@ -3769,6 +4280,7 @@ class NapariSBTController:
 
     def refresh_status(self) -> None:
         self._refresh_class_tally()
+        self.refresh_refinement_readiness()
         if self.manifest is None:
             self.set_status("FRESHNESS — no active experiment.")
             return
@@ -3800,6 +4312,11 @@ class NapariSBTController:
             labels_current = model_metadata.get(
                 "labels_fingerprint"
             ) == confirmed_labels_fingerprint(self.labels)
+            feature_selection_current = (
+                not self.manifest.active_model_features
+                or model_metadata.get("feature_set_hash")
+                == feature_set_hash(self.manifest.active_model_features)
+            )
             model_state = (
                 "current cohort/features/labels"
                 if model_metadata.get("cohort_fingerprint")
@@ -3807,6 +4324,7 @@ class NapariSBTController:
                 and model_metadata.get("feature_set_id")
                 == self.manifest.active_feature_set_id
                 and labels_current
+                and feature_selection_current
                 else "STALE cohort/features/labels"
             )
         scores_current = (
@@ -3826,13 +4344,24 @@ class NapariSBTController:
             )
         )
         scored = int(self.scores["scorable"].fillna(False).sum()) if scores_current else 0
-        represented = set(self.cohort["ROI"].astype(str))
+        working_cohort = self.cohort
+        if (
+            self.manifest.experiment_mode == "feature_discovery_trial"
+            and self.manifest.feature_trial is not None
+        ):
+            working_cohort = self.cohort.loc[
+                self.cohort["ROI"]
+                .astype(str)
+                .isin(self.manifest.feature_trial.selected_rois)
+            ]
+        represented = set(working_cohort["ROI"].astype(str))
         reviewed = len(represented & self.reviewed_rois)
         self.set_status(
             "FRESHNESS — "
             f"cohort={cohort_state}; classes={class_counts}; "
             f"proposals={proposed}; feature_set={feature_state}; "
-            f"model={model_state}; scored_current={scored}/{len(self.cohort)}; "
+            f"model_features={len(self.manifest.active_model_features) or 'all'}; "
+            f"model={model_state}; scored_current={scored}/{len(working_cohort)}; "
             f"reviewed_ROIs={reviewed}/{len(represented)}."
         )
 
@@ -3849,6 +4378,12 @@ class NapariSBTController:
             {item.name.casefold(): item.class_id for item in self.manifest.classes}
         )
         values = self.adata.obs[observation].astype("string")
+        working_rois = None
+        if (
+            self.manifest.experiment_mode == "feature_discovery_trial"
+            and self.manifest.feature_trial is not None
+        ):
+            working_rois = set(self.manifest.feature_trial.selected_rois)
         confirmed_identities = set(
             self.labels.loc[
                 self.labels["state"].eq("confirmed"), ["ROI", "ObjectNumber"]
@@ -3858,6 +4393,8 @@ class NapariSBTController:
         )
         seeded = 0
         for row in self.cohort.itertuples():
+            if working_rois is not None and str(row.ROI) not in working_rois:
+                continue
             if row.obs_name not in values.index:
                 continue
             if (str(row.ROI), int(row.ObjectNumber)) in confirmed_identities:
@@ -3972,6 +4509,10 @@ class NapariSBTController:
         return read_dataframe(self.paths.feature_table)
 
     def train_model(self) -> bool:
+        if not self.manifest.active_feature_set_id:
+            raise ValueError(
+                "Build features for the current experiment revision before training."
+            )
         if self.model_combo.currentData() == "hist_gradient_boosting":
             confirmed = self.labels.loc[self.labels["state"].eq("confirmed")]
             class_counts = {
@@ -4010,6 +4551,7 @@ class NapariSBTController:
             self._load_feature_table(),
             self.labels,
             class_ids=[item.class_id for item in self.manifest.classes],
+            feature_columns=(self.manifest.active_model_features or None),
             cohort=self.cohort,
             model_type=self.model_combo.currentData(),
             cohort_fingerprint=self.manifest.cell_scope.snapshot_sha256,
@@ -4018,6 +4560,19 @@ class NapariSBTController:
         if not result.ok:
             raise ValueError("; ".join(result.errors))
         self.model_bundle = result.bundle
+        if (
+            self.manifest.active_model_features
+            and self.manifest.active_model_features
+            != self.model_bundle.feature_columns
+        ):
+            self.manifest.active_model_features = list(
+                self.model_bundle.feature_columns
+            )
+            save_experiment(
+                self.manifest,
+                self.paths.root,
+                audit_action="drop_unusable_active_model_features",
+            )
         save_model_bundle(
             self.model_bundle, self.paths.models / "classifier_latest.joblib"
         )
@@ -4041,6 +4596,11 @@ class NapariSBTController:
 
                 self.model_bundle = load_model_bundle(latest)
         metadata = self.model_bundle.metadata
+        feature_selection_stale = bool(
+            self.manifest.active_model_features
+            and metadata.get("feature_set_hash")
+            != feature_set_hash(self.manifest.active_model_features)
+        )
         if (
             metadata.get("cohort_fingerprint")
             != self.manifest.cell_scope.snapshot_sha256
@@ -4048,6 +4608,7 @@ class NapariSBTController:
             != self.manifest.active_feature_set_id
             or metadata.get("labels_fingerprint")
             != confirmed_labels_fingerprint(self.labels)
+            or feature_selection_stale
         ):
             raise ValueError(
                 "The loaded model is stale for the current cohort, feature revision, "
@@ -4208,6 +4769,8 @@ class NapariSBTController:
             raise RuntimeError("Create or load an experiment before validating sources.")
         if self.feature_process is not None:
             raise RuntimeError("Wait for the feature build to finish first.")
+        if self.refinement_process is not None:
+            raise RuntimeError("Wait for feature refinement to finish first.")
         if self.source_validation_process is not None:
             raise RuntimeError("Feature-source validation is already running.")
         self.manifest.feature_sources = self.feature_sources()
@@ -4329,6 +4892,441 @@ class NapariSBTController:
         else:
             self.set_status(f"Feature-source validation exited with code {exit_code}.")
 
+    def refresh_refinement_readiness(self) -> None:
+        """Summarize whether confirmed trial labels support grouped evaluation."""
+
+        self.refinement_class_table.setRowCount(0)
+        trial = self.manifest.feature_trial if self.manifest is not None else None
+        is_trial = bool(
+            self.manifest is not None
+            and self.manifest.experiment_mode == "feature_discovery_trial"
+            and trial is not None
+        )
+        self.run_refinement_button.setEnabled(False)
+        self.apply_model_features_button.setEnabled(False)
+        self.promote_trial_button.setEnabled(False)
+        if not is_trial:
+            if self.manifest is not None and trial is not None:
+                self.refinement_scope_label.setText(
+                    "This full experiment was promoted from a feature trial. Its "
+                    "saved ranking remains available below as provenance."
+                )
+            else:
+                self.refinement_scope_label.setText(
+                    "Feature refinement requires a Feature Discovery Trial created "
+                    "in Setup."
+                )
+            return
+        trial_rois = set(trial.selected_rois)
+        trial_cells = int(self.cohort["ROI"].astype(str).isin(trial_rois).sum())
+        feature_rows = 0
+        has_features = bool(
+            self.paths is not None and self.paths.feature_table.is_file()
+        )
+        if has_features:
+            feature_rows = len(read_dataframe(self.paths.feature_table))
+        self.refinement_scope_label.setText(
+            f"{trial_cells:,} eligible trial cells in {len(trial_rois)} ROIs; "
+            f"{feature_rows:,} feature rows currently available. Confirm each class "
+            "in at least two ROIs; 20–30 cells per class is a useful practical target."
+        )
+        confirmed = self.labels.loc[
+            self.labels["state"].astype(str).eq("confirmed")
+            & self.labels["ROI"].astype(str).isin(trial_rois)
+        ]
+        class_coverage_ready = True
+        for definition in self.manifest.classes:
+            rows = confirmed.loc[confirmed["class_id"].eq(definition.class_id)]
+            count = len(rows)
+            roi_count = int(rows["ROI"].astype(str).nunique())
+            if count >= 20 and roi_count >= 2:
+                readiness = "Good initial coverage"
+                colour = "#dcfce7"
+            elif count >= 2 and roi_count >= 2:
+                readiness = "Runnable; add labels"
+                colour = "#fef3c7"
+            else:
+                readiness = "Needs ≥2 cells in ≥2 ROIs"
+                colour = "#fee2e2"
+                class_coverage_ready = False
+            row = self.refinement_class_table.rowCount()
+            self.refinement_class_table.insertRow(row)
+            for column, value in enumerate(
+                (definition.name, f"{count:,}", str(roi_count), readiness)
+            ):
+                item = self.QTableWidgetItem(value)
+                item.setBackground(self.QColor(colour))
+                self.refinement_class_table.setItem(row, column, item)
+        current_results = False
+        if self.paths is not None and self.paths.refinement_summary.is_file():
+            try:
+                summary = json.loads(
+                    self.paths.refinement_summary.read_text(encoding="utf-8")
+                )
+                current_results = bool(
+                    self.manifest.active_feature_set_id
+                    and summary.get("feature_set_id")
+                    == self.manifest.active_feature_set_id
+                )
+            except (OSError, json.JSONDecodeError):
+                current_results = False
+        self.run_refinement_button.setEnabled(
+            has_features
+            and class_coverage_ready
+            and self.refinement_process is None
+        )
+        self.apply_model_features_button.setEnabled(current_results)
+        self.promote_trial_button.setEnabled(current_results)
+        if not has_features:
+            self.refinement_scope_label.setText(
+                self.refinement_scope_label.text()
+                + " Build trial features before refinement."
+            )
+        elif not class_coverage_ready:
+            self.refinement_scope_label.setText(
+                self.refinement_scope_label.text()
+                + " Add confirmed labels where the table shows red rows."
+            )
+
+    def start_feature_refinement(self) -> None:
+        if self.manifest is None or self.paths is None:
+            raise RuntimeError("Create or load a feature-discovery trial first.")
+        if self.manifest.experiment_mode != "feature_discovery_trial":
+            raise ValueError("Switch to a Feature Discovery Trial in Setup first.")
+        if self.refinement_process is not None:
+            raise RuntimeError("Feature refinement is already running.")
+        if self.feature_process is not None or self.source_validation_process is not None:
+            raise RuntimeError("Wait for the current feature process to finish.")
+        from qtpy.QtCore import QProcess
+
+        process = QProcess(self.root)
+        process.setProgram(sys.executable)
+        process.setArguments(
+            [
+                "-m",
+                "SpatialBiologyToolkit.napari_sbt.worker",
+                "refine",
+                "--experiment",
+                str(self.paths.root),
+                "--maximum-candidate-features",
+                str(self.refine_candidate_spin.value()),
+                "--recommendation-count",
+                str(self.refine_recommendation_spin.value()),
+                "--permutation-repeats",
+                str(self.refine_repeats_spin.value()),
+                "--maximum-missing-fraction",
+                str(self.refine_missing_spin.value()),
+                "--correlation-threshold",
+                str(self.refine_correlation_spin.value()),
+            ]
+        )
+        process.setProcessChannelMode(QProcess.MergedChannels)
+        process.readyReadStandardOutput.connect(self._read_refinement_progress)
+        process.finished.connect(self._feature_refinement_finished)
+        process.started.connect(
+            lambda: self.refinement_progress_label.setText(
+                f"Refinement process: live (PID {int(process.processId())}); "
+                "waiting for the first ROI-fold update"
+            )
+        )
+        self.refinement_process = process
+        self.refinement_cancel_requested = False
+        self._refinement_output_buffer = ""
+        self.refinement_log.clear()
+        self.refinement_progress_bar.setRange(0, 0)
+        self.refinement_progress_bar.setFormat("Starting grouped evaluation…")
+        self.refinement_progress_label.setText("Refinement process: starting")
+        self.run_refinement_button.setEnabled(False)
+        self.cancel_refinement_button.setEnabled(True)
+        process.start()
+        self.set_status(
+            "Started leave-one-ROI-out feature refinement in a subprocess."
+        )
+
+    def _read_refinement_progress(self, *, flush: bool = False) -> None:
+        if self.refinement_process is not None:
+            self._refinement_output_buffer += bytes(
+                self.refinement_process.readAllStandardOutput()
+            ).decode(errors="replace")
+        lines = self._refinement_output_buffer.splitlines(keepends=True)
+        self._refinement_output_buffer = ""
+        for raw_line in lines:
+            if not flush and not raw_line.endswith(("\n", "\r")):
+                self._refinement_output_buffer = raw_line
+                continue
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                self.refinement_log.append(line)
+                continue
+            name = str(event.get("event", "progress"))
+            if name == "refinement_started":
+                self.refinement_progress_label.setText(
+                    "Refinement process: screening features and preparing ROI folds"
+                )
+            elif name in {
+                "refinement_fold_started",
+                "refinement_model_completed",
+            }:
+                completed = int(event.get("completed_fold_models", 0) or 0)
+                total = int(event.get("total_fold_models", 0) or 0)
+                self.refinement_progress_bar.setRange(0, max(total, 1))
+                self.refinement_progress_bar.setValue(completed)
+                self.refinement_progress_bar.setFormat(
+                    f"{completed}/{total} held-out ROI/model evaluations"
+                )
+                self.refinement_progress_label.setText(
+                    "Refinement process: "
+                    f"held out {event.get('held_out_roi', '—')}; "
+                    f"{event.get('model', 'screening')}"
+                )
+            elif name == "refinement_completed":
+                self.refinement_progress_bar.setRange(0, 1)
+                self.refinement_progress_bar.setValue(1)
+                self.refinement_progress_bar.setFormat("Complete")
+                self.refinement_progress_label.setText(
+                    "Refinement complete: "
+                    f"{int(event.get('recommended_feature_count', 0))} features "
+                    "recommended"
+                )
+            elif name == "refinement_failed":
+                self.refinement_progress_label.setText(
+                    f"Refinement failed: {event.get('error', '')}"
+                )
+            self.refinement_log.append(
+                "; ".join(
+                    str(value)
+                    for value in (
+                        name.replace("_", " "),
+                        event.get("held_out_roi"),
+                        event.get("model"),
+                        event.get("error"),
+                    )
+                    if value not in (None, "")
+                )
+            )
+
+    def _feature_refinement_finished(self, exit_code: int, _status) -> None:
+        self._read_refinement_progress(flush=True)
+        self.refinement_process = None
+        self.run_refinement_button.setEnabled(True)
+        self.cancel_refinement_button.setEnabled(False)
+        if self.refinement_cancel_requested:
+            self.refinement_progress_bar.setRange(0, 100)
+            self.refinement_progress_bar.setValue(0)
+            self.refinement_progress_bar.setFormat("Cancelled")
+            self.refinement_progress_label.setText("Refinement process: cancelled")
+            self.set_status(
+                "Feature refinement was cancelled; previously saved results were "
+                "not replaced."
+            )
+        elif exit_code == 0:
+            self.manifest, self.paths = load_experiment(self.paths.root)
+            self.load_refinement_results()
+            self.set_status("Feature refinement completed and results were loaded.")
+        else:
+            self.refinement_progress_bar.setRange(0, 100)
+            self.refinement_progress_bar.setValue(0)
+            self.refinement_progress_bar.setFormat("Failed")
+            self.set_status(f"Feature refinement exited with code {exit_code}.")
+        self.refresh_refinement_readiness()
+
+    def cancel_feature_refinement(self) -> None:
+        if self.refinement_process is None:
+            return
+        self.refinement_cancel_requested = True
+        self.refinement_process.terminate()
+        self.cancel_refinement_button.setEnabled(False)
+        self.refinement_progress_label.setText(
+            "Refinement process: cancellation requested"
+        )
+        self.set_status(
+            "Feature refinement cancellation requested. Previously saved results "
+            "remain unchanged."
+        )
+
+    def load_refinement_results(self, *, silent: bool = False) -> None:
+        self.refinement_results_table.setRowCount(0)
+        if self.paths is None or not self.paths.refinement_summary.is_file():
+            self.refinement_metrics_label.setText("No refinement results yet.")
+            if not silent:
+                self.set_status("No saved feature-refinement report is available.")
+            return
+        summary = json.loads(
+            self.paths.refinement_summary.read_text(encoding="utf-8")
+        )
+        ranking = read_dataframe(self.paths.feature_ranking)
+        stale = summary.get("feature_set_id") != self.manifest.active_feature_set_id
+        warning_text = " — STALE for current features" if stale else ""
+        family_text = ", ".join(
+            f"{row.get('source')}/{row.get('family')}"
+            for row in summary.get("family_importance", [])[:3]
+        )
+        self.refinement_metrics_label.setText(
+            f"Grouped validation: balanced accuracy "
+            f"{float(summary.get('mean_balanced_accuracy', 0)):.3f}; macro-F1 "
+            f"{float(summary.get('mean_macro_f1', 0)):.3f}; "
+            f"{int(summary.get('recommended_feature_count', 0))} recommended "
+            f"features{warning_text}. Leading source/families: "
+            f"{family_text or 'not available'}. Rankings are exploratory estimates, not an "
+            "independent final validation."
+        )
+        recommended = set(summary.get("recommended_features", []))
+        checked = set(self.manifest.active_model_features) or recommended
+        display = ranking.head(500).copy()
+        missing_recommended = ranking.loc[
+            ranking["feature"].isin(recommended - set(display["feature"]))
+        ]
+        if not missing_recommended.empty:
+            display = pd.concat([display, missing_recommended], ignore_index=True)
+        self.refinement_results_table.setRowCount(len(display))
+        for row_index, row in enumerate(display.itertuples(index=False)):
+            values = (
+                str(int(row.rank)),
+                str(row.feature),
+                str(row.source),
+                str(row.family),
+                f"{float(row.mean_permutation_importance):.4f}",
+                f"{float(row.positive_importance_frequency):.0%}",
+                f"{float(row.missing_fraction):.1%}",
+            )
+            for column, value in enumerate(values):
+                item = self.QTableWidgetItem(value)
+                if column == 1:
+                    item.setData(self.Qt.UserRole, str(row.feature))
+                    item.setToolTip(
+                        str(getattr(row, "redundant_with", "") or "")
+                    )
+                self.refinement_results_table.setItem(row_index, column, item)
+            use_item = self.QTableWidgetItem("Include")
+            use_item.setFlags(use_item.flags() | self.Qt.ItemIsUserCheckable)
+            use_item.setCheckState(
+                self.Qt.Checked
+                if str(row.feature) in checked
+                else self.Qt.Unchecked
+            )
+            self.refinement_results_table.setItem(row_index, 7, use_item)
+        if not silent:
+            self.set_status(
+                f"Loaded {len(ranking):,} ranked features; showing "
+                f"{len(display):,}."
+            )
+
+    def checked_refinement_features(self) -> list[str]:
+        selected = []
+        for row in range(self.refinement_results_table.rowCount()):
+            use_item = self.refinement_results_table.item(row, 7)
+            feature_item = self.refinement_results_table.item(row, 1)
+            if (
+                use_item is not None
+                and feature_item is not None
+                and use_item.checkState() == self.Qt.Checked
+            ):
+                selected.append(str(feature_item.data(self.Qt.UserRole)))
+        return selected
+
+    def _current_refinement_summary(self) -> dict:
+        if self.paths is None or not self.paths.refinement_summary.is_file():
+            raise FileNotFoundError("Run feature refinement first.")
+        summary = json.loads(
+            self.paths.refinement_summary.read_text(encoding="utf-8")
+        )
+        if summary.get("feature_set_id") != self.manifest.active_feature_set_id:
+            raise ValueError(
+                "The saved refinement is stale for the active feature build. Run "
+                "feature refinement again before applying or promoting it."
+            )
+        return summary
+
+    def restore_recommended_feature_checks(self) -> None:
+        summary = self._current_refinement_summary()
+        recommended = set(summary.get("recommended_features", []))
+        for row in range(self.refinement_results_table.rowCount()):
+            feature_item = self.refinement_results_table.item(row, 1)
+            use_item = self.refinement_results_table.item(row, 7)
+            if feature_item is not None and use_item is not None:
+                use_item.setCheckState(
+                    self.Qt.Checked
+                    if str(feature_item.data(self.Qt.UserRole)) in recommended
+                    else self.Qt.Unchecked
+                )
+        self.set_status("Restored the saved compact feature recommendation.")
+
+    def apply_checked_model_features(self) -> None:
+        if self.manifest is None:
+            raise RuntimeError("Create or load an experiment first.")
+        self._current_refinement_summary()
+        selected = self.checked_refinement_features()
+        if not selected:
+            raise ValueError("Check at least one recommended model feature.")
+        self.manifest.active_model_features = selected
+        save_experiment(
+            self.manifest,
+            self.paths.root,
+            audit_action="select_refined_model_features",
+        )
+        self.model_bundle = None
+        self._refresh_model_storage_label()
+        self.set_status(
+            f"The classifier will use {len(selected)} checked features. Retrain "
+            "before scoring."
+        )
+        self.refresh_status()
+
+    def promote_feature_trial(self) -> None:
+        if (
+            self.manifest is None
+            or self.manifest.experiment_mode != "feature_discovery_trial"
+            or self.manifest.feature_trial is None
+        ):
+            raise ValueError("Only an active Feature Discovery Trial can be promoted.")
+        self._current_refinement_summary()
+        selected = self.checked_refinement_features()
+        if not selected:
+            raise ValueError("Check at least one feature before promotion.")
+        reply = self.QMessageBox.question(
+            self.root,
+            "Promote feature trial",
+            "Create the next experiment revision for the complete frozen cohort "
+            f"using {len(selected)} model features? A new full feature build is "
+            "required before training or scoring the promoted experiment.",
+        )
+        if reply != self.QMessageBox.Yes:
+            return
+        promoted = self.manifest.model_copy(deep=True)
+        promoted.revision += 1
+        promoted.experiment_mode = "full"
+        promoted.feature_trial.status = "promoted"
+        promoted.feature_trial.recommended_model_features = selected
+        promoted.active_model_features = selected
+        promoted.synthetic_features = compact_synthetic_recipe(
+            promoted.synthetic_features,
+            selected,
+        )
+        for source in promoted.feature_sources:
+            prefix = f"source::{source.source_id}::"
+            selected_columns = [
+                feature.removeprefix(prefix)
+                for feature in selected
+                if feature.startswith(prefix)
+            ]
+            source.enabled = bool(selected_columns)
+            source.selected_columns = selected_columns
+        promoted.active_feature_set_id = None
+        save_experiment(
+            promoted,
+            self.paths.root,
+            audit_action="promote_feature_trial",
+        )
+        self.load_existing_experiment(self.paths.root)
+        self.set_status(
+            "Promoted the trial to a full-cohort experiment revision. Build full "
+            "features before retraining."
+        )
+
     def start_feature_build(self) -> None:
         if self.manifest is None:
             raise RuntimeError("Create or load an experiment before feature extraction.")
@@ -4336,6 +5334,8 @@ class NapariSBTController:
             raise RuntimeError("A feature build is already running.")
         if self.source_validation_process is not None:
             raise RuntimeError("Wait for feature-source validation to finish first.")
+        if self.refinement_process is not None:
+            raise RuntimeError("Wait for feature refinement to finish first.")
         self.manifest.feature_sources = self.feature_sources()
         self.manifest.synthetic_features = self.synthetic_recipe_from_controls()
         save_experiment(
@@ -4424,6 +5424,12 @@ class NapariSBTController:
                     "pending_rois": pending,
                     "workers": int(event.get("workers", 0) or 0),
                     "eligible_cells": int(event.get("eligible_cells", 0) or 0),
+                    "target_eligible_cells": int(
+                        event.get("target_eligible_cells", 0) or 0
+                    ),
+                    "target_represented_rois": int(
+                        event.get("target_represented_rois", total) or total
+                    ),
                     "recent": (
                         f"Started {pending} ROI task(s); reused "
                         f"{resumed} valid fragment(s)"
@@ -4481,7 +5487,9 @@ class NapariSBTController:
                     "recent": (
                         f"Wrote {int(event.get('feature_count', 0) or 0):,} "
                         f"features for "
-                        f"{int(event.get('eligible_cells', 0) or 0):,} cells"
+                        f"{int(event.get('eligible_cells', 0) or 0):,}/"
+                        f"{int(event.get('target_eligible_cells', 0) or 0):,} "
+                        "trial/target cells"
                     ),
                 }
             )
@@ -4542,7 +5550,12 @@ class NapariSBTController:
         )
         self.feature_counts_label.setText(
             f"ROIs: {complete} complete, {failed} failed, "
-            f"{pending} pending / {total} total"
+            f"{pending} pending / {total} current-scope total"
+            + (
+                f" ({int(state.get('target_represented_rois', total))} target ROIs)"
+                if int(state.get("target_represented_rois", total) or total) != total
+                else ""
+            )
         )
         self.feature_current_roi_label.setText(
             f"Latest: {state.get('recent', 'No worker events yet')}"
@@ -4599,6 +5612,8 @@ class NapariSBTController:
             self.manifest, self.paths = load_experiment(self.paths.root)
             self._update_scope_text()
             self.refresh_status()
+            self.refresh_refinement_readiness()
+            self.load_refinement_results(silent=True)
             self.feature_progress_state["phase"] = "Feature build complete"
             self.feature_progress_state["pending_rois"] = 0
             self.set_status("Feature build completed.")

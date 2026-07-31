@@ -35,6 +35,24 @@ dependency stack to the launcher environment. `conda-lock` is a separate base
 environment prerequisite for `sbt env`; follow the complete
 [CSF3 setup](../getting_started/hpc.md) for a fresh CSF3 installation.
 
+## Optional project console
+
+The lightweight graphical Project Console exposes project-internal inspection,
+configuration editing, stage explanations, the asset register, readiness, run
+summaries, reports, bounded log tails, and notes. It intentionally has no job
+submission, scheduler-control, destructive, or scientific-data capability.
+
+Install its separate Qt environment explicitly and launch it for an existing
+project:
+
+```bash
+bash install/bootstrap_sbt_gui.sh
+sbt gui project --project /path/to/project
+```
+
+See the complete [Project Console guide](../guides/project_console.md), including
+CSF3 `srun-x11`, config backup/audit behavior, and read-only mode.
+
 ## Compact a legacy configuration
 
 Migrate a verbose legacy YAML file to the current compact style:

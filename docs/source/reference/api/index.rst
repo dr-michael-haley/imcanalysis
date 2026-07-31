@@ -34,6 +34,7 @@ This reference is split by module so the site navigation stays compact.
    utils
    visium
    config_documentation
+   config_editing
    config_export
    config_load
    config_migration

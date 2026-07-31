@@ -81,8 +81,13 @@ def run_pipeline() -> int:
         active.add_file("table", result.failed_rois)
         active.add_file("summary", result.manifest)
         active.add_metric("selected_cells", result.eligible_cells)
+        active.add_metric("target_eligible_cells", result.target_eligible_cells)
         active.add_metric("total_cells", manifest.cell_scope.total_cell_count)
         active.add_metric("represented_rois", result.represented_rois)
+        active.add_metric(
+            "target_represented_rois", result.target_represented_rois
+        )
+        active.add_metric("experiment_mode", manifest.experiment_mode)
         active.add_metric("resumed_rois", result.skipped_rois)
         active.add_metric("feature_count", result.feature_count)
         active.add_metric("erosion_losses", result.erosion_losses)
@@ -91,10 +96,12 @@ def run_pipeline() -> int:
         for warning in result.warnings:
             active.add_warning(warning)
     LOGGER.info(
-        "cellfeat completed: %d/%d cells across %d ROIs, %d features, %d failures",
+        "cellfeat completed: %d/%d eligible cells across %d/%d ROIs, %d "
+        "features, %d failures",
         result.eligible_cells,
-        manifest.cell_scope.total_cell_count,
+        result.target_eligible_cells,
         result.represented_rois,
+        result.target_represented_rois,
         result.feature_count,
         result.failures,
     )

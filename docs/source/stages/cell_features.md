@@ -6,6 +6,12 @@
 calculates synthetic IMC features only for eligible objects, joins optional
 precomputed sources, and writes reusable cohort-only feature assets.
 
+For a Feature Discovery Trial, the frozen cohort remains unchanged but the
+stage processes only the manifest's explicit representative-ROI subset. Trial
+and full builds receive different feature-set identities. Promoting a trial
+therefore requires a new full-cohort build and cannot silently reuse the trial
+table as a full result.
+
 One spawn-safe worker processes each ROI. It loads the original full
 segmentation once, constructs cohort measurement regions, streams selected
 channel images, and writes one atomic Parquet fragment. Valid completed

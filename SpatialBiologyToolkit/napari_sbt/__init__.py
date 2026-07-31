@@ -5,12 +5,14 @@ from importlib import import_module
 
 _LAZY_EXPORTS = {
     "ExperimentManifest": (".models", "ExperimentManifest"),
+    "FeatureDiscoveryTrial": (".models", "FeatureDiscoveryTrial"),
     "ModelBundle": (".classifier", "ModelBundle"),
     "build_assignment_table": (".exports", "build_assignment_table"),
     "build_roi_features": (".features", "build_roi_features"),
     "cohort_mask": (".cohort", "cohort_mask"),
     "export_annotated_anndata": (".exports", "export_annotated_anndata"),
     "high_confidence_queue": (".classifier", "high_confidence_queue"),
+    "refine_trial_features": (".feature_refinement", "refine_trial_features"),
     "resolve_cohort": (".cohort", "resolve_cohort"),
     "score_cohort": (".classifier", "score_cohort"),
     "train_multiclass_classifier": (
@@ -41,6 +43,7 @@ def __getattr__(name: str):
 
 __all__ = [
     "ExperimentManifest",
+    "FeatureDiscoveryTrial",
     "ModelBundle",
     "build_assignment_table",
     "build_roi_features",
@@ -48,6 +51,7 @@ __all__ = [
     "export_annotated_anndata",
     "high_confidence_queue",
     "launch",
+    "refine_trial_features",
     "resolve_cohort",
     "score_cohort",
     "train_multiclass_classifier",

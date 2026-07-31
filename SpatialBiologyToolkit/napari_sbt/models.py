@@ -215,6 +215,38 @@ class SyntheticFeatureRecipe(BaseModel):
         return self
 
 
+class FeatureDiscoveryTrial(BaseModel):
+    """Representative-ROI scope and outputs for feature discovery."""
+
+    roi_selection: Literal["largest", "manual"] = "largest"
+    roi_count: int = Field(default=3, ge=2, le=10000)
+    selected_rois: list[str] = Field(default_factory=list)
+    status: Literal["configured", "features_built", "refined", "promoted"] = (
+        "configured"
+    )
+    refinement_report_path: str = "feature_refinement/summary.json"
+    recommended_model_features: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_trial(self) -> FeatureDiscoveryTrial:
+        self.selected_rois = list(
+            dict.fromkeys(
+                str(roi).strip()
+                for roi in self.selected_rois
+                if str(roi).strip()
+            )
+        )
+        if self.selected_rois and len(self.selected_rois) != self.roi_count:
+            raise ValueError(
+                "The feature-discovery ROI count must match the number of selected "
+                "ROIs."
+            )
+        self.recommended_model_features = list(
+            dict.fromkeys(str(feature) for feature in self.recommended_model_features)
+        )
+        return self
+
+
 class ExperimentManifest(BaseModel):
     """Canonical, versioned definition of one classification experiment."""
 
@@ -235,11 +267,14 @@ class ExperimentManifest(BaseModel):
     object_id_obs: str = "ObjectNumber"
     cell_scope: CellScope
     classes: list[ClassificationClass]
+    experiment_mode: Literal["full", "feature_discovery_trial"] = "full"
+    feature_trial: FeatureDiscoveryTrial | None = None
     feature_sources: list[FeatureSource] = Field(default_factory=list)
     synthetic_features: SyntheticFeatureRecipe = Field(
         default_factory=SyntheticFeatureRecipe
     )
     active_feature_set_id: str | None = None
+    active_model_features: list[str] = Field(default_factory=list)
     output_obs_slug: str | None = None
     annotated_adata_path: str | None = None
     materialize_cohort_masks: bool = False
@@ -270,6 +305,24 @@ class ExperimentManifest(BaseModel):
             raise ValueError("Feature source IDs must be unique.")
         if self.cell_scope.mode == "obs_values" and not self.anndata_path:
             raise ValueError("AnnData is required for observation-defined cohorts.")
+        if self.experiment_mode == "feature_discovery_trial":
+            if self.feature_trial is None or not self.feature_trial.selected_rois:
+                raise ValueError(
+                    "Feature-discovery trials require an explicit representative-ROI "
+                    "selection."
+                )
+            if self.feature_trial.status == "promoted":
+                raise ValueError(
+                    "A promoted feature trial must use full experiment mode."
+                )
+        elif self.feature_trial is not None and self.feature_trial.status != "promoted":
+            raise ValueError(
+                "A full experiment may retain feature-trial provenance only after "
+                "promotion."
+            )
+        self.active_model_features = list(
+            dict.fromkeys(str(feature) for feature in self.active_model_features)
+        )
         self.images_folders = [str(Path(path)) for path in self.images_folders]
         self.extra_images_folders = [
             str(Path(path)) for path in self.extra_images_folders
@@ -303,6 +356,7 @@ __all__ = [
     "CellScope",
     "ClassificationClass",
     "ExperimentManifest",
+    "FeatureDiscoveryTrial",
     "FeatureSource",
     "SyntheticFeatureRecipe",
     "segmentation_qc_classes",

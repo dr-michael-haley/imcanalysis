@@ -2,6 +2,8 @@ import json
 import subprocess
 import sys
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from typer.testing import CliRunner
 
@@ -18,6 +20,7 @@ class LightweightCliTests(unittest.TestCase):
             "squidpy",
             "tifffile",
             "torch",
+            "PySide6",
         ]
         script = (
             "import json, sys; "
@@ -89,6 +92,34 @@ class LightweightCliTests(unittest.TestCase):
         self.assertEqual(machine.exit_code, 0, machine.stdout)
         self.assertNotIn("\x1b[", machine.stdout)
         self.assertEqual(json.loads(machine.stdout)[0]["name"], "prep")
+
+    def test_project_gui_is_discoverable_without_importing_qt(self):
+        runner = CliRunner()
+        result = runner.invoke(app, ["gui", "--help"])
+
+        self.assertEqual(result.exit_code, 0, result.stdout)
+        self.assertIn("project", result.stdout)
+        self.assertIn("no scheduler", result.stdout)
+        self.assertIn("capability", result.stdout)
+
+    def test_project_gui_launcher_forwards_project_and_read_only(self):
+        runner = CliRunner()
+        with patch(
+            "SpatialBiologyToolkit.cli.main.importlib.util.find_spec",
+            return_value=object(),
+        ), patch(
+            "SpatialBiologyToolkit.cli.main.subprocess.run",
+            return_value=SimpleNamespace(returncode=0),
+        ) as run:
+            result = runner.invoke(
+                app,
+                ["gui", "project", "--project", "example", "--read-only"],
+            )
+
+        self.assertEqual(result.exit_code, 0, result.stdout)
+        command = run.call_args.args[0]
+        self.assertEqual(command[:3], [sys.executable, "-m", "SpatialBiologyToolkit.project_gui"])
+        self.assertEqual(command[-3:], ["--project", "example", "--read-only"])
 
 
 if __name__ == "__main__":

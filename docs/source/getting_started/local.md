@@ -92,6 +92,27 @@ python -c "import SpatialBiologyToolkit; print(SpatialBiologyToolkit.__file__)"
 sbt --help
 ```
 
+For lightweight project inspection and configuration editing, install the
+optional Project Console in its separate environment:
+
+On Windows, run this from Anaconda PowerShell Prompt:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File install/bootstrap_sbt_gui.ps1
+sbt gui project --project path\to\existing_project
+```
+
+On macOS:
+
+```bash
+bash install/bootstrap_sbt_gui.sh
+sbt gui project --project path/to/existing_project
+```
+
+The console does not load the scientific stack or submit jobs. See the
+[Project Console guide](../guides/project_console.md) for its capabilities,
+read-only mode, and configuration-safety guarantees.
+
 On macOS, also confirm the matched GUI and numerical stack:
 
 ```bash

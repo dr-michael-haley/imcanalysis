@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Literal
@@ -45,6 +46,89 @@ ASSET_FIELDS: tuple[tuple[str, str, AssetKind, AssetLifecycle], ...] = (
 
 RAW_IMC_SUFFIXES = {".mcd", ".txt"}
 DEFAULT_COUNT_LIMIT = 10_000
+
+
+@dataclass(frozen=True)
+class AssetSpec:
+    """Stable catalogue metadata for one configured project asset role."""
+
+    role: str
+    config_path: str
+    kind: AssetKind
+    lifecycle: AssetLifecycle
+
+
+ASSET_SPECS: tuple[AssetSpec, ...] = (
+    *(
+        AssetSpec(
+            role=role,
+            config_path=f"general.{field_name}",
+            kind=kind,
+            lifecycle=lifecycle,
+        )
+        for role, field_name, kind, lifecycle in ASSET_FIELDS
+    ),
+    AssetSpec(
+        "cellvision_assets",
+        "cellvision.asset_folder",
+        "directory",
+        "generated_output",
+    ),
+    AssetSpec(
+        "hyperstac_input_images",
+        "hyperstac.input_images_folder",
+        "directory",
+        "required_input",
+    ),
+    AssetSpec(
+        "hyperstac_assets",
+        "hyperstac.asset_folder",
+        "directory",
+        "generated_output",
+    ),
+    AssetSpec(
+        "population_qc_anndata",
+        "population_embedding_qc.annotated_adata_path",
+        "file",
+        "generated_output",
+    ),
+    AssetSpec(
+        "napari_sbt_experiments",
+        "napari_sbt.experiment_folder",
+        "directory",
+        "human_output",
+    ),
+    AssetSpec(
+        "maxfuse_reference",
+        "maxfuse.reference_adata_path",
+        "file",
+        "required_input",
+    ),
+    AssetSpec(
+        "maxfuse_target",
+        "maxfuse.target_adata_path",
+        "file",
+        "required_input",
+    ),
+    AssetSpec(
+        "maxfuse_feature_mapping",
+        "maxfuse.feature_mapping_path",
+        "file",
+        "required_input",
+    ),
+    AssetSpec(
+        "maxfuse_assets",
+        "maxfuse.asset_folder",
+        "directory",
+        "generated_output",
+    ),
+    AssetSpec(
+        "spatialdata_zarr",
+        "spatialdata.output_path",
+        "directory",
+        "generated_output",
+    ),
+)
 
 
 def resolve_project_path(root: Path, configured_path: str | Path) -> Path:
@@ -231,6 +315,12 @@ def asset_map(assets: Iterable[ProjectAsset]) -> dict[str, ProjectAsset]:
     return {asset.role: asset for asset in assets}
 
 
+def asset_spec_map() -> dict[str, AssetSpec]:
+    """Return catalogue metadata keyed by stable asset role."""
+
+    return {spec.role: spec for spec in ASSET_SPECS}
+
+
 def count_raw_imc_files(path: Path, *, limit: int = DEFAULT_COUNT_LIMIT) -> int:
     if not path.is_dir():
         return 0
@@ -301,9 +391,12 @@ def unexpected_top_level_paths(
 
 __all__ = [
     "ASSET_FIELDS",
+    "ASSET_SPECS",
+    "AssetSpec",
     "RAW_IMC_SUFFIXES",
     "asset_is_ready",
     "asset_map",
+    "asset_spec_map",
     "count_raw_imc_files",
     "inspect_asset",
     "inventory_assets",

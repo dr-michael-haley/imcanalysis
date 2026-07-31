@@ -35,6 +35,10 @@ class ExperimentPaths:
     feature_table: Path
     feature_dictionary: Path
     feature_manifest: Path
+    feature_refinement: Path
+    feature_ranking: Path
+    refinement_metrics: Path
+    refinement_summary: Path
     labels: Path
     label_audit: Path
     models: Path
@@ -56,6 +60,10 @@ def experiment_paths(root: str | Path) -> ExperimentPaths:
         feature_table=root / "features" / "feature_table.parquet",
         feature_dictionary=root / "features" / "feature_dictionary.csv",
         feature_manifest=root / "features" / "feature_manifest.json",
+        feature_refinement=root / "feature_refinement",
+        feature_ranking=root / "feature_refinement" / "feature_ranking.csv",
+        refinement_metrics=root / "feature_refinement" / "fold_metrics.csv",
+        refinement_summary=root / "feature_refinement" / "summary.json",
         labels=root / "labels" / "labels.parquet",
         label_audit=root / "labels" / "audit.jsonl",
         models=root / "models",
@@ -73,6 +81,7 @@ def ensure_experiment_directories(paths: ExperimentPaths) -> None:
         paths.cohort_masks,
         paths.features,
         paths.feature_fragments,
+        paths.feature_refinement,
         paths.labels.parent,
         paths.models,
         paths.scores.parent,
@@ -153,6 +162,47 @@ def save_experiment(
                     "The frozen cohort cannot change within an experiment revision. "
                     "Create an explicit revision."
                 )
+            existing_trial_scope = (
+                existing.experiment_mode,
+                (
+                    existing.feature_trial.roi_selection,
+                    existing.feature_trial.roi_count,
+                    tuple(existing.feature_trial.selected_rois),
+                )
+                if existing.feature_trial is not None
+                else None,
+            )
+            current_trial_scope = (
+                manifest.experiment_mode,
+                (
+                    manifest.feature_trial.roi_selection,
+                    manifest.feature_trial.roi_count,
+                    tuple(manifest.feature_trial.selected_rois),
+                )
+                if manifest.feature_trial is not None
+                else None,
+            )
+            stored_labels = (
+                read_dataframe(paths.labels)
+                if paths.labels.exists()
+                else pd.DataFrame()
+            )
+            has_confirmed_labels = bool(
+                "state" in stored_labels
+                and stored_labels["state"].astype(str).eq("confirmed").any()
+            )
+            if (
+                current_trial_scope != existing_trial_scope
+                and (
+                    existing.active_feature_set_id is not None
+                    or has_confirmed_labels
+                )
+            ):
+                raise ValueError(
+                    "The trial/full execution scope is locked after features are "
+                    "built or confirmed labels exist. Create an explicit experiment "
+                    "revision."
+                )
             existing_semantics = [
                 (item.class_id, item.shortcut, item.mask_disposition)
                 for item in existing.classes
@@ -161,19 +211,7 @@ def save_experiment(
                 (item.class_id, item.shortcut, item.mask_disposition)
                 for item in manifest.classes
             ]
-            semantics_locked = existing.locked
-            if paths.labels.exists():
-                stored_labels = read_dataframe(paths.labels)
-                semantics_locked = bool(
-                    semantics_locked
-                    or (
-                        "state" in stored_labels
-                        and stored_labels["state"]
-                        .astype(str)
-                        .eq("confirmed")
-                        .any()
-                    )
-                )
+            semantics_locked = bool(existing.locked or has_confirmed_labels)
             if semantics_locked and current_semantics != existing_semantics:
                 raise ValueError(
                     "Class IDs, shortcuts, ordering, and mask dispositions are locked "

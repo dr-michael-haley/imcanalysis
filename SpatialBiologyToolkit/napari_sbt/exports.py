@@ -196,6 +196,13 @@ def export_annotated_anndata(
     napari_uns[slug] = {
         "experiment_id": manifest.experiment_id,
         "experiment_revision": manifest.revision,
+        "experiment_mode": manifest.experiment_mode,
+        "feature_trial": (
+            manifest.feature_trial.model_dump(mode="json")
+            if manifest.feature_trial is not None
+            else None
+        ),
+        "active_model_features": list(manifest.active_model_features),
         "class_order": [item.class_id for item in manifest.classes],
         "class_names": {item.class_id: item.name for item in manifest.classes},
         "class_colours": {item.class_id: item.color for item in manifest.classes},
