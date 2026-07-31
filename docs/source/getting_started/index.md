@@ -8,8 +8,9 @@ Choose a starting point:
 
 1. [Complete beginner's guide](beginners.md) — learn the small set of command-line,
    Conda, Git, and SLURM concepts used by the toolkit.
-2. [HPC setup](hpc.md) — install the `sbt` launcher and scientific environments,
-   create or adopt a project, preview a run, and submit it to SLURM. This is the
+2. [HPC setup](hpc.md) — connect to a cluster, install Conda and the `sbt`
+   launcher, create or adopt a project, preview a run, and install scientific
+   environments only when the selected workflow needs them. This is the
    recommended route for the end-to-end pipeline.
 3. [Local analysis setup](local.md) — prepare a Windows or macOS environment for
    notebooks, Napari, exploratory analysis, and bespoke figures after pipeline

@@ -18,5 +18,5 @@ conda run -n "$LAUNCHER_ENV" python -m pip install \
     -e "$REPOSITORY_ROOT" --no-deps
 
 echo "Installed the sbt launcher in fixed environment '$LAUNCHER_ENV'."
-echo "Next: conda run -n '$LAUNCHER_ENV' sbt env doctor"
-echo "Then: conda run -n '$LAUNCHER_ENV' sbt env sync --all --dry-run"
+echo "Next: conda run -n '$LAUNCHER_ENV' sbt env list"
+echo "Scientific environments are checked and offered on demand by 'sbt run'."

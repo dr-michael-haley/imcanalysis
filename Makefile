@@ -18,7 +18,7 @@ update:
 	@bash install/setup.sh
 	
 envs:
-	@echo "Synchronizing fixed Conda environments through sbt..."
+	@echo "Synchronizing all repository-managed Conda environments through sbt..."
 	@sbt env sync --all
 
 docs-generate:

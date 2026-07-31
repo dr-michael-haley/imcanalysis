@@ -16,6 +16,11 @@ sbt env sync --all --dry-run
 sbt env sync --all
 ```
 
+Those `--all` commands reproduce the old full-environment installer and are
+intended for migration or administration. New users do not need them: a real
+`sbt run` checks the selected workflow and offers only its missing managed
+environments.
+
 `make envs` is retained as a convenience wrapper for `sbt env sync --all`.
 `install/setup_envs.sh` remains as a deprecated compatibility wrapper and no
 longer contains an independent environment array or installation algorithm.

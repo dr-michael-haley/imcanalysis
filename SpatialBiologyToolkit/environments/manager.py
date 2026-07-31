@@ -9,7 +9,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 import yaml  # type: ignore[import-untyped]
 
@@ -182,6 +182,36 @@ class EnvironmentManager:
                 )
             )
         return rows
+
+    def required_for_stages(self, stages: Iterable[str]) -> list[EnvironmentSummary]:
+        """Return the live availability of environments used by selected stages.
+
+        Environment keys are de-duplicated in first-use order so a multi-stage
+        workflow checks Conda only once and presents each required environment
+        once. Stages without a registered Conda environment (for example the
+        shell-only debug stage) do not require Conda to be available.
+        """
+
+        uses: dict[str, list[str]] = {}
+        for stage in stages:
+            for key in self.registry.stage_environments.get(stage, []):
+                stage_uses = uses.setdefault(key, [])
+                if stage not in stage_uses:
+                    stage_uses.append(stage)
+        if not uses:
+            return []
+
+        inventory = self._environment_inventory()
+        return [
+            EnvironmentSummary(
+                key=key,
+                conda_name=self.registry.environments[key].conda_name,
+                managed=self.registry.environments[key].managed,
+                exists=self.registry.environments[key].conda_name in inventory,
+                stages=stage_names,
+            )
+            for key, stage_names in uses.items()
+        ]
 
     def show(self, selector: str) -> dict[str, Any]:
         key, definition = self.resolve(selector)

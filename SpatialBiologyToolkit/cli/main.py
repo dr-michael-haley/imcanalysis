@@ -16,6 +16,7 @@ from pydantic import BaseModel
 from SpatialBiologyToolkit.config import load_config, write_compact_config
 from SpatialBiologyToolkit.config.export import write_resolved_config
 from SpatialBiologyToolkit.environments import EnvironmentManager, load_environment_registry
+from SpatialBiologyToolkit.environments.models import EnvironmentSummary
 from SpatialBiologyToolkit.pipeline.asset_cleanup import (
     apply_asset_cleanup,
     cleanup_audit,
@@ -760,6 +761,102 @@ def _env_machine(value: Any, output_format: SummaryFormat | OutputFormat) -> Non
     _emit_machine(value, selected)
 
 
+def _required_environment_commands(rows: list[EnvironmentSummary]) -> str:
+    return "\n".join(f"  sbt env sync {row.key}" for row in rows)
+
+
+def _ensure_run_environments(
+    stage_names: list[str],
+    *,
+    install_missing: bool,
+) -> None:
+    """Stop before run creation unless every selected stage environment exists."""
+
+    manager = _env_manager(None)
+    required = manager.required_for_stages(stage_names)
+    missing = [row for row in required if not row.exists]
+    if not missing:
+        return
+
+    typer.echo("Required Conda environments:")
+    for row in required:
+        status = "available" if row.exists else "MISSING"
+        management = "repository-managed" if row.managed else "external"
+        typer.echo(
+            f"  - {row.conda_name} ({row.key}; {management}): {status} "
+            f"for {', '.join(row.stages)}"
+        )
+
+    missing_external = [row for row in missing if not row.managed]
+    if missing_external:
+        details = "\n".join(
+            f"  - {row.conda_name} ({row.key}) for {', '.join(row.stages)}"
+            for row in missing_external
+        )
+        raise RuntimeError(
+            "The following externally managed Conda environments are missing and "
+            "cannot be installed automatically:\n"
+            f"{details}\n"
+            "Inspect each environment with 'sbt env show <key>' and follow its "
+            "stage/environment documentation. No run record was created and no jobs "
+            "were submitted."
+        )
+
+    missing_managed = [row for row in missing if row.managed]
+    invalid_specifications: list[str] = []
+    for row in missing_managed:
+        validation = manager.validate(row.key)
+        if validation.valid:
+            continue
+        errors = [
+            issue.message
+            for issue in validation.issues
+            if issue.severity == "error"
+        ]
+        detail = "; ".join(errors) or "the specification did not validate"
+        invalid_specifications.append(f"  - {row.key}: {detail}")
+    if invalid_specifications:
+        raise RuntimeError(
+            "The repository cannot safely install these missing environments "
+            "because their specifications are invalid:\n"
+            + "\n".join(invalid_specifications)
+            + "\nUpdate the toolkit checkout and try again. If the error remains, "
+            "report it to the toolkit maintainer rather than installing arbitrary "
+            "packages. No run record was created and no jobs were submitted."
+        )
+
+    if not install_missing:
+        names = ", ".join(row.conda_name for row in missing_managed)
+        install_missing = typer.confirm(
+            f"Install the missing environment(s) now ({names})?",
+            default=True,
+        )
+    if not install_missing:
+        raise RuntimeError(
+            "Missing environments were not installed. Install only the environments "
+            "needed by this run with:\n"
+            f"{_required_environment_commands(missing_managed)}\n"
+            "No run record was created and no jobs were submitted."
+        )
+
+    for row in missing_managed:
+        typer.echo(f"Installing {row.conda_name} for {', '.join(row.stages)}...")
+        manager.sync(row.key, verbose=True)
+        typer.echo(f"Installed and smoke-tested {row.conda_name}.")
+
+    remaining = [
+        row
+        for row in manager.required_for_stages(stage_names)
+        if not row.exists
+    ]
+    if remaining:
+        raise RuntimeError(
+            "Environment installation finished, but these environments are still "
+            "not visible to Conda: "
+            + ", ".join(row.conda_name for row in remaining)
+        )
+
+
 @env_app.command("list")
 def env_list(
     output_format: SummaryFormat = typer.Option(SummaryFormat.table, "--format"),
@@ -1122,6 +1219,15 @@ def run_command(
         "--note",
         help="Optional repeatable run note recorded in run and stage reports.",
     ),
+    install_missing_environments: bool = typer.Option(
+        False,
+        "--install-missing-environments",
+        "--install-missing-envs",
+        help=(
+            "Install missing repository-managed environments without prompting. "
+            "Externally managed environments must still be prepared separately."
+        ),
+    ),
 ) -> None:
     try:
         context = _project(project, config)
@@ -1171,6 +1277,10 @@ def run_command(
         return
 
     try:
+        _ensure_run_environments(
+            [stage.name for stage in plan.resolved_stages],
+            install_missing=install_missing_environments,
+        )
         run = create_run_record(
             context,
             plan,

@@ -2,11 +2,13 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from typer.testing import CliRunner
 
 from SpatialBiologyToolkit.cli.main import app
+from SpatialBiologyToolkit.environments.models import EnvironmentSummary
 from SpatialBiologyToolkit.pipeline.assets import resolve_assets
 from SpatialBiologyToolkit.pipeline.executions import execution_summaries
 from SpatialBiologyToolkit.pipeline.logs import resolve_run_logs, tail_text
@@ -339,6 +341,167 @@ class RunControlTests(unittest.TestCase):
             self.assertEqual(result.exit_code, 0, result.stdout)
             self.assertIn("no run directory was created", result.stdout)
             self.assertEqual(list(runs_dir.iterdir()), [])
+
+    def test_run_prompts_to_install_only_missing_managed_environments(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "project"
+            initialize_project(root)
+            (root / "IMC_files" / "case.mcd").write_bytes(b"x")
+
+            class FakeEnvironmentManager:
+                installed = False
+                synced: list[str] = []
+
+                def required_for_stages(self, stages):
+                    return [
+                        EnvironmentSummary(
+                            key="segmentation",
+                            conda_name="imc_segmentation",
+                            managed=True,
+                            exists=self.installed,
+                            stages=list(stages),
+                        )
+                    ]
+
+                def sync(self, key, **_kwargs):
+                    self.synced.append(key)
+                    self.installed = True
+
+                def validate(self, _key):
+                    return SimpleNamespace(valid=True, issues=[])
+
+            manager = FakeEnvironmentManager()
+            submitted = SimpleNamespace(jobs=[])
+            with (
+                patch("SpatialBiologyToolkit.cli.main._env_manager", return_value=manager),
+                patch(
+                    "SpatialBiologyToolkit.cli.main.submit_run",
+                    return_value=submitted,
+                ) as submit_mock,
+            ):
+                result = CliRunner().invoke(
+                    app,
+                    ["run", "prep", "--project", str(root)],
+                    input="\n",
+                )
+
+            self.assertEqual(result.exit_code, 0, result.stdout)
+            self.assertIn("imc_segmentation", result.stdout)
+            self.assertIn("Install the missing environment(s) now", result.stdout)
+            self.assertEqual(manager.synced, ["segmentation"])
+            submit_mock.assert_called_once()
+
+    def test_run_declining_environment_install_stops_before_run_creation(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "project"
+            initialize_project(root)
+            (root / "IMC_files" / "case.mcd").write_bytes(b"x")
+
+            manager = SimpleNamespace(
+                required_for_stages=lambda _stages: [
+                    EnvironmentSummary(
+                        key="segmentation",
+                        conda_name="imc_segmentation",
+                        managed=True,
+                        exists=False,
+                        stages=["prep"],
+                    )
+                ],
+                validate=lambda _key: SimpleNamespace(valid=True, issues=[]),
+            )
+            with (
+                patch("SpatialBiologyToolkit.cli.main._env_manager", return_value=manager),
+                patch("SpatialBiologyToolkit.cli.main.submit_run") as submit_mock,
+            ):
+                result = CliRunner().invoke(
+                    app,
+                    ["run", "prep", "--project", str(root)],
+                    input="n\n",
+                )
+
+            self.assertNotEqual(result.exit_code, 0)
+            output = result.stdout + result.stderr
+            self.assertIn("sbt env sync segmentation", output)
+            self.assertIn("No run record was created", output)
+            submit_mock.assert_not_called()
+            self.assertEqual(list((root / ".sbt" / "runs").iterdir()), [])
+
+    def test_run_missing_external_environment_stops_with_guidance(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "project"
+            context = initialize_project(root)
+            assets = {asset.role: asset for asset in resolve_assets(context.config, root)}
+            assets["anndata"].path.write_bytes(b"placeholder")
+
+            manager = SimpleNamespace(
+                required_for_stages=lambda _stages: [
+                    EnvironmentSummary(
+                        key="rapids",
+                        conda_name="rapids_singlecell",
+                        managed=False,
+                        exists=False,
+                        stages=["rapids"],
+                    )
+                ]
+            )
+            with (
+                patch("SpatialBiologyToolkit.cli.main._env_manager", return_value=manager),
+                patch("SpatialBiologyToolkit.cli.main.submit_run") as submit_mock,
+            ):
+                result = CliRunner().invoke(
+                    app,
+                    ["run", "rapids", "--project", str(root), "--no-deps"],
+                )
+
+            self.assertNotEqual(result.exit_code, 0)
+            output = result.stdout + result.stderr
+            self.assertIn("externally managed Conda environments are missing", output)
+            self.assertIn("sbt env show <key>", output)
+            submit_mock.assert_not_called()
+            self.assertEqual(list((root / ".sbt" / "runs").iterdir()), [])
+
+    def test_run_invalid_environment_spec_stops_before_prompt_or_run_creation(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "project"
+            initialize_project(root)
+            (root / "IMC_files" / "case.mcd").write_bytes(b"x")
+
+            manager = SimpleNamespace(
+                required_for_stages=lambda _stages: [
+                    EnvironmentSummary(
+                        key="segmentation",
+                        conda_name="imc_segmentation",
+                        managed=True,
+                        exists=False,
+                        stages=["prep"],
+                    )
+                ],
+                validate=lambda _key: SimpleNamespace(
+                    valid=False,
+                    issues=[
+                        SimpleNamespace(
+                            severity="error",
+                            message="The lockfile needs maintainer attention.",
+                        )
+                    ],
+                ),
+            )
+            with (
+                patch("SpatialBiologyToolkit.cli.main._env_manager", return_value=manager),
+                patch("SpatialBiologyToolkit.cli.main.submit_run") as submit_mock,
+            ):
+                result = CliRunner().invoke(
+                    app,
+                    ["run", "prep", "--project", str(root)],
+                )
+
+            self.assertNotEqual(result.exit_code, 0)
+            output = result.stdout + result.stderr
+            self.assertIn("specifications are invalid", output)
+            self.assertIn("The lockfile needs maintainer attention", output)
+            self.assertNotIn("Install the missing environment(s) now", output)
+            submit_mock.assert_not_called()
+            self.assertEqual(list((root / ".sbt" / "runs").iterdir()), [])
 
     def test_no_deps_dry_run_submits_only_requested_stage(self):
         with tempfile.TemporaryDirectory() as temp_dir:

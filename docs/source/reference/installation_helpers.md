@@ -24,7 +24,8 @@ It:
 
 It does not modify shell startup files, install `conda-lock`, create scientific
 environments, or submit jobs. It is safe to rerun to refresh the editable
-launcher installation.
+launcher installation. Scientific environments are checked and offered on
+demand by a real `sbt run`.
 
 ## `setup.sh` and `make install`
 
@@ -60,7 +61,9 @@ sbt env sync --all
 `make envs` runs the same command directly. The canonical environment registry,
 lockfiles, synchronization logic, safeguards, and smoke tests live behind
 `sbt env`; the helper has no independent environment list or installation
-algorithm.
+algorithm. This intentionally installs every repository-managed environment
+and is retained for legacy or administrative use; beginners should let
+`sbt run` offer only the environments needed by their selected workflow.
 
 ## `make update`
 

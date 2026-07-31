@@ -218,6 +218,33 @@ class RegistryTests(EnvironmentFixture):
         for stage, keys in central.stage_environments.items():
             self.assertEqual(by_name[stage].environment_keys, keys)
 
+    def test_required_stage_environments_report_live_availability_once(self):
+        manager, runner = self.manager(exists=False)
+
+        rows = manager.required_for_stages(["prep", "prep", "unmapped"])
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].key, "test")
+        self.assertEqual(rows[0].conda_name, "test_env")
+        self.assertFalse(rows[0].exists)
+        self.assertEqual(rows[0].stages, ["prep"])
+        self.assertEqual(
+            sum(call[:4] == ["conda", "env", "list", "--json"] for call in runner.calls),
+            1,
+        )
+
+    def test_stages_without_environment_mapping_do_not_require_conda(self):
+        manager = EnvironmentManager(
+            self.root,
+            registry_path=self.registry_path,
+            runner=FakeRunner(self.root),
+            conda_executable=None,
+            state_root=self.root / "state",
+        )
+        manager.conda = None
+
+        self.assertEqual(manager.required_for_stages(["debug"]), [])
+
 
 class SpecificationTests(EnvironmentFixture):
     def test_valid_specification(self):

@@ -63,13 +63,14 @@ Manage the fixed scientific environments through `sbt env`, not an independent
 installer implementation:
 
 ```bash
-sbt env doctor
 sbt env list
-sbt env sync --all --dry-run
+sbt env validate-spec segmentation
+sbt env sync segmentation --dry-run
 ```
 
 See the [fixed Conda environment guide](environments.md) for synchronization,
 capture, drift comparison, lock maintenance, smoke tests, and stage provenance.
+Installing all environments is not a prerequisite for the launcher or a run.
 
 ## SBT projects
 
@@ -210,6 +211,25 @@ sbt run cellpose --reason "Repeat with a larger diameter after fragmentation."
 sbt run cellpose --note "Review ROI_17 carefully." --note "Compare with run 2026..."
 ```
 
+Immediately before a real submission, `sbt run` resolves the Conda environments
+mapped to the selected stages and dependencies. Missing repository-managed
+environments have their installation specifications validated, then are listed
+and offered for installation. If a specification is invalid, the user declines,
+an external environment is missing, installation fails, or the environment is
+still not visible afterward, the command stops before creating the run record
+or calling `sbatch`.
+
+For explicitly non-interactive setup, missing repository-managed environments
+can be installed without the prompt:
+
+```bash
+sbt run segmentation --install-missing-envs
+```
+
+This option cannot install registry entries marked external. `--dry-run`
+remains side-effect free: it validates and previews the workflow without
+checking or installing Conda environments.
+
 To submit only the explicitly requested stage when its upstream assets already
 exist, disable dependency expansion:
 
@@ -344,8 +364,9 @@ output versioning remain outside the current scope.
 
 - `sbatch`, `squeue`, and usually `sacct` are available on the login node.
 - The existing wrappers can source `$HOME/imcanalysis/SLURM_scripts/job_env.sh`.
-- Repository-managed environments have been synchronized with `sbt env`; any
-  external environments exist under the fixed names in the central registry.
+- The environments required by the selected stages exist under the fixed names
+  in the central registry. `sbt run` can install missing repository-managed
+  environments; external environments must be prepared separately.
 - The site accepts standard `--parsable`, `--chdir`, `--output`, `--error`,
   `--export`, and `afterok` options.
 

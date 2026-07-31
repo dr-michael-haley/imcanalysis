@@ -1,114 +1,229 @@
 # Complete beginner's guide
 
-SpatialBiologyToolkit is designed around a simple division of work:
+This page explains the ideas behind SpatialBiologyToolkit before asking you to
+install or run anything. You do not need to become a Linux, Python, or HPC
+expert. The practical [HPC setup](hpc.md) includes copy-and-paste commands and
+explains what you should see after each step.
 
-1. Store a dataset as a toolkit project on an HPC cluster.
-2. Use the `sbt` command to check the project, plan a workflow, and submit jobs.
-3. Let SLURM run each scientific stage in the correct Conda environment.
-4. Read the reports and logs, then use the resulting data locally for interactive
-   analysis when needed.
+SpatialBiologyToolkit is **HPC-first**. Its usual workflow is:
 
-You do not need to become a Linux or Python expert before starting. The terms
-below are the ones used in the setup and pipeline guides.
+1. connect to an HPC cluster;
+2. use `sbt` to check a dataset project and preview a workflow;
+3. let SLURM run the scientific stages on compute nodes;
+4. inspect the reports and logs;
+5. use notebooks or Napari locally when interactive analysis is helpful.
 
-## Terminal and commands
+## The command line
 
-A **terminal** (or shell) is a text interface to a computer. On an HPC cluster,
-you normally connect to a login node and type commands there. Three useful Linux
-commands are:
+The **command line**, **terminal**, and **shell** all refer to the text-based
+interface where you type commands. Instead of opening folders by clicking, you
+move around and run programs by typing instructions.
+
+On Windows, open PowerShell, Windows Terminal, or Anaconda Prompt. On macOS,
+open Terminal. After connecting to an HPC cluster, the commands are normally
+Linux commands regardless of the computer on your desk.
+
+These four commands are enough to start:
 
 ```bash
-pwd                 # show the current directory
-ls                  # list files and directories
+pwd                 # print the directory you are currently in
+ls                  # list its files and directories
 cd path/to/project  # change directory
+mkdir new_directory # make a directory
 ```
 
-Commands are sensitive to spelling, spaces, and capital letters. A command in
-the documentation can usually be copied exactly, but replace placeholders such
-as `<project-name>` with your own value. Do not include the angle brackets.
+The `#` text in these examples is an explanation; the shell ignores everything
+after it. Commands are sensitive to spelling, spaces, and capital letters.
+Replace placeholders such as `<username>` with your own value, without typing
+the angle brackets.
 
-The login node is for short management tasks. Scientific processing is sent to
-the cluster's compute nodes through SLURM; do not run a large pipeline stage
-directly on the login node.
+Two useful pieces of path notation are:
 
-## Repository and Git
+- `~` or `$HOME`: your personal home directory on the current computer;
+- `.`: the directory you are currently in.
 
-The **repository** is the `imcanalysis` directory containing the toolkit's code,
-environment definitions, and SLURM wrappers. Git downloads and updates it:
+For example, `cd "$HOME/imcanalysis"` enters the toolkit repository stored in
+your HPC home directory.
+
+## What is an HPC cluster?
+
+**HPC** means **high-performance computing**. An HPC cluster is a shared group
+of computers with many processors, large amounts of memory, and often GPUs.
+It can process large images and cell datasets without tying the work to your
+laptop.
+
+The [University of Manchester Computational Shared Facility
+(CSF3)](https://ri.itservices.manchester.ac.uk/csf3/) is one example. Other
+institutions use different cluster names and login addresses, but the concepts
+are similar.
+
+An HPC cluster normally has two kinds of machine:
+
+- a **login node**, where you connect, manage files, inspect results, and submit
+  work;
+- **compute nodes**, where the large scientific calculations run.
+
+The login node is shared by many people. Do not run a heavy pipeline stage
+directly there. SpatialBiologyToolkit submits that work to a compute node for
+you.
+
+### Why use HPC?
+
+- **Scale:** large IMC datasets can need more memory or GPU capacity than a
+  normal laptop.
+- **Long-running jobs:** work can continue after you disconnect or close your
+  laptop.
+- **Repeatability:** standard scripts and environments make it easier to run
+  the same analysis consistently.
+- **Shared resources:** specialist hardware can be scheduled fairly between
+  users.
+
+HPC storage is not all permanent. Many clusters have fast **scratch** storage
+that is automatically cleaned. Read your cluster's storage policy and keep a
+separate backed-up copy of irreplaceable raw data. CSF3 users should start with
+the current [CSF3 getting-started
+guide](https://ri.itservices.manchester.ac.uk/csf3/getting-started/).
+
+## Connecting with SSH
+
+**SSH** is the secure connection used to open a terminal on an HPC login node.
+The general form is:
 
 ```bash
-git clone https://github.com/dr-michael-haley/imcanalysis.git
-git pull --ff-only
+ssh <username>@<cluster-address>
 ```
 
-`clone` creates your first working copy. Later, `pull --ff-only` updates a clean
-copy without silently merging local changes. Run `git status --short` first; if
-it lists files you intentionally changed, preserve or commit them before asking
-Git to update the checkout.
+For CSF3, the current command is:
 
-The repository and your **dataset projects** are different things. Keep the
-toolkit checkout at `~/imcanalysis` on HPC. Keep each dataset in its own project
-directory, usually on the cluster's project or scratch storage.
+```bash
+ssh <username>@csf3.itservices.manchester.ac.uk
+```
 
-## Python, packages, and Conda environments
+You need a cluster account, and CSF3 requires the University VPN when connecting
+from outside its network. The first connection may ask whether you trust the
+host key; check it against your institution's instructions before accepting.
+When you type a password, the terminal usually displays no dots or characters.
+That is normal.
 
-Python packages are reusable pieces of software. Different stages need
-different, sometimes incompatible package versions, so the toolkit uses
-separate **Conda environments**.
+## What is SLURM?
 
-There are two kinds of environment on HPC:
+**SLURM** is the job scheduler used by CSF3 and many other HPC clusters. It:
 
-- `sbt-cli` is small and contains the project-management command. It is safe to
-  use on the login node.
-- Scientific environments such as `imc_segmentation` and `imc_denoise` contain
-  the heavier analysis software. SLURM wrappers activate them on compute nodes.
+- accepts a request to run a calculation, called a **job**;
+- decides when and on which compute node it can run;
+- allocates the requested CPUs, memory, GPU, and time;
+- tracks status and writes output and error logs.
 
-Activate the launcher environment with:
+A job may wait in a queue before it starts. Closing your SSH connection does
+not cancel a submitted job. SpatialBiologyToolkit prepares and submits the
+SLURM commands, so beginners do not need to write job scripts for the normal
+pipeline.
+
+The usual rhythm is:
+
+```bash
+sbt run segmentation --dry-run  # preview only
+sbt run segmentation            # check environments, then submit
+sbt status latest               # ask what SLURM reports
+sbt logs latest                 # inspect recent log output
+```
+
+## Python, Anaconda, Miniconda, and Conda
+
+**Python** is the programming language used by most of the toolkit.
+**Packages** are reusable pieces of Python software, rather like specialist
+apps or plug-ins.
+
+**Conda** manages both packages and isolated software environments. It is
+distributed through:
+
+- **Anaconda**, a large distribution that includes many data-science packages;
+- **Miniconda**, a smaller installation containing Conda and its essentials.
+
+The HPC guide uses Miniconda because it is small and the toolkit installs only
+what it needs. If your cluster already provides Conda, you may not need to
+install either distribution yourself.
+
+### What is a Conda environment?
+
+A **Conda environment** is an isolated collection of Python and packages.
+Different analyses can require incompatible versions, so environments prevent
+one tool's packages from breaking another.
+
+SpatialBiologyToolkit deliberately separates:
+
+- `sbt-cli`: a small environment containing the lightweight `sbt` command;
+- scientific environments such as `imc_segmentation` and `imc_denoise`, used
+  by the corresponding SLURM jobs.
+
+You do **not** install every scientific environment at the beginning. When you
+submit a run, `sbt` checks the environments required by that run. If their
+repository specifications are valid, it offers to install any missing managed
+environment and leaves unrelated ones alone. An invalid specification or a
+missing external environment stops safely for maintainer or specialist setup.
+
+Activate the launcher with:
 
 ```bash
 conda activate sbt-cli
 ```
 
-The command prompt often shows `(sbt-cli)` while it is active. If `sbt` is not
-found, first check that this environment is active.
+The prompt may then begin with `(sbt-cli)`. Activation changes which Python and
+commands the shell uses; it does not start a pipeline job.
 
-An **editable installation** connects an environment to the code in your Git
-checkout. Updating the checkout therefore updates the code used by the
-environment. The supplied setup commands create these editable links for you.
+### `conda` and `pip`
 
-## The `sbt` command
+Both tools install packages:
 
-`sbt` is the supported front door to the pipeline. It can:
+- `conda install ...` installs packages and non-Python libraries from Conda
+  channels;
+- `python -m pip install ...` installs Python packages from Python package
+  sources.
 
-- create or adopt a dataset project;
-- validate configuration and required files;
-- list stages and reusable workflow modes;
-- show a plan without submitting anything;
-- submit jobs to SLURM;
-- find status, reports, and logs for recorded executions.
+Scientific environments can use both, but mixing arbitrary install commands
+often creates hard-to-reproduce environments. Use the repository's setup and
+`sbt env` commands unless a guide explicitly tells you otherwise.
 
-Useful read-only commands include:
+### Editable installations
+
+An **editable installation** links the installed Python package to a Git
+checkout instead of copying its source elsewhere. The setup helper performs
+the equivalent of:
 
 ```bash
-sbt --help
-sbt stages list
-sbt modes list
-sbt project describe
-sbt plan segmentation
-sbt run segmentation --dry-run
+python -m pip install --no-deps -e .
 ```
 
-The last command is a preview: it prints the planned SLURM submission but does
-not create a run or submit a job. `sbt run segmentation` without `--dry-run`
-does submit jobs.
+After a clean `git pull`, environments using that link see the updated toolkit
+code. `--no-deps` prevents pip from replacing the carefully managed scientific
+dependencies.
 
-Older commands named `pl`, `pll`, and `pls` still exist for compatibility, but
-new users should use `sbt`.
+## Repository, Git, and GitHub
+
+The toolkit lives in a **Git repository**: a directory containing code plus its
+change history. GitHub hosts the shared copy.
+
+- **Clone** downloads the repository for the first time.
+- **Pull** updates an existing checkout.
+- **Status** shows local changes that Git is not safe to ignore.
+
+```bash
+git clone https://github.com/dr-michael-haley/imcanalysis.git
+git status --short
+git pull --ff-only
+```
+
+The pipeline does not silently update the repository before a run. Update it
+deliberately, and do not pull over local edits you need to keep.
+
+The repository is software; a **dataset project** is your data, configuration,
+outputs, and run history. Keep them in separate directories. On HPC, the
+repository currently belongs at `~/imcanalysis` because some compatibility
+wrappers still expect that location.
 
 ## Projects and `config.yaml`
 
-A toolkit **project** is one dataset plus its configuration, scientific assets,
-and run history. A typical project contains:
+A toolkit project represents one dataset. A typical project contains:
 
 ```text
 my_dataset/
@@ -119,55 +234,84 @@ my_dataset/
   outputs/
 ```
 
-`config.yaml` records choices and paths. Most paths are relative to the project
-directory. `sbt project init` creates a new project with a compact config;
-`sbt project adopt --config config.yaml` records an existing project without
-moving its data.
+`config.yaml` is a text file recording analysis choices and paths. Most paths
+are interpreted relative to the project directory. `sbt project init` creates
+a new project; `sbt project adopt --config config.yaml` registers an existing
+one without moving scientific data.
 
-The `.sbt/` directory contains toolkit run records. The `outputs/` directory
-contains numbered, human-readable reports. Large reusable assets such as TIFFs,
-masks, and AnnData remain at their configured project paths.
+The hidden `.sbt/` directory contains technical run records. `outputs/`
+contains numbered, human-readable reports. Images, masks, AnnData, and other
+large reusable assets remain at the configured project paths.
 
-## HPC, SLURM, and jobs
+## What the `sbt` command does
 
-An HPC cluster is a shared collection of computers. **SLURM** is the scheduler
-that decides where and when requested work runs. A submitted unit of work is a
-**job**.
+`sbt` is the supported front door to the pipeline. It can:
 
-This changes the rhythm of analysis:
+- create or adopt a project;
+- validate configuration and required files;
+- explain stages and reusable workflow modes;
+- preview a plan without changing cluster state;
+- check and, with permission, install required environments;
+- submit jobs and resolve their status, reports, and logs.
 
-1. Validate and preview the work on the login node.
-2. Submit it to SLURM.
-3. Disconnect if you wish; the job continues on a compute node.
-4. Return later and inspect status, logs, and reports.
-
-For example:
+Useful safe inspection commands include:
 
 ```bash
+sbt --help
+sbt stages list
+sbt modes list
+sbt project describe
+sbt plan segmentation
 sbt run segmentation --dry-run
-sbt run segmentation
-sbt status latest
-sbt logs latest
-sbt summary
 ```
 
-## Local notebooks and Napari
+A dry run creates no run record, installs no environment, and submits no job.
+The same command without `--dry-run` can install a missing managed environment
+after validating its installation specification and prompting, then submit
+work. Older commands named `pl`, `pll`, and `pls` remain only for compatibility;
+new users should use `sbt`.
 
-Jupyter notebooks and Napari are useful after scripted processing for exploring
-data, reviewing images, testing ideas, and making bespoke figures. They are not
-the primary way to run the full pipeline.
+## Headless pipeline work and interactive analysis
 
-A Jupyter notebook runs code in a **kernel** backed by a selected environment.
-Run notebook cells from top to bottom, save regularly, and use **Restart and Run
-All** to check that a result does not depend on hidden state. Copy tutorial
-notebooks into your own analysis directory before editing them so a later Git
-update cannot conflict with your work.
+HPC pipeline stages are normally **headless**: there is no graphical window or
+live plot. A script runs on a compute node and writes assets, logs, and reports.
+This is well suited to repeatable processing.
 
-## Where to go next
+Jupyter notebooks and Napari are interactive tools, normally used after or
+alongside the standard pipeline for exploration, manual review, bespoke
+analysis, and figure making.
 
-- Follow [HPC setup](hpc.md) for the recommended installation and first dry run.
-- Use [Local analysis setup](local.md) only when you need notebooks, Napari, or
-  workstation-based analysis.
-- Read the [pipeline workflow](../pipeline/workflow.md) before selecting stages.
-- Use the [scientific guides](../stages/index.md) to understand what each stage
-  does and how to interpret its outputs.
+### What is a Jupyter notebook?
+
+A notebook combines executable Python **cells**, their displayed results, and
+Markdown notes. A **kernel** is the Python process that executes those cells.
+The kernel belongs to an environment, so selecting the wrong kernel can make an
+installed package appear to be missing.
+
+Good notebook habits are:
+
+- copy a tutorial into your own analysis directory before editing it;
+- run cells from top to bottom;
+- use small cells and Markdown notes to record what and why;
+- save regularly;
+- use **Restart Kernel and Run All** to check that hidden state is not affecting
+  the result.
+
+Restarting clears variables and imports from memory. Deleting a cell does not
+clear a variable it already created. If a notebook behaves impossibly, restart
+the kernel and run it from the beginning.
+
+Common shortcuts include **Shift+Enter** to run a cell, **Tab** for completion,
+and **Shift+Tab** inside a function call for help. Notebook interfaces differ,
+so menus and some shortcuts may vary.
+
+## How HPC and local work fit together
+
+Most users will run the standard, compute-heavy workflow on HPC, then copy the
+resulting AnnData and selected images into a separate local analysis directory
+for notebooks or Napari. Useful, repeatable notebook operations can later be
+turned into scripted pipeline stages.
+
+When these concepts make sense, continue with [HPC setup](hpc.md). Use
+[local analysis setup](local.md) for workstation notebooks and interactive
+tools, not as a replacement for the SLURM pipeline.

@@ -11,6 +11,13 @@ All lock generation and installation operations use the copy of `conda-lock`
 installed in Conda base through `conda run -n base conda-lock`; the active
 scientific environment and its `PATH` do not control lock availability.
 
+You do not need every registered environment. A real `sbt run` checks only the
+environments mapped to its resolved stages, after planning and before creating
+a run record. It validates the installation specification and offers to install
+missing repository-managed environments. It stops safely when a specification
+is invalid or a required external environment is absent. Dry runs never install
+environments.
+
 ## Environment registry
 
 [`HPC_env_files/environments.yaml`](https://github.com/dr-michael-haley/imcanalysis/blob/main/HPC_env_files/environments.yaml)
@@ -28,6 +35,8 @@ lightweight smoke tests.
 | `rapids` | `rapids_singlecell` | External/pre-existing |
 | `starling` | `imc_starling` | External/pre-existing |
 | `scportrait` | `scPortrait` | External/pre-existing |
+| `hyperstac` | `hyperstac-imc` | External/pre-existing |
+| `maxfuse` | `imc_maxfuse` | External/pre-existing |
 
 Commands accept either the logical key or fixed name. External environments
 can be listed, shown and smoke-tested, but `sync`, `lock`, and `capture` refuse
@@ -37,14 +46,16 @@ The stage mapping is also centralized:
 
 | Environment key | Pipeline stages |
 |---|---|
-| `segmentation` | `prep`, `vis`, `nimbus`, `subcl`, `dnqc`, `aiinter`, `config`, `cellpose`, `reint`, `remap`, `slogs`, `rebuildmeta` |
+| `segmentation` | `prep`, `vis`, `nimbus`, `subcl`, `dnqc`, `aiinter`, `config`, `cellpose`, `reint`, `remap`, `slogs`, `rebuildmeta`, `cellfeat`, `spatialdata` |
 | `denoise` | `denoise`, `dnqc` |
 | `cellposesam` | `cellpose` |
 | `biobatchnet` | `bbn` |
-| `cellcharter` | `bint`, `cchar`, `pairsp`, `nxsp` |
+| `cellcharter` | `bint`, `cchar`, `pairsp`, `nxsp`, `popqc` |
 | `rapids` | `rapids`, `cellvision-cluster`, `cellvision-full` |
 | `starling` | `starling` |
 | `scportrait` | `scport`, `cellvision-extract`, `cellvision-embed`, `cellvision-plot`, `cellvision-full` |
+| `hyperstac` | `hyperstac-preprocess`, `hyperstac-model`, `hyperstac-permutation`, `hyperstac-visualise`, `cox`, `hyperstac-stability`, `hyperstac-full` |
+| `maxfuse` | `maxfuse` |
 
 `cellpose`, `dnqc`, and `cellvision-full` intentionally use two environments;
 their primary environment is listed first in the registry mapping.
@@ -75,12 +86,26 @@ sbt env validate-spec --all
 
 ## Repository to fixed HPC environment
 
+The normal beginner path is to let a real run offer the environments it needs:
+
+```bash
+sbt run segmentation --dry-run
+sbt run segmentation
+```
+
+The first command previews without inspecting Conda. The second validates the
+needed installation specifications, lists missing managed environments, and
+asks permission to install them when valid. Use the commands below for
+deliberate manual maintenance of one environment.
+
 Always inspect the plan first:
 
 ```bash
 sbt env sync imc_cellcharter --dry-run
-sbt env sync --all --dry-run
 ```
+
+`--all` remains available for administrators or deliberate full-stack
+maintenance, but it is not part of initial setup.
 
 For an absent environment, synchronisation performs:
 
