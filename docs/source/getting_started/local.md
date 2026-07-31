@@ -2,8 +2,9 @@
 
 Use this setup for Jupyter notebooks, Napari, exploratory analysis, and bespoke
 figures on a Windows or macOS workstation. The reproducible end-to-end pipeline
-is designed for Linux HPC with SLURM; start with [HPC setup](hpc.md) when you
-need to process a full dataset.
+is designed for Linux HPC with SLURM. University of Manchester beginners should
+start with [CSF3 setup](hpc.md); experienced HPC users can use the
+[`sbt` CLI guide](../pipeline/cli.md).
 
 ## What you will set up
 
@@ -165,4 +166,6 @@ python -m pip install "numpy>=1.26,<2" "PySide6==6.9.1" "tensorflow-macos==2.16.
 
 The `sbt` command can perform lightweight inspection locally, but actual
 pipeline submission requires the repository's Linux SLURM environment and
-scientific stage environments. Use [HPC setup](hpc.md) for pipeline runs.
+scientific stage environments. University of Manchester beginners can follow
+[CSF3 setup](hpc.md); experienced HPC users can use the
+[`sbt` CLI guide](../pipeline/cli.md).

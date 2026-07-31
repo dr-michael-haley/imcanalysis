@@ -765,11 +765,7 @@ def _required_environment_commands(rows: list[EnvironmentSummary]) -> str:
     return "\n".join(f"  sbt env sync {row.key}" for row in rows)
 
 
-def _ensure_run_environments(
-    stage_names: list[str],
-    *,
-    install_missing: bool,
-) -> None:
+def _ensure_run_environments(stage_names: list[str]) -> None:
     """Stop before run creation unless every selected stage environment exists."""
 
     manager = _env_manager(None)
@@ -825,13 +821,11 @@ def _ensure_run_environments(
             "packages. No run record was created and no jobs were submitted."
         )
 
-    if not install_missing:
-        names = ", ".join(row.conda_name for row in missing_managed)
-        install_missing = typer.confirm(
-            f"Install the missing environment(s) now ({names})?",
-            default=True,
-        )
-    if not install_missing:
+    names = ", ".join(row.conda_name for row in missing_managed)
+    if not typer.confirm(
+        f"Install the missing environment(s) now ({names})?",
+        default=False,
+    ):
         raise RuntimeError(
             "Missing environments were not installed. Install only the environments "
             "needed by this run with:\n"
@@ -1219,15 +1213,6 @@ def run_command(
         "--note",
         help="Optional repeatable run note recorded in run and stage reports.",
     ),
-    install_missing_environments: bool = typer.Option(
-        False,
-        "--install-missing-environments",
-        "--install-missing-envs",
-        help=(
-            "Install missing repository-managed environments without prompting. "
-            "Externally managed environments must still be prepared separately."
-        ),
-    ),
 ) -> None:
     try:
         context = _project(project, config)
@@ -1277,10 +1262,7 @@ def run_command(
         return
 
     try:
-        _ensure_run_environments(
-            [stage.name for stage in plan.resolved_stages],
-            install_missing=install_missing_environments,
-        )
+        _ensure_run_environments([stage.name for stage in plan.resolved_stages])
         run = create_run_record(
             context,
             plan,

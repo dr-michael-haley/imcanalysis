@@ -37,7 +37,7 @@ notebook work on Windows and macOS.
 
 - If the command line, Conda, or SLURM are new to you, read the [complete beginner's guide](https://imcanalysis.readthedocs.io/en/latest/getting_started/beginners.html).
 - To understand what a stage does, why it is performed, and how to interpret its biological outputs, use the [scientific guides](https://imcanalysis.readthedocs.io/en/latest/stages/index.html).
-- For the recommended HPC-first workflow, use the [HPC setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/hpc.html), [`sbt` CLI guide](https://imcanalysis.readthedocs.io/en/latest/pipeline/cli.html), [pipeline workflow](https://imcanalysis.readthedocs.io/en/latest/pipeline/workflow.html), and [outputs/reporting guide](https://imcanalysis.readthedocs.io/en/latest/pipeline/reporting.html).
+- For the recommended HPC-first workflow, CSF3 beginners should use the [CSF3 setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/hpc.html); experienced HPC users can start with the [`sbt` CLI guide](https://imcanalysis.readthedocs.io/en/latest/pipeline/cli.html), [pipeline workflow](https://imcanalysis.readthedocs.io/en/latest/pipeline/workflow.html), and [outputs/reporting guide](https://imcanalysis.readthedocs.io/en/latest/pipeline/reporting.html).
 - For notebooks and interactive exploration, use the [local analysis setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/local.html) and [tutorial index](https://imcanalysis.readthedocs.io/en/latest/tutorials/index.html).
 - For exact stage and config fields, use the generated [SLURM stage reference](https://imcanalysis.readthedocs.io/en/latest/pipeline/stages/index.html) and [configuration reference](https://imcanalysis.readthedocs.io/en/latest/reference/configuration/index.html).
 
@@ -49,7 +49,7 @@ for interactive work.
 
 | Use case | Platform | Starting point |
 | --- | --- | --- |
-| Reproducible end-to-end pipeline | Linux HPC with SLURM | [HPC setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/hpc.html) |
+| Reproducible end-to-end pipeline | Linux HPC with SLURM | [`sbt` CLI guide](https://imcanalysis.readthedocs.io/en/latest/pipeline/cli.html) ([CSF3 beginner setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/hpc.html)) |
 | Local analysis and notebooks | Windows | [Local analysis setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/local.html) |
 | Local analysis and notebooks | Apple Silicon macOS | [Local analysis setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/local.html) |
 

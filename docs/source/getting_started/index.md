@@ -8,15 +8,16 @@ Choose a starting point:
 
 1. [Complete beginner's guide](beginners.md) — learn the small set of command-line,
    Conda, Git, and SLURM concepts used by the toolkit.
-2. [HPC setup](hpc.md) — connect to a cluster, install Conda and the `sbt`
-   launcher, create or adopt a project, preview a run, and install scientific
-   environments only when the selected workflow needs them. This is the
-   recommended route for the end-to-end pipeline.
+2. [CSF3 setup](hpc.md) — an absolute-beginner walkthrough for University of
+   Manchester users, from installing Conda to submitting and monitoring the
+   first job.
 3. [Local analysis setup](local.md) — prepare a Windows or macOS environment for
    notebooks, Napari, exploratory analysis, and bespoke figures after pipeline
    processing.
 
-Experienced HPC users can go straight to [HPC setup](hpc.md). Details of the
+Experienced users on another HPC can go straight to the
+[`sbt` CLI guide](../pipeline/cli.md) and
+[environment-management guide](../pipeline/environments.md). Details of the
 optional shell installer have moved to the
 [installation helper scripts reference](../reference/installation_helpers.md).
 

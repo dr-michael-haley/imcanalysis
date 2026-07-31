@@ -33,7 +33,7 @@ python -m pip install --no-deps -e .
 The editable installation supplies `sbt` without adding the scientific
 dependency stack to the launcher environment. `conda-lock` is a separate base
 environment prerequisite for `sbt env`; follow the complete
-[HPC setup](../getting_started/hpc.md) for a fresh cluster installation.
+[CSF3 setup](../getting_started/hpc.md) for a fresh CSF3 installation.
 
 ## Compact a legacy configuration
 
@@ -219,16 +219,11 @@ an external environment is missing, installation fails, or the environment is
 still not visible afterward, the command stops before creating the run record
 or calling `sbatch`.
 
-For explicitly non-interactive setup, missing repository-managed environments
-can be installed without the prompt:
-
-```bash
-sbt run segmentation --install-missing-envs
-```
-
-This option cannot install registry entries marked external. `--dry-run`
-remains side-effect free: it validates and previews the workflow without
-checking or installing Conda environments.
+Installation always requires an explicit interactive `y`; `sbt run` has no
+flag that bypasses this prompt. Non-interactive workflows must prepare the
+required environment beforehand with `sbt env sync <key>`. `--dry-run` remains
+side-effect free: it validates and previews the workflow without checking or
+installing Conda environments.
 
 To submit only the explicitly requested stage when its upstream assets already
 exist, disable dependency expansion:

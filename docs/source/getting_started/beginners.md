@@ -2,7 +2,7 @@
 
 This page explains the ideas behind SpatialBiologyToolkit before asking you to
 install or run anything. You do not need to become a Linux, Python, or HPC
-expert. The practical [HPC setup](hpc.md) includes copy-and-paste commands and
+expert. The practical [CSF3 setup](hpc.md) includes copy-and-paste commands and
 explains what you should see after each step.
 
 SpatialBiologyToolkit is **HPC-first**. Its usual workflow is:
@@ -312,6 +312,6 @@ resulting AnnData and selected images into a separate local analysis directory
 for notebooks or Napari. Useful, repeatable notebook operations can later be
 turned into scripted pipeline stages.
 
-When these concepts make sense, continue with [HPC setup](hpc.md). Use
+When these concepts make sense, continue with [CSF3 setup](hpc.md). Use
 [local analysis setup](local.md) for workstation notebooks and interactive
 tools, not as a replacement for the SLURM pipeline.

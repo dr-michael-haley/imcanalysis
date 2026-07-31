@@ -7,7 +7,7 @@ pipeline.
 
 For a new or maintained analysis, use:
 
-- [HPC and SLURM setup](../getting_started/hpc.md)
+- [CSF3 setup](../getting_started/hpc.md)
 - [Pipeline workflow](../pipeline/workflow.md)
 - [Generated SLURM stage reference](../pipeline/stages/index.md)
 - [Generated configuration reference](../reference/configuration/index.md)

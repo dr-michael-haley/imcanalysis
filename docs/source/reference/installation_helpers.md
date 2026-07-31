@@ -1,7 +1,7 @@
 # Installation helper scripts
 
-This page documents the shell scripts and Make targets in `install/`. New HPC
-users should follow [HPC setup](../getting_started/hpc.md), which needs only the
+This page documents the shell scripts and Make targets in `install/`. New CSF3
+users should follow [CSF3 setup](../getting_started/hpc.md), which needs only the
 `bootstrap_sbt.sh` helper. The remaining scripts maintain the older shell
 conveniences and are not required for the project-aware `sbt` workflow.
 
@@ -69,9 +69,9 @@ and is retained for legacy or administrative use; beginners should let
 
 `make update` runs `git pull` and then the optional `setup.sh` shell installer.
 For the current `sbt` workflow, the more explicit update sequence in
-[HPC setup](../getting_started/hpc.md) is preferred because it checks the Git
-working tree, uses a fast-forward-only pull, refreshes the launcher, and previews
-environment changes.
+[CSF3 setup](../getting_started/hpc.md) is preferred because it checks the Git
+working tree, uses a fast-forward-only pull, and refreshes the launcher without
+running the older shell installer.
 
 ## `uninstall.sh` and `make uninstall`
 

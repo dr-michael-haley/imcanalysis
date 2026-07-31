@@ -56,6 +56,13 @@ class FakeSbatchRunner:
 
 
 class RunControlTests(unittest.TestCase):
+    def test_run_help_has_no_environment_install_bypass_flag(self):
+        result = CliRunner().invoke(app, ["run", "--help"])
+
+        self.assertEqual(result.exit_code, 0, result.stdout)
+        self.assertNotIn("--install-missing-envs", result.stdout)
+        self.assertNotIn("--install-missing-environments", result.stdout)
+
     def _project_and_plan(self, temp_dir: str, targets=None):
         root = Path(temp_dir) / "project"
         context = initialize_project(root)
@@ -382,12 +389,13 @@ class RunControlTests(unittest.TestCase):
                 result = CliRunner().invoke(
                     app,
                     ["run", "prep", "--project", str(root)],
-                    input="\n",
+                    input="y\n",
                 )
 
             self.assertEqual(result.exit_code, 0, result.stdout)
             self.assertIn("imc_segmentation", result.stdout)
             self.assertIn("Install the missing environment(s) now", result.stdout)
+            self.assertIn("[y/N]", result.stdout)
             self.assertEqual(manager.synced, ["segmentation"])
             submit_mock.assert_called_once()
 

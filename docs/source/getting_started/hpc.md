@@ -1,159 +1,50 @@
-# HPC setup
+# CSF3 setup
 
-This is the recommended installation route for SpatialBiologyToolkit. It starts
-from obtaining an HPC account and installing Conda, so no previous Linux or HPC
-experience is assumed. Experienced users can skip directly to the numbered
-step they need.
+This guide will take you from logging in to the University of Manchester's
+CSF3 for the first time to submitting your first SpatialBiologyToolkit job. No
+previous Linux or HPC experience is assumed.
 
 By the end, you will have:
 
-- a copy of the toolkit at `~/imcanalysis`;
-- a small `sbt-cli` Conda environment for project and job control;
-- a dataset project that can be checked and previewed;
-- only the scientific environments needed by the pipeline stages you run.
+- Miniconda installed in your CSF3 home directory;
+- a copy of SpatialBiologyToolkit at `~/imcanalysis`;
+- the small `sbt-cli` environment used to control the pipeline;
+- a project in scratch containing your raw MCD files;
+- your first analysis submitted to the CSF3 queue.
 
-The complete pipeline needs a Linux HPC cluster using SLURM. The commands below
-run on the **HPC login node**, not in a terminal that is still on your Windows
-or macOS computer. See the [complete beginner's guide](beginners.md) for an
-explanation of terminals, HPC, SLURM, Conda, environments, and projects.
+If terms such as terminal, Conda environment, HPC, or SLURM are unfamiliar,
+read the [complete beginner's guide](beginners.md) first.
 
-## 1. Obtain an HPC account and connect
+## 1. Obtain a CSF3 account and connect
 
-Follow your institution's instructions to request an account. You will need:
+The University of Manchester's
+[CSF3 getting-started guide](https://ri.itservices.manchester.ac.uk/csf3/getting-started/)
+explains how to request an account and connect from Windows, macOS, or Linux.
+Research IT also runs regular CSF3 training courses if you want more help.
 
-- your HPC username;
-- the cluster's SSH address;
-- any required VPN or multi-factor authentication;
-- the cluster's storage and acceptable-use guidance.
-
-Open PowerShell or Windows Terminal on Windows, or Terminal on macOS/Linux, and
-connect with:
-
-```bash
-ssh <username>@<cluster-address>
-```
-
-For the University of Manchester CSF3, the current command is:
-
-```bash
-ssh <username>@csf3.itservices.manchester.ac.uk
-```
-
-Replace `<username>` with your University username. CSF3 requires the
-University VPN when connecting from outside its network. Its current account,
-connection, file-transfer, storage, Linux, and SLURM instructions are collected
-in the [CSF3 getting-started
-guide](https://ri.itservices.manchester.ac.uk/csf3/getting-started/).
-
-The first connection may ask you to confirm a host fingerprint. Compare it with
-your institution's instructions. When entering a password, the terminal does
-not normally display characters.
-
-After login, practise these safe commands:
-
-```bash
-pwd
-ls
-echo "$HOME"
-```
-
-`$HOME` is your personal directory on the cluster. The prompt may include the
-login-node name and normally ends in `$`.
+You log in using your central University username and password and authenticate
+with Duo MFA. Once logged in, you will be on a **login node** in your home
+directory (`$HOME`). This is your personal directory on the cluster.
 
 > [!IMPORTANT]
-> Use the login node for short commands, file management, validation, and job
-> submission. Do not run segmentation, denoising, or another heavy analysis
-> directly on it. `sbt run` submits those calculations to SLURM compute nodes.
+> The login node is for short commands, moving files, checking results, and
+> submitting jobs. Do not run segmentation, denoising, or another large
+> analysis directly on it. `sbt run` sends that work to a compute node using
+> SLURM.
 
-## 2. Choose where data will live
+## 2. Install Miniconda
 
-Keep the small software checkout in your home directory at `~/imcanalysis`.
-Keep dataset projects on storage suitable for larger data, according to your
-cluster's policy.
+Miniconda provides Python and Conda, which we use to keep the different pieces
+of software needed by the pipeline separate from one another.
 
-Scratch space is often fast but temporary. On CSF3 it is subject to automatic
-cleanup. Do not keep the only copy of raw data or irreplaceable results there.
-Before uploading data, decide which backed-up project or research-data storage
-will hold the permanent copy.
-
-You can inspect free space with:
-
-```bash
-quota -s
-df -h .
-```
-
-Not every cluster provides `quota`; if it is unavailable, use the storage
-command in your cluster's documentation.
-
-## 3. Check Git, SLURM, and Conda
-
-Run each command separately:
-
-```bash
-git --version
-sbatch --version
-conda --version
-```
-
-- If Git prints a version, it is ready. If not, follow your cluster's module
-  instructions or ask its support team; do not use `sudo` on a shared cluster.
-- If `sbatch` prints a SLURM version, you are on a suitable login node. If not,
-  check the cluster login and module instructions.
-- If Conda prints a version, skip to step 5 below. If the shell says
-  `conda: command not found`, continue with step 4.
-
-Some clusters provide Conda as a module. Run `module avail` and follow the local
-documentation before installing your own copy. On CSF3, a user-owned Miniconda
-installation is a straightforward option.
-
-## 4. Install Miniconda when `conda` is missing
-
-Miniconda provides Python and the Conda environment manager without installing
-a large scientific stack. These instructions are for a standard 64-bit Linux
-HPC login node.
-
-First check the processor type:
-
-```bash
-uname -m
-```
-
-If it prints `x86_64`, use the commands below. For another value, choose the
-matching Linux installer from Anaconda's official [Miniconda Linux installation
-guide](https://www.anaconda.com/docs/getting-started/miniconda/install/linux-install)
-instead of guessing.
-
-### Download the installer
+Download the CSF3-compatible Linux installer into your home directory:
 
 ```bash
 cd "$HOME"
 curl -O https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
 ```
 
-If `curl` is unavailable but `wget` exists, use:
-
-```bash
-wget https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh
-```
-
-Confirm that the file exists:
-
-```bash
-ls -lh Miniconda3-latest-Linux-x86_64.sh
-```
-
-For additional assurance, calculate its checksum:
-
-```bash
-sha256sum Miniconda3-latest-Linux-x86_64.sh
-```
-
-Compare the result with the same installer in Anaconda's official [Miniconda
-archive](https://repo.anaconda.com/miniconda/). Do not run an installer whose
-checksum does not match.
-
-### Run the installer
+Run it:
 
 ```bash
 bash ./Miniconda3-latest-Linux-x86_64.sh
@@ -161,35 +52,29 @@ bash ./Miniconda3-latest-Linux-x86_64.sh
 
 The installer asks several questions:
 
-1. Press **Enter** to read through the licence. Press **Space** to move a page
-   at a time, or `q` if the pager says that key will finish displaying it.
+1. Press **Enter** to read the licence. Press **Space** to move through it.
 2. Type `yes` to accept the licence.
-3. Press **Enter** to accept the default location, normally
-   `/home/<username>/miniconda3`. A home-directory install does not need `sudo`.
-4. Type `yes` when asked whether to initialize Miniconda/Conda.
+3. Press **Enter** to accept the default install location in your home
+   directory. You do not need `sudo`.
+4. Type `yes` when asked whether to initialize Conda.
 
-Load the updated shell configuration:
+Load the updated shell settings:
 
 ```bash
 source "$HOME/.bashrc"
 ```
 
-Then verify the installation:
+Check that Conda is working:
 
 ```bash
 conda --version
-conda info --base
 ```
 
-The second command should show a directory in your home directory. If `conda`
-is still not found, disconnect with `exit`, connect again, and repeat the two
-checks. Keep the downloaded installer until the setup works; it can then be
-removed if you wish.
+If `conda` is not found, log out of CSF3, reconnect, and try the command again.
 
-## 5. Clone the toolkit
+## 3. Clone (download) the toolkit
 
-The active SLURM wrappers retain a compatibility assumption that the checkout
-is at `~/imcanalysis`, so use that location:
+SpatialBiologyToolkit expects its code to live at `~/imcanalysis` on CSF3:
 
 ```bash
 cd "$HOME"
@@ -197,180 +82,152 @@ git clone https://github.com/dr-michael-haley/imcanalysis.git
 cd "$HOME/imcanalysis"
 ```
 
-If Git says the destination already exists, do not clone over it. Inspect and
-update the existing checkout instead:
+`git clone` downloads the code. You only do this once.
 
-```bash
-cd "$HOME/imcanalysis"
-git status --short
-git pull --ff-only
-```
+## 4. Install the `sbt` command
 
-No output from `git status --short` means the checkout is clean. If it lists
-files you intentionally changed, preserve or commit them before pulling.
-
-## 6. Install the lightweight `sbt` command
-
-From the repository root, run:
+From the `imcanalysis` folder, run:
 
 ```bash
 bash install/bootstrap_sbt.sh
 ```
 
-This creates a small Conda environment called `sbt-cli` and links it to this
-checkout. It does **not** install all scientific environments or submit work.
-The first installation may take several minutes.
+This creates a small Conda environment called `sbt-cli`. It contains the
+lightweight `sbt` command used to set up projects, check files, submit jobs, and
+view results. It does not contain all the scientific software used by the
+pipeline.
 
-Activate it and verify the command:
+Activate it and check that `sbt` is available:
 
 ```bash
 conda activate sbt-cli
 sbt --help
 ```
 
-The prompt often starts with `(sbt-cli)` after activation. If your cluster does
-not support shell activation, prefix commands with `conda run -n sbt-cli`, for
-example:
+Your prompt should now start with `(sbt-cli)`. You will need to run
+`conda activate sbt-cli` again each time you reconnect to CSF3.
+
+## 5. Install `conda-lock`
+
+The toolkit uses `conda-lock` to install tested versions of scientific
+software. Install it once:
 
 ```bash
-conda run -n sbt-cli sbt --help
+conda install --name base --channel conda-forge conda-lock -y
 ```
 
-## 7. Install `conda-lock`
+You do not need to run this command again for every project or environment.
 
-The repository-managed scientific environments use exact lockfiles.
-Install `conda-lock` once in the Conda base environment:
+## 6. Create a project folder in scratch
+
+Keep the toolkit code in your home directory, but keep large analysis projects
+in scratch:
 
 ```bash
-conda install --name base --channel conda-forge conda-lock
+cd "$HOME/scratch"
+mkdir HyperionProject
+cd HyperionProject
 ```
 
-When Conda shows a package plan and asks `Proceed ([y]/n)?`, review it and press
-**Enter** or type `y`. Confirm that the command is available and inspect the
-environment registry:
+`HyperionProject` is only an example name. You can use a name that describes
+your study.
+
+Scratch is useful for active analysis but old files are automatically deleted.
+Do not keep the only copy of raw data or irreplaceable results there.
+
+## 7. Initialize the project and add the MCD files
+
+Initialize a SpatialBiologyToolkit project inside the new folder:
 
 ```bash
-conda run -n base conda-lock --version
-sbt env list
-```
-
-Both commands are read-only. The toolkit invokes `conda-lock` through the base
-environment, in line with the official [conda-lock installation
-guidance](https://conda.github.io/conda-lock/getting_started/).
-
-## 8. Do not install every scientific environment
-
-The environment list includes several large and specialised stacks. A user who
-only runs segmentation does not need BioBatchNet, CellCharter, STARLING,
-HyPERSTAC, or other unrelated environments.
-
-Install an environment manually only when you already know you need it:
-
-```bash
-sbt env validate-spec <key>
-sbt env sync <key> --dry-run
-sbt env sync <key>
-```
-
-Replace `<key>` with an environment key shown by `sbt env list`. For most
-beginners, continue without running these commands. `sbt run` checks
-the environments used by the resolved workflow immediately before it creates a
-run record or submits jobs. It first validates the installation specifications.
-If a valid repository-managed environment is missing, it lists the affected
-stages and asks:
-
-```text
-Install the missing environment(s) now (...) [Y/n]:
-```
-
-Press **Enter** to accept the default `Y`, or type `n` to stop. On acceptance,
-`sbt` installs only those missing environments, applies the editable toolkit
-link, runs their smoke tests, checks again, and then submits the workflow.
-
-If a required installation specification is invalid, `sbt` stops before the
-prompt and tells you to update the checkout or report the problem to the
-maintainer. Do not work around that safeguard by installing arbitrary package
-versions.
-
-Some specialist environments are marked **external** because the repository
-does not yet provide an installable lockfile. `sbt` detects a missing external
-environment but cannot create it; it stops before recording or submitting the
-run and directs you to `sbt env show <key>` and the relevant stage guide.
-
-For a non-interactive script, request automatic installation of missing managed
-environments explicitly:
-
-```bash
-sbt run segmentation --install-missing-envs
-```
-
-This option never installs an external environment. A dry run never checks or
-installs environments because it does not execute them.
-
-## 9. Create or adopt a dataset project
-
-Keep dataset projects outside the repository. Substitute a location approved
-for research data on your cluster. For a new project:
-
-```bash
-mkdir -p /path/to/project-storage/my_dataset
-cd /path/to/project-storage/my_dataset
 sbt project init
 ```
 
-Do not type `/path/to/project-storage` literally. For a first CSF3 project, ask
-your research group or the CSF team which project or scratch path to use.
+This creates the files and folders used by the pipeline, including:
 
-The command creates `config.yaml`, input directories, `.sbt/` run state, and an
-`outputs/` report index. Put raw inputs at the paths shown in `config.yaml` and
-adjust the dataset settings.
+- `config.yaml`, which stores the analysis settings;
+- `IMC_files/`, where the raw MCD files belong;
+- `.sbt/`, which stores run information;
+- `outputs/`, which stores readable analysis reports.
 
-For an existing dataset that already has `config.yaml`:
+Upload the raw MCD files into `IMC_files/`. In MobaXterm, you can drag and drop
+the files into this folder, although large files may take a while to upload.
 
-```bash
-cd /real/path/to/existing_project
-sbt project adopt --config config.yaml
-```
-
-Adoption records the project without moving or rewriting data. Check either
-kind of project with:
+Check that the toolkit can see them:
 
 ```bash
-sbt project describe
 sbt project assets
-sbt project validate --mode segmentation
 ```
 
-Validation is read-only. Missing assets are reported by role and path.
+## 8. Understand how environments are managed
 
-## 10. Preview the first workflow
+A Conda **environment** is a separate collection of software. Keeping software
+in separate environments prevents the requirements for one analysis from
+breaking another.
 
-List the available modes, inspect the plan, and preview the exact SLURM
-submission:
+SpatialBiologyToolkit uses environments in two ways:
+
+- `sbt-cli` is the small environment you activate yourself. It runs the `sbt`
+  command on the login node.
+- Scientific environments contain the larger packages used by pipeline stages.
+  For example, the `prep` stage uses an environment called
+  `imc_segmentation`.
+
+You do not need to install every scientific environment at the start. When you
+run a stage, `sbt` checks which environment that stage needs.
+
+- If the environment already exists, the job is submitted normally.
+- If it is missing, `sbt` warns you and asks whether it should be installed.
+- If you type `y`, only the missing environments needed for that run are
+  installed.
+- If you type `n` or just press **Enter**, the run stops and no job is
+  submitted.
+
+An environment can be shared by several stages, so you normally install each
+one only once. The environments belong to your CSF3 account and can be reused
+by your other SpatialBiologyToolkit projects. SLURM activates the correct
+scientific environment inside the job; you should leave `sbt-cli` active at the
+command line.
+
+## 9. Start the first workflow
+
+The first pipeline stage is `prep`. It unpacks the images from the MCD files
+and creates the initial metadata and panel tables.
+
+First preview the run:
 
 ```bash
-sbt modes list
-sbt plan segmentation
-sbt run segmentation --dry-run
+sbt run prep --dry-run
 ```
 
-The dry run validates configuration, assets, dependencies, and wrapper files.
-It creates no run directory, installs no Conda environment, and submits no job.
-Fix any reported problem and repeat it until the preview succeeds.
+A dry run checks the project, input files, configuration, and SLURM command. It
+does not install an environment, create a run record, or submit a job.
 
-## 11. Submit and monitor
-
-Only submit when the preview is correct:
+If the preview succeeds, start the real run:
 
 ```bash
-sbt run segmentation
+sbt run prep
 ```
 
-If required managed environments are absent, accept the installation prompt or
-stop and inspect it. Environment installation can take time and produces no
-SLURM job. Submission begins only after every required environment exists.
+The first time, you should see a warning similar to:
 
-After submission:
+```text
+Required Conda environments:
+  - imc_segmentation (segmentation; repository-managed): MISSING for prep
+Install the missing environment(s) now (imc_segmentation)? [y/N]:
+```
+
+Type `y` and press **Enter**. Installing the environment can take several
+minutes. Once it has been installed and checked, `sbt` submits the `prep` job
+to SLURM.
+
+The job joins the CSF3 queue. It may start immediately, or it may wait while the
+cluster is busy. You can disconnect from CSF3 after submission; the job will
+continue running.
+
+## 10. Monitor the analysis
+
+Use these commands to see how the analysis is progressing:
 
 ```bash
 sbt status latest
@@ -379,29 +236,32 @@ sbt summary
 sbt report latest
 ```
 
-It is safe to disconnect with `exit`; submitted jobs continue. Human-readable
-stage reports are below the project's `outputs/` directory. Technical run
-records and log paths are below `.sbt/`.
+- `status` asks SLURM whether the latest job is waiting, running, or finished.
+- `logs` shows the latest messages from the job.
+- `summary` lists the analyses recorded in this project.
+- `report` displays the human-readable report for an analysis.
 
-## 12. Optional email and AI credentials
+## 11. Find other stages and workflows
 
-Core processing does not require an OpenAI key. Set these only when a selected
-workflow explicitly needs them:
+List the individual analysis stages:
 
 ```bash
-export IMC_EMAIL="your.email@example.org"
-export OPENAI_API_KEY="your-key"
+sbt stages list
 ```
 
-For persistent values, use a private file outside the Git repository and set
-mode `600`. Never put credentials in `config.yaml` or commit them. The optional
-legacy installer can create `~/.imc_config`; its exact behaviour belongs in the
-[installation helper scripts reference](../reference/installation_helpers.md),
-not in the beginner setup.
+List the predefined multi-stage workflows:
 
-## 13. Update an existing installation
+```bash
+sbt modes list
+```
 
-Start from the repository and check for local changes:
+Use `--help` whenever you are unsure about a command. The complete
+[`sbt` CLI guide](../pipeline/cli.md) describes project checks, planning,
+submission, logs, and reports in more detail.
+
+## Updating SpatialBiologyToolkit
+
+From a clean toolkit checkout:
 
 ```bash
 cd "$HOME/imcanalysis"
@@ -409,75 +269,54 @@ git status --short
 git pull --ff-only
 bash install/bootstrap_sbt.sh
 conda activate sbt-cli
-sbt env list
 ```
 
-Do not synchronize every scientific environment after every update. The next
-real `sbt run` checks and offers to install any newly required managed
-environment. For an already installed environment whose specification changed,
-inspect it with `sbt env compare <key>` and follow the [fixed Conda environment
-management guide](../pipeline/environments.md) before recreating it.
+Do not reinstall every scientific environment after an update. The next
+`sbt run` checks the environment needed for that run and prompts if a new one is
+required.
 
 ## Troubleshooting
 
 ### `conda: command not found`
 
-If the cluster provides a Conda module, load it according to its documentation.
-Otherwise repeat step 4, then run `source "$HOME/.bashrc"` or reconnect. Do not
-install system-wide software with `sudo`.
+Run `source "$HOME/.bashrc"` and try again. If it is still missing, log out of
+CSF3 and reconnect. If that does not help, repeat the Miniconda installation.
 
 ### `sbt: command not found`
 
-Run `conda activate sbt-cli`. If that environment does not exist, return to
-`$HOME/imcanalysis` and rerun `bash install/bootstrap_sbt.sh`.
-
-### `conda-lock` is missing
-
-Run:
+Activate the command environment:
 
 ```bash
-conda install --name base --channel conda-forge conda-lock
-conda run -n base conda-lock --version
+conda activate sbt-cli
 ```
 
-### `sbatch: command not found`
+If `sbt-cli` does not exist, return to `~/imcanalysis` and rerun
+`bash install/bootstrap_sbt.sh`.
 
-Confirm that SSH connected to the cluster's SLURM login node. Follow its module
-instructions or contact support. A normal Windows or macOS terminal cannot
-submit this pipeline directly.
+### The environment prompt does not appear
 
-### An environment is missing
+This normally means the required environment is already installed. The run
+will continue to SLURM without asking again.
 
-Run the real `sbt run` and accept the prompt for a repository-managed
-environment, or install just that environment explicitly:
+### The environment cannot be installed
+
+Update the toolkit using the commands above and try again. If the same error
+remains, keep the complete error message and contact the toolkit maintainer. Do
+not try to repair it by installing arbitrary packages.
+
+### The job is waiting for a long time
+
+Run `sbt status latest`. A pending job is usually waiting for suitable CSF3
+resources. `sbt logs latest` becomes more useful after the job starts.
+
+## Optional email and AI credentials
+
+Core processing does not require an OpenAI key. Set these only if a selected
+workflow explicitly needs them:
 
 ```bash
-sbt env show <key>
-sbt env sync <key> --dry-run
-sbt env sync <key>
+export IMC_EMAIL="your.email@example.org"
+export OPENAI_API_KEY="your-key"
 ```
 
-Do not include the angle brackets. External environments need the setup named
-in `sbt env show <key>` and their stage documentation.
-
-### A wrapper is not executable
-
-From the repository root:
-
-```bash
-chmod +x SLURM_scripts/*.sh
-```
-
-### The repository is elsewhere
-
-`SBT_TOOLKIT_ROOT` can change where planning finds wrappers, but some active
-wrappers still source `$HOME/imcanalysis`. Keeping the documented location is
-the supported beginner setup.
-
-### Do I need `make install` or `make envs`?
-
-No. `make install` configures older shell shortcuts, and `make envs` installs
-every repository-managed scientific environment. Neither is part of the
-beginner workflow. See [installation helper scripts
-reference](../reference/installation_helpers.md) only when maintaining a
-legacy setup.
+Never put credentials in `config.yaml` or commit them to Git.

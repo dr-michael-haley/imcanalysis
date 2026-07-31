@@ -17,9 +17,11 @@ Core Python package for IMC / spatial-omics analysis. The notebooks and SLURM jo
 
 ## Installation routes
 
-- For the supported end-to-end pipeline, follow [HPC setup](../getting_started/hpc.md).
+- For an absolute-beginner CSF3 installation, follow [CSF3 setup](../getting_started/hpc.md).
   It installs the lightweight `sbt-cli` launcher separately from the scientific
   environments used by SLURM.
+- For another Linux HPC with SLURM, use the [`sbt` CLI guide](../pipeline/cli.md)
+  and [environment-management guide](../pipeline/environments.md).
 - For notebooks, Napari, and workstation analysis, follow
   [local analysis setup](../getting_started/local.md). Windows uses
   `Local_envs/sbt_env.yml`; Apple Silicon macOS uses
