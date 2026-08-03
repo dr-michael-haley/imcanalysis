@@ -13,8 +13,6 @@ from SpatialBiologyToolkit.cli.main import app
 from SpatialBiologyToolkit.napari_sbt.__main__ import _resolve_project_context
 from SpatialBiologyToolkit.napari_sbt.preflight import format_preflight, run_preflight
 from SpatialBiologyToolkit.napari_sbt.resources import resolve_worker_count
-from SpatialBiologyToolkit.pipeline.models import RegisteredProject
-from SpatialBiologyToolkit.pipeline.project import ProjectNotInitializedError
 
 
 class NapariSBTResourceTests(unittest.TestCase):
@@ -97,29 +95,14 @@ class NapariSBTLauncherTests(unittest.TestCase):
 
     def test_project_argument_accepts_registered_name(self):
         context = object()
-        registered = RegisteredProject(
-            name="GBMp2",
-            path=Path("/registered/GBMp2"),
-            project_id="project-id",
-        )
         with patch(
-            "SpatialBiologyToolkit.pipeline.project.load_project",
-            side_effect=[
-                ProjectNotInitializedError("not a project path"),
-                context,
-            ],
-        ) as load, patch(
-            "SpatialBiologyToolkit.pipeline.project_registry.load_project_registry"
-        ), patch(
-            "SpatialBiologyToolkit.pipeline.project_registry.resolve_registered_project",
-            return_value=registered,
-        ) as resolve:
+            "SpatialBiologyToolkit.pipeline.project_registry.load_project_reference",
+            return_value=context,
+        ) as load:
             resolved = _resolve_project_context(Path("GBMp2"))
 
         self.assertIs(resolved, context)
-        resolve.assert_called_once()
-        self.assertEqual(resolve.call_args.args[1], "GBMp2")
-        self.assertEqual(load.call_args_list[1].args, (registered.path,))
+        load.assert_called_once_with(Path("GBMp2"))
 
     def test_cli_uses_registered_napari_environment_and_forwards_preflight(self):
         with patch(

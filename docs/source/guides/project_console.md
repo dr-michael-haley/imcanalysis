@@ -65,7 +65,10 @@ sbt project unregister "First cohort"
 
 Unregistering only forgets the central reference. No project files are deleted.
 Unavailable paths and project-identity mismatches remain visible in the
-**Projects** page until corrected or unregistered.
+**Projects** page until corrected or unregistered. All CLI `--project` options
+accept a registered name or project ID as well as a direct path. If a project is
+moved, register it again from the new root so its stable ID refreshes the saved
+location.
 
 ## Launch locally
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -18,6 +19,7 @@ from SpatialBiologyToolkit.pipeline.project import (
 from SpatialBiologyToolkit.pipeline.project_registry import (
     ProjectRegistryError,
     load_project_registry,
+    load_project_reference,
     register_project,
     registered_project_statuses,
     set_default_project,
@@ -26,6 +28,85 @@ from SpatialBiologyToolkit.pipeline.project_registry import (
 
 
 class ProjectRegistryTests(unittest.TestCase):
+    def test_registered_alias_and_id_load_from_outside_the_project(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = root / ".imc_config"
+            context = initialize_project(root / "cohort")
+            _registry, registered = register_project(
+                context.root,
+                name="Cohort-A",
+                registry_path=settings,
+            )
+
+            by_name = load_project_reference(
+                "Cohort-A",
+                registry_path=settings,
+            )
+            by_id = load_project_reference(
+                registered.project_id,
+                registry_path=settings,
+            )
+
+            self.assertEqual(by_name.root, context.root)
+            self.assertEqual(by_id.root, context.root)
+
+    def test_cli_project_commands_accept_registered_aliases(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = root / ".imc_config"
+            context = initialize_project(root / "cohort")
+            register_project(
+                context.root,
+                name="Cohort-A",
+                registry_path=settings,
+            )
+            runner = CliRunner()
+
+            with patch.dict("os.environ", {"SBT_IMC_CONFIG": str(settings)}):
+                result = runner.invoke(
+                    app,
+                    [
+                        "project",
+                        "describe",
+                        "--project",
+                        "Cohort-A",
+                        "--format",
+                        "json",
+                    ],
+                )
+                summary_result = runner.invoke(
+                    app,
+                    ["summary", "--project", "Cohort-A", "--format", "json"],
+                )
+
+            self.assertEqual(result.exit_code, 0, result.stdout)
+            payload = json.loads(result.stdout)
+            self.assertEqual(payload["project_id"], context.project_metadata.project_id)
+            self.assertEqual(Path(payload["project_root"]), context.root)
+            self.assertEqual(summary_result.exit_code, 0, summary_result.stdout)
+            summary = json.loads(summary_result.stdout)
+            self.assertEqual(summary["project_id"], context.project_metadata.project_id)
+
+    def test_stale_registered_location_has_an_actionable_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            settings = root / ".imc_config"
+            context = initialize_project(root / "original")
+            register_project(
+                context.root,
+                name="Cohort-A",
+                registry_path=settings,
+            )
+            moved = root / "moved"
+            context.root.rename(moved)
+
+            with self.assertRaisesRegex(
+                ProjectNotFoundError,
+                "Re-register the project from its current root",
+            ):
+                load_project_reference("Cohort-A", registry_path=settings)
+
     def test_cli_registers_lists_defaults_and_unregisters_projects(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -12,7 +12,13 @@ from pydantic import ValidationError
 
 from .manifests import read_model, write_text
 from .models import ProjectMetadata, ProjectRegistry, RegisteredProject
-from .project import PROJECT_MARKER
+from .project import (
+    PROJECT_MARKER,
+    ProjectContext,
+    ProjectNotFoundError,
+    ProjectNotInitializedError,
+    load_project,
+)
 
 
 IMC_CONFIG_ENV = "SBT_IMC_CONFIG"
@@ -233,6 +239,57 @@ def resolve_registered_project(
     return matches[0]
 
 
+def load_project_reference(
+    project: str | Path | None = None,
+    *,
+    start: str | Path | None = None,
+    config_override: str | Path | None = None,
+    registry_path: str | Path | None = None,
+) -> ProjectContext:
+    """Load an explicit path or resolve a registered project name/ID.
+
+    Direct initialized paths retain precedence. A bare value which is not an
+    initialized path is then resolved through the central project registry.
+    This keeps ``--project`` usable from any working directory without making
+    callers distinguish paths from registered references.
+    """
+
+    if project is None:
+        return load_project(start=start, config_override=config_override)
+
+    try:
+        return load_project(
+            project,
+            start=start,
+            config_override=config_override,
+        )
+    except ProjectNotInitializedError as path_error:
+        try:
+            registered = resolve_registered_project(
+                load_project_registry(registry_path),
+                project,
+            )
+        except ProjectRegistryError as registry_error:
+            raise ProjectNotFoundError(
+                f"Could not resolve project reference {str(project)!r} as an "
+                "initialized path, registered project name, or project ID. "
+                f"Path lookup: {path_error} Registry lookup: {registry_error}"
+            ) from registry_error
+
+    try:
+        return load_project(
+            registered.path,
+            config_override=config_override,
+        )
+    except ProjectNotInitializedError as registry_path_error:
+        raise ProjectNotFoundError(
+            f"Registered project {registered.name!r} points to a location which "
+            "is no longer initialized or available. Re-register the project from "
+            "its current root to refresh the central registry. "
+            f"Registry lookup: {registry_path_error}"
+        ) from registry_path_error
+
+
 def unregister_project(
     reference: str | Path,
     *,
@@ -307,6 +364,7 @@ __all__ = [
     "default_registered_project",
     "imc_config_path",
     "load_project_registry",
+    "load_project_reference",
     "register_project",
     "registered_project_statuses",
     "resolve_registered_project",

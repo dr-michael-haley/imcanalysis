@@ -158,8 +158,11 @@ inventory. Present, absent, and unexpected top-level paths are reported but
 left unchanged.
 
 After initialization or adoption, commands discover the project by walking
-upwards from nested subdirectories. Use `--project /path/to/project` to select
-an explicit root.
+upwards from nested subdirectories. Every command with `--project` accepts an
+initialized path, a registered project name, or a project ID. An initialized
+path takes precedence; otherwise SBT resolves the value through the central
+project registry. This makes registered projects usable from any working
+directory, including directory-independent integrations such as SBT Gateway.
 
 Register projects for the graphical cockpit in the SBT-managed block inside
 `~/.imc_config`:
@@ -172,7 +175,9 @@ sbt project unregister "My cohort"
 ```
 
 These commands preserve existing credentials and unrelated shell settings.
-Unregistering never changes project files.
+Unregistering never changes project files. If a project is moved, register it
+again from its new root; the stable project ID replaces the old location rather
+than creating a duplicate entry.
 
 ## Validate and inspect
 

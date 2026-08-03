@@ -56,13 +56,13 @@ from SpatialBiologyToolkit.pipeline.planner import build_run_plan
 from SpatialBiologyToolkit.pipeline.project import (
     adopt_project,
     initialize_project,
-    load_project,
     validate_project,
     write_config_template,
 )
 from SpatialBiologyToolkit.pipeline.project_registry import (
     default_registered_project,
     imc_config_path,
+    load_project_reference,
     load_project_registry,
     register_project,
     registered_project_statuses,
@@ -372,7 +372,7 @@ def _project(
     project: Path | None,
     config: Path | None = None,
 ):
-    return load_project(project, config_override=config)
+    return load_project_reference(project, config_override=config)
 
 
 def _short_path(path: Path, root: Path) -> str:

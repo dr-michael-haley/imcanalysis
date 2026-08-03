@@ -36,7 +36,6 @@ def build_parser() -> argparse.ArgumentParser:
 def _resolve_project_context(project: Path | None):
     from SpatialBiologyToolkit.pipeline.project import (
         ProjectNotFoundError,
-        ProjectNotInitializedError,
         load_project,
     )
 
@@ -47,26 +46,9 @@ def _resolve_project_context(project: Path | None):
             # Preserve the standalone launcher outside an initialized project.
             return None
 
-    try:
-        return load_project(project)
-    except ProjectNotInitializedError as path_error:
-        from SpatialBiologyToolkit.pipeline.project_registry import (
-            ProjectRegistryError,
-            load_project_registry,
-            resolve_registered_project,
-        )
+    from SpatialBiologyToolkit.pipeline.project_registry import load_project_reference
 
-        try:
-            registered = resolve_registered_project(
-                load_project_registry(), str(project)
-            )
-        except ProjectRegistryError as registry_error:
-            raise ProjectNotFoundError(
-                f"Could not resolve --project {str(project)!r} as an initialized "
-                "path, registered project name, or project ID. "
-                f"Path lookup: {path_error} Registry lookup: {registry_error}"
-            ) from registry_error
-        return load_project(registered.path)
+    return load_project_reference(project)
 
 
 def _project_defaults(args) -> dict:
