@@ -15,6 +15,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--masks", type=Path)
     parser.add_argument("--images", type=Path, action="append", default=[])
     parser.add_argument("--extra-images", type=Path, action="append", default=[])
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Check launch prerequisites without importing Qt or opening Napari.",
+    )
+    parser.add_argument(
+        "--check-format",
+        choices=("text", "json"),
+        default="text",
+        help="Preflight output format.",
+    )
     return parser
 
 
@@ -32,6 +43,7 @@ def _project_defaults(args) -> dict:
         "images_folders": [
             context.root / context.config.general.denoised_images_folder
         ],
+        "worker_count": settings.worker_count,
     }
     if settings.active_experiment:
         configured = Path(settings.active_experiment)
@@ -45,15 +57,61 @@ def _project_defaults(args) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    defaults = _project_defaults(args)
+    try:
+        defaults = _project_defaults(args)
+    except Exception as exc:
+        if not args.check:
+            raise
+        if args.check_format == "json":
+            import json
+
+            print(
+                json.dumps(
+                    {
+                        "ready": False,
+                        "checks": [
+                            {
+                                "name": "Project configuration",
+                                "status": "error",
+                                "detail": str(exc),
+                            }
+                        ],
+                    },
+                    indent=2,
+                )
+            )
+        else:
+            print(
+                "NapariSBT preflight: BLOCKED\n"
+                f"[ERROR] Project configuration: {exc}"
+            )
+        return 2
+    project_root = args.project or defaults.get("project_root")
+    experiment = args.experiment or defaults.get("experiment")
+    anndata_path = args.anndata or defaults.get("anndata_path")
+    masks_folder = args.masks or defaults.get("masks_folder")
+    images_folders = args.images or defaults.get("images_folders", [])
+    if args.check:
+        from .preflight import format_preflight, run_preflight
+
+        report = run_preflight(
+            project_root=project_root,
+            experiment=experiment,
+            anndata_path=anndata_path,
+            masks_folder=masks_folder,
+            images_folders=tuple(images_folders) + tuple(args.extra_images),
+            worker_count=defaults.get("worker_count"),
+        )
+        print(format_preflight(report, args.check_format))
+        return report.exit_code
     from .app import launch
 
     launch(
-        project_root=args.project or defaults.get("project_root"),
-        experiment=args.experiment or defaults.get("experiment"),
-        anndata_path=args.anndata or defaults.get("anndata_path"),
-        masks_folder=args.masks or defaults.get("masks_folder"),
-        images_folders=args.images or defaults.get("images_folders", []),
+        project_root=project_root,
+        experiment=experiment,
+        anndata_path=anndata_path,
+        masks_folder=masks_folder,
+        images_folders=images_folders,
         extra_images_folders=args.extra_images,
     )
     import napari

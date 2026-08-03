@@ -1,0 +1,33 @@
+name: sbt-napari
+channels:
+  - conda-forge
+
+dependencies:
+  - python=3.11
+  - napari=0.5.5
+  - pyqt=5.15
+  - qtpy>=2.4,<3
+  - magicgui>=0.10,<1
+  - vispy>=0.14,<1
+  - anndata>=0.10,<0.13
+  - scanpy>=1.10,<2
+  - numpy<3
+  - pandas<3
+  - scipy<2
+  - scikit-image>=0.23,<0.26
+  - scikit-learn>=1.5,<2
+  - pyarrow>=15
+  - tifffile
+  - imageio
+  - imagecodecs
+  - matplotlib
+  - pyyaml>=6
+  - pydantic>=2.4,<3
+  - typer>=0.12,<1
+  - psutil
+  - joblib
+  - xgboost>=2,<4
+  - lightgbm>=4,<5
+  - setuptools>=68
+  - wheel
+  - pip

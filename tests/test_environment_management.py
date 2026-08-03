@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 import yaml
 from pydantic import ValidationError
@@ -12,7 +13,12 @@ from typer.testing import CliRunner
 
 from SpatialBiologyToolkit.cli.main import app
 from SpatialBiologyToolkit.environments.manager import EnvironmentManager
-from SpatialBiologyToolkit.environments.models import EnvironmentRegistry
+from SpatialBiologyToolkit.environments.models import (
+    CapturePlan,
+    CondaEnvironmentRecord,
+    EnvironmentCaptureTarget,
+    EnvironmentRegistry,
+)
 from SpatialBiologyToolkit.environments.provenance import (
     snapshot_stage_environment_specifications,
 )
@@ -20,6 +26,7 @@ from SpatialBiologyToolkit.environments.registry import (
     load_environment_registry,
     resolve_environment,
 )
+from SpatialBiologyToolkit.environments.runtime import conda_environment_records
 from SpatialBiologyToolkit.environments.specification import (
     declared_pip_requirements,
     satisfies_constraint,
@@ -50,7 +57,10 @@ class FakeRunner:
             stdout = json.dumps(
                 {"envs": [str(self.root / "conda" / "envs" / "test_env")] if self.exists else []}
             )
-        elif command[:4] == ["conda", "list", "-n", "test_env"]:
+        elif command[:3] in (
+            ["conda", "list", "--name"],
+            ["conda", "list", "--prefix"],
+        ):
             packages = [
                 {
                     "name": "python",
@@ -66,7 +76,10 @@ class FakeRunner:
                 },
             ]
             stdout = json.dumps(packages)
-        elif command[:5] == ["conda", "run", "-n", "test_env", "python"]:
+        elif command[:3] in (
+            ["conda", "run", "--name"],
+            ["conda", "run", "--prefix"],
+        ) and command[4] == "python":
             if "pip" in command and "list" in command and "--editable" in command:
                 stdout = json.dumps(
                     [
@@ -119,7 +132,10 @@ class FakeRunner:
         elif conda_lock_command and conda_lock_command[0] == "lock":
             destination = Path(command[command.index("--lockfile") + 1])
             destination.write_text("version: 1\nmetadata:\n  platforms: [linux-64]\npackage: []\n")
-        elif command[:4] == ["conda", "env", "export", "--name"]:
+        elif command[:4] in (
+            ["conda", "env", "export", "--name"],
+            ["conda", "env", "export", "--prefix"],
+        ):
             stdout = yaml.safe_dump(
                 {
                     "name": "test_env",
@@ -194,6 +210,30 @@ class EnvironmentFixture(unittest.TestCase):
 
 
 class RegistryTests(EnvironmentFixture):
+    def test_conda_inventory_keeps_base_and_distinct_prefixes(self):
+        root_prefix = self.root / "conda"
+        scratch_prefix = root_prefix / "envs" / "scratch"
+
+        def inventory_runner(command, **kwargs):
+            payload = {
+                "root_prefix": str(root_prefix),
+                "platform": "linux-64",
+                "envs": [
+                    str(root_prefix),
+                    str(scratch_prefix),
+                    str(scratch_prefix),
+                ],
+            }
+            return subprocess.CompletedProcess(command, 0, json.dumps(payload), "")
+
+        records = conda_environment_records("conda", runner=inventory_runner)
+
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[0].name, "base")
+        self.assertTrue(records[0].is_base)
+        self.assertEqual(records[1].name, "scratch")
+        self.assertFalse(records[1].is_base)
+
     def test_registry_resolves_key_and_fixed_name(self):
         registry = load_environment_registry(self.root, registry_path=self.registry_path)
         self.assertEqual(resolve_environment(registry, "test")[0], "test")
@@ -351,6 +391,107 @@ class CaptureAndProvenanceTests(EnvironmentFixture):
         self.assertIsNotNone(plan.excluded_toolkit)
         self.assertTrue((plan.candidate_directory / "conda-linux-64.lock").is_file())
 
+    def test_discover_capture_targets_includes_unregistered_prefixes(self):
+        manager, _ = self.manager()
+        records = [
+            CondaEnvironmentRecord(
+                name="base",
+                prefix=self.root / "conda",
+                platform="linux-64",
+                is_base=True,
+            ),
+            CondaEnvironmentRecord(
+                name="test_env",
+                prefix=self.root / "conda" / "envs" / "test_env",
+                platform="linux-64",
+            ),
+            CondaEnvironmentRecord(
+                name="scratch",
+                prefix=self.root / "conda" / "envs" / "scratch",
+                platform="linux-64",
+            ),
+            CondaEnvironmentRecord(
+                name="scratch",
+                prefix=self.root / "alternate" / "envs" / "scratch",
+                platform="linux-64",
+            ),
+        ]
+        manager._environment_records = Mock(return_value=records)
+
+        targets = manager.discover_capture_targets()
+
+        self.assertEqual(len(targets), 4)
+        registered = next(item for item in targets if item.registered)
+        self.assertEqual(registered.environment_key, "test")
+        self.assertEqual(registered.conda_name, "test_env")
+        unregistered = [item for item in targets if not item.registered]
+        self.assertIn("conda:base", {item.environment_key for item in unregistered})
+        scratch = [item for item in unregistered if item.conda_name == "scratch"]
+        self.assertEqual(len(scratch), 2)
+        self.assertEqual(len({item.environment_key for item in scratch}), 2)
+        self.assertEqual(len({item.capture_directory_name for item in scratch}), 2)
+
+    def test_capture_unregistered_target_uses_exact_prefix(self):
+        manager, runner = self.manager()
+        prefix = self.root / "conda" / "envs" / "test_env"
+        target = EnvironmentCaptureTarget(
+            environment_key="conda:test_env",
+            conda_name="test_env",
+            conda_prefix=prefix,
+            platform="linux-64",
+            registered=False,
+            capture_directory_name="test_env",
+        )
+
+        plan = manager.capture_target(target, accept_vcs=True)
+
+        self.assertFalse(plan.registered)
+        self.assertFalse(plan.managed)
+        self.assertEqual(plan.conda_prefix, prefix)
+        self.assertTrue(
+            any(call[:4] == ["conda", "list", "--prefix", str(prefix)] for call in runner.calls)
+        )
+        self.assertFalse(
+            any(call[:4] == ["conda", "list", "--name", "test_env"] for call in runner.calls)
+        )
+
+    def test_capture_retains_conda_inventory_when_python_is_unavailable(self):
+        manager, runner = self.manager()
+        prefix = self.root / "conda" / "envs" / "test_env"
+        target = EnvironmentCaptureTarget(
+            environment_key="conda:test_env",
+            conda_name="test_env",
+            conda_prefix=prefix,
+            platform="linux-64",
+            registered=False,
+            capture_directory_name="test_env",
+        )
+
+        def no_python(command, **kwargs):
+            normalized = [str(item) for item in command]
+            if (
+                normalized[:3] == ["conda", "run", "--prefix"]
+                and normalized[4] == "python"
+            ):
+                return subprocess.CompletedProcess(
+                    normalized, 127, "", "python is unavailable"
+                )
+            return runner(command, **kwargs)
+
+        manager.runner = no_python
+        plan = manager.capture_target(target)
+        snapshot = json.loads(
+            (plan.candidate_directory / "environment.snapshot.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        self.assertTrue(snapshot["conda_packages"])
+        self.assertIsNone(snapshot["python_version"])
+        self.assertTrue(
+            any("Python/pip inspection unavailable" in item for item in plan.review_requirements)
+        )
+
     def test_external_capture_creates_observational_bundle_but_refuses_write(self):
         registry = yaml.safe_load(self.registry_path.read_text(encoding="utf-8"))
         registry["environments"]["test"]["managed"] = False
@@ -438,6 +579,71 @@ class EnvironmentCliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         payload = json.loads(result.output)
         self.assertIn("segmentation", {item["key"] for item in payload})
+
+    def test_capture_all_continues_after_failure_and_summarizes(self):
+        manager = Mock()
+        targets = [
+            EnvironmentCaptureTarget(
+                environment_key="conda:missing",
+                conda_name="missing",
+                conda_prefix=Path("/conda/envs/missing"),
+                platform="linux-64",
+                capture_directory_name="missing",
+            ),
+            EnvironmentCaptureTarget(
+                environment_key="conda:external",
+                conda_name="external_env",
+                conda_prefix=Path("/conda/envs/external_env"),
+                platform="linux-64",
+                capture_directory_name="external_env",
+            ),
+        ]
+        manager.discover_capture_targets.return_value = targets
+        plan = CapturePlan(
+            environment_key="conda:external",
+            conda_name="external_env",
+            managed=False,
+            registered=False,
+            conda_prefix=Path("/conda/envs/external_env"),
+            candidate_directory=Path("/capture/external_env"),
+            environment_yml="name: external_env\n",
+            pip_extras="",
+        )
+        manager.capture_target.side_effect = [RuntimeError("environment is absent"), plan]
+
+        with patch(
+            "SpatialBiologyToolkit.cli.main._env_manager", return_value=manager
+        ):
+            result = CliRunner().invoke(
+                app,
+                [
+                    "env",
+                    "capture",
+                    "--all",
+                    "--dry-run",
+                    "--verbose",
+                    "--accept-vcs",
+                ],
+            )
+
+        self.assertEqual(result.exit_code, 2, result.output)
+        self.assertIn("Environment: conda:external (external_env)", result.output)
+        self.assertIn("Registry: unregistered", result.output)
+        self.assertIn("Capture summary: 1 succeeded, 1 failed.", result.output)
+        self.assertIn("conda:missing: environment is absent", result.output)
+        manager.discover_capture_targets.assert_called_once_with()
+        self.assertEqual(manager.capture_target.call_count, 2)
+        for call in manager.capture_target.call_args_list:
+            self.assertTrue(call.kwargs["accept_vcs"])
+            self.assertTrue(call.kwargs["verbose"])
+
+    def test_capture_all_rejects_repository_writes(self):
+        result = CliRunner().invoke(
+            app, ["env", "capture", "--all", "--write"]
+        )
+
+        self.assertEqual(result.exit_code, 2, result.output)
+        self.assertIn("--all is observational only", result.output)
 
 
 if __name__ == "__main__":

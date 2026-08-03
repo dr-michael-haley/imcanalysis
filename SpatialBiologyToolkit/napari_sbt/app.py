@@ -69,6 +69,7 @@ from .models import (
     segmentation_qc_classes,
     slugify,
 )
+from .resources import resolve_worker_count
 from .storage import (
     append_audit,
     dataframe_sha256,
@@ -557,9 +558,11 @@ class NapariSBTController:
         self.feature_tree.expandAll()
         self.feature_selection_summary = QLabel()
         self.feature_selection_summary.setWordWrap(True)
+        worker_resolution = resolve_worker_count(None)
         self.workers_spin = QSpinBox()
-        self.workers_spin.setRange(1, max(os.cpu_count() or 1, 1))
-        self.workers_spin.setValue(min(8, max(os.cpu_count() or 1, 1)))
+        self.workers_spin.setRange(1, worker_resolution.cpu_limit)
+        self.workers_spin.setValue(worker_resolution.effective)
+        self.workers_spin.setToolTip(worker_resolution.message)
         feature_form.addRow("Signed intensity-mask offset (px)", self.offset_spin)
         feature_form.addRow("Positive-offset collisions", self.offset_overlap_check)
         feature_form.addRow("Background ring (px)", self.background_ring_spin)
@@ -567,7 +570,10 @@ class NapariSBTController:
         feature_form.addRow("Enabled families", feature_checks)
         feature_form.addRow("Specific features", self.feature_tree)
         feature_form.addRow("Selection summary", self.feature_selection_summary)
-        feature_form.addRow("Local workers", self.workers_spin)
+        feature_form.addRow(
+            f"Local workers (available: {worker_resolution.cpu_limit})",
+            self.workers_spin,
+        )
         feature_builder_layout.addWidget(feature_group)
 
         progress_group = QGroupBox("4. Build progress and process health")

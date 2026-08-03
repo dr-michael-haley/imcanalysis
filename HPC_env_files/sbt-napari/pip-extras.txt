@@ -1,0 +1,1 @@
+# NapariSBT currently has no non-Conda runtime requirements.

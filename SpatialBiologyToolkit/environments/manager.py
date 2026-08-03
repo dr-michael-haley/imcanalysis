@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import difflib
+import hashlib
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -15,11 +17,13 @@ import yaml  # type: ignore[import-untyped]
 
 from .models import (
     CapturePlan,
+    CondaEnvironmentRecord,
     DoctorCheck,
     DoctorReport,
     DriftItem,
     EnvironmentComparison,
     EnvironmentDefinition,
+    EnvironmentCaptureTarget,
     EnvironmentPaths,
     EnvironmentRegistry,
     EnvironmentSummary,
@@ -39,6 +43,7 @@ from .runtime import (
     Runner,
     command_text,
     conda_environment_names,
+    conda_environment_records,
     find_conda_executable,
     find_executable,
     inspect_environment,
@@ -81,8 +86,20 @@ def _normalized_map(records: list[Any]) -> dict[str, Any]:
     return {normalize_package_name(item.name): item for item in records}
 
 
+def _safe_capture_name(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", name).strip("._-") or "environment"
+
+
+def _capture_directory_name(name: str, prefix: Path, *, disambiguate: bool) -> str:
+    safe_name = _safe_capture_name(name)
+    if not disambiguate:
+        return safe_name
+    digest = hashlib.sha256(os.path.normcase(str(prefix)).encode("utf-8")).hexdigest()[:8]
+    return f"{safe_name}-{digest}"
+
+
 class EnvironmentManager:
-    """Operate on registry-defined environments without shell activation."""
+    """Operate on registered and discovered Conda environments without activation."""
 
     def __init__(
         self,
@@ -150,6 +167,57 @@ class EnvironmentManager:
         if not self.conda:
             raise RuntimeError("Conda executable was not found on PATH.")
         return conda_environment_names(self.conda, runner=self.runner)
+
+    def _environment_records(self) -> list[CondaEnvironmentRecord]:
+        if not self.conda:
+            raise RuntimeError("Conda executable was not found on PATH.")
+        return conda_environment_records(self.conda, runner=self.runner)
+
+    def discover_capture_targets(self) -> list[EnvironmentCaptureTarget]:
+        """Return every distinct Conda prefix, enriched with SBT registry metadata."""
+        records = self._environment_records()
+        records_by_name: dict[str, list[CondaEnvironmentRecord]] = {}
+        records_by_directory: dict[str, list[CondaEnvironmentRecord]] = {}
+        for record in records:
+            records_by_name.setdefault(record.name.casefold(), []).append(record)
+            records_by_directory.setdefault(
+                _safe_capture_name(record.name).casefold(), []
+            ).append(record)
+        registered_by_name = {
+            definition.conda_name.casefold(): (key, definition)
+            for key, definition in self.registry.environments.items()
+        }
+        targets: list[EnvironmentCaptureTarget] = []
+        for record in sorted(records, key=lambda item: str(item.prefix).casefold()):
+            same_name = records_by_name[record.name.casefold()]
+            registered = registered_by_name.get(record.name.casefold())
+            is_registered = registered is not None and len(same_name) == 1
+            disambiguate = (
+                len(same_name) > 1
+                or len(records_by_directory[_safe_capture_name(record.name).casefold()]) > 1
+            )
+            directory_name = _capture_directory_name(
+                record.name, record.prefix, disambiguate=disambiguate
+            )
+            if is_registered:
+                assert registered is not None
+                environment_key, definition = registered
+                conda_name = definition.conda_name
+            else:
+                suffix = f"@{directory_name.rsplit('-', 1)[-1]}" if disambiguate else ""
+                environment_key = f"conda:{record.name}{suffix}"
+                conda_name = record.name
+            targets.append(
+                EnvironmentCaptureTarget(
+                    environment_key=environment_key,
+                    conda_name=conda_name,
+                    conda_prefix=record.prefix,
+                    platform=record.platform,
+                    registered=is_registered,
+                    capture_directory_name=directory_name,
+                )
+            )
+        return targets
 
     def list_environments(self, *, compare: bool = False) -> list[EnvironmentSummary]:
         inventory: dict[str, Path] = {}
@@ -1037,23 +1105,31 @@ class EnvironmentManager:
             tests=results,
         )
 
-    def _capture_export(self, definition: EnvironmentDefinition) -> dict[str, Any]:
+    def _capture_export(
+        self,
+        definition: EnvironmentDefinition,
+        *,
+        conda_prefix: Path | None = None,
+    ) -> dict[str, Any]:
         if not self.conda:
             raise RuntimeError("Conda executable was not found on PATH.")
+        selector = (
+            ["--prefix", str(conda_prefix)]
+            if conda_prefix is not None
+            else ["--name", definition.conda_name]
+        )
         commands = [
             [
                 self.conda,
                 "env",
                 "export",
-                "--name",
-                definition.conda_name,
+                *selector,
                 "--from-history",
             ],
             [
                 self.conda,
                 "export",
-                "--name",
-                definition.conda_name,
+                *selector,
                 "--from-history",
                 "--format",
                 "environment-yaml",
@@ -1079,6 +1155,65 @@ class EnvironmentManager:
         verbose: bool = False,
     ) -> CapturePlan:
         key, definition = self.resolve(selector)
+        return self._capture_definition(
+            key,
+            definition,
+            write=write,
+            accept_vcs=accept_vcs,
+            verbose=verbose,
+        )
+
+    def capture_target(
+        self,
+        target: EnvironmentCaptureTarget,
+        *,
+        accept_vcs: bool = False,
+        verbose: bool = False,
+    ) -> CapturePlan:
+        """Capture one exact Conda prefix discovered outside or inside the registry."""
+        if target.registered:
+            key, definition = self.resolve(target.environment_key)
+            if definition.conda_name.casefold() != target.conda_name.casefold():
+                raise RuntimeError(
+                    f"Discovered target {target.environment_key!r} no longer matches "
+                    "the environment registry."
+                )
+        else:
+            key = target.environment_key
+            definition = EnvironmentDefinition(
+                conda_name=target.conda_name,
+                platform=target.platform,
+                toolkit_overlay="none",
+                managed=False,
+                notes=[
+                    "Discovered from Conda and not registered with SpatialBiologyToolkit."
+                ],
+            )
+        return self._capture_definition(
+            key,
+            definition,
+            write=False,
+            accept_vcs=accept_vcs,
+            verbose=verbose,
+            conda_prefix=target.conda_prefix,
+            registered=target.registered,
+            capture_directory_name=target.capture_directory_name,
+            retain_lock_failure=True,
+        )
+
+    def _capture_definition(
+        self,
+        key: str,
+        definition: EnvironmentDefinition,
+        *,
+        write: bool,
+        accept_vcs: bool,
+        verbose: bool,
+        conda_prefix: Path | None = None,
+        registered: bool = True,
+        capture_directory_name: str | None = None,
+        retain_lock_failure: bool = False,
+    ) -> CapturePlan:
         if write and not definition.managed:
             raise ValueError(
                 f"Environment {key!r} is externally managed; capture it without --write "
@@ -1087,16 +1222,20 @@ class EnvironmentManager:
             )
         if not self.conda:
             raise RuntimeError("Conda executable was not found on PATH.")
-        if definition.conda_name not in self._environment_inventory():
+        if (
+            conda_prefix is None
+            and definition.conda_name not in self._environment_inventory()
+        ):
             raise RuntimeError(f"Conda environment {definition.conda_name!r} does not exist.")
         snapshot = inspect_environment(
             key=key,
             definition=definition,
             repository_root=self.repository_root,
             conda=self.conda,
+            conda_prefix=conda_prefix,
             runner=self.runner,
         )
-        exported = self._capture_export(definition)
+        exported = self._capture_export(definition, conda_prefix=conda_prefix)
         dependencies = sorted(
             [item for item in exported.get("dependencies", []) if isinstance(item, str)],
             key=lambda item: normalize_package_name(item.split("=", 1)[0]),
@@ -1126,7 +1265,13 @@ class EnvironmentManager:
             if item.manager == "conda"
         }
         pip_lines: list[str] = []
-        review: list[str] = []
+        review: list[str] = [
+            item
+            for item in snapshot.review_requirements
+            if item.startswith(
+                ("Python/pip inspection unavailable:", "pip freeze unavailable:")
+            )
+        ]
         excluded_toolkit: str | None = None
         for package in snapshot.pip_packages:
             normalized = normalize_package_name(package.name)
@@ -1148,9 +1293,9 @@ class EnvironmentManager:
         pip_text = "\n".join(sorted(set(pip_lines), key=str.casefold))
         if pip_text:
             pip_text += "\n"
-        capture_directory = (
-            self.state_root / "captures" / definition.conda_name / _timestamp()
-        )
+        capture_directory = self.state_root / "captures" / (
+            capture_directory_name or definition.conda_name
+        ) / _timestamp()
         capture_directory.mkdir(parents=True, exist_ok=False)
         candidate_yml = capture_directory / "environment.yml"
         candidate_extras = capture_directory / "pip-extras.txt"
@@ -1167,7 +1312,7 @@ class EnvironmentManager:
                 candidate_yml, candidate_lock, definition.platform, verbose=verbose
             )
         except RuntimeError as exc:
-            if definition.managed:
+            if definition.managed and not retain_lock_failure:
                 raise RuntimeError(
                     f"Lock generation failed; candidates retained in {capture_directory}: {exc}"
                 ) from exc
@@ -1204,6 +1349,8 @@ class EnvironmentManager:
             environment_key=key,
             conda_name=definition.conda_name,
             managed=definition.managed,
+            registered=registered,
+            conda_prefix=snapshot.conda_prefix or conda_prefix,
             candidate_directory=capture_directory,
             environment_yml=environment_text,
             pip_extras=pip_text,

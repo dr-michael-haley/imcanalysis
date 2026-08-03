@@ -34,6 +34,7 @@ from .feature_sources import combine_feature_sources, load_feature_source
 from .features import build_feature_dictionary, build_roi_features
 from .feature_refinement import refine_trial_features
 from .models import FeatureSource, SyntheticFeatureRecipe
+from .resources import resolve_worker_count
 from .storage import (
     feature_recipe_hash,
     load_experiment,
@@ -394,7 +395,8 @@ def run_feature_build(
         )
     normalization = _load_normalization(recipe)
     mask_paths = discover_mask_files(mask_folder)
-    worker_count = max(1, int(workers or min(os.cpu_count() or 1, 8)))
+    worker_resolution = resolve_worker_count(workers)
+    worker_count = worker_resolution.effective
     cancel_path = paths.logs / "feature_build.cancel"
     if cancel_path.exists():
         cancel_path.unlink()
@@ -402,6 +404,18 @@ def run_feature_build(
     completed: list[dict] = []
     failures: list[dict] = []
     warnings: list[str] = []
+    if worker_resolution.adjusted:
+        warnings.append(worker_resolution.message)
+        notify(
+            {
+                "event": "worker_limit_adjusted",
+                "requested_workers": worker_resolution.requested,
+                "workers": worker_count,
+                "cpu_limit": worker_resolution.cpu_limit,
+                "limit_source": worker_resolution.limit_source,
+                "message": worker_resolution.message,
+            }
+        )
     skipped_rois = 0
     for roi, object_ids in sorted(eligible.items()):
         mask_path = mask_paths.get(roi)
@@ -488,7 +502,10 @@ def run_feature_build(
             "target_represented_rois": manifest.cell_scope.represented_roi_count,
             "pending_rois": len(tasks),
             "resumed_rois": skipped_rois,
+            "requested_workers": worker_resolution.requested,
             "workers": worker_count,
+            "cpu_limit": worker_resolution.cpu_limit,
+            "limit_source": worker_resolution.limit_source,
         }
     )
     if tasks:

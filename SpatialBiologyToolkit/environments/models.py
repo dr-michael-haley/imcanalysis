@@ -168,6 +168,22 @@ class EnvironmentSummary(EnvironmentModel):
     stages: list[str] = Field(default_factory=list)
 
 
+class CondaEnvironmentRecord(EnvironmentModel):
+    name: str
+    prefix: Path
+    platform: str
+    is_base: bool = False
+
+
+class EnvironmentCaptureTarget(EnvironmentModel):
+    environment_key: str
+    conda_name: str
+    conda_prefix: Path
+    platform: str
+    registered: bool = False
+    capture_directory_name: str
+
+
 class DoctorCheck(EnvironmentModel):
     name: str
     status: Literal["ok", "warning", "error"]
@@ -214,6 +230,8 @@ class CapturePlan(EnvironmentModel):
     environment_key: str
     conda_name: str
     managed: bool = True
+    registered: bool = True
+    conda_prefix: Path | None = None
     candidate_directory: Path
     environment_yml: str
     pip_extras: str

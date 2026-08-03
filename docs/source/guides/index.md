@@ -9,6 +9,7 @@ config-driven pipeline.
 napari_imc_explorer
 cellpose_qc_active_learning
 napari_sbt
+napari_sbt_csf3
 napari_sbt_help
 napari_sbt_migration
 project_console

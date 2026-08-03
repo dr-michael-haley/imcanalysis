@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import (
+    CondaEnvironmentRecord,
     CondaPackageRecord,
     EnvironmentDefinition,
     ObservedEnvironmentSnapshot,
@@ -90,16 +91,51 @@ def conda_environment_names(
     *,
     runner: Runner = subprocess.run,
 ) -> dict[str, Path]:
+    return {
+        item.name: item.prefix
+        for item in conda_environment_records(conda, runner=runner)
+    }
+
+
+def conda_environment_records(
+    conda: str,
+    *,
+    runner: Runner = subprocess.run,
+) -> list[CondaEnvironmentRecord]:
     completed = run_checked([conda, "env", "list", "--json"], runner=runner)
     try:
         payload = json.loads(completed.stdout)
     except json.JSONDecodeError as exc:
         raise RuntimeError("Conda returned invalid JSON for `env list --json`.") from exc
-    environments: dict[str, Path] = {}
-    for raw_prefix in payload.get("envs", []):
+    raw_environments = payload.get("envs", [])
+    if not isinstance(raw_environments, list):
+        raise RuntimeError("Conda returned an invalid environment inventory.")
+    raw_root = payload.get("root_prefix")
+    root_prefix = (
+        Path(str(raw_root)).expanduser().resolve(strict=False) if raw_root else None
+    )
+    platform = str(payload.get("platform") or "linux-64")
+    records: list[CondaEnvironmentRecord] = []
+    seen_prefixes: set[str] = set()
+    for raw_prefix in raw_environments:
         prefix = Path(raw_prefix).expanduser().resolve(strict=False)
-        environments[prefix.name] = prefix
-    return environments
+        normalized_prefix = os.path.normcase(str(prefix))
+        if normalized_prefix in seen_prefixes:
+            continue
+        seen_prefixes.add(normalized_prefix)
+        is_base = bool(
+            root_prefix
+            and normalized_prefix == os.path.normcase(str(root_prefix))
+        )
+        records.append(
+            CondaEnvironmentRecord(
+                name="base" if is_base else prefix.name,
+                prefix=prefix,
+                platform=platform,
+                is_base=is_base,
+            )
+        )
+    return records
 
 
 def environment_exists(
@@ -209,12 +245,20 @@ def inspect_environment(
     definition: EnvironmentDefinition,
     repository_root: Path,
     conda: str,
+    conda_prefix: Path | None = None,
     runner: Runner = subprocess.run,
     now: datetime | None = None,
     execution_environment: dict[str, str] | None = None,
 ) -> ObservedEnvironmentSnapshot:
     name = definition.conda_name
-    conda_payload = _json_command([conda, "list", "-n", name, "--json"], runner=runner)
+    selector = (
+        ["--prefix", str(conda_prefix)]
+        if conda_prefix is not None
+        else ["--name", name]
+    )
+    conda_payload = _json_command(
+        [conda, "list", *selector, "--json"], runner=runner
+    )
     conda_records = [
         CondaPackageRecord(
             name=str(item.get("name", "")),
@@ -241,20 +285,40 @@ def inspect_environment(
         "print(json.dumps({'prefix':sys.prefix,'python':platform.python_version(),"
         "'toolkit_origin':getattr(s,'origin',None)}))"
     )
-    runtime = _json_command(
-        [conda, "run", "-n", name, "python", "-c", prefix_script], runner=runner
-    )
-    pip_all = _json_command(
-        [conda, "run", "-n", name, "python", "-m", "pip", "list", "--format=json"],
-        runner=runner,
-    )
+    review: list[str] = []
+    runtime: dict[str, Any] = {}
+    pip_all: list[dict[str, Any]] = []
+    try:
+        runtime_payload = _json_command(
+            [conda, "run", *selector, "python", "-c", prefix_script],
+            runner=runner,
+        )
+        if not isinstance(runtime_payload, dict):
+            raise RuntimeError("Python runtime inspection returned invalid JSON data.")
+        runtime = runtime_payload
+        pip_payload = _json_command(
+            [
+                conda,
+                "run",
+                *selector,
+                "python",
+                "-m",
+                "pip",
+                "list",
+                "--format=json",
+            ],
+            runner=runner,
+        )
+        if isinstance(pip_payload, list):
+            pip_all = pip_payload
+    except RuntimeError as exc:
+        review.append(f"Python/pip inspection unavailable: {exc}")
     try:
         pip_editable = _json_command(
             [
                 conda,
                 "run",
-                "-n",
-                name,
+                *selector,
                 "python",
                 "-m",
                 "pip",
@@ -266,10 +330,20 @@ def inspect_environment(
         )
     except RuntimeError:
         pip_editable = []
-    freeze = run_checked(
-        [conda, "run", "-n", name, "python", "-m", "pip", "freeze"], runner=runner
-    ).stdout.splitlines()
-    pip_records, editable_records, review = _pip_records(pip_all, pip_editable, freeze)
+    try:
+        freeze = run_checked(
+            [conda, "run", *selector, "python", "-m", "pip", "freeze"],
+            runner=runner,
+        ).stdout.splitlines()
+    except RuntimeError as exc:
+        freeze = []
+        message = f"pip freeze unavailable: {exc}"
+        if message not in review:
+            review.append(message)
+    pip_records, editable_records, pip_review = _pip_records(
+        pip_all, pip_editable if isinstance(pip_editable, list) else [], freeze
+    )
+    review.extend(pip_review)
 
     toolkit_package = next(
         (item for item in pip_records if normalize_package_name(item.name) in TOOLKIT_NAMES),
@@ -311,7 +385,11 @@ def inspect_environment(
         environment_name=name,
         captured_at=now or datetime.now(timezone.utc),
         platform=observed_platform,
-        conda_prefix=Path(runtime["prefix"]) if runtime.get("prefix") else None,
+        conda_prefix=(
+            Path(runtime["prefix"])
+            if runtime.get("prefix")
+            else conda_prefix
+        ),
         python_version=runtime.get("python"),
         conda_version=conda_version,
         conda_packages=conda_records,
@@ -335,6 +413,7 @@ __all__ = [
     "TOOLKIT_NAMES",
     "command_text",
     "conda_environment_names",
+    "conda_environment_records",
     "environment_exists",
     "find_conda_executable",
     "find_executable",

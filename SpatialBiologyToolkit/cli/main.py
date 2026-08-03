@@ -20,8 +20,9 @@ from SpatialBiologyToolkit.config.export import write_resolved_config
 from SpatialBiologyToolkit.environments import (
     EnvironmentManager,
     load_environment_registry,
+    resolve_environment,
 )
-from SpatialBiologyToolkit.environments.models import EnvironmentSummary
+from SpatialBiologyToolkit.environments.models import CapturePlan, EnvironmentSummary
 from SpatialBiologyToolkit.pipeline.asset_cleanup import (
     apply_asset_cleanup,
     cleanup_audit,
@@ -172,6 +173,69 @@ def _project_gui_command(environment_name: str) -> list[str]:
     ]
 
 
+NAPARI_RUNTIME_MODULES = (
+    "anndata",
+    "joblib",
+    "napari",
+    "numpy",
+    "pandas",
+    "pyarrow",
+    "qtpy",
+    "skimage",
+    "sklearn",
+    "tifffile",
+)
+QT_BINDING_MODULES = ("PyQt5", "PyQt6", "PySide2", "PySide6")
+
+
+def _napari_gui_bootstrap_hint() -> str:
+    if sys.platform == "win32":
+        return "conda env create --file HPC_env_files/sbt-napari/environment.yml"
+    return "bash install/bootstrap_napari_sbt_csf3.sh"
+
+
+def _napari_runtime_available() -> bool:
+    required = all(
+        importlib.util.find_spec(module) is not None
+        for module in NAPARI_RUNTIME_MODULES
+    )
+    binding = any(
+        importlib.util.find_spec(module) is not None
+        for module in QT_BINDING_MODULES
+    )
+    return required and binding
+
+
+def _napari_gui_command(environment_selector: str) -> list[str]:
+    module = "SpatialBiologyToolkit.napari_sbt"
+    if _napari_runtime_available():
+        return [sys.executable, "-m", module]
+    conda = shutil.which("conda")
+    if conda is None:
+        raise RuntimeError(
+            "The NapariSBT runtime is unavailable and Conda was not found. From "
+            f"the toolkit checkout run '{_napari_gui_bootstrap_hint()}'."
+        )
+    try:
+        _key, definition = resolve_environment(
+            load_environment_registry(), environment_selector
+        )
+    except Exception as exc:
+        raise RuntimeError(
+            f"Could not resolve NapariSBT environment {environment_selector!r}: {exc}"
+        ) from exc
+    return [
+        conda,
+        "run",
+        "--no-capture-output",
+        "-n",
+        definition.conda_name,
+        "python",
+        "-m",
+        module,
+    ]
+
+
 @gui_app.command("project")
 def gui_project_command(
     project: Path | None = typer.Option(
@@ -224,10 +288,31 @@ def gui_napari_command(
     anndata: Path | None = typer.Option(None, "--anndata"),
     masks: Path | None = typer.Option(None, "--masks"),
     images: list[Path] | None = typer.Option(None, "--images"),
+    check: bool = typer.Option(
+        False,
+        "--check",
+        help="Check the environment, display, allocation, and paths without opening Napari.",
+    ),
+    check_format: str = typer.Option(
+        "text",
+        "--check-format",
+        help="Preflight output format: text or json.",
+    ),
+    gui_environment: str = typer.Option(
+        "napari",
+        "--gui-environment",
+        help="Registered environment key or Conda name used when Napari is unavailable.",
+        hidden=True,
+    ),
 ) -> None:
     """Launch cohort-first IMC exploration and classification without loading Qt here."""
 
-    command = [sys.executable, "-m", "SpatialBiologyToolkit.napari_sbt"]
+    if check_format not in {"text", "json"}:
+        _fail("--check-format must be 'text' or 'json'.")
+    try:
+        command = _napari_gui_command(gui_environment)
+    except Exception as exc:
+        _fail(exc)
     if project is not None:
         command.extend(["--project", str(project)])
     if experiment is not None:
@@ -238,8 +323,16 @@ def gui_napari_command(
         command.extend(["--masks", str(masks)])
     for folder in images or []:
         command.extend(["--images", str(folder)])
+    if check:
+        command.extend(["--check", "--check-format", check_format])
     completed = subprocess.run(command, check=False)
     if completed.returncode:
+        if not check:
+            typer.echo(
+                "NapariSBT failed to start. Install or refresh its CSF3 environment "
+                f"with '{_napari_gui_bootstrap_hint()}'.",
+                err=True,
+            )
         raise typer.Exit(completed.returncode)
 
 
@@ -1329,7 +1422,14 @@ def env_sync(
 
 @env_app.command("capture")
 def env_capture(
-    environment: str = typer.Argument(..., help="Logical key or fixed Conda name."),
+    environment: str | None = typer.Argument(
+        None, help="Logical key or fixed Conda name."
+    ),
+    all_: bool = typer.Option(
+        False,
+        "--all",
+        help="Capture every Conda environment, including environments unknown to SBT.",
+    ),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
@@ -1348,17 +1448,71 @@ def env_capture(
     verbose: bool = typer.Option(False, "--verbose"),
     toolkit: Path | None = typer.Option(None, "--toolkit-root"),
 ) -> None:
-    """Capture a live environment into a reviewed compatibility bundle."""
+    """Capture live environments into reviewed compatibility bundles."""
     if dry_run and write:
         _fail("Choose --dry-run or --write, not both.")
-    try:
-        plan = _env_manager(toolkit).capture(
-            environment, write=write, accept_vcs=accept_vcs, verbose=verbose
+    if all_ and write:
+        _fail(
+            "--all is observational only and cannot be combined with --write; "
+            "write reviewed managed environments individually."
         )
+    plans: list[CapturePlan] = []
+    failures: list[tuple[str, str]] = []
+    try:
+        manager = _env_manager(toolkit)
+        if all_:
+            if environment:
+                raise ValueError("Choose an environment or --all, not both.")
+            targets = manager.discover_capture_targets()
+        else:
+            if not environment:
+                raise ValueError("Provide an environment or use --all.")
+            plan = manager.capture(
+                environment,
+                write=write,
+                accept_vcs=accept_vcs,
+                verbose=verbose,
+            )
+            _print_capture_plan(plan, write=write)
+            return
     except Exception as exc:
         _fail(exc)
+
+    for target in targets:
+        try:
+            plans.append(
+                manager.capture_target(
+                    target,
+                    accept_vcs=accept_vcs,
+                    verbose=verbose,
+                )
+            )
+        except Exception as exc:
+            failures.append((target.environment_key, str(exc)))
+
+    for index, plan in enumerate(plans):
+        if index:
+            typer.echo("\n" + "-" * 72)
+        _print_capture_plan(plan, write=write)
+
+    if all_:
+        typer.echo(
+            f"\nCapture summary: {len(plans)} succeeded, {len(failures)} failed."
+        )
+        if failures:
+            typer.echo("Failures:")
+            for key, message in failures:
+                typer.echo(f"  {key}: {message}")
+            raise typer.Exit(2)
+
+
+def _print_capture_plan(plan: CapturePlan, *, write: bool) -> None:
+    """Render one environment compatibility-capture result."""
     typer.echo(f"Environment: {plan.environment_key} ({plan.conda_name})")
     typer.echo(f"Management: {'repository-managed' if plan.managed else 'external'}")
+    typer.echo(f"Registry: {'registered' if plan.registered else 'unregistered'}")
+    if plan.conda_prefix:
+        typer.echo(f"Conda prefix: {plan.conda_prefix}")
     typer.echo(f"Candidate files: {plan.candidate_directory}")
     if plan.lockfile:
         typer.echo(f"Candidate lock: {plan.lockfile}")

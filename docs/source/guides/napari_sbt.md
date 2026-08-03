@@ -17,6 +17,17 @@ From an initialized SBT project:
 sbt gui napari --project /path/to/project
 ```
 
+Run a side-effect-free launch check first when using a new environment or an
+HPC allocation:
+
+```bash
+sbt gui napari --check --project /path/to/project
+```
+
+On CSF3, install the dedicated Linux environment and launch only from an
+X11-enabled interactive node. See [Running NapariSBT on a CSF3 interactive
+node](napari_sbt_csf3.md).
+
 Direct launch accepts explicit paths:
 
 ```bash

@@ -55,6 +55,22 @@ See the complete [Project Console guide](../guides/project_console.md), includin
 the central project registry, CSF3 `srun-x11`, config backup/audit behavior, and
 read-only mode.
 
+## Optional NapariSBT application
+
+NapariSBT uses its own scientific GUI environment. The lightweight launcher
+uses the current interpreter when it already contains Napari and Qt; otherwise
+it re-executes through the centrally registered `sbt-napari` environment:
+
+```bash
+bash install/bootstrap_napari_sbt_csf3.sh
+sbt gui napari --check --project /path/to/project
+sbt gui napari --project /path/to/project
+```
+
+The preflight is side-effect free and supports `--check-format json`. On CSF3,
+run these commands only after entering an X11-enabled interactive allocation.
+See the [CSF3 NapariSBT guide](../guides/napari_sbt_csf3.md).
+
 ## Compact a legacy configuration
 
 Migrate a verbose legacy YAML file to the current compact style:

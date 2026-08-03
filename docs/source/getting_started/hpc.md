@@ -296,6 +296,30 @@ See the [Project Console guide](../guides/project_console.md) for portfolio
 switching, recovery mode, configuration audits, and the exact capability
 boundary.
 
+## 13. Optional NapariSBT interactive classification
+
+NapariSBT requires a separate scientific GUI environment and must run on a
+compute node. Install it once:
+
+```bash
+cd "$HOME/imcanalysis"
+bash install/bootstrap_napari_sbt_csf3.sh
+```
+
+Then request an X11 session, preflight the project, and launch:
+
+```bash
+srun-x11 -p interactive -t 60 -c 4
+conda activate sbt-cli
+sbt gui napari --check --project "$HOME/scratch/HyperionProject"
+sbt gui napari --project "$HOME/scratch/HyperionProject"
+```
+
+Use the GUI for exploration, annotation, training, scoring, and small feature
+trials. Submit full feature extraction separately with `sbt run cellfeat`.
+The complete [CSF3 NapariSBT guide](../guides/napari_sbt_csf3.md) explains
+resource profiles, state preservation, and X11/OpenGL troubleshooting.
+
 ## Updating SpatialBiologyToolkit
 
 From a clean toolkit checkout:

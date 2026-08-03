@@ -1,6 +1,20 @@
 schema_version: 1
 
 environments:
+  napari:
+    conda_name: sbt-napari
+    specification_directory: HPC_env_files/sbt-napari
+    managed: false
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
+      - [python, -c, "import napari, qtpy, anndata, pyarrow, sklearn, skimage"]
+      - [python, -m, SpatialBiologyToolkit.napari_sbt, --help]
+    notes:
+      - Interactive-only Linux environment; it is not mapped to a pipeline stage.
+      - The CSF3 bootstrap owns installation until a reviewed linux-64 lock is generated on CSF3.
+
   segmentation:
     conda_name: imc_segmentation
     specification_directory: HPC_env_files/imc_segmentation

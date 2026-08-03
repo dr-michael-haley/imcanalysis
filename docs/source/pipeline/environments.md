@@ -27,6 +27,7 @@ lightweight smoke tests.
 
 | Key | Fixed Conda name | Management |
 |---|---|---|
+| `napari` | `sbt-napari` | Explicit interactive bootstrap; Linux lock pending |
 | `segmentation` | `imc_segmentation` | Repository lock |
 | `denoise` | `imc_denoise` | Repository lock |
 | `cellposesam` | `imc_cellposesam` | Repository lock |
@@ -42,6 +43,12 @@ Commands accept either the logical key or fixed name. External environments
 can be listed, shown, smoke-tested, and captured into observational
 compatibility bundles. `sync`, `lock`, and capture with `--write` refuse them
 until repository specifications are deliberately added.
+
+`napari` is an interactive application environment and therefore has no stage
+mapping. Install or refresh it explicitly with
+`bash install/bootstrap_napari_sbt_csf3.sh`. Its committed intent specification
+will become a repository-managed lock contract only after the Linux solve and
+GUI smoke checks have been reviewed on CSF3.
 
 The stage mapping is also centralized:
 
@@ -193,15 +200,39 @@ sbt env capture starling --dry-run --verbose
 sbt env capture scportrait --dry-run --verbose
 ```
 
+To capture every environment reported by the active Conda installation in one
+observational pass, use:
+
+```bash
+sbt env capture --all --dry-run --verbose --accept-vcs
+```
+
+The standard spelling is `--all` with two leading hyphens. SBT uses
+`conda env list --json` and captures every distinct prefix it reports,
+including the base environment, prefix-based environments, and environments
+absent from `HPC_env_files/environments.yaml`. Registered environments retain their SBT
+identity; unregistered environments are labelled `conda:<name>` and remain
+observational for manual curation. Same-named prefixes receive stable hash
+suffixes so neither is silently discarded.
+
+Each environment receives its own timestamped bundle. SBT targets exact Conda
+prefixes during batch capture and records the prefix in both the snapshot and
+capture plan. An environment without a working Python or pip installation can
+still retain its Conda inventory, with the unavailable inspection steps called
+out for manual review. Other per-environment failures are reported after the
+remaining captures have been attempted; the command exits with status 2 when
+the batch is incomplete. For safety, `--all` is observational only and cannot
+be combined with `--write`.
+
 This produces an observational compatibility bundle under the SBT user state
 directory without changing the repository. The bundle contains a normalized
 from-history `environment.yml`, separated `pip-extras.txt`, the exact Conda and
 pip inventory in `environment.snapshot.json`, a self-describing
 `capture-plan.json`, and a candidate target-platform lock when lock generation
-succeeds. A lock-solver failure is recorded but does not discard the other
-external-environment evidence. VCS, editable, and local requirements remain
-explicitly flagged for review; use `--accept-vcs` only when retaining the
-observed VCS reference is intentional.
+succeeds. A lock-solver failure during observational capture is recorded but
+does not discard the other environment evidence. VCS, editable, and local
+requirements remain explicitly flagged for review; use `--accept-vcs` only
+when retaining the observed VCS reference is intentional.
 
 Capture with `--write` remains unavailable for an external environment. After
 reviewing compatibility, add its repository specification deliberately and
