@@ -78,6 +78,36 @@ class ProjectConsoleServiceTests(unittest.TestCase):
             self.assertEqual(audit["changed_paths"], ["general.outputs_folder"])
             self.assertFalse(session.dirty)
 
+    def test_config_field_specs_distinguish_disk_defaults_and_unsaved_state(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            context = self._project(temporary)
+            session = ConfigEditorSession.open(context.config_path)
+
+            stored = next(spec for spec in session.field_specs() if spec.stored)
+            inherited = next(spec for spec in session.field_specs() if not spec.stored)
+            self.assertTrue(stored.explicit)
+            self.assertFalse(stored.staged)
+            self.assertFalse(inherited.explicit)
+            self.assertFalse(inherited.staged)
+
+            session.set_value(inherited.path, inherited.value)
+            proposed = next(
+                spec for spec in session.field_specs() if spec.path == inherited.path
+            )
+            self.assertFalse(proposed.stored)
+            self.assertTrue(proposed.explicit)
+            self.assertTrue(proposed.staged)
+
+            session.reset_to_default(inherited.path)
+            session.reset_to_default(stored.path)
+            pending_reset = next(
+                spec for spec in session.field_specs() if spec.path == stored.path
+            )
+            self.assertTrue(pending_reset.stored)
+            self.assertFalse(pending_reset.explicit)
+            self.assertTrue(pending_reset.staged)
+            self.assertTrue(pending_reset.pending_removal)
+
     def test_config_edit_detects_external_change_and_reset_removes_explicit_key(self):
         with tempfile.TemporaryDirectory() as temporary:
             context = self._project(temporary)

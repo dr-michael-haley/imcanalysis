@@ -49,7 +49,10 @@ class ConfigFieldSpec:
     kind: str
     default: Any
     value: Any
+    stored: bool
     explicit: bool
+    staged: bool
+    pending_removal: bool
     required: bool
     nullable: bool
     description: str
@@ -276,6 +279,10 @@ class ConfigEditorSession:
             section_schema = schema["$defs"][model_class.__name__]
             raw_section = self.working_data.get(section)
             raw_section = raw_section if isinstance(raw_section, Mapping) else {}
+            stored_section = self.source_data.get(section)
+            stored_section = (
+                stored_section if isinstance(stored_section, Mapping) else {}
+            )
             resolved_section = getattr(self._validated, section)
             resolved_values = resolved_section.model_dump(mode="python")
             for name, model_field in model_class.model_fields.items():
@@ -297,7 +304,13 @@ class ConfigEditorSession:
                         kind=_schema_kind(field_schema),
                         default=default,
                         value=_plain_value(resolved_values[name]),
+                        stored=name in stored_section,
                         explicit=name in raw_section,
+                        staged=(
+                            f"{section}.{name}" in self.changed_paths
+                            or f"{section}.{name}" in self._removed_paths
+                        ),
+                        pending_removal=f"{section}.{name}" in self._removed_paths,
                         required=model_field.is_required(),
                         nullable=any(
                             item.get("type") == "null"

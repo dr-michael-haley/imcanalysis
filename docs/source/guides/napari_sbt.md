@@ -11,17 +11,31 @@ annotation, training, scoring, or export.
 
 ## Launch
 
-From an initialized SBT project:
+From an initialized SBT project, change into the project (or any directory
+inside it) and launch without repeating the path:
 
 ```bash
+cd /path/to/project
+sbt gui napari
+```
+
+You can instead select a project explicitly by registered name, project ID, or
+filesystem path:
+
+```bash
+sbt gui napari --project "Registered project name"
 sbt gui napari --project /path/to/project
 ```
+
+An explicit existing initialized path takes precedence over a registry lookup.
+Outside an initialized project, omitting `--project` retains the blank Setup
+workflow for manually supplied inputs.
 
 Run a side-effect-free launch check first when using a new environment or an
 HPC allocation:
 
 ```bash
-sbt gui napari --check --project /path/to/project
+sbt gui napari --check
 ```
 
 On CSF3, install the dedicated Linux environment and launch only from an

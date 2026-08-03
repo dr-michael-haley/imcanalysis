@@ -311,8 +311,9 @@ Then request an X11 session, preflight the project, and launch:
 ```bash
 srun-x11 -p interactive -t 60 -c 4
 conda activate sbt-cli
-sbt gui napari --check --project "$HOME/scratch/HyperionProject"
-sbt gui napari --project "$HOME/scratch/HyperionProject"
+cd "$HOME/scratch/HyperionProject"
+sbt gui napari --check
+sbt gui napari
 ```
 
 Use the GUI for exploration, annotation, training, scoring, and small feature

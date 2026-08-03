@@ -58,6 +58,10 @@ class ProjectConsoleGuiTests(unittest.TestCase):
                 self.assertEqual(len(controller.config_fields()), expected)
                 self.assertLess(len(window.findChildren(FieldEditor)), expected)
                 self.assertIn("scheduler", window.statusBar().currentMessage())
+                self.assertIn("QFrame#sidebar", window.styleSheet())
+                self.assertIsNotNone(window.logo_label)
+                self.assertFalse(window.logo_label.pixmap().isNull())
+                self.assertEqual(window.navigation.objectName(), "navigation")
                 button_labels = {
                     button.text().strip().casefold()
                     for button in window.findChildren(QPushButton)
@@ -76,6 +80,65 @@ class ProjectConsoleGuiTests(unittest.TestCase):
                     splitter = page.findChild(QSplitter)
                     self.assertGreater(splitter.height(), page.height() * 0.65)
                 window.close()
+
+    def test_configuration_origin_filters_and_preparation_navigation(self):
+        from PySide6.QtCore import Qt
+
+        from SpatialBiologyToolkit.project_gui.app import (
+            ConfigurationPage,
+            FieldEditor,
+        )
+        from SpatialBiologyToolkit.project_gui.controller import (
+            ProjectConsoleController,
+        )
+
+        with tempfile.TemporaryDirectory() as temporary:
+            context = initialize_project(Path(temporary) / "project")
+            controller = ProjectConsoleController.open(context.root)
+            page = ConfigurationPage(controller, lambda: None)
+            page.level.setCurrentText("All")
+
+            def rendered_editors():
+                editors = []
+                for index in range(page.form.count()):
+                    widget = page.form.itemAt(index).widget()
+                    if widget is not None:
+                        editors.extend(widget.findChildren(FieldEditor))
+                return editors
+
+            page.origin.setCurrentIndex(page.origin.findData("inherited"))
+            self.application.processEvents()
+            inherited_editors = rendered_editors()
+            self.assertTrue(inherited_editors)
+            self.assertTrue(
+                all(
+                    editor.property("configState") == "inherited"
+                    for editor in inherited_editors
+                )
+            )
+
+            page.origin.setCurrentIndex(page.origin.findData("custom"))
+            self.application.processEvents()
+            custom_editors = rendered_editors()
+            self.assertTrue(custom_editors)
+            self.assertTrue(
+                all(
+                    editor.property("configState")
+                    in {"stored", "staged", "pending-reset"}
+                    for editor in custom_editors
+                )
+            )
+
+            section = page.prepare_section.currentData()
+            self.assertIsNotNone(section)
+            page.prepare_selected_section()
+            self.application.processEvents()
+            self.assertEqual(
+                page.sections.currentItem().data(Qt.ItemDataRole.UserRole),
+                section,
+            )
+            self.assertIn("not yet present", page.section_notice.text())
+            page.deleteLater()
 
     def test_invalid_yaml_opens_recovery_page(self):
         from SpatialBiologyToolkit.project_gui.app import (

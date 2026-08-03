@@ -280,7 +280,10 @@ def gui_napari_command(
     project: Path | None = typer.Option(
         None,
         "--project",
-        help="Optional SBT project root used to resolve config defaults.",
+        help=(
+            "Optional initialized project path, registered project name, or "
+            "project ID. Omit to discover the project from the current directory."
+        ),
     ),
     experiment: Path | None = typer.Option(
         None, "--experiment", help="Existing napari_sbt experiment folder or manifest."

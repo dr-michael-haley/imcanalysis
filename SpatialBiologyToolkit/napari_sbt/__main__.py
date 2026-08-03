@@ -9,7 +9,11 @@ from pathlib import Path
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--project", type=Path)
+    parser.add_argument(
+        "--project",
+        type=Path,
+        help="Initialized project path, registered project name, or project ID.",
+    )
     parser.add_argument("--experiment", type=Path)
     parser.add_argument("--anndata", type=Path)
     parser.add_argument("--masks", type=Path)
@@ -29,12 +33,46 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _project_defaults(args) -> dict:
-    if args.project is None:
-        return {}
-    from SpatialBiologyToolkit.pipeline.project import load_project
+def _resolve_project_context(project: Path | None):
+    from SpatialBiologyToolkit.pipeline.project import (
+        ProjectNotFoundError,
+        ProjectNotInitializedError,
+        load_project,
+    )
 
-    context = load_project(args.project)
+    if project is None:
+        try:
+            return load_project()
+        except ProjectNotFoundError:
+            # Preserve the standalone launcher outside an initialized project.
+            return None
+
+    try:
+        return load_project(project)
+    except ProjectNotInitializedError as path_error:
+        from SpatialBiologyToolkit.pipeline.project_registry import (
+            ProjectRegistryError,
+            load_project_registry,
+            resolve_registered_project,
+        )
+
+        try:
+            registered = resolve_registered_project(
+                load_project_registry(), str(project)
+            )
+        except ProjectRegistryError as registry_error:
+            raise ProjectNotFoundError(
+                f"Could not resolve --project {str(project)!r} as an initialized "
+                "path, registered project name, or project ID. "
+                f"Path lookup: {path_error} Registry lookup: {registry_error}"
+            ) from registry_error
+        return load_project(registered.path)
+
+
+def _project_defaults(args) -> dict:
+    context = _resolve_project_context(args.project)
+    if context is None:
+        return {}
     settings = context.config.napari_sbt
     defaults: dict = {
         "project_root": context.root,
@@ -86,7 +124,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"[ERROR] Project configuration: {exc}"
             )
         return 2
-    project_root = args.project or defaults.get("project_root")
+    project_root = defaults.get("project_root")
     experiment = args.experiment or defaults.get("experiment")
     anndata_path = args.anndata or defaults.get("anndata_path")
     masks_folder = args.masks or defaults.get("masks_folder")

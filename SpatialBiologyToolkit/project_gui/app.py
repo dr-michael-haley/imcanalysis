@@ -9,7 +9,7 @@ from typing import Any, Callable
 
 import yaml
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QCloseEvent, QFont
+from PySide6.QtGui import QBrush, QCloseEvent, QColor, QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -53,9 +53,13 @@ from SpatialBiologyToolkit.pipeline.notes import (
 )
 
 from .controller import ProjectConsoleController
+from .theme import APP_STYLESHEET, COLORS
 
 
 APP_TITLE = "SBT Project Console"
+LOGO_PATH = (
+    Path(__file__).resolve().parents[2] / "docs" / "source" / "_static" / "Logo.png"
+)
 
 
 def _clear_layout(layout) -> None:
@@ -78,10 +82,71 @@ def _markdown_browser() -> QTextBrowser:
 def _page_title(text: str) -> QLabel:
     """Return a compact heading that never consumes page stretch."""
 
-    label = QLabel(f"<h1>{text}</h1>")
+    label = QLabel(text)
+    label.setObjectName("pageTitle")
     label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
     label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
     return label
+
+
+def _page_subtitle(text: str) -> QLabel:
+    label = QLabel(text)
+    label.setObjectName("pageSubtitle")
+    label.setWordWrap(True)
+    label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+    return label
+
+
+def _set_dynamic_property(widget: QWidget, name: str, value: str) -> None:
+    widget.setProperty(name, value)
+    style = widget.style()
+    style.unpolish(widget)
+    style.polish(widget)
+
+
+def _short_value(value: Any, *, limit: int = 180) -> str:
+    rendered = _format_value(value).replace("\n", " · ")
+    if len(rendered) <= limit:
+        return rendered
+    return rendered[: limit - 1].rstrip() + "…"
+
+
+def _config_state(spec: ConfigFieldSpec) -> str:
+    if spec.pending_removal:
+        return "pending-reset"
+    if spec.staged:
+        return "staged"
+    if spec.stored:
+        return "stored"
+    return "inherited"
+
+
+CONFIG_STATE_LABELS = {
+    "inherited": "INHERITED DEFAULT",
+    "stored": "STORED OVERRIDE",
+    "staged": "UNSAVED CHANGE",
+    "pending-reset": "PENDING RESET",
+}
+
+
+class MetricCard(QFrame):
+    """Compact dashboard signal with a strong value and quiet label."""
+
+    def __init__(self, label: str):
+        super().__init__()
+        self.setObjectName("metricCard")
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(12, 9, 12, 9)
+        layout.setSpacing(1)
+        self.value = QLabel("—")
+        self.value.setObjectName("metricValue")
+        caption = QLabel(label)
+        caption.setObjectName("metricLabel")
+        layout.addWidget(self.value)
+        layout.addWidget(caption)
+
+    def set_value(self, value: str | int) -> None:
+        self.value.setText(str(value))
 
 
 def _format_value(value: Any) -> str:
@@ -140,23 +205,25 @@ class ProjectsPage(QWidget):
         self.registry_changed = registry_changed
         layout = QVBoxLayout(self)
         layout.addWidget(_page_title("IMC project cockpit"))
-        introduction = QLabel(
-            "Projects are registered centrally in ~/.imc_config. Switching only "
-            "changes the project being viewed; it never submits or controls jobs."
+        layout.addWidget(
+            _page_subtitle(
+                "Projects are registered centrally in ~/.imc_config. Switching only "
+                "changes the project being viewed; it never submits or controls jobs."
+            )
         )
-        introduction.setWordWrap(True)
-        layout.addWidget(introduction)
         self.table = QTableWidget()
         self.table.setColumnCount(len(self.HEADERS))
         self.table.setHorizontalHeaderLabels(self.HEADERS)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QTableWidget.SelectionMode.SingleSelection)
+        self.table.setAlternatingRowColors(True)
         self.table.doubleClicked.connect(self.open_selected)
         self.table.horizontalHeader().setStretchLastSection(True)
         layout.addWidget(self.table, 1)
         controls = QHBoxLayout()
         open_button = QPushButton("Open selected")
+        open_button.setProperty("role", "primary")
         open_button.clicked.connect(self.open_selected)
         browse_button = QPushButton("Browse and register…")
         browse_button.clicked.connect(self.browse_and_register)
@@ -187,6 +254,7 @@ class ProjectsPage(QWidget):
         controls.addStretch()
         layout.addLayout(controls)
         self.status = QLabel("")
+        self.status.setObjectName("mutedText")
         layout.addWidget(self.status)
         self.refresh()
 
@@ -228,6 +296,12 @@ class ProjectsPage(QWidget):
                 if column == 1:
                     cell.setData(Qt.ItemDataRole.UserRole, str(project.path))
                     cell.setData(Qt.ItemDataRole.UserRole + 1, project.project_id)
+                if not status.available:
+                    cell.setBackground(QBrush(QColor(COLORS["red_soft"])))
+                    cell.setForeground(QBrush(QColor(COLORS["red"])))
+                elif registry.default_project_id == project.project_id:
+                    cell.setBackground(QBrush(QColor(COLORS["purple_soft"])))
+                    cell.setForeground(QBrush(QColor(COLORS["purple"])))
                 self.table.setItem(row, column, cell)
             if project.path == self.controller.opened.root:
                 current_row = row
@@ -341,6 +415,25 @@ class DashboardPage(QWidget):
         refresh.clicked.connect(self.refresh)
         header.addWidget(refresh)
         layout.addLayout(header)
+        layout.addWidget(
+            _page_subtitle(
+                "A lightweight project snapshot from config, asset paths and durable "
+                "records. No scientific files or live scheduler state are loaded."
+            )
+        )
+        metrics = QHBoxLayout()
+        self.validation_card = MetricCard("Configuration")
+        self.assets_card = MetricCard("Assets present")
+        self.executions_card = MetricCard("Recorded executions")
+        self.status_card = MetricCard("Latest recorded status")
+        for card in (
+            self.validation_card,
+            self.assets_card,
+            self.executions_card,
+            self.status_card,
+        ):
+            metrics.addWidget(card, 1)
+        layout.addLayout(metrics)
         self.browser = _markdown_browser()
         layout.addWidget(self.browser, 1)
         self.render_snapshot()
@@ -360,16 +453,20 @@ class DashboardPage(QWidget):
             item.status == "missing" for item in snapshot.validation.required_inputs
         )
         present_assets = sum(view.asset.exists for view in snapshot.assets)
+        self.validation_card.set_value(
+            "Valid" if snapshot.validation.valid else "Needs review"
+        )
+        self.assets_card.set_value(f"{present_assets}/{len(snapshot.assets)}")
+        self.executions_card.set_value(len(snapshot.executions))
+        self.status_card.set_value(status.overall_status if status else "None")
         lines = [
-            f"# {context.project_metadata.title or context.root.name}",
+            f"## {context.project_metadata.title or context.root.name}",
             "",
             f"- **Project ID:** `{context.project_metadata.project_id}`",
             f"- **Root:** `{context.root}`",
             f"- **Configuration:** `{context.config_path}`",
             f"- **Config validation:** {'valid' if snapshot.validation.valid else 'invalid'}",
             f"- **Required items missing:** {required_missing}",
-            f"- **Assets present:** {present_assets} / {len(snapshot.assets)}",
-            f"- **Recorded executions:** {len(snapshot.executions)}",
         ]
         if status is None:
             lines.append("- **Latest recorded status:** no status snapshot")
@@ -404,6 +501,12 @@ class CataloguePage(QWidget):
         self.controller = controller
         layout = QVBoxLayout(self)
         layout.addWidget(_page_title("Stages and modes"))
+        layout.addWidget(
+            _page_subtitle(
+                "Browse the scientific catalogue, direct requirements and conventional "
+                "lineage. Search keeps the full explainer one click away."
+            )
+        )
         controls = QHBoxLayout()
         self.kind = QComboBox()
         self.kind.addItems(["Stages", "Modes"])
@@ -445,6 +548,14 @@ class CataloguePage(QWidget):
             )
             item = QListWidgetItem(label)
             item.setData(Qt.ItemDataRole.UserRole, record.name)
+            item.setForeground(
+                QBrush(
+                    QColor(COLORS["purple"] if selected == "Stages" else COLORS["blue"])
+                )
+            )
+            font = item.font()
+            font.setBold(True)
+            item.setFont(font)
             self.items.addItem(item)
         if self.items.count():
             self.items.setCurrentRow(0)
@@ -495,7 +606,7 @@ class FieldEditor(QFrame):
     def __init__(
         self,
         spec: ConfigFieldSpec,
-        on_change: Callable[[str, Any], None],
+        on_change: Callable[[str, Any], str | None],
         on_reset: Callable[[str], None],
         on_validity: Callable[[str, bool], None],
         *,
@@ -506,7 +617,11 @@ class FieldEditor(QFrame):
         self.on_change = on_change
         self.on_reset = on_reset
         self.on_validity = on_validity
+        self.read_only = read_only
         self._yaml_timer: QTimer | None = None
+        self.setObjectName("configField")
+        self.config_state = _config_state(spec)
+        self.setProperty("configState", self.config_state)
         self.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Maximum,
@@ -514,16 +629,21 @@ class FieldEditor(QFrame):
         self.setFrameShape(QFrame.Shape.StyledPanel)
         layout = QVBoxLayout(self)
         top = QHBoxLayout()
-        badge = "explicit" if spec.explicit else "default"
-        title = QLabel(
-            f"<b>{spec.name}</b> &nbsp; <small>{badge} · {spec.level}</small>"
-        )
+        title = QLabel(spec.name)
+        title.setObjectName("fieldName")
         top.addWidget(title)
+        self.state_badge = QLabel(CONFIG_STATE_LABELS[self.config_state])
+        self.state_badge.setObjectName("stateBadge")
+        self.state_badge.setProperty("configState", self.config_state)
+        top.addWidget(self.state_badge)
+        level = QLabel(spec.level.upper())
+        level.setObjectName("mutedText")
+        top.addWidget(level)
         top.addStretch()
-        reset = QPushButton("Reset to default")
-        reset.setEnabled(not read_only and spec.explicit)
-        reset.clicked.connect(lambda: self.on_reset(spec.path))
-        top.addWidget(reset)
+        self.reset_button = QPushButton("Use inherited default")
+        self.reset_button.setEnabled(not read_only and spec.explicit)
+        self.reset_button.clicked.connect(lambda: self.on_reset(spec.path))
+        top.addWidget(self.reset_button)
         layout.addLayout(top)
         if spec.description:
             description = QLabel(spec.description)
@@ -532,10 +652,32 @@ class FieldEditor(QFrame):
         if spec.advice:
             advice = QLabel(f"Advice: {spec.advice}")
             advice.setWordWrap(True)
-            advice.setStyleSheet("color: #5b6573;")
+            advice.setObjectName("mutedText")
             layout.addWidget(advice)
+        default_context = {
+            "inherited": (
+                f"Inherited model default: {_short_value(spec.default)} · "
+                "this field is not stored in config.yaml."
+            ),
+            "stored": (
+                f"Model default: {_short_value(spec.default)} · the value below is "
+                "stored in config.yaml."
+            ),
+            "staged": (
+                f"Model default: {_short_value(spec.default)} · this proposed value "
+                "has not been saved yet."
+            ),
+            "pending-reset": (
+                f"After saving, config.yaml will stop storing this field and inherit: "
+                f"{_short_value(spec.default)}"
+            ),
+        }[self.config_state]
+        self.default_label = QLabel(default_context)
+        self.default_label.setObjectName("defaultValue")
+        self.default_label.setWordWrap(True)
+        layout.addWidget(self.default_label)
         self.error = QLabel("")
-        self.error.setStyleSheet("color: #a01818;")
+        self.error.setObjectName("errorText")
         self.editor = self._create_editor(read_only)
         layout.addWidget(self.editor)
         layout.addWidget(self.error)
@@ -636,13 +778,41 @@ class FieldEditor(QFrame):
 
     def _submit(self, value: Any) -> None:
         try:
-            self.on_change(self.spec.path, value)
+            state = self.on_change(self.spec.path, value)
         except InvalidConfigEditError as exc:
             self.error.setText(str(exc).splitlines()[0])
             self.on_validity(self.spec.path, False)
         else:
             self.error.clear()
             self.on_validity(self.spec.path, True)
+            if state:
+                self.config_state = state
+                self.state_badge.setText(CONFIG_STATE_LABELS[state])
+                self.reset_button.setEnabled(
+                    not self.read_only and state in {"stored", "staged"}
+                )
+                self.default_label.setText(
+                    {
+                        "inherited": (
+                            f"Inherited model default: {_short_value(self.spec.default)} "
+                            "• this field is not stored in config.yaml."
+                        ),
+                        "stored": (
+                            f"Model default: {_short_value(self.spec.default)} • the "
+                            "value below is stored in config.yaml."
+                        ),
+                        "staged": (
+                            f"Model default: {_short_value(self.spec.default)} • this "
+                            "proposed value has not been saved yet."
+                        ),
+                        "pending-reset": (
+                            "After saving, config.yaml will stop storing this field "
+                            f"and inherit: {_short_value(self.spec.default)}"
+                        ),
+                    }[state]
+                )
+                _set_dynamic_property(self, "configState", state)
+                _set_dynamic_property(self.state_badge, "configState", state)
 
 
 class ConfigurationPage(QWidget):
@@ -659,29 +829,62 @@ class ConfigurationPage(QWidget):
         self.invalid_paths: set[str] = set()
         layout = QVBoxLayout(self)
         layout.addWidget(_page_title("Configuration"))
+        layout.addWidget(
+            _page_subtitle(
+                "See exactly what config.yaml stores, what SBT supplies by default, "
+                "and what will change on save. Prepare future stages without copying "
+                "unchanged defaults into the file."
+            )
+        )
+        self.summary = QLabel("")
+        self.summary.setObjectName("configSummary")
+        self.summary.setWordWrap(True)
+        layout.addWidget(self.summary)
         controls = QHBoxLayout()
         self.scope = QComboBox()
-        self.scope.addItem("All config sections", None)
+        self.scope.addItem("Whole project", None)
         for mode in controller.modes():
-            self.scope.addItem(f"Mode: {mode.name}", ("mode", mode.name))
+            self.scope.addItem(f"Prepare mode: {mode.name}", ("mode", mode.name))
         for stage in controller.stages():
-            self.scope.addItem(f"Stage: {stage.display_name}", ("stage", stage.name))
+            self.scope.addItem(
+                f"Prepare stage: {stage.display_name}", ("stage", stage.name)
+            )
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search fields, descriptions and advice")
         self.level = QComboBox()
         self.level.addItems(["Basic", "Advanced", "Expert", "All"])
+        self.origin = QComboBox()
+        self.origin.addItem("All values", "all")
+        self.origin.addItem("Customised + staged", "custom")
+        self.origin.addItem("Inherited defaults only", "inherited")
+        self.origin.addItem("Unsaved changes only", "staged")
         self.reload_button = QPushButton("Reload from disk")
         self.diff_button = QPushButton("Review changes")
         self.save_button = QPushButton("Save configuration")
+        self.diff_button.setProperty("role", "warning")
+        self.save_button.setProperty("role", "primary")
         self.diff_button.setEnabled(False)
         self.save_button.setEnabled(False)
         controls.addWidget(self.scope)
         controls.addWidget(self.search)
         controls.addWidget(self.level)
+        controls.addWidget(self.origin)
         controls.addWidget(self.reload_button)
         controls.addWidget(self.diff_button)
         controls.addWidget(self.save_button)
         layout.addLayout(controls)
+        prepare_controls = QHBoxLayout()
+        prepare_label = QLabel("Prepare an unconfigured section")
+        prepare_label.setObjectName("mutedText")
+        self.prepare_section = QComboBox()
+        self.prepare_section.setMinimumWidth(260)
+        self.prepare_button = QPushButton("Open section")
+        self.prepare_button.setProperty("role", "primary")
+        prepare_controls.addWidget(prepare_label)
+        prepare_controls.addWidget(self.prepare_section)
+        prepare_controls.addWidget(self.prepare_button)
+        prepare_controls.addStretch()
+        layout.addLayout(prepare_controls)
         splitter = QSplitter()
         self.sections = QListWidget()
         container = QWidget()
@@ -690,17 +893,28 @@ class ConfigurationPage(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setWidget(container)
+        detail = QWidget()
+        detail_layout = QVBoxLayout(detail)
+        detail_layout.setContentsMargins(0, 0, 0, 0)
+        self.section_notice = QLabel("")
+        self.section_notice.setObjectName("sectionNotice")
+        self.section_notice.setWordWrap(True)
+        detail_layout.addWidget(self.section_notice)
+        detail_layout.addWidget(scroll, 1)
         splitter.addWidget(self.sections)
-        splitter.addWidget(scroll)
+        splitter.addWidget(detail)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([260, 1040])
+        splitter.setSizes([290, 1010])
         layout.addWidget(splitter, 1)
         self.status = QLabel("")
+        self.status.setObjectName("mutedText")
         layout.addWidget(self.status)
         self.search.textChanged.connect(self.populate_sections)
         self.scope.currentIndexChanged.connect(self.populate_sections)
         self.level.currentTextChanged.connect(self.populate_sections)
+        self.origin.currentIndexChanged.connect(self.populate_sections)
         self.sections.currentItemChanged.connect(self.render_section)
+        self.prepare_button.clicked.connect(self.prepare_selected_section)
         self.reload_button.clicked.connect(self.reload_from_disk)
         self.diff_button.clicked.connect(self.show_diff)
         self.save_button.clicked.connect(self.save)
@@ -711,6 +925,8 @@ class ConfigurationPage(QWidget):
         self.specs = self.controller.config_fields()
         self.specs_dirty = False
         self._update_actions()
+        self._update_summary()
+        self.populate_prepare_sections()
         self.populate_sections()
 
     def _update_actions(self) -> None:
@@ -720,6 +936,64 @@ class ConfigurationPage(QWidget):
         self.save_button.setEnabled(
             dirty and valid_widgets and not self.controller.read_only
         )
+
+    def _update_summary(self) -> None:
+        stored = sum(spec.stored for spec in self.specs)
+        inherited = sum(_config_state(spec) == "inherited" for spec in self.specs)
+        staged = sum(spec.staged for spec in self.specs)
+        sections_on_disk = len({spec.section for spec in self.specs if spec.stored})
+        self.summary.setText(
+            f"config.yaml stores {stored} override(s) across {sections_on_disk} "
+            f"section(s)  •  {inherited} value(s) inherit SBT defaults  •  "
+            f"{staged} unsaved change(s)"
+        )
+
+    def populate_prepare_sections(self) -> None:
+        current = self.prepare_section.currentData()
+        sections: list[str] = []
+        for spec in self.specs:
+            if spec.section not in sections:
+                sections.append(spec.section)
+        self.prepare_section.blockSignals(True)
+        self.prepare_section.clear()
+        for section in sections:
+            stored = sum(spec.stored for spec in self.specs if spec.section == section)
+            if not stored:
+                self.prepare_section.addItem(
+                    f"{section} — not yet in config.yaml", section
+                )
+        if self.prepare_section.count() == 0:
+            self.prepare_section.addItem("Every section has a stored override", None)
+        elif current is not None:
+            index = self.prepare_section.findData(current)
+            if index >= 0:
+                self.prepare_section.setCurrentIndex(index)
+        self.prepare_section.blockSignals(False)
+        self.prepare_button.setEnabled(self.prepare_section.currentData() is not None)
+
+    def prepare_selected_section(self) -> None:
+        section = self.prepare_section.currentData()
+        if section is None:
+            return
+        self.scope.setCurrentIndex(0)
+        self.search.clear()
+        self.origin.setCurrentIndex(0)
+        self.level.setCurrentText("Basic")
+        self.populate_sections()
+        matches = [
+            self.sections.item(index)
+            for index in range(self.sections.count())
+            if self.sections.item(index).data(Qt.ItemDataRole.UserRole) == section
+        ]
+        if not matches:
+            self.level.setCurrentText("Advanced")
+            matches = [
+                self.sections.item(index)
+                for index in range(self.sections.count())
+                if self.sections.item(index).data(Qt.ItemDataRole.UserRole) == section
+            ]
+        if matches:
+            self.sections.setCurrentItem(matches[0])
 
     def set_validity(self, path: str, valid: bool) -> None:
         if valid:
@@ -752,13 +1026,22 @@ class ConfigurationPage(QWidget):
             ).casefold()
             if query not in haystack:
                 return False
+        origin = str(self.origin.currentData())
+        if origin == "custom" and not (spec.explicit or spec.staged):
+            return False
+        if origin == "inherited" and (spec.explicit or spec.staged):
+            return False
+        if origin == "staged" and not spec.staged:
+            return False
         return True
 
     def populate_sections(self) -> None:
         current = (
-            self.sections.currentItem().text() if self.sections.currentItem() else None
+            self.sections.currentItem().data(Qt.ItemDataRole.UserRole)
+            if self.sections.currentItem()
+            else None
         )
-        visible = []
+        visible: list[str] = []
         for spec in self.specs:
             if self._matches(spec) and spec.section not in visible:
                 visible.append(spec.section)
@@ -771,13 +1054,33 @@ class ConfigurationPage(QWidget):
             self.level.setCurrentText("Advanced")
             return
         self.sections.clear()
-        self.sections.addItems(visible)
+        for section in visible:
+            section_specs = [spec for spec in self.specs if spec.section == section]
+            stored = sum(spec.stored for spec in section_specs)
+            staged = sum(spec.staged for spec in section_specs)
+            suffix = f"{stored} stored" if stored else "not in config.yaml"
+            if staged:
+                suffix += f", {staged} unsaved"
+            item = QListWidgetItem(f"{section}\n{suffix}")
+            item.setData(Qt.ItemDataRole.UserRole, section)
+            item.setForeground(
+                QBrush(QColor(COLORS["blue"] if stored else COLORS["muted"]))
+            )
+            self.sections.addItem(item)
         if not visible:
             _clear_layout(self.form)
             self.form.addWidget(QLabel("No fields match the current filters."))
             self.form.addStretch()
+            self.section_notice.setText(
+                "No configuration fields match this combination of scope, detail, "
+                "origin and search filters."
+            )
             return
-        matches = self.sections.findItems(current or "", Qt.MatchFlag.MatchExactly)
+        matches = [
+            self.sections.item(index)
+            for index in range(self.sections.count())
+            if self.sections.item(index).data(Qt.ItemDataRole.UserRole) == current
+        ]
         self.sections.setCurrentItem(matches[0] if matches else self.sections.item(0))
 
     def render_section(self, current: QListWidgetItem | None, *_args) -> None:
@@ -792,7 +1095,22 @@ class ConfigurationPage(QWidget):
         if current is None:
             self.form.addStretch()
             return
-        section = current.text()
+        section = str(current.data(Qt.ItemDataRole.UserRole))
+        section_specs = [spec for spec in self.specs if spec.section == section]
+        stored = sum(spec.stored for spec in section_specs)
+        staged = sum(spec.staged for spec in section_specs)
+        if stored:
+            self.section_notice.setText(
+                f"{section} has {stored} stored override(s) in config.yaml. Blue "
+                "fields are stored, grey fields inherit defaults, and gold fields "
+                f"are unsaved. {staged} change(s) are currently staged here."
+            )
+        else:
+            self.section_notice.setText(
+                f"{section} is not yet present in config.yaml. Its fields currently "
+                "inherit SBT defaults. Change only what this project needs; saving "
+                "will add those individual overrides and leave the rest inherited."
+            )
         groups: dict[str, list[ConfigFieldSpec]] = {}
         for spec in self.specs:
             if spec.section == section and self._matches(spec):
@@ -817,15 +1135,21 @@ class ConfigurationPage(QWidget):
             self.form.addWidget(group)
         self.form.addStretch()
 
-    def update_value(self, path: str, value: Any) -> None:
+    def update_value(self, path: str, value: Any) -> str | None:
         if self.controller.read_only:
-            return
+            return None
         self.controller.editor.set_value(path, value)
         self.specs_dirty = True
         self.status.setText(
             f"Staged {len(self.controller.editor.changed_paths)} change(s)."
         )
         self._update_actions()
+        self.specs = self.controller.config_fields()
+        self.specs_dirty = False
+        self._update_summary()
+        self.populate_prepare_sections()
+        updated = next(spec for spec in self.specs if spec.path == path)
+        return _config_state(updated)
 
     def reset_value(self, path: str) -> None:
         if self.controller.read_only:
@@ -905,17 +1229,18 @@ class AssetsPage(QWidget):
         refresh.clicked.connect(self.refresh)
         header.addWidget(refresh)
         layout.addLayout(header)
-        note = QLabel(
-            "Computed from the typed config and stage registry. Direct directory counts "
-            "are bounded; no scientific files are opened."
+        layout.addWidget(
+            _page_subtitle(
+                "Paths, lifecycle, producers and consumers computed from the typed "
+                "configuration. Counts are bounded and no scientific files are opened."
+            )
         )
-        note.setWordWrap(True)
-        layout.addWidget(note)
         self.table = QTableWidget()
         self.table.setColumnCount(len(self.HEADERS))
         self.table.setHorizontalHeaderLabels(self.HEADERS)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setAlternatingRowColors(True)
         layout.addWidget(self.table, 1)
         self.render_snapshot()
 
@@ -949,8 +1274,16 @@ class AssetsPage(QWidget):
                 ", ".join(view.consumers) or "-",
                 str(asset.path),
             ]
+            background, foreground = {
+                "present": (COLORS["green_soft"], COLORS["green"]),
+                "empty": (COLORS["gold_soft"], "#6A4B00"),
+                "absent": (COLORS["red_soft"], COLORS["red"]),
+            }[status]
             for column, value in enumerate(values):
-                self.table.setItem(row, column, QTableWidgetItem(value))
+                cell = QTableWidgetItem(value)
+                cell.setBackground(QBrush(QColor(background)))
+                cell.setForeground(QBrush(QColor(foreground)))
+                self.table.setItem(row, column, cell)
         self.table.resizeColumnsToContents()
 
 
@@ -960,12 +1293,12 @@ class ReadinessPage(QWidget):
         self.controller = controller
         layout = QVBoxLayout(self)
         layout.addWidget(_page_title("Workflow readiness"))
-        notice = QLabel(
-            "Inspection only: dependencies and assets are evaluated, but the Project "
-            "Console has no submission capability."
+        layout.addWidget(
+            _page_subtitle(
+                "Inspect direct blocking requirements separately from advisory lineage. "
+                "This page cannot submit, cancel or query jobs."
+            )
         )
-        notice.setWordWrap(True)
-        layout.addWidget(notice)
         controls = QHBoxLayout()
         self.target = QComboBox()
         for mode in controller.modes():
@@ -977,11 +1310,15 @@ class ReadinessPage(QWidget):
         self.policy.addItem("Explicit stages only", "none")
         self.policy.addItem("All conventional upstream stages", "all")
         inspect = QPushButton("Inspect readiness")
+        inspect.setProperty("role", "primary")
         inspect.clicked.connect(self.refresh)
         controls.addWidget(self.target)
         controls.addWidget(self.policy)
         controls.addWidget(inspect)
         layout.addLayout(controls)
+        self.result = QLabel("")
+        self.result.setWordWrap(True)
+        layout.addWidget(self.result)
         self.browser = _markdown_browser()
         layout.addWidget(self.browser, 1)
         self.refresh()
@@ -991,8 +1328,17 @@ class ReadinessPage(QWidget):
             str(self.target.currentData()),
             dependency_policy=str(self.policy.currentData()),
         )
+        self.result.setObjectName("resultReady" if plan.ready else "resultBlocked")
+        self.result.setText(
+            "READY — all direct blocking requirements are available."
+            if plan.ready
+            else "NOT READY — one or more direct blocking requirements are missing."
+        )
+        style = self.result.style()
+        style.unpolish(self.result)
+        style.polish(self.result)
         lines = [
-            f"# {'Ready' if plan.ready else 'Not ready'}",
+            "## Inspection plan",
             "",
             f"Requested: {', '.join(f'`{item}`' for item in plan.requested)}",
             f"Upstream policy: **{plan.dependency_policy}**",
@@ -1044,12 +1390,19 @@ class ExecutionsPage(QWidget):
         refresh.clicked.connect(self.refresh)
         header.addWidget(refresh)
         layout.addLayout(header)
+        layout.addWidget(
+            _page_subtitle(
+                "Durable run records, provenance, reports and bounded log tails. "
+                "Statuses are recorded snapshots; no live scheduler query is made."
+            )
+        )
         splitter = QSplitter()
         self.table = QTableWidget()
         self.table.setColumnCount(len(self.HEADERS))
         self.table.setHorizontalHeaderLabels(self.HEADERS)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self.table.setAlternatingRowColors(True)
         self.tabs = QTabWidget()
         self.overview = _markdown_browser()
         self.report = _markdown_browser()
@@ -1089,10 +1442,21 @@ class ExecutionsPage(QWidget):
                 else "-",
                 item.asset_effect,
             ]
+            status = item.status.casefold()
+            if any(word in status for word in ("fail", "cancel", "block", "error")):
+                background, foreground = COLORS["red_soft"], COLORS["red"]
+            elif any(word in status for word in ("complete", "success", "done")):
+                background, foreground = COLORS["green_soft"], COLORS["green"]
+            elif any(word in status for word in ("run", "pending", "queue")):
+                background, foreground = COLORS["gold_soft"], "#6A4B00"
+            else:
+                background, foreground = COLORS["surface"], COLORS["ink"]
             for column, value in enumerate(values):
                 cell = QTableWidgetItem(value)
                 if column == 0:
                     cell.setData(Qt.ItemDataRole.UserRole, item.technical_run_id)
+                cell.setBackground(QBrush(QColor(background)))
+                cell.setForeground(QBrush(QColor(foreground)))
                 self.table.setItem(row, column, cell)
         self.table.resizeColumnsToContents()
         if records:
@@ -1178,6 +1542,12 @@ class NotesPage(QWidget):
         self.dirty = False
         layout = QVBoxLayout(self)
         layout.addWidget(_page_title("Project notes"))
+        layout.addWidget(
+            _page_subtitle(
+                "Keep lightweight project context beside the durable records. Notes "
+                "are saved explicitly and protected against concurrent changes."
+            )
+        )
         self.editor = QPlainTextEdit()
         self.editor.setPlainText(
             controller.notes.source_text if controller.notes else ""
@@ -1192,6 +1562,7 @@ class NotesPage(QWidget):
         reload_button = QPushButton("Reload")
         reload_button.clicked.connect(self.reload)
         self.save_button = QPushButton("Save notes")
+        self.save_button.setProperty("role", "primary")
         self.save_button.setEnabled(False)
         self.save_button.clicked.connect(self.save)
         buttons.addWidget(reload_button)
@@ -1235,6 +1606,13 @@ class HelpPage(QWidget):
     def __init__(self, controller: ProjectConsoleController):
         super().__init__()
         layout = QVBoxLayout(self)
+        layout.addWidget(_page_title("Help and boundaries"))
+        layout.addWidget(
+            _page_subtitle(
+                "What the Project Console can inspect and edit—and what deliberately "
+                "remains in the audited CLI or specialist tools."
+            )
+        )
         browser = _markdown_browser()
         mode = (
             "read-only" if controller.read_only else "config and notes editing enabled"
@@ -1242,7 +1620,7 @@ class HelpPage(QWidget):
         browser.setMarkdown(
             "\n".join(
                 [
-                    "# About the SBT Project Console",
+                    "## About the SBT Project Console",
                     "",
                     "A lightweight cockpit for registered Spatial Biology Toolkit projects.",
                     "",
@@ -1280,12 +1658,12 @@ class RecoveryPage(QWidget):
         self.dirty = False
         layout = QVBoxLayout(self)
         layout.addWidget(_page_title("Configuration recovery mode"))
-        message = QLabel(
-            "The project marker was found, but its configuration could not be validated. "
-            "Other project pages are disabled until the YAML is repaired."
+        layout.addWidget(
+            _page_subtitle(
+                "The project marker was found, but its configuration could not be "
+                "validated. Repair and validate the raw YAML to restore other pages."
+            )
         )
-        message.setWordWrap(True)
-        layout.addWidget(message)
         self.error = QLabel(controller.opened.error or "")
         self.error.setWordWrap(True)
         self.error.setStyleSheet("color: #a01818;")
@@ -1299,6 +1677,7 @@ class RecoveryPage(QWidget):
         validate = QPushButton("Validate")
         validate.clicked.connect(self.validate)
         save = QPushButton("Save repaired config")
+        save.setProperty("role", "primary")
         save.setEnabled(not controller.read_only)
         save.clicked.connect(self.save)
         buttons.addStretch()
@@ -1355,6 +1734,14 @@ class ProjectConsoleWindow(QMainWindow):
         self.assets_page: AssetsPage | None = None
         self.readiness_page: ReadinessPage | None = None
         self.executions_page: ExecutionsPage | None = None
+        self.navigation: QListWidget | None = None
+        self.stack: QStackedWidget | None = None
+        self.logo_label: QLabel | None = None
+        self.setObjectName("projectConsole")
+        self.setStyleSheet(APP_STYLESHEET)
+        self.setFont(QFont("Segoe UI", 10))
+        if LOGO_PATH.is_file():
+            self.setWindowIcon(QIcon(str(LOGO_PATH)))
         self._update_window_title()
         self.resize(1450, 900)
         self.build()
@@ -1367,20 +1754,26 @@ class ProjectConsoleWindow(QMainWindow):
 
     def _project_bar(self) -> QFrame:
         bar = QFrame()
+        bar.setObjectName("projectBar")
         bar.setFrameShape(QFrame.Shape.StyledPanel)
         bar.setSizePolicy(
             QSizePolicy.Policy.Expanding,
             QSizePolicy.Policy.Fixed,
         )
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(8, 4, 8, 4)
-        layout.addWidget(QLabel("<b>Project</b>"))
+        layout.setContentsMargins(12, 7, 10, 7)
+        project_label = QLabel("CURRENT PROJECT")
+        project_label.setStyleSheet(
+            f"color: {COLORS['purple']}; font-size: 8.5pt; font-weight: 700;"
+        )
+        layout.addWidget(project_label)
         self.project_combo = QComboBox()
         self.project_combo.setMinimumWidth(420)
         layout.addWidget(self.project_combo, 1)
         browse = QPushButton("Open another…")
         browse.clicked.connect(self.browse_project)
         register = QPushButton("Register current")
+        register.setProperty("role", "primary")
         register.clicked.connect(self.register_current_project)
         register.setEnabled(not self.controller.read_only)
         layout.addWidget(browse)
@@ -1500,25 +1893,73 @@ class ProjectConsoleWindow(QMainWindow):
         self.assets_page = None
         self.readiness_page = None
         self.executions_page = None
+        self.notes_page = None
+        self.stack = None
         central = QWidget()
-        outer_layout = QVBoxLayout(central)
-        outer_layout.setContentsMargins(6, 6, 6, 6)
-        outer_layout.setSpacing(6)
-        outer_layout.addWidget(self._project_bar())
+        outer_layout = QHBoxLayout(central)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        sidebar = QFrame()
+        sidebar.setObjectName("sidebar")
+        sidebar.setFixedWidth(220)
+        sidebar_layout = QVBoxLayout(sidebar)
+        sidebar_layout.setContentsMargins(13, 16, 13, 13)
+        sidebar_layout.setSpacing(8)
+        self.logo_label = QLabel()
+        self.logo_label.setObjectName("brandLogo")
+        self.logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.logo_label.setMinimumHeight(83)
+        if LOGO_PATH.is_file():
+            pixmap = QPixmap(str(LOGO_PATH))
+            self.logo_label.setPixmap(
+                pixmap.scaled(
+                    188,
+                    86,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+            )
+        else:
+            self.logo_label.setText("SBT")
+        sidebar_layout.addWidget(self.logo_label)
+        brand = QLabel("PROJECT CONSOLE")
+        brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        brand.setStyleSheet("font-size: 9pt; font-weight: 700; letter-spacing: 2px;")
+        sidebar_layout.addWidget(brand)
+
+        self.navigation = QListWidget()
+        self.navigation.setObjectName("navigation")
+        self.navigation.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        sidebar_layout.addWidget(self.navigation, 1)
+        safety = QLabel(
+            "INSPECTION ONLY\nScheduler controls and scientific execution are disabled."
+        )
+        safety.setObjectName("safetyBadge")
+        safety.setWordWrap(True)
+        sidebar_layout.addWidget(safety)
+        outer_layout.addWidget(sidebar)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(16, 12, 16, 10)
+        content_layout.setSpacing(10)
+        content_layout.addWidget(self._project_bar())
         if self.controller.recovery_mode:
             self.recovery_page = RecoveryPage(
                 self.controller, self.rebuild_after_recovery
             )
-            outer_layout.addWidget(self.recovery_page, 1)
+            self.navigation.addItem("Recovery")
+            self.navigation.setCurrentRow(0)
+            content_layout.addWidget(self.recovery_page, 1)
+            outer_layout.addWidget(content, 1)
             self.setCentralWidget(central)
             self.statusBar().showMessage("Configuration recovery mode")
             return
         self.recovery_page = None
-        body = QWidget()
-        layout = QHBoxLayout(body)
-        layout.setContentsMargins(0, 0, 0, 0)
-        navigation = QListWidget()
-        stack = QStackedWidget()
+        self.stack = QStackedWidget()
         self.projects_page = ProjectsPage(
             self.controller,
             self.switch_project,
@@ -1543,14 +1984,12 @@ class ProjectConsoleWindow(QMainWindow):
         self.notes_page = NotesPage(self.controller)
         pages.extend((("Notes", self.notes_page), ("Help", HelpPage(self.controller))))
         for name, page in pages:
-            navigation.addItem(name)
-            stack.addWidget(page)
-        navigation.setFixedWidth(180)
-        navigation.currentRowChanged.connect(stack.setCurrentIndex)
-        navigation.setCurrentRow(0)
-        layout.addWidget(navigation)
-        layout.addWidget(stack, 1)
-        outer_layout.addWidget(body, 1)
+            self.navigation.addItem(name)
+            self.stack.addWidget(page)
+        self.navigation.currentRowChanged.connect(self.stack.setCurrentIndex)
+        self.navigation.setCurrentRow(0)
+        content_layout.addWidget(self.stack, 1)
+        outer_layout.addWidget(content, 1)
         self.setCentralWidget(central)
         mode = (
             "read-only" if self.controller.read_only else "config/notes writes enabled"

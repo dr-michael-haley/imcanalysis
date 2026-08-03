@@ -33,7 +33,16 @@ Connect to CSF3 with X11 forwarding enabled and verify it on the login node:
 echo "$DISPLAY"
 ```
 
-The command must print a display value. Do not launch Napari on the login node.
+For a direct SSH connection, the command should print a network-forwarded value
+such as `localhost:10.0`. A value such as `:1`, `:2`, or `unix:1` is a
+local-only desktop display. It is not sufficient for `srun-x11` unless that VNC
+desktop was explicitly started with TCP X access. Do not launch Napari on the
+login node.
+
+On Windows, the simplest supported route is a direct MobaXterm SSH session to
+`csf3.itservices.manchester.ac.uk` with **X11-forwarding** enabled under the
+session's advanced SSH settings. If working off campus, connect to the
+University VPN first.
 
 ## Request the interactive allocation
 
@@ -53,16 +62,22 @@ Inside the allocated shell, launch from either environment:
 
 ```bash
 conda activate sbt-cli
-sbt gui napari --check --project "$HOME/scratch/HyperionProject"
-sbt gui napari --project "$HOME/scratch/HyperionProject"
+cd "$HOME/scratch/HyperionProject"
+sbt gui napari --check
+sbt gui napari
 ```
+
+The launcher discovers the initialized project from the current directory or
+its parents. From elsewhere, `--project` accepts a registered project name,
+project ID, or explicit path.
 
 When `sbt-cli` does not contain Napari, the launcher automatically re-executes
 the application in the registered `sbt-napari` environment. Alternatively:
 
 ```bash
 conda activate sbt-napari
-sbt gui napari --project "$HOME/scratch/HyperionProject"
+cd "$HOME/scratch/HyperionProject"
+sbt gui napari
 ```
 
 ## Preflight checks
@@ -127,6 +142,24 @@ The original images, masks, and source AnnData remain unchanged.
 Reconnect with X11 enabled and request a new `srun-x11` session. Do not work
 around this by launching on the login node.
 
+### `Cannot use current desktop display for remote access`
+
+The current terminal is normally inside a VNC desktop whose display looks like
+`:1` and accepts only local Unix-socket connections. The compute node cannot
+send Napari's windows back to it.
+
+Preferred recovery on Windows:
+
+1. Leave the current CSF terminal; the VNC desktop itself need not be deleted.
+2. Open a direct MobaXterm SSH session to
+   `csf3.itservices.manchester.ac.uk` with X11 forwarding enabled.
+3. Confirm that `echo "$DISPLAY"` resembles `localhost:10.0` rather than `:1`.
+4. Run `srun-x11 -p interactive -t 60 -c 4` again.
+
+If the VNC route is required, restart it using the University-supported launch
+method with TCP X access enabled, as suggested by `srun-x11`. Do not expose a
+VNC/X server manually without following Research IT guidance.
+
 ### The environment cannot be found
 
 Return to the toolkit checkout and rerun:
@@ -144,9 +177,10 @@ export LIBGL_ALWAYS_INDIRECT=1
 sbt gui napari --project /path/to/project
 ```
 
-If the viewer remains slow or unstable, use the University Research Virtual
-Desktop Service so the remote graphical session has better compression and
-OpenGL compatibility.
+If the viewer remains slow or unstable, the University Research Virtual
+Desktop Service may provide better compression and OpenGL compatibility, but
+its VNC display must be started with TCP X access before `srun-x11` can reuse
+it. Otherwise use direct MobaXterm X11 forwarding.
 
 ### The allocation is too short for feature building
 

@@ -63,9 +63,13 @@ it re-executes through the centrally registered `sbt-napari` environment:
 
 ```bash
 bash install/bootstrap_napari_sbt_csf3.sh
-sbt gui napari --check --project /path/to/project
-sbt gui napari --project /path/to/project
+cd /path/to/project
+sbt gui napari --check
+sbt gui napari
 ```
+
+`--project` also accepts a registered project name, project ID, or explicit
+path when launching from elsewhere.
 
 The preflight is side-effect free and supports `--check-format json`. On CSF3,
 run these commands only after entering an X11-enabled interactive allocation.

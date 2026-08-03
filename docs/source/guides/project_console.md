@@ -139,8 +139,31 @@ constructs a live scheduler query.
 
 ## Configuration safety
 
-The structured editor distinguishes explicit YAML values from inherited model
-defaults. Saving performs all of the following:
+The structured editor makes configuration provenance visible at a glance:
+
+- **grey — inherited default:** the field is not stored in `config.yaml`; SBT is
+  supplying the displayed model default;
+- **blue — stored override:** the displayed value is explicitly present in the
+  project `config.yaml`;
+- **gold — unsaved change:** the displayed proposal differs from the file on
+  disk;
+- **pink — pending reset:** saving will remove the stored key and return the
+  field to its inherited default.
+
+The summary strip reports how many individual overrides and sections are
+actually on disk, how many values remain inherited, and how many changes are
+staged. The origin filter can show all values, only customised values, only
+inherited defaults, or only unsaved changes. These controls are independent of
+the existing stage/mode, expertise-level, and text-search filters.
+
+Use **Prepare an unconfigured section** or a **Prepare stage/mode** scope to
+navigate fields needed for future work. Opening a section does not write it and
+does not copy all defaults into YAML. Change only the fields the project needs;
+on save, those individual overrides are added while untouched values continue
+to inherit canonical defaults. This keeps adopted and partially prepared
+projects compact without preventing advance configuration.
+
+Saving performs all of the following:
 
 1. validates the complete proposed Pydantic configuration;
 2. preserves unknown legacy sections and keys;
@@ -169,7 +192,8 @@ trapped in the broken project.
 - **Stages & modes** renders the typed registry, direct/advisory requirements,
   typical lineage, and shared Markdown explainers.
 - **Configuration** provides stage/section-aware schema controls, search, level
-  filters, advice, constraints, diff, backup, and audit.
+  and provenance filters, colour-coded stored/default/staged state, preparation
+  navigation, advice, constraints, diff, backup, and audit.
 - **Assets** computes paths, lifecycle, presence, producer stages, and blocking
   consumer stages without recursively scanning the project.
 - **Readiness** compares the three upstream policies and displays blocking

@@ -120,14 +120,29 @@ def run_preflight(
 
     display = os.environ.get("DISPLAY")
     if sys.platform.startswith("linux"):
+        local_only_display = bool(
+            display and display.startswith((":", "unix:"))
+        )
         checks.append(
             PreflightCheck(
                 "X11 display",
-                "ok" if display else "error",
+                "error" if not display or local_only_display else "ok",
                 (
-                    f"DISPLAY={display}"
-                    if display
-                    else "DISPLAY is unset; reconnect with X11 and use srun-x11."
+                    (
+                        f"DISPLAY={display} is local-only. CSF3 srun-x11 cannot "
+                        "forward it to a compute node unless the VNC desktop was "
+                        "started with TCP X access. Reconnect directly with X11 "
+                        "forwarding or use the supported VNC launch configuration."
+                    )
+                    if local_only_display
+                    else (
+                        f"DISPLAY={display}"
+                        if display
+                        else (
+                            "DISPLAY is unset; reconnect with X11 and use "
+                            "srun-x11."
+                        )
+                    )
                 ),
             )
         )
