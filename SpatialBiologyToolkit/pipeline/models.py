@@ -327,6 +327,9 @@ class RunManifest(PipelineModel):
     hostname: str | None = None
     username: str | None = None
     executions: list[ExecutionReference] = Field(default_factory=list)
+    plan_token_digest: str | None = None
+    provenance_digest: str | None = None
+    provenance_file: Path | None = None
 
 
 class SubmissionRecord(PipelineModel):

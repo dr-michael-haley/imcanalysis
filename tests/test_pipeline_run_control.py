@@ -241,6 +241,20 @@ class RunControlTests(unittest.TestCase):
                 {stage.stage: stage.status for stage in report.stages},
                 {"debug": "running", "config": "completed"},
             )
+            completed_at = next(
+                item.completed_at
+                for item in execution_summaries(context)
+                if item.stage == "config"
+            )
+            inspect_run_status(context, run.run_dir, runner=status_runner)
+            self.assertEqual(
+                next(
+                    item.completed_at
+                    for item in execution_summaries(context)
+                    if item.stage == "config"
+                ),
+                completed_at,
+            )
 
     def test_failed_afterok_dependency_marks_pending_stage_blocked(self):
         with tempfile.TemporaryDirectory() as temp_dir:

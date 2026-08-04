@@ -12,11 +12,12 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from SpatialBiologyToolkit.config.export import write_resolved_config
 
 from .assets import inventory_assets
+from .control import persist_provenance
 from .manifests import read_model, utc_now, write_yaml
 from .executions import (
     allocate_executions,
@@ -103,6 +104,11 @@ def create_run_record(
     run_id: str | None = None,
     reason: str | None = None,
     notes: Iterable[str] = (),
+    plan_token_digest: str | None = None,
+    provenance_digest: str | None = None,
+    provenance_file: Path | None = None,
+    provenance_payload: dict[str, Any] | None = None,
+    technical_run_ids: list[str] | None = None,
 ) -> RunRecord:
     if not plan.ready:
         raise ValueError("Cannot create a submitted run record for an invalid plan.")
@@ -120,12 +126,19 @@ def create_run_record(
     resolved_config_path = run_dir / RESOLVED_CONFIG
     copy_user_config(context, user_config_path)
     write_resolved_config(context.config, resolved_config_path)
+    if provenance_payload is not None:
+        provenance_path, provenance_digest = persist_provenance(
+            run_dir,
+            provenance_payload,
+        )
+        provenance_file = provenance_path.relative_to(run_dir)
 
     try:
         executions = allocate_executions(
             context,
             [stage.name for stage in plan.resolved_stages],
             workflow_run_id=workflow_run_id,
+            technical_run_ids=technical_run_ids,
         )
     except Exception:
         # Allocation is the first operation that links this technical workflow to
@@ -153,6 +166,9 @@ def create_run_record(
         hostname=socket.gethostname(),
         username=getpass.getuser(),
         executions=[execution_reference(record) for record in executions],
+        plan_token_digest=plan_token_digest,
+        provenance_digest=provenance_digest,
+        provenance_file=provenance_file,
     )
     write_yaml(run_dir / RUN_MANIFEST, manifest)
     write_yaml(run_dir / RUN_PLAN, plan)
@@ -199,6 +215,8 @@ def prospective_run_record(
     command: str = "",
     reason: str | None = None,
     notes: Iterable[str] = (),
+    plan_token_digest: str | None = None,
+    technical_run_ids: list[str] | None = None,
 ) -> RunRecord:
     """Build run paths for a dry run without creating files or directories."""
     workflow_run_id = run_id or new_run_id()
@@ -208,6 +226,7 @@ def prospective_run_record(
         context,
         [stage.name for stage in plan.resolved_stages],
         workflow_run_id=workflow_run_id,
+        technical_run_ids=technical_run_ids,
     )
     manifest = RunManifest(
         run_id=workflow_run_id,
@@ -228,6 +247,7 @@ def prospective_run_record(
         hostname=socket.gethostname(),
         username=getpass.getuser(),
         executions=[execution_reference(record) for record in executions],
+        plan_token_digest=plan_token_digest,
     )
     return RunRecord(
         workflow_run_id=workflow_run_id,
@@ -281,6 +301,19 @@ def load_submitted_jobs(run_dir: str | Path) -> SubmittedJobs:
     return read_model(Path(run_dir) / SUBMITTED_JOBS, SubmittedJobs)
 
 
+def find_run_by_plan_token_digest(
+    context: ProjectContext,
+    digest: str,
+) -> tuple[Path, RunManifest, SubmittedJobs] | None:
+    """Resolve an already-created workflow for idempotent gateway retries."""
+
+    for run_dir in reversed(list_run_directories(context)):
+        manifest = load_run_manifest(run_dir)
+        if manifest.plan_token_digest == digest:
+            return run_dir, manifest, load_submitted_jobs(run_dir)
+    return None
+
+
 __all__ = [
     "ASSETS_BEFORE",
     "COMMAND_FILE",
@@ -295,6 +328,7 @@ __all__ = [
     "USER_CONFIG",
     "command_text",
     "create_run_record",
+    "find_run_by_plan_token_digest",
     "list_run_directories",
     "load_run_manifest",
     "load_run_plan",

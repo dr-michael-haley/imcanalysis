@@ -299,7 +299,10 @@ def inspect_run_status(
             continue
         if status == "running" and current.started_at is None:
             changes["started_at"] = utc_now()
-        if status in {"completed", "failed", "cancelled", "blocked"}:
+        if (
+            status in {"completed", "failed", "cancelled", "blocked"}
+            and current.completed_at is None
+        ):
             changes["completed_at"] = utc_now()
         try:
             update_execution(context, stage.technical_run_id, **changes)

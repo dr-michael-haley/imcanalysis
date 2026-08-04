@@ -287,6 +287,20 @@ sbt run segmentation --dry-run
 Dry runs create no persistent run record and submit no jobs. Displayed run paths
 are prospective only.
 
+Machine-readable dry runs also return a short-lived state-bound preview token
+and action receipt:
+
+```bash
+sbt run segmentation --dry-run --format json
+```
+
+Directory-independent integrations submit the unchanged plan with
+`--plan-token` and send bounded decision provenance through
+`--provenance-stdin`. SBT rejects an expired token or any change to project ID,
+configuration, resolved stages, dependency policy, or execution index. Reusing
+a token after a successful submission returns the original run idempotently
+rather than creating duplicate jobs.
+
 Submit:
 
 ```bash
@@ -403,6 +417,56 @@ state.
 
 Logs are resolved from recorded paths and tailed from the end of each file;
 large directory trees are not scanned.
+
+## Owned queue and guarded cancellation
+
+```bash
+sbt squeue
+sbt squeue --job 12345678 --format json
+sbt cancel 12345678 --reason "Submitted with incorrect parameters" --dry-run
+sbt cancel 004 --project "My cohort" --reason "Terminal input failure" --dry-run
+```
+
+`sbt squeue` asks SLURM only for jobs owned by the current account. Its output
+contains exact job IDs and bounded state/resource metadata, but never a
+username. It marks jobs linked to registered SBT executions while retaining
+other jobs owned by the same user so pipeline operation can account for them.
+
+Cancellation always starts with `--dry-run`. The preview returns a five-minute
+token bound to the job identity, state, project/execution association, and
+reason. Pending jobs do not automatically require another confirmation;
+running, completing, and stage-out jobs do. The execution call rechecks current
+ownership/state before invoking `scancel` internally and writes a cancellation
+audit. Without `--project`, only an exact numeric job ID (optionally an array
+task) is accepted.
+
+## Verified transfer, ZIP, upload, and backup
+
+```bash
+sbt transfer list --project "My cohort" --format json
+sbt artifacts list 004 --project "My cohort" --format json
+sbt transfer preview-download ITEM_ID --project "My cohort" --format json
+sbt zip ITEM_ID ITEM_ID --project "My cohort" --dry-run --format json
+```
+
+Transfer commands accept stable item IDs, never caller-selected project paths.
+Folders and multiple items should use `sbt zip`; bundles are ZIP64 and contain a
+transfer manifest. Preparation calculates size/count, rejects links and special
+files, and requires `--allow-large-transfer` above 3 GiB. SBT records the final
+size and SHA-256 for SFTP verification.
+
+Uploads use a preview, isolated staging target, and commit sequence. Metadata
+accepts files or folders. A file uploaded directly to the project root must be
+`.h5ad`; commit verifies its HDF5 signature. Existing destinations require an
+explicit overwrite preview, are moved to a verified `.sbt/backups` record, and
+only then are replaced atomically. `sbt transfer backups` lists recovery IDs;
+`sbt transfer restore BACKUP --dry-run` produces the state-bound token required
+for restore. Restoration retains the selected backup and backs up any displaced
+current data. No transfer command deletes project files.
+
+All gateway-facing JSON operations return an action receipt which lists each
+action, its justification, outcome, evidence, warnings, and whether state
+changed.
 
 Remove a visible execution with `sbt remove 003`. The command confirms the
 identity and output path, warns again for created, modified, or unknown reusable

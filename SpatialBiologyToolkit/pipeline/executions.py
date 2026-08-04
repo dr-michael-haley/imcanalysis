@@ -244,7 +244,10 @@ def preview_executions(
     stages: list[str],
     *,
     workflow_run_id: str,
+    technical_run_ids: list[str] | None = None,
 ) -> list[ExecutionRecord]:
+    if technical_run_ids is not None and len(technical_run_ids) != len(stages):
+        raise ValueError("Technical execution identity count does not match stages.")
     index = load_execution_index(context)
     start = len(index.executions) + 1
     now = utc_now()
@@ -255,6 +258,7 @@ def preview_executions(
             stage=stage,
             workflow_run_id=workflow_run_id,
             created_at=now,
+            technical_run_id=(technical_run_ids[offset] if technical_run_ids else None),
         )
         for offset, stage in enumerate(stages)
     ]
@@ -265,9 +269,12 @@ def allocate_executions(
     stages: list[str],
     *,
     workflow_run_id: str,
+    technical_run_ids: list[str] | None = None,
 ) -> list[ExecutionRecord]:
     if not stages:
         return []
+    if technical_run_ids is not None and len(technical_run_ids) != len(stages):
+        raise ValueError("Technical execution identity count does not match stages.")
     with execution_lock(context):
         if has_legacy_execution_layout(context):
             raise ExecutionLayoutError(
@@ -289,6 +296,7 @@ def allocate_executions(
                 stage=stage,
                 workflow_run_id=workflow_run_id,
                 created_at=now,
+                technical_run_id=(technical_run_ids[offset] if technical_run_ids else None),
             )
             for offset, stage in enumerate(stages)
         ]

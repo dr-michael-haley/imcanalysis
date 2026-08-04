@@ -32,6 +32,16 @@ from SpatialBiologyToolkit.pipeline.assets import (
     count_raw_imc_files,
     resolve_assets,
 )
+from SpatialBiologyToolkit.pipeline.control import (
+    ActionRecord,
+    action_receipt_payload,
+    canonical_digest,
+    make_preview_token,
+    preview_run_identities,
+    read_provenance_stdin,
+    run_preview_snapshot,
+    validate_preview_token,
+)
 from SpatialBiologyToolkit.pipeline.logs import resolve_run_logs, tail_text
 from SpatialBiologyToolkit.pipeline.manifests import (
     format_machine_output,
@@ -81,6 +91,7 @@ from SpatialBiologyToolkit.pipeline.runs import (
     STATUS_FILE,
     command_text,
     create_run_record,
+    find_run_by_plan_token_digest,
     list_run_directories,
     prospective_run_record,
     resolve_run_directory,
@@ -90,7 +101,22 @@ from SpatialBiologyToolkit.pipeline.slurm import (
     preview_submission_commands,
     submit_run,
 )
+from SpatialBiologyToolkit.pipeline.scheduler import (
+    cancel_job,
+    list_user_jobs,
+    preview_cancellation,
+)
 from SpatialBiologyToolkit.pipeline.status import inspect_run_status
+from SpatialBiologyToolkit.pipeline.transfers import (
+    commit_upload,
+    list_backups,
+    list_transfer_items,
+    prepare_download,
+    prepare_upload,
+    preview_download,
+    preview_upload,
+    restore_backup,
+)
 
 
 class OutputFormat(str, Enum):
@@ -137,12 +163,18 @@ env_app = typer.Typer(
 gui_app = typer.Typer(
     help="Launch optional interactive desktop applications in subprocesses."
 )
+transfer_app = typer.Typer(help="Preview and prepare guarded project file transfers.")
+artifacts_app = typer.Typer(help="List stable execution artifacts for transfer.")
+gateway_app = typer.Typer(help="Describe the structured gateway control contract.")
 app.add_typer(config_app, name="config")
 app.add_typer(project_app, name="project")
 app.add_typer(stages_app, name="stages")
 app.add_typer(modes_app, name="modes")
 app.add_typer(env_app, name="env")
 app.add_typer(gui_app, name="gui")
+app.add_typer(transfer_app, name="transfer")
+app.add_typer(artifacts_app, name="artifacts")
+app.add_typer(gateway_app, name="gateway")
 
 
 def _project_gui_bootstrap_hint() -> str:
@@ -1579,6 +1611,353 @@ def env_test(
         raise typer.Exit(1)
 
 
+@gateway_app.command("capabilities")
+def gateway_capabilities_command(
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+) -> None:
+    payload = {
+        "schema_version": 1,
+        "protocol_version": "0.2",
+        "operations": [
+            "list_projects",
+            "describe_project",
+            "validate_project",
+            "list_assets",
+            "list_stages",
+            "list_modes",
+            "project_summary",
+            "execution_status",
+            "execution_logs",
+            "execution_report",
+            "plan_pipeline",
+            "preview_run",
+            "submit_run",
+            "scheduler_queue",
+            "preview_cancel",
+            "cancel_job",
+            "list_artifacts",
+            "list_transfer_items",
+            "preview_download",
+            "prepare_download",
+            "preview_upload",
+            "prepare_upload",
+            "commit_upload",
+            "list_backups",
+            "preview_restore_backup",
+            "restore_backup",
+            "zip",
+        ],
+        "invariants": {
+            "project_registry_resolution": True,
+            "structured_json": True,
+            "state_bound_preview_tokens": True,
+            "decision_provenance": True,
+            "action_receipts": True,
+            "current_user_scheduler_scope": True,
+            "remote_delete_exposed": False,
+            "upload_backup_before_overwrite": True,
+            "large_transfer_threshold_bytes": 3 * 1024**3,
+        },
+    }
+    if output_format != OutputFormat.text:
+        _emit_machine(payload, output_format)
+        return
+    typer.echo("SBT gateway protocol 0.2")
+    for operation in payload["operations"]:
+        typer.echo(f"  - {operation}")
+
+
+@transfer_app.command("list")
+def transfer_list_command(
+    project: Path | None = typer.Option(None, "--project"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+) -> None:
+    try:
+        context = _project(project)
+        items = list_transfer_items(context)
+    except Exception as exc:
+        _fail(exc)
+    payload = {
+        "schema_version": 1,
+        "project_id": context.project_metadata.project_id,
+        "items": [item.model_dump(mode="json") for item in items],
+        "action_receipt": action_receipt_payload(
+            operation="list_transfer_items",
+            target=context.project_metadata.project_id,
+            actions=[
+                ActionRecord(
+                    action="Listed bounded project files and assets with stable transfer IDs",
+                    justification="Transfers must select SBT-resolved items rather than remote paths.",
+                    outcome="succeeded",
+                    evidence=[f"items={len(items)}"],
+                )
+            ],
+        ),
+    }
+    if output_format != OutputFormat.text:
+        _emit_machine(payload, output_format)
+        return
+    for item in items:
+        typer.echo(
+            f"{item.item_id}  {item.kind:<9} {item.size_bytes:>12}  {item.relative_path}"
+        )
+
+
+@artifacts_app.command("list")
+def artifacts_list_command(
+    execution: str = typer.Argument(...),
+    project: Path | None = typer.Option(None, "--project"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+) -> None:
+    try:
+        context = _project(project)
+        selected = resolve_execution(context, execution)
+        output_relative = execution_output_path(context, selected).relative_to(context.root).as_posix()
+        items = [
+            item
+            for item in list_transfer_items(context)
+            if item.relative_path == output_relative
+            or item.relative_path.startswith(output_relative + "/")
+        ]
+    except Exception as exc:
+        _fail(exc)
+    payload = {
+        "schema_version": 1,
+        "project_id": context.project_metadata.project_id,
+        "execution": selected.execution_label,
+        "items": [item.model_dump(mode="json") for item in items],
+    }
+    if output_format != OutputFormat.text:
+        _emit_machine(payload, output_format)
+        return
+    for item in items:
+        typer.echo(f"{item.item_id}  {item.relative_path}")
+
+
+@transfer_app.command("preview-download")
+def transfer_preview_download_command(
+    item_ids: list[str] = typer.Argument(...),
+    project: Path | None = typer.Option(None, "--project"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+) -> None:
+    try:
+        context = _project(project)
+        payload = preview_download(context, item_ids)
+    except Exception as exc:
+        _fail(exc)
+    if output_format != OutputFormat.text:
+        _emit_machine(payload, output_format)
+        return
+    typer.echo(f"Items: {len(payload['items'])}")
+    typer.echo(f"Files: {payload['file_count']}")
+    typer.echo(f"Bytes: {payload['total_bytes']}")
+    typer.echo(
+        f"Large-transfer permission required: {payload['requires_large_transfer_permission']}"
+    )
+    typer.echo(f"Preview token: {payload['preview_token']}")
+
+
+@transfer_app.command("prepare-download")
+def transfer_prepare_download_command(
+    item_ids: list[str] = typer.Argument(...),
+    project: Path | None = typer.Option(None, "--project"),
+    plan_token: str = typer.Option(..., "--plan-token"),
+    allow_large_transfer: bool = typer.Option(False, "--allow-large-transfer"),
+    bundle_name: str | None = typer.Option(None, "--bundle-name"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+) -> None:
+    try:
+        context = _project(project)
+        payload = prepare_download(
+            context,
+            item_ids,
+            preview_token=plan_token,
+            allow_large_transfer=allow_large_transfer,
+            bundle_name=bundle_name,
+        )
+    except Exception as exc:
+        _fail(exc)
+    if output_format != OutputFormat.text:
+        _emit_machine(payload, output_format)
+        return
+    typer.echo(f"Prepared transfer {payload['transfer_id']}: {payload['download_name']}")
+
+
+@app.command("zip", help="Create a verified ZIP64 bundle from stable transfer item IDs.")
+def zip_command(
+    item_ids: list[str] = typer.Argument(...),
+    project: Path | None = typer.Option(None, "--project"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    plan_token: str | None = typer.Option(None, "--plan-token"),
+    name: str | None = typer.Option(None, "--name"),
+    allow_large_transfer: bool = typer.Option(False, "--allow-large-transfer"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+) -> None:
+    try:
+        context = _project(project)
+        if dry_run:
+            payload = preview_download(context, item_ids)
+        else:
+            if not plan_token:
+                raise ValueError("sbt zip requires a token from sbt zip --dry-run.")
+            payload = prepare_download(
+                context,
+                item_ids,
+                preview_token=plan_token,
+                allow_large_transfer=allow_large_transfer,
+                bundle_name=name,
+                force_bundle=True,
+            )
+    except Exception as exc:
+        _fail(exc)
+    if output_format != OutputFormat.text:
+        _emit_machine(payload, output_format)
+        return
+    if dry_run:
+        typer.echo(f"Bundle bytes: {payload['total_bytes']}")
+        typer.echo(f"Preview token: {payload['preview_token']}")
+    else:
+        typer.echo(f"Created bundle {payload['transfer_id']}: {payload['download_name']}")
+
+
+@transfer_app.command("preview-upload")
+def transfer_preview_upload_command(
+    name: str = typer.Option(..., "--name"),
+    destination: str = typer.Option(..., "--destination"),
+    kind: str = typer.Option("file", "--kind"),
+    size_bytes: int = typer.Option(..., "--size-bytes", min=0),
+    sha256: str = typer.Option(..., "--sha256"),
+    overwrite: bool = typer.Option(False, "--overwrite"),
+    project: Path | None = typer.Option(None, "--project"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+) -> None:
+    if kind not in {"file", "directory"}:
+        _fail("--kind must be file or directory.")
+    try:
+        context = _project(project)
+        payload = preview_upload(
+            context,
+            name=name,
+            destination=destination,
+            kind=kind,  # type: ignore[arg-type]
+            size_bytes=size_bytes,
+            sha256=sha256,
+            overwrite=overwrite,
+        )
+    except Exception as exc:
+        _fail(exc)
+    if output_format != OutputFormat.text:
+        _emit_machine(payload, output_format)
+        return
+    typer.echo(f"Destination: {payload['target_relative']}")
+    typer.echo(f"Backup required: {payload['backup_required']}")
+    typer.echo(f"Preview token: {payload['preview_token']}")
+
+
+@transfer_app.command("prepare-upload")
+def transfer_prepare_upload_command(
+    name: str = typer.Option(..., "--name"),
+    destination: str = typer.Option(..., "--destination"),
+    kind: str = typer.Option("file", "--kind"),
+    size_bytes: int = typer.Option(..., "--size-bytes", min=0),
+    sha256: str = typer.Option(..., "--sha256"),
+    overwrite: bool = typer.Option(False, "--overwrite"),
+    plan_token: str = typer.Option(..., "--plan-token"),
+    allow_large_transfer: bool = typer.Option(False, "--allow-large-transfer"),
+    project: Path | None = typer.Option(None, "--project"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+) -> None:
+    if kind not in {"file", "directory"}:
+        _fail("--kind must be file or directory.")
+    try:
+        context = _project(project)
+        payload = prepare_upload(
+            context,
+            name=name,
+            destination=destination,
+            kind=kind,  # type: ignore[arg-type]
+            size_bytes=size_bytes,
+            sha256=sha256,
+            overwrite=overwrite,
+            preview_token=plan_token,
+            allow_large_transfer=allow_large_transfer,
+        )
+    except Exception as exc:
+        _fail(exc)
+    if output_format != OutputFormat.text:
+        _emit_machine(payload, output_format)
+        return
+    typer.echo(f"Prepared upload staging: {payload['transfer_id']}")
+
+
+@transfer_app.command("commit-upload")
+def transfer_commit_upload_command(
+    transfer_id: str = typer.Argument(...),
+    project: Path | None = typer.Option(None, "--project"),
+    provenance_stdin: bool = typer.Option(False, "--provenance-stdin"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+) -> None:
+    try:
+        context = _project(project)
+        provenance = read_provenance_stdin() if provenance_stdin else None
+        payload = commit_upload(context, transfer_id, provenance=provenance)
+    except Exception as exc:
+        _fail(exc)
+    if output_format != OutputFormat.text:
+        _emit_machine(payload, output_format)
+        return
+    typer.echo(f"Upload {transfer_id}: {payload['status']}")
+
+
+@transfer_app.command("backups")
+def transfer_backups_command(
+    project: Path | None = typer.Option(None, "--project"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+) -> None:
+    try:
+        context = _project(project)
+        backups = list_backups(context)
+    except Exception as exc:
+        _fail(exc)
+    payload = {"schema_version": 1, "backups": backups}
+    if output_format != OutputFormat.text:
+        _emit_machine(payload, output_format)
+        return
+    for backup in backups:
+        typer.echo(f"{backup['backup_id']}  {backup['target_relative']}")
+
+
+@transfer_app.command("restore")
+def transfer_restore_command(
+    backup_id: str = typer.Argument(...),
+    project: Path | None = typer.Option(None, "--project"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    plan_token: str | None = typer.Option(None, "--plan-token"),
+    provenance_stdin: bool = typer.Option(False, "--provenance-stdin"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+) -> None:
+    try:
+        context = _project(project)
+        provenance = read_provenance_stdin() if provenance_stdin else None
+        payload = restore_backup(
+            context,
+            backup_id,
+            dry_run=dry_run,
+            preview_token=plan_token,
+            provenance=provenance,
+        )
+    except Exception as exc:
+        _fail(exc)
+    if output_format != OutputFormat.text:
+        _emit_machine(payload, output_format)
+        return
+    typer.echo(
+        f"Backup {backup_id}: " + ("previewed" if dry_run else "restored")
+    )
+    if dry_run:
+        typer.echo(f"Preview token: {payload['preview_token']}")
+
+
 @app.command(
     "plan",
     help="Validate and preview stages, dependencies, assets, and readiness.",
@@ -1646,6 +2025,17 @@ def run_command(
         "--note",
         help="Optional repeatable run note recorded in run and stage reports.",
     ),
+    plan_token: str | None = typer.Option(
+        None,
+        "--plan-token",
+        help="Submit only if this short-lived dry-run token still matches project state.",
+    ),
+    provenance_stdin: bool = typer.Option(
+        False,
+        "--provenance-stdin",
+        help="Read bounded decision provenance JSON from standard input.",
+    ),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
 ) -> None:
     if no_deps and dependency_policy != DependencyPolicyOption.assets:
         _fail("--no-deps cannot be combined with --dependency-policy.")
@@ -1665,13 +2055,68 @@ def run_command(
 
     command = command_text(sys.argv)
     if dry_run:
+        snapshot = run_preview_snapshot(context, plan, reason=reason)
+        preview_token = make_preview_token(snapshot)
+        workflow_run_id, technical_run_ids = preview_run_identities(
+            preview_token,
+            len(plan.resolved_stages),
+        )
         run = prospective_run_record(
             context,
             plan,
+            run_id=workflow_run_id,
             command=command,
             reason=reason,
             notes=note,
+            plan_token_digest=canonical_digest(preview_token),
+            technical_run_ids=technical_run_ids,
         )
+        previews = preview_submission_commands(context, plan, run)
+        receipt = action_receipt_payload(
+            operation="preview_run",
+            target=context.project_metadata.project_id,
+            actions=[
+                ActionRecord(
+                    action="Validated and planned the requested pipeline targets",
+                    justification=reason or "A pipeline preview was requested before submission.",
+                    outcome="succeeded",
+                    evidence=[
+                        f"resolved_stages={','.join(item.name for item in plan.resolved_stages)}",
+                        f"dependency_policy={plan.dependency_policy}",
+                    ],
+                ),
+                ActionRecord(
+                    action="Created a short-lived state-bound submission token",
+                    justification=(
+                        "Submission must be rejected if configuration, assets, or "
+                        "execution state changes."
+                    ),
+                    outcome="succeeded",
+                ),
+            ],
+            warnings=plan.warnings,
+        )
+        if output_format != OutputFormat.text:
+            _emit_machine(
+                {
+                    "schema_version": 1,
+                    "project_id": context.project_metadata.project_id,
+                    "preview_token": preview_token,
+                    "preview_expires_in_seconds": 900,
+                    "plan": plan.model_dump(mode="json"),
+                    "prospective_workflow_run_id": run.workflow_run_id,
+                    "prospective_executions": [
+                        item.model_dump(mode="json") for item in run.executions
+                    ],
+                    "submission_commands": [
+                        {"argv": arguments, "environment": exported}
+                        for arguments, exported in previews
+                    ],
+                    "action_receipt": receipt,
+                },
+                output_format,
+            )
+            return
         _print_plan(plan)
         typer.echo("")
         typer.echo(f"Prospective workflow run ID: {run.workflow_run_id}")
@@ -1685,7 +2130,7 @@ def run_command(
         typer.echo(f"Resolved config path: {run.resolved_config_path}")
         typer.echo("")
         typer.echo("Exact submission preview")
-        for arguments, exported in preview_submission_commands(context, plan, run):
+        for arguments, exported in previews:
             typer.echo(f"  {command_text(arguments)}")
             typer.echo(
                 "    env: "
@@ -1695,7 +2140,66 @@ def run_command(
         typer.echo(
             "Dry run complete: no run directory was created and no jobs were submitted."
         )
+        typer.echo(f"Preview token: {preview_token}")
         return
+
+    provenance_payload: dict[str, Any] | None = None
+    if provenance_stdin:
+        try:
+            provenance_payload = read_provenance_stdin()
+        except Exception as exc:
+            _fail(exc)
+
+    token_digest: str | None = None
+    planned_run_id: str | None = None
+    planned_technical_ids: list[str] | None = None
+    if plan_token:
+        try:
+            validate_preview_token(
+                plan_token,
+                run_preview_snapshot(context, plan, reason=reason),
+            )
+        except Exception as exc:
+            _fail(exc)
+        token_digest = canonical_digest(plan_token)
+        planned_run_id, planned_technical_ids = preview_run_identities(
+            plan_token,
+            len(plan.resolved_stages),
+        )
+        existing = find_run_by_plan_token_digest(context, token_digest)
+        if existing is not None:
+            existing_dir, existing_manifest, existing_submitted = existing
+            receipt = action_receipt_payload(
+                operation="submit_run",
+                target=context.project_metadata.project_id,
+                actions=[
+                    ActionRecord(
+                        action="Returned the existing submission for a used preview token",
+                        justification=(
+                            "Submission retries are idempotent and must not create "
+                            "duplicate SLURM jobs."
+                        ),
+                        outcome="skipped",
+                        evidence=[f"workflow_run_id={existing_manifest.run_id}"],
+                    )
+                ],
+            )
+            payload = {
+                "schema_version": 1,
+                "idempotent_replay": True,
+                "workflow_run_id": existing_manifest.run_id,
+                "technical_record": str(existing_dir),
+                "submitted": existing_submitted.model_dump(mode="json"),
+                "action_receipt": receipt,
+            }
+            if output_format != OutputFormat.text:
+                _emit_machine(payload, output_format)
+            else:
+                typer.echo(
+                    "Submission already exists for this preview: "
+                    f"{existing_manifest.run_id}"
+                )
+            return
 
     try:
         _ensure_run_environments([stage.name for stage in plan.resolved_stages])
@@ -1703,8 +2207,12 @@ def run_command(
             context,
             plan,
             command=command,
+            run_id=planned_run_id,
             reason=reason,
             notes=note,
+            plan_token_digest=token_digest,
+            provenance_payload=provenance_payload,
+            technical_run_ids=planned_technical_ids,
         )
         submitted = submit_run(context, plan, run)
     except SubmissionError as exc:
@@ -1712,6 +2220,41 @@ def run_command(
         _fail(exc, code=1)
     except Exception as exc:
         _fail(exc, code=1)
+
+    receipt = action_receipt_payload(
+        operation="submit_run",
+        target=context.project_metadata.project_id,
+        actions=[
+            ActionRecord(
+                action="Revalidated the pipeline plan and preview token",
+                justification=reason or "The requested stages were ready for submission.",
+                outcome="succeeded",
+                evidence=[f"dependency_policy={plan.dependency_policy}"],
+            ),
+            ActionRecord(
+                action=f"Submitted {len(submitted.jobs)} stage job(s) to SLURM",
+                justification="The validated pipeline plan was authorized for execution.",
+                outcome="succeeded",
+                state_changed=True,
+                evidence=[f"workflow_run_id={run.workflow_run_id}"],
+            ),
+        ],
+        warnings=plan.warnings,
+    )
+    if output_format != OutputFormat.text:
+        _emit_machine(
+            {
+                "schema_version": 1,
+                "idempotent_replay": False,
+                "workflow_run_id": run.workflow_run_id,
+                "technical_record": str(run.run_dir),
+                "executions": [item.model_dump(mode="json") for item in run.executions],
+                "submitted": submitted.model_dump(mode="json"),
+                "action_receipt": receipt,
+            },
+            output_format,
+        )
+        return
 
     typer.echo(f"Submitted workflow: {run.workflow_run_id}")
     typer.echo(f"Technical record: {run.run_dir}")
@@ -1730,6 +2273,92 @@ def run_command(
     typer.echo(f"  sbt status {first} --project {context.root}")
     typer.echo(f"  sbt logs {first} --project {context.root}")
     typer.echo(f"  sbt summary --project {context.root}")
+
+
+@app.command(
+    "squeue",
+    help="List a bounded view of SLURM jobs owned by the current user.",
+)
+def squeue_command(
+    job_id: str | None = typer.Option(None, "--job"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+) -> None:
+    try:
+        snapshot = list_user_jobs(job_id=job_id)
+    except Exception as exc:
+        _fail(exc)
+    receipt = action_receipt_payload(
+        operation="squeue",
+        target=job_id,
+        actions=[
+            ActionRecord(
+                action="Listed SLURM jobs owned by the current user",
+                justification="Queue awareness is required to monitor pipeline and other owned jobs.",
+                outcome="succeeded",
+                evidence=[f"jobs={len(snapshot.jobs)}"],
+            )
+        ],
+    )
+    if output_format != OutputFormat.text:
+        _emit_machine(
+            {
+                **snapshot.model_dump(mode="json"),
+                "action_receipt": receipt,
+            },
+            output_format,
+        )
+        return
+    typer.echo(f"{'JOB ID':<16} {'STATE':<12} {'PARTITION':<14} {'SBT':<4} NAME")
+    for job in snapshot.jobs:
+        typer.echo(
+            f"{job.job_id:<16} {job.state:<12} {(job.partition or '-'):<14} "
+            f"{('yes' if job.sbt_managed else 'no'):<4} {job.name}"
+        )
+
+
+@app.command(
+    "cancel",
+    help="Preview or cancel one exact current-user SLURM job or SBT execution.",
+)
+def cancel_command(
+    reference: str = typer.Argument(..., help="Job ID, or execution ID with --project."),
+    project: Path | None = typer.Option(None, "--project"),
+    reason: str = typer.Option(..., "--reason"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    plan_token: str | None = typer.Option(None, "--plan-token"),
+    provenance_stdin: bool = typer.Option(False, "--provenance-stdin"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+) -> None:
+    try:
+        context = _project(project) if project is not None else None
+        if dry_run:
+            payload = preview_cancellation(reference, reason=reason, context=context)
+        else:
+            if not plan_token:
+                raise ValueError(
+                    "Cancellation requires a preview token from sbt cancel --dry-run."
+                )
+            provenance = read_provenance_stdin() if provenance_stdin else None
+            payload = cancel_job(
+                reference,
+                reason=reason,
+                preview_token=plan_token,
+                context=context,
+                provenance=provenance,
+            )
+    except Exception as exc:
+        _fail(exc)
+    if output_format != OutputFormat.text:
+        _emit_machine(payload, output_format)
+        return
+    if dry_run:
+        job = payload["job"]
+        typer.echo(f"Cancellation preview for job {job['job_id']} ({job['state']})")
+        typer.echo(f"Reason: {reason}")
+        typer.echo(f"Confirmation required: {payload['confirmation_required']}")
+        typer.echo(f"Preview token: {payload['preview_token']}")
+    else:
+        typer.echo(f"Job {payload['job_id']}: {payload['outcome']}")
 
 
 @app.command(
@@ -1809,6 +2438,7 @@ def logs_command(
     stderr: bool = typer.Option(False, "--stderr"),
     tail: int = typer.Option(40, "--tail", min=0),
     path_only: bool = typer.Option(False, "--path-only"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
 ) -> None:
     include_stdout = stdout or not stderr
     include_stderr = stderr or not stdout
@@ -1833,6 +2463,26 @@ def logs_command(
         )
     except Exception as exc:
         _fail(exc)
+    if output_format != OutputFormat.text:
+        _emit_machine(
+            {
+                "schema_version": 1,
+                "execution": selected.model_dump(mode="json"),
+                "logs": [
+                    {
+                        **record.model_dump(mode="json"),
+                        "content": (
+                            tail_text(record.path, tail)
+                            if record.exists and tail and not path_only
+                            else None
+                        ),
+                    }
+                    for record in logs
+                ],
+            },
+            output_format,
+        )
+        return
     if not logs:
         typer.echo("No recorded logs match the selection.")
         return
@@ -1860,6 +2510,7 @@ def report_command(
     execution: str = typer.Argument("latest", help="Execution ID or 'latest'."),
     project: Path | None = typer.Option(None, "--project"),
     path_only: bool = typer.Option(False, "--path-only"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
 ) -> None:
     try:
         context = _project(project)
@@ -1870,7 +2521,17 @@ def report_command(
             raise FileNotFoundError(f"Execution report not found: {report}")
     except Exception as exc:
         _fail(exc)
-    if path_only:
+    if output_format != OutputFormat.text:
+        _emit_machine(
+            {
+                "schema_version": 1,
+                "execution": selected.model_dump(mode="json"),
+                "report_path": str(report),
+                "content": None if path_only else report.read_text(encoding="utf-8"),
+            },
+            output_format,
+        )
+    elif path_only:
         typer.echo(str(report))
     else:
         typer.echo(
