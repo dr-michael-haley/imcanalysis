@@ -7,6 +7,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from typer.testing import CliRunner
@@ -261,6 +262,59 @@ class GatewayControlTests(unittest.TestCase):
             self.assertTrue(payload["preview_token"].startswith("v1."))
             self.assertEqual(payload["action_receipt"]["operation"], "preview_run")
             self.assertEqual(list((context.root / ".sbt" / "runs").iterdir()), [])
+
+    def test_cli_run_preview_token_submits_unchanged_plan(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = initialize_project(Path(temp_dir) / "project")
+            runner = CliRunner()
+            preview = runner.invoke(
+                app,
+                [
+                    "run",
+                    "debug",
+                    "--project",
+                    str(context.root),
+                    "--dry-run",
+                    "--format",
+                    "json",
+                ],
+            )
+            self.assertEqual(preview.exit_code, 0, preview.stdout)
+            payload = json.loads(preview.stdout)
+
+            with (
+                patch("SpatialBiologyToolkit.cli.main._ensure_run_environments"),
+                patch(
+                    "SpatialBiologyToolkit.cli.main.submit_run",
+                    return_value=SimpleNamespace(jobs=[]),
+                ) as submit_mock,
+            ):
+                submitted = runner.invoke(
+                    app,
+                    [
+                        "run",
+                        "debug",
+                        "--project",
+                        str(context.root),
+                        "--plan-token",
+                        payload["preview_token"],
+                    ],
+                )
+
+            self.assertEqual(submitted.exit_code, 0, submitted.stdout)
+            self.assertIn(payload["prospective_workflow_run_id"], submitted.stdout)
+            submit_mock.assert_called_once()
+            self.assertTrue(
+                (context.root / ".sbt" / "runs" / payload["prospective_workflow_run_id"]).is_dir()
+            )
+
+    def test_run_token_accepts_unchanged_asset_inventory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = initialize_project(Path(temp_dir) / "project")
+            plan = build_run_plan(context, ["debug"])
+            token = make_preview_token(run_preview_snapshot(context, plan))
+
+            validate_preview_token(token, run_preview_snapshot(context, plan))
 
     def test_guarded_preview_and_created_run_use_the_same_exact_identities(self):
         with tempfile.TemporaryDirectory() as temp_dir:

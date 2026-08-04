@@ -297,9 +297,11 @@ sbt run segmentation --dry-run --format json
 Directory-independent integrations submit the unchanged plan with
 `--plan-token` and send bounded decision provenance through
 `--provenance-stdin`. SBT rejects an expired token or any change to project ID,
-configuration, resolved stages, dependency policy, or execution index. Reusing
-a token after a successful submission returns the original run idempotently
-rather than creating duplicate jobs.
+configuration, resolved stages, dependency policy, stable asset state, or
+execution index. Inventory capture timestamps are excluded from the token so
+repeated inspection alone does not invalidate an unchanged preview. Reusing a
+token after a successful submission returns the original run idempotently rather
+than creating duplicate jobs.
 
 Submit:
 

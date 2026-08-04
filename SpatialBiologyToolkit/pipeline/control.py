@@ -72,6 +72,11 @@ def run_preview_snapshot(
     """Return stable state which must remain unchanged between preview and submit."""
 
     index = load_execution_index(context)
+    asset_state = inventory_assets(
+        project_id=context.project_metadata.project_id,
+        project_root=context.root,
+        config=context.config,
+    ).model_dump(mode="json", exclude={"captured_at"})
     return {
         "kind": "run",
         "project_id": context.project_metadata.project_id,
@@ -83,13 +88,7 @@ def run_preview_snapshot(
         "errors": list(plan.errors),
         "warnings": list(plan.warnings),
         "config_digest": canonical_digest(context.config.model_dump(mode="json")),
-        "asset_inventory_digest": canonical_digest(
-            inventory_assets(
-                project_id=context.project_metadata.project_id,
-                project_root=context.root,
-                config=context.config,
-            ).model_dump(mode="json")
-        ),
+        "asset_inventory_digest": canonical_digest(asset_state),
         "execution_index_digest": canonical_digest(
             [
                 {
