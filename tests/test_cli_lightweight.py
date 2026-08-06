@@ -1,9 +1,13 @@
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
+
+import yaml
 
 from typer.testing import CliRunner
 
@@ -11,6 +15,24 @@ from SpatialBiologyToolkit.cli.main import DOCUMENTATION_URL, REPOSITORY_URL, ap
 
 
 class LightweightCliTests(unittest.TestCase):
+    def test_project_init_writes_compact_config_by_default(self):
+        runner = CliRunner()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            project = Path(temp_dir) / "project"
+
+            result = runner.invoke(
+                app,
+                ["project", "init", "--project", str(project)],
+            )
+
+            self.assertEqual(result.exit_code, 0, result.stdout)
+            self.assertEqual(
+                yaml.safe_load(
+                    (project / "config.yaml").read_text(encoding="utf-8")
+                ),
+                {},
+            )
+
     def test_cli_startup_does_not_import_heavy_analysis_dependencies(self):
         heavy_modules = [
             "anndata",

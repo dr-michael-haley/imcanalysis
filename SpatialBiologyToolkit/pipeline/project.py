@@ -146,8 +146,12 @@ def _config_template(config_level: str) -> dict:
     config = PipelineConfig()
     if config_level == "complete":
         return config.model_dump(mode="python")
+    if config_level == "compact":
+        return config.model_dump(mode="python", exclude_defaults=True)
     if config_level != "basic":
-        raise ValueError("config level must be 'basic' or 'complete'")
+        raise ValueError(
+            "config level must be 'compact', 'basic', or 'complete'"
+        )
 
     template: dict[str, dict] = {}
     for section_name in PipelineConfig.model_fields:
@@ -165,7 +169,7 @@ def _config_template(config_level: str) -> dict:
 def write_config_template(
     output_path: str | Path,
     *,
-    config_level: str = "basic",
+    config_level: str = "compact",
     force: bool = False,
 ) -> Path:
     destination = Path(output_path).expanduser().resolve(strict=False)
@@ -206,7 +210,7 @@ def initialize_project(
     root: str | Path,
     *,
     config_name: str = "config.yaml",
-    config_level: str = "basic",
+    config_level: str = "compact",
     force: bool = False,
 ) -> ProjectContext:
     project_root = Path(root).expanduser().resolve(strict=False)

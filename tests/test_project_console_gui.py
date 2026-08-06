@@ -94,6 +94,10 @@ class ProjectConsoleGuiTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temporary:
             context = initialize_project(Path(temporary) / "project")
+            context.config_path.write_text(
+                "general:\n  outputs_folder: review_outputs\n",
+                encoding="utf-8",
+            )
             controller = ProjectConsoleController.open(context.root)
             page = ConfigurationPage(controller, lambda: None)
             page.level.setCurrentText("All")

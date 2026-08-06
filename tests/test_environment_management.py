@@ -23,11 +23,13 @@ from SpatialBiologyToolkit.environments.provenance import (
     snapshot_stage_environment_specifications,
 )
 from SpatialBiologyToolkit.environments.registry import (
+    associated_stages,
     load_environment_registry,
     resolve_environment,
 )
 from SpatialBiologyToolkit.environments.runtime import conda_environment_records
 from SpatialBiologyToolkit.environments.specification import (
+    declared_conda_requirements,
     declared_pip_requirements,
     satisfies_constraint,
 )
@@ -257,6 +259,32 @@ class RegistryTests(EnvironmentFixture):
         by_name = {stage.name: stage for stage in STAGES}
         for stage, keys in central.stage_environments.items():
             self.assertEqual(by_name[stage].environment_keys, keys)
+
+    def test_joint_analysis_candidate_is_registered_but_not_active(self):
+        root = Path(__file__).resolve().parents[1]
+        central = load_environment_registry(root)
+        definition = central.environments["analysis"]
+
+        self.assertEqual(definition.conda_name, "sbt-analysis")
+        self.assertTrue(definition.managed)
+        self.assertEqual(associated_stages(central, "analysis"), [])
+        self.assertIn("segmentation", " ".join(definition.notes).casefold())
+        self.assertIn("biobatchnet", " ".join(definition.notes).casefold())
+        self.assertIn("cellcharter", " ".join(definition.notes).casefold())
+        self.assertIn("starling", " ".join(definition.notes).casefold())
+
+        conda_requirements = declared_conda_requirements(
+            root / "HPC_env_files" / "sbt-analysis" / "environment.yml"
+        )
+        pip_requirements = declared_pip_requirements(
+            root / "HPC_env_files" / "sbt-analysis" / "pip-extras.txt"
+        )
+        self.assertEqual(conda_requirements["python"], "=3.11")
+        self.assertEqual(conda_requirements["numpy"], "=1.26.4")
+        self.assertEqual(pip_requirements["torch"].version, "2.9.1")
+        self.assertEqual(pip_requirements["cellcharter"].version, "0.3.7")
+        self.assertEqual(pip_requirements["biostarling"].version, "0.1.4")
+        self.assertEqual(pip_requirements["biobatchnet"].source_type, "vcs")
 
     def test_required_stage_environments_report_live_availability_once(self):
         manager, runner = self.manager(exists=False)

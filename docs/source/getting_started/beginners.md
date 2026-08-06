@@ -236,8 +236,9 @@ my_dataset/
 
 `config.yaml` is a text file recording analysis choices and paths. Most paths
 are interpreted relative to the project directory. `sbt project init` creates
-a new project; `sbt project adopt --config config.yaml` registers an existing
-one without moving scientific data.
+a new project with a compact config that omits values inherited unchanged from
+SBT defaults; `sbt project adopt --config config.yaml` registers an existing one
+without moving scientific data.
 
 The hidden `.sbt/` directory contains technical run records. `outputs/`
 contains numbered, human-readable reports. Images, masks, AnnData, and other

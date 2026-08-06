@@ -81,6 +81,10 @@ class ProjectConsoleServiceTests(unittest.TestCase):
     def test_config_field_specs_distinguish_disk_defaults_and_unsaved_state(self):
         with tempfile.TemporaryDirectory() as temporary:
             context = self._project(temporary)
+            context.config_path.write_text(
+                "general:\n  outputs_folder: review_outputs\n",
+                encoding="utf-8",
+            )
             session = ConfigEditorSession.open(context.config_path)
 
             stored = next(spec for spec in session.field_specs() if spec.stored)
@@ -111,6 +115,10 @@ class ProjectConsoleServiceTests(unittest.TestCase):
     def test_config_edit_detects_external_change_and_reset_removes_explicit_key(self):
         with tempfile.TemporaryDirectory() as temporary:
             context = self._project(temporary)
+            context.config_path.write_text(
+                "general:\n  outputs_folder: outputs\n",
+                encoding="utf-8",
+            )
             session = ConfigEditorSession.open(context.config_path)
             session.set_value("general.outputs_folder", "elsewhere")
             context.config_path.write_text(

@@ -533,7 +533,7 @@ def config_validate(
 @config_app.command("template")
 def config_template(
     output: Path = typer.Option(Path("config.yaml"), "--output", "-o"),
-    level: str = typer.Option("basic", "--level"),
+    level: str = typer.Option("compact", "--level"),
     force: bool = typer.Option(False, "--force"),
 ) -> None:
     try:
@@ -603,7 +603,7 @@ def config_compact(
 @project_app.command("init")
 def project_init(
     project: Path | None = typer.Option(None, "--project"),
-    config_level: str = typer.Option("basic", "--config-level"),
+    config_level: str = typer.Option("compact", "--config-level"),
     config_name: str = typer.Option("config.yaml", "--config-name"),
     force: bool = typer.Option(False, "--force"),
 ) -> None:

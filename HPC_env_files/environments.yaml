@@ -1,6 +1,23 @@
 schema_version: 1
 
 environments:
+  analysis:
+    conda_name: sbt-analysis
+    specification_directory: HPC_env_files/sbt-analysis
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
+      - [python, -c, "import numpy, pandas, scipy, anndata, scanpy, torch, torchvision, pytorch_lightning"]
+      - [python, -c, "import cellpose, nimbus_inference, readimc, skimage, pyarrow, spatialdata"]
+      - [python, -c, "import biobatchnet, cellcharter, scarches, squidpy, starling"]
+      - [python, -c, "from importlib.metadata import version; assert version('cellcharter') == '0.3.7'; assert version('torch').split('+', 1)[0] == '2.9.1'; assert version('numpy') == '1.26.4'"]
+      - [python, -c, "import SpatialBiologyToolkit.scripts.basic_process_biobatchnet, SpatialBiologyToolkit.scripts.cellcharter_neighborhoods, SpatialBiologyToolkit.scripts.starling_analysis"]
+    notes:
+      - Candidate consolidated runtime for the existing segmentation, biobatchnet, cellcharter, and starling environment families.
+      - No stage uses this key until the joint install, smoke tests, and scientific parity checks pass.
+      - MaxFuse, scPortrait, Cellpose-SAM, RAPIDS, HyPERSTAC, and legacy denoising remain separate.
+
   napari:
     conda_name: sbt-napari
     specification_directory: HPC_env_files/sbt-napari

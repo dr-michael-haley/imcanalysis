@@ -142,8 +142,10 @@ sbt project init
 This creates `config.yaml`, the configured raw IMC and metadata folders,
 `.sbt/project.yaml`, `.sbt/project_notes.md`, `.sbt/runs/`, an empty execution
 index, and `outputs/README.md`. Execution folders are created only as stages
-are accepted for submission. Use `--config-level complete` for every
-current default. Existing scientific files are not overwritten.
+are accepted for submission. The initial `config.yaml` is compact and stores
+no values that merely repeat SBT defaults. Use `--config-level basic` for a
+starter file containing commonly edited defaults, or `--config-level complete`
+for every current default. Existing scientific files are not overwritten.
 
 Adopt an existing project without moving or rewriting data:
 

@@ -20,6 +20,7 @@ from SpatialBiologyToolkit.pipeline.project import (
     initialize_project,
     load_project,
     validate_project,
+    write_config_template,
 )
 from SpatialBiologyToolkit.pipeline.registry import (
     MODE_REGISTRY,
@@ -37,12 +38,40 @@ class ProjectAndPlanningTests(unittest.TestCase):
             nested.mkdir()
 
             self.assertTrue((root / "config.yaml").is_file())
+            self.assertEqual(
+                yaml.safe_load((root / "config.yaml").read_text(encoding="utf-8")),
+                {},
+            )
             self.assertTrue((root / "IMC_files").is_dir())
             self.assertTrue((root / "metadata").is_dir())
             self.assertTrue((root / PROJECT_MARKER).is_file())
             self.assertTrue((root / ".sbt" / "runs").is_dir())
             self.assertEqual(discover_project_root(nested), root.resolve())
             self.assertEqual(load_project(start=nested).root, context.root)
+
+    def test_config_template_levels_keep_defaults_out_of_compact_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            compact = write_config_template(root / "compact.yaml")
+            basic = write_config_template(
+                root / "basic.yaml", config_level="basic"
+            )
+            complete = write_config_template(
+                root / "complete.yaml", config_level="complete"
+            )
+
+            self.assertEqual(
+                yaml.safe_load(compact.read_text(encoding="utf-8")),
+                {},
+            )
+            self.assertIn(
+                "imc_files_folder",
+                yaml.safe_load(basic.read_text(encoding="utf-8"))["general"],
+            )
+            self.assertIn(
+                "logging",
+                yaml.safe_load(complete.read_text(encoding="utf-8")),
+            )
 
     def test_adopt_is_non_destructive_and_records_initial_inventory(self):
         with tempfile.TemporaryDirectory() as temp_dir:

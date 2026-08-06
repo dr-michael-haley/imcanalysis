@@ -1,0 +1,57 @@
+# Candidate joint scientific runtime consolidating these existing environments:
+#   - imc_segmentation
+#   - imc_biobatchnet
+#   - imc_cellcharter
+#   - imc_starling
+#
+# MaxFuse, scPortrait, Cellpose-SAM, RAPIDS, HyPERSTAC, and IMC-Denoise are
+# deliberately outside this environment.
+name: sbt-analysis
+channels:
+  - conda-forge
+  - bioconda
+  - defaults
+
+dependencies:
+  # Shared interpreter and scientific-data baseline.
+  - python=3.11
+  - pip
+  - numpy=1.26.4
+  - pandas>=2.2,<2.4
+  - scipy>=1.13,<1.17
+  - scikit-learn>=1.6,<1.9
+  - scikit-image>=0.25,<0.26
+  - matplotlib>=3.9,<3.11
+  - seaborn>=0.13,<0.14
+  - h5py>=3.14,<4
+  - anndata>=0.10,<0.13
+  - scanpy>=1.10,<1.12
+  - numba>=0.60,<0.64
+  - statsmodels>=0.14,<0.15
+  - umap-learn>=0.5,<0.6
+  - tqdm>=4.65,<5
+
+  # Graph, image, table, and IMC dependencies shared by the migrated stages.
+  - leidenalg>=0.10,<0.13
+  - python-igraph>=0.10,<2
+  - bbknn>=1.6,<2
+  - harmonypy>=0.0.10,<1
+  - pyarrow>=15,<23
+  - shapely>=2,<3
+  - tifffile
+  - pillow
+  - psutil
+  - ipython
+
+  # SBT control/config dependencies required inside scientific jobs.
+  - pyyaml>=6
+  - pydantic>=2.4,<3
+  - typer>=0.12,<1
+
+  # Keep compiled extensions compatible with the CSF3 Linux runtime.
+  - libstdcxx-ng>=13
+  - libgcc-ng>=13
+
+variables:
+  # Required by a legacy transitive dependency in the CellCharter/scArches path.
+  SKLEARN_ALLOW_DEPRECATED_SKLEARN_PACKAGE_INSTALL: "true"
