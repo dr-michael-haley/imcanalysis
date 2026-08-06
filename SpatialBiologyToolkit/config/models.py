@@ -8,7 +8,7 @@ first when extending these models.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Literal, Optional, Type
+from typing import Any, Dict, List, Literal, Optional, Tuple, Type
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -2246,7 +2246,7 @@ class SpatialDataConfig(ConfigModel):
         stage="spatialdata",
         ui_group="Output",
     )
-    raster_chunks: tuple[int, int] = config_field(
+    raster_chunks: Tuple[int, int] = config_field(
         (512, 512),
         description="Y/X Dask chunk dimensions used for raster elements.",
         stage="spatialdata",

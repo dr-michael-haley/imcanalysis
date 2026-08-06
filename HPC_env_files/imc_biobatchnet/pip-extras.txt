@@ -1,1 +1,2 @@
 BioBatchNet @ git+https://github.com/UoM-HealthAI/BioBatchNet.git
+eval-type-backport>=0.2,<1

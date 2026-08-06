@@ -1,4 +1,5 @@
 IMC_Denoise @ git+https://github.com/couper-lab/IMC_Denoise_Updated
+eval-type-backport>=0.2,<1
 keras==2.6.0
 matplotlib==3.3.4
 numpy==1.19.5

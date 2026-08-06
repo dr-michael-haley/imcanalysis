@@ -286,6 +286,30 @@ class RegistryTests(EnvironmentFixture):
         self.assertEqual(pip_requirements["biostarling"].version, "0.1.4")
         self.assertEqual(pip_requirements["biobatchnet"].source_type, "vcs")
 
+    def test_legacy_python_environments_support_runtime_type_evaluation(self):
+        root = Path(__file__).resolve().parents[1]
+        central = load_environment_registry(root)
+
+        for key in ("denoise", "biobatchnet"):
+            definition = central.environments[key]
+            specification = root / definition.specification_directory
+            pip_requirements = declared_pip_requirements(
+                specification / "pip-extras.txt"
+            )
+            smoke_scripts = [
+                command[-1]
+                for command in definition.smoke_tests
+                if len(command) >= 3 and command[:2] == ["python", "-c"]
+            ]
+
+            self.assertIn("eval-type-backport", pip_requirements)
+            self.assertTrue(
+                any(
+                    "PipelineConfig" in script and "StageReporter" in script
+                    for script in smoke_scripts
+                )
+            )
+
     def test_required_stage_environments_report_live_availability_once(self):
         manager, runner = self.manager(exists=False)
 

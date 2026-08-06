@@ -48,6 +48,7 @@ environments:
     toolkit_overlay: editable-no-deps
     smoke_tests:
       - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
+      - [python, -c, "from SpatialBiologyToolkit.config import PipelineConfig; from SpatialBiologyToolkit.reporting import StageReporter; PipelineConfig()"]
       - [python, -c, "import IMC_Denoise, tensorflow, tifffile"]
 
   cellposesam:
@@ -66,6 +67,7 @@ environments:
     toolkit_overlay: editable-no-deps
     smoke_tests:
       - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
+      - [python, -c, "from SpatialBiologyToolkit.config import PipelineConfig; from SpatialBiologyToolkit.reporting import StageReporter; PipelineConfig()"]
       - [python, -c, "import scanpy, torch"]
     notes:
       - BioBatchNet is installed from its upstream VCS repository and requires review during capture.

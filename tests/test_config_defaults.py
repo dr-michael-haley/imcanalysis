@@ -1,3 +1,4 @@
+import ast
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,6 +11,40 @@ from SpatialBiologyToolkit.scripts.config_and_utils import (
 
 
 class ConfigDefaultsTests(unittest.TestCase):
+    def test_model_field_annotations_remain_python38_runtime_compatible(self):
+        models_path = (
+            Path(__file__).resolve().parents[1]
+            / "SpatialBiologyToolkit"
+            / "config"
+            / "models.py"
+        )
+        tree = ast.parse(models_path.read_text(encoding="utf-8"))
+        builtin_generics = {"dict", "frozenset", "list", "set", "tuple"}
+        incompatible: list[str] = []
+
+        for model_class in (
+            node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
+        ):
+            for statement in model_class.body:
+                if not isinstance(statement, ast.AnnAssign):
+                    continue
+                annotation = statement.annotation
+                uses_builtin_generic = (
+                    isinstance(annotation, ast.Subscript)
+                    and isinstance(annotation.value, ast.Name)
+                    and annotation.value.id in builtin_generics
+                )
+                uses_union_operator = any(
+                    isinstance(node, ast.BinOp) and isinstance(node.op, ast.BitOr)
+                    for node in ast.walk(annotation)
+                )
+                if uses_builtin_generic or uses_union_operator:
+                    incompatible.append(
+                        f"{model_class.name}.{getattr(statement.target, 'id', '?')}"
+                    )
+
+        self.assertEqual(incompatible, [])
+
     def test_pipeline_defaults_match_legacy_default_dictionary(self):
         expected = generate_default_config_dict()
         resolved = PipelineConfig().model_dump(mode="python")

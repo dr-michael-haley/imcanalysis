@@ -10,7 +10,7 @@ import subprocess
 from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .models import (
     CondaEnvironmentRecord,
@@ -22,7 +22,13 @@ from .models import (
 )
 
 
-Runner = Callable[..., subprocess.CompletedProcess[str]]
+if TYPE_CHECKING:
+    Runner = Callable[..., subprocess.CompletedProcess[str]]
+else:
+    # ``collections.abc.Callable`` and ``CompletedProcess`` became subscriptable
+    # in Python 3.9. The legacy denoising runtime is Python 3.8, so keep the
+    # runtime alias unsubscripted while retaining the precise static type.
+    Runner = Callable
 TOOLKIT_NAMES = {"spatialbiologytoolkit", "spatial-biology-toolkit"}
 
 
