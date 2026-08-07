@@ -11,6 +11,10 @@ numeric observations, individual populations, and `adata.X` marker values can be
 rendered as cell overlays. Existing categorical colours are recovered from
 `adata.uns` whenever possible.
 
+Observation overlays are cohort-restricted by default. Select **Include cells
+outside the classification cohort** when reviewing a curated observation
+alongside every identity-matched cell in the ROI.
+
 The reload recipe records which images and overlays should reappear after moving
 to another ROI, together with colours, visibility, opacity, contours, and contrast
 limits. **Update from current layers** captures manual display changes. Delete

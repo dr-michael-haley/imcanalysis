@@ -56,6 +56,12 @@ def test_launch_accepts_live_anndata_in_anndata_path_argument(tmp_path: Path):
             in controller.anndata_edit.placeholderText()
         )
         assert controller.obs_combo.findText("population") >= 0
+        assert controller.curation_source_combo.findText("population") >= 0
+        assert (
+            controller.population_neighbor_source_combo.currentData()
+            == "rebuild_from_rep"
+        )
+        assert controller.population_n_neighbors_spin.value() == 15
         assert controller.marker_overlay_list.item(0).text() == "CD3"
     finally:
         viewer.close()
@@ -137,11 +143,14 @@ def test_unified_dock_is_cohort_gated_and_rejects_context_clicks(tmp_path: Path)
     try:
         _, controller, _dock = launch(viewer=viewer, experiment=root)
         assert [
-            controller.tabs.tabText(index)
+            controller.tabs.tabText(index).split(" ", 1)[-1]
             for index in range(controller.tabs.count())
         ] == [
             "Setup",
+            "Feature Building",
+            "Feature Refinement",
             "Explore",
+            "Populations",
             "Classify",
             "Regions & Export",
             "Layers & Status",

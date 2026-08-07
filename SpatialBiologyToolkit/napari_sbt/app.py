@@ -8,6 +8,7 @@ import sys
 import time
 from collections.abc import Iterable
 from pathlib import Path
+from uuid import uuid4
 
 import numpy as np
 import pandas as pd
@@ -68,6 +69,34 @@ from .models import (
     SyntheticFeatureRecipe,
     segmentation_qc_classes,
     slugify,
+)
+from .population_curation import (
+    BASE_MAPPING_COLUMNS,
+    COMPONENT_COLUMNS,
+    GraphSubclusterRequest,
+    PopulationDraft,
+    PopulationWorkspace,
+    PopulationWorkspacePaths,
+    append_population_audit,
+    apply_population_draft,
+    atomic_write_curated_anndata,
+    component_tables_from_assignments,
+    create_population_draft as create_population_draft_asset,
+    empty_components,
+    empty_membership,
+    ensure_population_workspace,
+    import_base_mapping_csv,
+    integrate_component_tables,
+    list_population_drafts,
+    load_population_draft,
+    ordered_source_labels,
+    population_draft_paths,
+    population_workspace_paths,
+    read_population_audit,
+    save_graph_subcluster_request,
+    save_population_draft,
+    source_obs_fingerprint,
+    synthesize_population_labels,
 )
 from .resources import resolve_worker_count
 from .storage import (
@@ -225,6 +254,7 @@ class NapariSBTController:
             QGroupBox,
             QHBoxLayout,
             QHeaderView,
+            QInputDialog,
             QLabel,
             QLineEdit,
             QListWidget,
@@ -256,6 +286,7 @@ class NapariSBTController:
         self.QColorDialog = QColorDialog
         self.QDialog = QDialog
         self.QDialogButtonBox = QDialogButtonBox
+        self.QInputDialog = QInputDialog
         self.QColor = QColor
         self.QIcon = QIcon
         self.QPixmap = QPixmap
@@ -284,6 +315,7 @@ class NapariSBTController:
         self.feature_process = None
         self.source_validation_process = None
         self.refinement_process = None
+        self.population_process = None
         self.refinement_cancel_requested = False
         self.feature_build_started_at: float | None = None
         self.feature_last_event_at: float | None = None
@@ -291,6 +323,15 @@ class NapariSBTController:
         self._feature_output_buffer = ""
         self._source_validation_output_buffer = ""
         self._refinement_output_buffer = ""
+        self._population_output_buffer = ""
+        self._population_pending_run: dict[str, object] | None = None
+        self.population_workspace: PopulationWorkspace | None = None
+        self.population_workspace_paths: PopulationWorkspacePaths | None = None
+        self.population_draft: PopulationDraft | None = None
+        self.population_base_mapping = pd.DataFrame(columns=BASE_MAPPING_COLUMNS)
+        self.population_components = pd.DataFrame(columns=COMPONENT_COLUMNS)
+        self.population_membership = empty_membership()
+        self.population_plot_dialogs: list[object] = []
         self.reviewed_rois: set[str] = set()
         self._class_shortcuts: list[str] = []
         self.current_image_paths: dict[str, Path] = {}
@@ -889,6 +930,9 @@ class NapariSBTController:
         overlay_group = QGroupBox("AnnData overlays and population-to-cohort transfer")
         overlay_form = QFormLayout(overlay_group)
         self.overlay_obs_combo = QComboBox()
+        self.overlay_full_dataset_check = QCheckBox(
+            "Include cells outside the classification cohort"
+        )
         self.overlay_button = QPushButton("Render observation overlay")
         self.population_obs_combo = QComboBox()
         self.population_value_combo = QComboBox()
@@ -915,6 +959,7 @@ class NapariSBTController:
             "Add selected adata.X markers as cell overlays"
         )
         overlay_form.addRow("Categorical or numeric observation", self.overlay_obs_combo)
+        overlay_form.addRow("Overlay scope", self.overlay_full_dataset_check)
         overlay_form.addRow("", self.overlay_button)
         overlay_form.addRow("Population observation", self.population_obs_combo)
         overlay_form.addRow("Population", self.population_value_combo)
@@ -956,6 +1001,336 @@ class NapariSBTController:
         image_layout.addLayout(image_actions)
         explore_layout.addWidget(image_group)
         add_tab(explore, "🔬 Explore", "explore")
+
+        # Population Curation
+        populations = QWidget()
+        populations_layout = QVBoxLayout(populations)
+        populations_intro = QLabel(
+            "Craft one or more named observations from a single immutable source "
+            "observation. Base populations can be renamed or explicitly merged; "
+            "Scanpy and image-classifier results appear as editable split components."
+        )
+        populations_intro.setWordWrap(True)
+        populations_layout.addWidget(populations_intro)
+
+        population_workspace_group = QGroupBox(
+            "1. Source-locked workspace and derived observations"
+        )
+        population_workspace_form = QFormLayout(population_workspace_group)
+        self.curation_source_combo = QComboBox()
+        self.curation_draft_combo = QComboBox()
+        self.curation_draft_name_edit = QLineEdit("Named populations")
+        self.curation_derived_obs_edit = QLineEdit("population_curated")
+        self.create_population_draft_button = QPushButton(
+            "Create new derived-observation draft"
+        )
+        self.load_population_draft_button = QPushButton("Load selected draft")
+        self.save_population_draft_button = QPushButton(
+            "Save mapping, split edits, and provenance"
+        )
+        population_draft_actions = QWidget()
+        population_draft_actions_layout = QHBoxLayout(population_draft_actions)
+        population_draft_actions_layout.setContentsMargins(0, 0, 0, 0)
+        population_draft_actions_layout.addWidget(
+            self.create_population_draft_button
+        )
+        population_draft_actions_layout.addWidget(
+            self.load_population_draft_button
+        )
+        population_draft_actions_layout.addWidget(
+            self.save_population_draft_button
+        )
+        self.population_workspace_label = QLabel(
+            "Load AnnData, then choose the original clustering observation."
+        )
+        self.population_workspace_label.setWordWrap(True)
+        population_workspace_form.addRow(
+            "Original source obs", self.curation_source_combo
+        )
+        population_workspace_form.addRow(
+            "Existing sibling draft", self.curation_draft_combo
+        )
+        population_workspace_form.addRow(
+            "Draft display name", self.curation_draft_name_edit
+        )
+        population_workspace_form.addRow(
+            "New adata.obs name", self.curation_derived_obs_edit
+        )
+        population_workspace_form.addRow("", population_draft_actions)
+        population_workspace_form.addRow(
+            "Workspace", self.population_workspace_label
+        )
+        populations_layout.addWidget(population_workspace_group)
+
+        self.population_editor_tabs = QTabWidget()
+
+        base_mapping_page = QWidget()
+        base_mapping_layout = QVBoxLayout(base_mapping_page)
+        base_mapping_help = QLabel(
+            "Edit Proposed name to rename a source population. Give two or more "
+            "rows exactly the same name to propose a merge; those rows are "
+            "highlighted and listed in the merge preview."
+        )
+        base_mapping_help.setWordWrap(True)
+        self.population_base_table = QTableWidget(0, 5)
+        self.population_base_table.setHorizontalHeaderLabels(
+            ["Source population", "Cells", "Proposed name", "Colour", "Notes"]
+        )
+        self.population_base_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeToContents
+        )
+        self.population_base_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeToContents
+        )
+        self.population_base_table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.Stretch
+        )
+        self.population_base_table.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeToContents
+        )
+        self.population_base_table.horizontalHeader().setSectionResizeMode(
+            4, QHeaderView.Stretch
+        )
+        self.population_base_table.setSelectionBehavior(
+            QAbstractItemView.SelectRows
+        )
+        self.population_base_table.setSelectionMode(
+            QAbstractItemView.ExtendedSelection
+        )
+        self.population_base_table.setMinimumHeight(300)
+        base_mapping_actions = QHBoxLayout()
+        self.name_selected_populations_button = QPushButton(
+            "Give selected rows one name / merge"
+        )
+        self.colour_selected_populations_button = QPushButton(
+            "Set selected rows' colour"
+        )
+        self.import_population_mapping_button = QPushButton(
+            "Import preliminary names from CSV"
+        )
+        self.export_population_mapping_button = QPushButton(
+            "Export editable mapping CSV"
+        )
+        base_mapping_actions.addWidget(self.name_selected_populations_button)
+        base_mapping_actions.addWidget(self.colour_selected_populations_button)
+        base_mapping_actions.addWidget(self.import_population_mapping_button)
+        base_mapping_actions.addWidget(self.export_population_mapping_button)
+        base_mapping_layout.addWidget(base_mapping_help)
+        base_mapping_layout.addWidget(self.population_base_table)
+        base_mapping_layout.addLayout(base_mapping_actions)
+        self.population_editor_tabs.addTab(base_mapping_page, "Base naming & merges")
+
+        split_page = QWidget()
+        split_layout = QVBoxLayout(split_page)
+        split_controls = QGroupBox("Batch-correction-preserving Scanpy subclustering")
+        split_form = QFormLayout(split_controls)
+        split_explanation = QLabel(
+            "Default: isolate the selected cells, rebuild their neighbours from "
+            "adata.obsm['X_biobatchnet'], then run Leiden. BioBatchNet itself, "
+            "normalization, scaling, PCA, and UMAP are not rerun."
+        )
+        split_explanation.setWordWrap(True)
+        self.population_split_values_list = QListWidget()
+        self.population_split_values_list.setSelectionMode(
+            QAbstractItemView.ExtendedSelection
+        )
+        self.population_split_values_list.setMaximumHeight(125)
+        self.population_neighbor_source_combo = QComboBox()
+        self.population_neighbor_source_combo.addItem(
+            "Rebuild neighbours from corrected obsm (recommended)",
+            "rebuild_from_rep",
+        )
+        self.population_neighbor_source_combo.addItem(
+            "Reuse an existing obsp connectivity graph",
+            "existing_graph",
+        )
+        self.population_representation_combo = QComboBox()
+        self.population_n_neighbors_spin = QSpinBox()
+        self.population_n_neighbors_spin.setRange(2, 1000)
+        self.population_n_neighbors_spin.setValue(15)
+        self.population_adjacency_combo = QComboBox()
+        self.population_graph_provenance_label = QLabel(
+            "Choose the corrected representation used to rebuild neighbours."
+        )
+        self.population_graph_provenance_label.setWordWrap(True)
+        self.population_resolution_spin = QDoubleSpinBox()
+        self.population_resolution_spin.setRange(0.01, 20.0)
+        self.population_resolution_spin.setDecimals(2)
+        self.population_resolution_spin.setSingleStep(0.1)
+        self.population_resolution_spin.setValue(0.5)
+        self.population_subcluster_mode_combo = QComboBox()
+        self.population_subcluster_mode_combo.addItem(
+            "Subcluster each selected population separately (recommended)",
+            "within_each",
+        )
+        self.population_subcluster_mode_combo.addItem(
+            "Subcluster selected populations together", "together"
+        )
+        self.run_population_subcluster_button = QPushButton(
+            "Run monitored subclustering"
+        )
+        self.cancel_population_subcluster_button = QPushButton("Cancel")
+        self.cancel_population_subcluster_button.setEnabled(False)
+        subcluster_actions = QWidget()
+        subcluster_actions_layout = QHBoxLayout(subcluster_actions)
+        subcluster_actions_layout.setContentsMargins(0, 0, 0, 0)
+        subcluster_actions_layout.addWidget(
+            self.run_population_subcluster_button
+        )
+        subcluster_actions_layout.addWidget(
+            self.cancel_population_subcluster_button
+        )
+        self.population_subcluster_status = QLabel("No subclustering run in progress.")
+        self.population_subcluster_status.setWordWrap(True)
+        split_form.addRow("Safety contract", split_explanation)
+        split_form.addRow(
+            "Source populations", self.population_split_values_list
+        )
+        split_form.addRow("Neighbour strategy", self.population_neighbor_source_combo)
+        split_form.addRow("Corrected representation", self.population_representation_combo)
+        split_form.addRow("n_neighbors", self.population_n_neighbors_spin)
+        split_form.addRow("Existing connectivity graph", self.population_adjacency_combo)
+        split_form.addRow("Input provenance", self.population_graph_provenance_label)
+        split_form.addRow("Leiden resolution", self.population_resolution_spin)
+        split_form.addRow("Run populations", self.population_subcluster_mode_combo)
+        split_form.addRow("", subcluster_actions)
+        split_form.addRow("Progress", self.population_subcluster_status)
+        split_layout.addWidget(split_controls)
+
+        self.population_components_table = QTableWidget(0, 8)
+        self.population_components_table.setHorizontalHeaderLabels(
+            [
+                "Parent",
+                "Method",
+                "Raw component",
+                "Cells",
+                "Proposed name",
+                "Colour",
+                "Run",
+                "Notes",
+            ]
+        )
+        for column in (0, 1, 2, 3, 5, 6):
+            self.population_components_table.horizontalHeader().setSectionResizeMode(
+                column, QHeaderView.ResizeToContents
+            )
+        self.population_components_table.horizontalHeader().setSectionResizeMode(
+            4, QHeaderView.Stretch
+        )
+        self.population_components_table.horizontalHeader().setSectionResizeMode(
+            7, QHeaderView.Stretch
+        )
+        self.population_components_table.setSelectionBehavior(
+            QAbstractItemView.SelectRows
+        )
+        self.population_components_table.setSelectionMode(
+            QAbstractItemView.ExtendedSelection
+        )
+        self.population_components_table.setMinimumHeight(250)
+        split_table_actions = QHBoxLayout()
+        self.import_population_components_button = QPushButton(
+            "Import image/other cell-level assignments"
+        )
+        self.import_current_classifier_components_button = QPushButton(
+            "Use current classifier assignments"
+        )
+        self.name_selected_components_button = QPushButton(
+            "Give selected components one name / merge"
+        )
+        self.colour_selected_components_button = QPushButton(
+            "Set selected components' colour"
+        )
+        self.remove_population_components_button = QPushButton(
+            "Remove selected split components"
+        )
+        split_table_actions.addWidget(self.import_population_components_button)
+        split_table_actions.addWidget(
+            self.import_current_classifier_components_button
+        )
+        split_table_actions.addWidget(self.name_selected_components_button)
+        split_table_actions.addWidget(self.colour_selected_components_button)
+        split_table_actions.addWidget(self.remove_population_components_button)
+        split_layout.addWidget(QLabel("Editable split components"))
+        split_layout.addWidget(self.population_components_table)
+        split_layout.addLayout(split_table_actions)
+        self.population_editor_tabs.addTab(split_page, "Subclusters")
+
+        preview_page = QWidget()
+        preview_layout = QVBoxLayout(preview_page)
+        self.population_merge_preview = QTextEdit()
+        self.population_merge_preview.setReadOnly(True)
+        self.population_merge_preview.setMinimumHeight(220)
+        population_apply_group = QGroupBox("Apply to the live working AnnData")
+        population_apply_form = QFormLayout(population_apply_group)
+        self.population_overwrite_check = QCheckBox(
+            "Allow replacing an existing derived obs with the same name"
+        )
+        self.apply_population_draft_button = QPushButton(
+            "Apply draft and refresh all AnnData selectors"
+        )
+        self.show_curated_population_overlay_button = QPushButton(
+            "Show the derived observation in Explore"
+        )
+        self.export_curated_anndata_button = QPushButton(
+            "Export all live curated observations to a new AnnData copy..."
+        )
+        apply_actions = QWidget()
+        apply_actions_layout = QHBoxLayout(apply_actions)
+        apply_actions_layout.setContentsMargins(0, 0, 0, 0)
+        apply_actions_layout.addWidget(self.apply_population_draft_button)
+        apply_actions_layout.addWidget(
+            self.show_curated_population_overlay_button
+        )
+        population_apply_form.addRow("Overwrite guard", self.population_overwrite_check)
+        population_apply_form.addRow("", apply_actions)
+        population_apply_form.addRow("", self.export_curated_anndata_button)
+        preview_layout.addWidget(QLabel("Effective labels and explicit merges"))
+        preview_layout.addWidget(self.population_merge_preview)
+        preview_layout.addWidget(population_apply_group)
+
+        qc_group = QGroupBox("Live QC plots (simple, regenerable pop-ups)")
+        qc_form = QFormLayout(qc_group)
+        self.population_embedding_combo = QComboBox()
+        self.population_marker_list = QListWidget()
+        self.population_marker_list.setSelectionMode(
+            QAbstractItemView.ExtendedSelection
+        )
+        self.population_marker_list.setMaximumHeight(135)
+        qc_actions = QWidget()
+        qc_actions_layout = QHBoxLayout(qc_actions)
+        qc_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.population_embedding_plot_button = QPushButton(
+            "Open embedding QC plot"
+        )
+        self.population_heatmap_button = QPushButton(
+            "Open selected-marker heat map"
+        )
+        qc_actions_layout.addWidget(self.population_embedding_plot_button)
+        qc_actions_layout.addWidget(self.population_heatmap_button)
+        qc_form.addRow("Existing 2-D embedding", self.population_embedding_combo)
+        qc_form.addRow("Markers of interest", self.population_marker_list)
+        qc_form.addRow("", qc_actions)
+        preview_layout.addWidget(qc_group)
+        self.population_editor_tabs.addTab(preview_page, "Preview, apply & QC")
+
+        provenance_page = QWidget()
+        provenance_layout = QVBoxLayout(provenance_page)
+        provenance_explanation = QLabel(
+            "The log is append-only and records draft creation, every saved naming "
+            "edit, explicit merge groups, imported or computed split memberships, "
+            "live application, and export."
+        )
+        provenance_explanation.setWordWrap(True)
+        self.population_provenance_text = QTextEdit()
+        self.population_provenance_text.setReadOnly(True)
+        self.refresh_population_provenance_button = QPushButton("Refresh provenance")
+        provenance_layout.addWidget(provenance_explanation)
+        provenance_layout.addWidget(self.population_provenance_text)
+        provenance_layout.addWidget(self.refresh_population_provenance_button)
+        self.population_editor_tabs.addTab(provenance_page, "Provenance")
+
+        populations_layout.addWidget(self.population_editor_tabs)
+        add_tab(populations, "🧭 Populations", "populations")
 
         # Classify
         classify = QWidget()
@@ -1185,7 +1560,8 @@ class NapariSBTController:
             QTabBar::tab:nth-child(4) { background: #fce7f3; }
             QTabBar::tab:nth-child(5) { background: #ede9fe; }
             QTabBar::tab:nth-child(6) { background: #e0f2fe; }
-            QTabBar::tab:nth-child(7) { background: #f1f5f9; }
+            QTabBar::tab:nth-child(7) { background: #ecfccb; }
+            QTabBar::tab:nth-child(8) { background: #f1f5f9; }
             QTabBar::tab:selected {
                 font-weight: bold;
                 border: 2px solid #5f6368;
@@ -1203,6 +1579,7 @@ class NapariSBTController:
             "#047857",
             "#b45309",
             "#be185d",
+            "#4d7c0f",
             "#0369a1",
             "#475569",
         )
@@ -1359,6 +1736,98 @@ class NapariSBTController:
             self._guard(self.load_six_colour_channels)
         )
         self.load_rgb_button.clicked.connect(self._guard(self.load_rgb))
+        self.curation_source_combo.currentTextChanged.connect(
+            self._guard(self.refresh_population_workspace)
+        )
+        self.create_population_draft_button.clicked.connect(
+            self._guard(self.create_population_draft)
+        )
+        self.load_population_draft_button.clicked.connect(
+            self._guard(self.load_selected_population_draft)
+        )
+        self.save_population_draft_button.clicked.connect(
+            self._guard(self.save_current_population_draft)
+        )
+        self.curation_draft_combo.currentIndexChanged.connect(
+            self._guard(self.load_selected_population_draft)
+        )
+        self.population_base_table.itemChanged.connect(
+            self._guard(self._population_tables_changed)
+        )
+        self.population_components_table.itemChanged.connect(
+            self._guard(self._population_tables_changed)
+        )
+        self.name_selected_populations_button.clicked.connect(
+            lambda: self._guard(
+                lambda: self.name_selected_population_rows("base")
+            )()
+        )
+        self.name_selected_components_button.clicked.connect(
+            lambda: self._guard(
+                lambda: self.name_selected_population_rows("components")
+            )()
+        )
+        self.colour_selected_populations_button.clicked.connect(
+            lambda: self._guard(
+                lambda: self.colour_selected_population_rows("base")
+            )()
+        )
+        self.colour_selected_components_button.clicked.connect(
+            lambda: self._guard(
+                lambda: self.colour_selected_population_rows("components")
+            )()
+        )
+        self.import_population_mapping_button.clicked.connect(
+            self._guard(self.import_population_mapping)
+        )
+        self.export_population_mapping_button.clicked.connect(
+            self._guard(self.export_population_mapping)
+        )
+        self.run_population_subcluster_button.clicked.connect(
+            self._guard(self.start_population_subclustering)
+        )
+        self.population_neighbor_source_combo.currentIndexChanged.connect(
+            self._guard(self._update_population_neighbor_controls)
+        )
+        self.population_representation_combo.currentTextChanged.connect(
+            self._guard(self._update_population_graph_provenance)
+        )
+        self.population_n_neighbors_spin.valueChanged.connect(
+            self._guard(self._update_population_graph_provenance)
+        )
+        self.population_adjacency_combo.currentTextChanged.connect(
+            self._guard(self._update_population_graph_provenance)
+        )
+        self.cancel_population_subcluster_button.clicked.connect(
+            self.cancel_population_subclustering
+        )
+        self.import_population_components_button.clicked.connect(
+            self._guard(self.import_population_components)
+        )
+        self.import_current_classifier_components_button.clicked.connect(
+            self._guard(self.import_current_classifier_components)
+        )
+        self.remove_population_components_button.clicked.connect(
+            self._guard(self.remove_selected_population_components)
+        )
+        self.apply_population_draft_button.clicked.connect(
+            self._guard(self.apply_current_population_draft)
+        )
+        self.show_curated_population_overlay_button.clicked.connect(
+            self._guard(self.show_curated_population_overlay)
+        )
+        self.export_curated_anndata_button.clicked.connect(
+            self._guard(self.export_curated_anndata)
+        )
+        self.population_embedding_plot_button.clicked.connect(
+            self._guard(self.show_population_embedding_qc)
+        )
+        self.population_heatmap_button.clicked.connect(
+            self._guard(self.show_population_heatmap_qc)
+        )
+        self.refresh_population_provenance_button.clicked.connect(
+            self._guard(self.refresh_population_provenance)
+        )
         self.propose_button.clicked.connect(lambda: self.annotate_selected("proposed"))
         self.confirm_button.clicked.connect(lambda: self.annotate_selected("confirmed"))
         self.classifier_display_button.clicked.connect(
@@ -1410,6 +1879,7 @@ class NapariSBTController:
         self.refresh_status_button.clicked.connect(self._guard(self.refresh_status))
         self._update_scope_widget_state()
         self._update_experiment_mode_state()
+        self._update_population_neighbor_controls()
 
     def _guard(self, callback, *, pass_signal_args: bool = False):
         def wrapped(*args, **kwargs):
@@ -1466,6 +1936,7 @@ class NapariSBTController:
             self.export_adata_button,
             self.export_cohort_masks_button,
             self.export_clean_masks_button,
+            self.import_current_classifier_components_button,
         ):
             widget.setEnabled(enabled)
 
@@ -1563,12 +2034,18 @@ class NapariSBTController:
         if self.adata is None:
             raise RuntimeError("No AnnData object is available.")
         columns = [str(column) for column in self.adata.obs.columns]
-        for combo in (
+        selector_combos = (
             self.obs_combo,
             self.overlay_obs_combo,
             self.population_obs_combo,
-        ):
+            self.curation_source_combo,
+        )
+        previous_values = {
+            id(combo): combo.currentText() for combo in selector_combos
+        }
+        for combo in selector_combos:
             current = combo.currentText()
+            combo.blockSignals(True)
             combo.clear()
             combo.addItems(columns)
             if current in columns:
@@ -1579,8 +2056,25 @@ class NapariSBTController:
             if isinstance(self.adata.obs[column].dtype, pd.CategoricalDtype)
         ]
         if preferred:
-            self.obs_combo.setCurrentText(preferred[0])
-            self.population_obs_combo.setCurrentText(preferred[0])
+            for combo in (
+                self.obs_combo,
+                self.population_obs_combo,
+                self.curation_source_combo,
+            ):
+                if previous_values[id(combo)] not in columns:
+                    preferred_value = preferred[0]
+                    if combo is self.curation_source_combo:
+                        preferred_value = next(
+                            (
+                                column
+                                for column in preferred
+                                if "leiden" in column.lower()
+                            ),
+                            preferred_value,
+                        )
+                    combo.setCurrentText(preferred_value)
+        for combo in selector_combos:
+            combo.blockSignals(False)
         selected_markers = {
             item.text() for item in self.marker_overlay_list.selectedItems()
         }
@@ -1594,6 +2088,8 @@ class NapariSBTController:
         self.refresh_scope_values()
         self.refresh_population_values()
         self.refresh_feature_channel_choices()
+        self._refresh_population_data_choices()
+        self.refresh_population_workspace()
         self.set_status(
             f"Loaded AnnData selectors for {self.adata.n_obs:,} cells from {source}."
         )
@@ -1615,6 +2111,1334 @@ class NapariSBTController:
         else:
             raise ValueError("Supply an AnnData path or launch with an AnnData object.")
         self._populate_anndata_selectors(source=source)
+
+    def _population_curation_root(self) -> Path:
+        if self.paths is not None:
+            return self.paths.root / "population_curation"
+        return self.project_root / "napari_sbt" / "population_curation"
+
+    def _refresh_population_data_choices(self) -> None:
+        """Refresh source values, graph keys, embeddings, and marker selectors."""
+
+        if self.adata is None:
+            return
+        source_obs = self.curation_source_combo.currentText().strip()
+        selected_values = {
+            item.text()
+            for item in self.population_split_values_list.selectedItems()
+        }
+        self.population_split_values_list.clear()
+        if source_obs in self.adata.obs:
+            series = self.adata.obs[source_obs]
+            values = ordered_source_labels(series)
+            self.population_split_values_list.addItems(values)
+            for index in range(self.population_split_values_list.count()):
+                item = self.population_split_values_list.item(index)
+                item.setSelected(item.text() in selected_values)
+
+        current_representation = self.population_representation_combo.currentText()
+        self.population_representation_combo.clear()
+        representation_keys = [
+            str(key)
+            for key, value in self.adata.obsm.items()
+            if getattr(value, "ndim", 0) == 2
+            and value.shape[1] >= 1
+            and not any(
+                token in str(key).lower()
+                for token in ("umap", "tsne", "spatial")
+            )
+        ]
+        self.population_representation_combo.addItems(representation_keys)
+        if current_representation in representation_keys:
+            self.population_representation_combo.setCurrentText(
+                current_representation
+            )
+        elif "X_biobatchnet" in representation_keys:
+            self.population_representation_combo.setCurrentText("X_biobatchnet")
+        else:
+            # Do not silently substitute PCA or another embedding when the
+            # requested batch-corrected representation is absent.
+            self.population_representation_combo.setCurrentIndex(-1)
+
+        current_graph = self.population_adjacency_combo.currentText()
+        self.population_adjacency_combo.clear()
+        graph_keys = [str(key) for key in self.adata.obsp.keys()]
+        self.population_adjacency_combo.addItems(graph_keys)
+        if current_graph in graph_keys:
+            self.population_adjacency_combo.setCurrentText(current_graph)
+        elif "connectivities" in graph_keys:
+            self.population_adjacency_combo.setCurrentText("connectivities")
+        self._update_population_neighbor_controls()
+
+        current_embedding = self.population_embedding_combo.currentText()
+        embeddings = [
+            str(key)
+            for key, value in self.adata.obsm.items()
+            if getattr(value, "ndim", 0) == 2 and value.shape[1] >= 2
+        ]
+        self.population_embedding_combo.clear()
+        self.population_embedding_combo.addItems(embeddings)
+        if current_embedding in embeddings:
+            self.population_embedding_combo.setCurrentText(current_embedding)
+        elif "X_umap" in embeddings:
+            self.population_embedding_combo.setCurrentText("X_umap")
+
+        selected_markers = {
+            item.text() for item in self.population_marker_list.selectedItems()
+        }
+        self.population_marker_list.clear()
+        self.population_marker_list.addItems(
+            [str(marker) for marker in self.adata.var_names]
+        )
+        for index in range(self.population_marker_list.count()):
+            item = self.population_marker_list.item(index)
+            item.setSelected(item.text() in selected_markers)
+
+    def _update_population_graph_provenance(self) -> None:
+        if self.adata is None:
+            return
+        if self.population_neighbor_source_combo.currentData() == "rebuild_from_rep":
+            representation_key = self.population_representation_combo.currentText().strip()
+            if not representation_key:
+                self.population_graph_provenance_label.setText(
+                    "No corrected representation is selected. X_biobatchnet is "
+                    "the required default; if it is absent, choose another obsm "
+                    "only after verifying that it is batch corrected."
+                )
+                return
+            representation = self.adata.obsm[representation_key]
+            correction_note = (
+                "BioBatchNet-corrected representation selected."
+                if representation_key == "X_biobatchnet"
+                else "Verify that this representation is already batch corrected."
+            )
+            self.population_graph_provenance_label.setText(
+                f"adata.obsm[{representation_key!r}], shape={representation.shape}. "
+                f"Neighbours will be rebuilt only within the selected cells using "
+                f"n_neighbors={self.population_n_neighbors_spin.value()}. "
+                f"{correction_note}"
+            )
+            return
+        graph_key = self.population_adjacency_combo.currentText().strip()
+        if not graph_key:
+            self.population_graph_provenance_label.setText(
+                "No square connectivity graph is available in adata.obsp."
+            )
+            return
+        matches = []
+        for uns_key, payload in self.adata.uns.items():
+            if not isinstance(payload, dict):
+                continue
+            if str(payload.get("connectivities_key", "")) != graph_key and not (
+                graph_key == "connectivities" and uns_key == "neighbors"
+            ):
+                continue
+            params = payload.get("params", {})
+            use_rep = params.get("use_rep") if isinstance(params, dict) else None
+            method = params.get("method") if isinstance(params, dict) else None
+            details = [f"uns[{uns_key!r}]"]
+            if use_rep:
+                details.append(f"use_rep={use_rep}")
+            if method:
+                details.append(f"method={method}")
+            matches.append(", ".join(details))
+        graph = self.adata.obsp.get(graph_key)
+        edge_count = getattr(graph, "nnz", "unknown")
+        provenance = "; ".join(matches) if matches else "no linked uns metadata found"
+        self.population_graph_provenance_label.setText(
+            f"adata.obsp[{graph_key!r}], shape={getattr(graph, 'shape', None)}, "
+            f"stored edges={edge_count}; {provenance}. The worker reuses this "
+            "graph exactly and records the selected key."
+        )
+
+    def _update_population_neighbor_controls(self) -> None:
+        rebuild = (
+            self.population_neighbor_source_combo.currentData()
+            == "rebuild_from_rep"
+        )
+        self.population_representation_combo.setEnabled(rebuild)
+        self.population_n_neighbors_spin.setEnabled(rebuild)
+        self.population_adjacency_combo.setEnabled(not rebuild)
+        self._update_population_graph_provenance()
+
+    def refresh_population_workspace(self) -> None:
+        """Discover sibling drafts for the currently selected immutable source."""
+
+        self._refresh_population_data_choices()
+        if self.adata is None:
+            return
+        source_obs = self.curation_source_combo.currentText().strip()
+        if not source_obs or source_obs not in self.adata.obs:
+            return
+        previous_draft_id = (
+            self.population_draft.draft_id
+            if self.population_draft is not None
+            and self.population_draft.source_obs == source_obs
+            else self.curation_draft_combo.currentData()
+        )
+        candidate_paths = population_workspace_paths(
+            self._population_curation_root(), source_obs
+        )
+        self.curation_draft_combo.blockSignals(True)
+        self.curation_draft_combo.clear()
+        if not candidate_paths.manifest.is_file():
+            self.population_workspace = None
+            self.population_workspace_paths = None
+            self.population_draft = None
+            self.population_base_mapping = pd.DataFrame(
+                columns=BASE_MAPPING_COLUMNS
+            )
+            self.population_components = empty_components()
+            self.population_membership = empty_membership()
+            self._set_population_tables(
+                self.population_base_mapping,
+                self.population_components,
+            )
+            self.population_workspace_label.setText(
+                f"No workspace yet for source obs {source_obs!r}. Creating the "
+                "first draft will freeze its cell/label fingerprint."
+            )
+            default_obs = f"{slugify(source_obs)}_named"
+            if not self.curation_derived_obs_edit.text().strip() or (
+                self.curation_derived_obs_edit.text().strip()
+                == "population_curated"
+            ):
+                self.curation_derived_obs_edit.setText(default_obs)
+            self.curation_draft_combo.blockSignals(False)
+            self.refresh_population_provenance()
+            return
+
+        workspace, workspace_paths = ensure_population_workspace(
+            self.adata,
+            self._population_curation_root(),
+            source_obs,
+        )
+        self.population_workspace = workspace
+        self.population_workspace_paths = workspace_paths
+        drafts = list_population_drafts(workspace_paths)
+        for draft in drafts:
+            self.curation_draft_combo.addItem(
+                f"{draft.name} → {draft.derived_obs} (r{draft.revision})",
+                draft.draft_id,
+            )
+        index = self.curation_draft_combo.findData(previous_draft_id)
+        if index < 0 and drafts:
+            index = 0
+        if index >= 0:
+            self.curation_draft_combo.setCurrentIndex(index)
+        self.curation_draft_combo.blockSignals(False)
+        self.population_workspace_label.setText(
+            f"Source {workspace.source_obs!r} is frozen at fingerprint "
+            f"{workspace.source_fingerprint[:12]}…; {len(drafts)} sibling "
+            "derived-observation draft(s)."
+        )
+        if index >= 0:
+            self.load_selected_population_draft()
+        else:
+            self.refresh_population_provenance()
+
+    def create_population_draft(self) -> None:
+        if self.adata is None:
+            raise RuntimeError("Load AnnData before creating a population draft.")
+        source_obs = self.curation_source_combo.currentText().strip()
+        name = self.curation_draft_name_edit.text().strip()
+        derived_obs = self.curation_derived_obs_edit.text().strip()
+        (
+            workspace,
+            workspace_paths,
+            draft,
+            base,
+            components,
+            membership,
+        ) = create_population_draft_asset(
+            self.adata,
+            self._population_curation_root(),
+            source_obs=source_obs,
+            name=name,
+            derived_obs=derived_obs,
+        )
+        self.population_workspace = workspace
+        self.population_workspace_paths = workspace_paths
+        self.population_draft = draft
+        self.population_base_mapping = base
+        self.population_components = components
+        self.population_membership = membership
+        self.refresh_population_workspace()
+        index = self.curation_draft_combo.findData(draft.draft_id)
+        if index >= 0:
+            self.curation_draft_combo.setCurrentIndex(index)
+        self.load_selected_population_draft()
+        self.population_editor_tabs.setCurrentIndex(0)
+        self.set_status(
+            f"Created population draft {draft.name!r} for live obs "
+            f"{derived_obs!r}. The source fingerprint is now frozen."
+        )
+
+    def load_selected_population_draft(self) -> None:
+        if self.population_workspace_paths is None:
+            return
+        draft_id = self.curation_draft_combo.currentData()
+        if not draft_id:
+            return
+        draft, base, components, membership = load_population_draft(
+            self.population_workspace_paths, str(draft_id)
+        )
+        self.population_draft = draft
+        self.population_base_mapping = base
+        self.population_components = components
+        self.population_membership = membership
+        self.curation_draft_name_edit.setText(draft.name)
+        self.curation_derived_obs_edit.setText(draft.derived_obs)
+        self._set_population_tables(base, components)
+        self._refresh_population_merge_preview()
+        self.refresh_population_provenance()
+        self.set_status(
+            f"Loaded population draft {draft.name!r} r{draft.revision}."
+        )
+
+    def _readonly_table_item(self, value: object):
+        item = self.QTableWidgetItem(str(value))
+        item.setFlags(item.flags() & ~self.Qt.ItemIsEditable)
+        return item
+
+    def _set_population_tables(
+        self,
+        base_mapping: pd.DataFrame,
+        components: pd.DataFrame,
+    ) -> None:
+        self.population_base_table.blockSignals(True)
+        self.population_base_table.setRowCount(0)
+        for row_index, row in base_mapping.reset_index(drop=True).iterrows():
+            self.population_base_table.insertRow(row_index)
+            self.population_base_table.setItem(
+                row_index, 0, self._readonly_table_item(row["source_value"])
+            )
+            self.population_base_table.setItem(
+                row_index,
+                1,
+                self._readonly_table_item(f"{int(row['cell_count']):,}"),
+            )
+            for column, field in ((2, "proposed_label"), (3, "color"), (4, "notes")):
+                item = self.QTableWidgetItem(str(row[field]))
+                self.population_base_table.setItem(row_index, column, item)
+            colour = self.QColor(str(row["color"]))
+            if colour.isValid():
+                self.population_base_table.item(row_index, 3).setBackground(colour)
+        self.population_base_table.blockSignals(False)
+
+        self.population_components_table.blockSignals(True)
+        self.population_components_table.setRowCount(0)
+        for row_index, row in components.reset_index(drop=True).iterrows():
+            self.population_components_table.insertRow(row_index)
+            parent_item = self._readonly_table_item(row["parent_source_value"])
+            parent_item.setData(self.Qt.UserRole, str(row["component_id"]))
+            self.population_components_table.setItem(row_index, 0, parent_item)
+            for column, field in (
+                (1, "method"),
+                (2, "component_value"),
+                (3, "cell_count"),
+                (6, "run_id"),
+            ):
+                value = (
+                    f"{int(row[field]):,}"
+                    if field == "cell_count"
+                    else row[field]
+                )
+                self.population_components_table.setItem(
+                    row_index, column, self._readonly_table_item(value)
+                )
+            for column, field in ((4, "proposed_label"), (5, "color"), (7, "notes")):
+                self.population_components_table.setItem(
+                    row_index, column, self.QTableWidgetItem(str(row[field]))
+                )
+            colour = self.QColor(str(row["color"]))
+            if colour.isValid():
+                self.population_components_table.item(row_index, 5).setBackground(
+                    colour
+                )
+        self.population_components_table.blockSignals(False)
+
+    def _population_tables_to_frames(
+        self,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
+        base_rows = []
+        for row in range(self.population_base_table.rowCount()):
+            base_rows.append(
+                {
+                    "source_value": self.population_base_table.item(row, 0).text(),
+                    "cell_count": self.population_base_table.item(row, 1)
+                    .text()
+                    .replace(",", ""),
+                    "proposed_label": self.population_base_table.item(row, 2).text(),
+                    "color": self.population_base_table.item(row, 3).text(),
+                    "notes": self.population_base_table.item(row, 4).text(),
+                }
+            )
+        component_rows = []
+        for row in range(self.population_components_table.rowCount()):
+            component_rows.append(
+                {
+                    "component_id": self.population_components_table.item(row, 0).data(
+                        self.Qt.UserRole
+                    ),
+                    "parent_source_value": self.population_components_table.item(
+                        row, 0
+                    ).text(),
+                    "method": self.population_components_table.item(row, 1).text(),
+                    "component_value": self.population_components_table.item(
+                        row, 2
+                    ).text(),
+                    "cell_count": self.population_components_table.item(row, 3)
+                    .text()
+                    .replace(",", ""),
+                    "proposed_label": self.population_components_table.item(
+                        row, 4
+                    ).text(),
+                    "color": self.population_components_table.item(row, 5).text(),
+                    "run_id": self.population_components_table.item(row, 6).text(),
+                    "notes": self.population_components_table.item(row, 7).text(),
+                }
+            )
+        return (
+            pd.DataFrame(base_rows, columns=BASE_MAPPING_COLUMNS),
+            pd.DataFrame(component_rows, columns=COMPONENT_COLUMNS),
+        )
+
+    def _population_tables_changed(self) -> None:
+        if self.population_draft is None:
+            return
+        try:
+            for table, colour_column in (
+                (self.population_base_table, 3),
+                (self.population_components_table, 5),
+            ):
+                table.blockSignals(True)
+                for row in range(table.rowCount()):
+                    item = table.item(row, colour_column)
+                    colour = self.QColor(item.text().strip())
+                    item.setBackground(
+                        colour if colour.isValid() else self.QColor("#fecaca")
+                    )
+                table.blockSignals(False)
+            self._refresh_population_merge_preview()
+        except Exception as exc:  # allow temporarily incomplete table edits
+            self.population_merge_preview.setPlainText(
+                f"Finish the current edit to refresh the preview: {exc}"
+            )
+
+    def _refresh_population_merge_preview(self) -> None:
+        if self.population_draft is None or self.adata is None:
+            self.population_merge_preview.setPlainText(
+                "Create or load a population draft to preview its effective labels."
+            )
+            return
+        base, components = self._population_tables_to_frames()
+        labels, summary = synthesize_population_labels(
+            self.adata,
+            source_obs=self.population_draft.source_obs,
+            base_mapping=base,
+            components=components,
+            membership=self.population_membership,
+        )
+        counts = labels.value_counts(dropna=False)
+        lines = [
+            f"Derived obs: {self.population_draft.derived_obs}",
+            f"{summary['label_count']:,} effective population(s) across "
+            f"{summary['cell_count']:,} cells; {summary['split_cell_count']:,} "
+            "cells currently use split-component assignments.",
+            "",
+            "Effective population counts:",
+        ]
+        lines.extend(
+            f"  • {label}: {int(count):,} cells"
+            for label, count in counts.items()
+        )
+        groups = summary["merge_groups"]
+        lines.append("")
+        if groups:
+            lines.append("Explicit proposed merges (shared final name):")
+            for label, contributors in groups.items():
+                lines.append(f"  • {label} ← {', '.join(contributors)}")
+        else:
+            lines.append("No explicit merges are currently proposed.")
+        if summary["missing_source_cells"]:
+            lines.append(
+                f"WARNING: {summary['missing_source_cells']:,} cells have missing "
+                "source labels and remain unassigned."
+            )
+        colour_rows = pd.concat(
+            [
+                base[["proposed_label", "color"]],
+                components[["proposed_label", "color"]]
+                if not components.empty
+                else pd.DataFrame(columns=["proposed_label", "color"]),
+            ],
+            ignore_index=True,
+        )
+        colour_conflicts = {
+            str(label): list(dict.fromkeys(group["color"].astype(str)))
+            for label, group in colour_rows.groupby("proposed_label", sort=False)
+            if group["color"].astype(str).nunique() > 1
+            and str(label) in groups
+        }
+        if colour_conflicts:
+            lines.append("")
+            lines.append(
+                "Colour conflicts (the first colour will be used when applied):"
+            )
+            for label, colours in colour_conflicts.items():
+                lines.append(f"  • {label}: {', '.join(colours)}")
+        self.population_merge_preview.setPlainText("\n".join(lines))
+
+        merged_names = set(groups)
+        self.population_base_table.blockSignals(True)
+        for row in range(self.population_base_table.rowCount()):
+            name_item = self.population_base_table.item(row, 2)
+            name_item.setBackground(
+                self.QColor("#fed7aa")
+                if name_item.text().strip() in merged_names
+                else self.QColor("#ffffff")
+            )
+        self.population_base_table.blockSignals(False)
+        self.population_components_table.blockSignals(True)
+        for row in range(self.population_components_table.rowCount()):
+            name_item = self.population_components_table.item(row, 4)
+            name_item.setBackground(
+                self.QColor("#fed7aa")
+                if name_item.text().strip() in merged_names
+                else self.QColor("#ffffff")
+            )
+        self.population_components_table.blockSignals(False)
+
+    def _save_current_population_draft(
+        self,
+        *,
+        action: str,
+        details: dict[str, object] | None = None,
+    ) -> PopulationDraft:
+        if (
+            self.population_draft is None
+            or self.population_workspace_paths is None
+            or self.adata is None
+        ):
+            raise RuntimeError("Create or load a population draft first.")
+        base, components = self._population_tables_to_frames()
+        draft = self.population_draft.model_copy(
+            update={
+                "name": self.curation_draft_name_edit.text().strip(),
+                "derived_obs": self.curation_derived_obs_edit.text().strip(),
+            },
+            deep=True,
+        )
+        updated = save_population_draft(
+            self.population_workspace_paths,
+            draft,
+            base,
+            components,
+            self.population_membership,
+            adata=self.adata,
+            action=action,
+            details=details,
+        )
+        self.population_draft = updated
+        self.population_base_mapping = base
+        self.population_components = components
+        return updated
+
+    def save_current_population_draft(self) -> None:
+        updated = self._save_current_population_draft(action="save_draft")
+        self.refresh_population_workspace()
+        index = self.curation_draft_combo.findData(updated.draft_id)
+        if index >= 0:
+            self.curation_draft_combo.setCurrentIndex(index)
+        self.set_status(
+            f"Saved population draft {updated.name!r} r{updated.revision}; "
+            "naming and merge changes were appended to provenance."
+        )
+
+    def _selected_population_table_rows(self, table) -> list[int]:
+        return sorted(
+            {index.row() for index in table.selectionModel().selectedRows()}
+        )
+
+    def name_selected_population_rows(self, table_kind: str) -> None:
+        table = (
+            self.population_base_table
+            if table_kind == "base"
+            else self.population_components_table
+        )
+        column = 2 if table_kind == "base" else 4
+        rows = self._selected_population_table_rows(table)
+        if not rows:
+            raise ValueError("Select one or more complete table rows first.")
+        initial = table.item(rows[0], column).text()
+        value, accepted = self.QInputDialog.getText(
+            self.root,
+            "Name population components",
+            "Final population name (using one name for several rows proposes a merge):",
+            text=initial,
+        )
+        if not accepted:
+            return
+        value = value.strip()
+        if not value:
+            raise ValueError("Population names must not be blank.")
+        for row in rows:
+            table.item(row, column).setText(value)
+        self._refresh_population_merge_preview()
+
+    def colour_selected_population_rows(self, table_kind: str) -> None:
+        table = (
+            self.population_base_table
+            if table_kind == "base"
+            else self.population_components_table
+        )
+        column = 3 if table_kind == "base" else 5
+        rows = self._selected_population_table_rows(table)
+        if not rows:
+            raise ValueError("Select one or more complete table rows first.")
+        initial = self.QColor(table.item(rows[0], column).text())
+        colour = self.QColorDialog.getColor(initial, self.root)
+        if not colour.isValid():
+            return
+        value = colour.name()
+        for row in rows:
+            item = table.item(row, column)
+            item.setText(value)
+            item.setBackground(colour)
+        self._refresh_population_merge_preview()
+
+    def import_population_mapping(self) -> None:
+        if self.population_draft is None:
+            raise RuntimeError("Create or load a population draft first.")
+        selected, _ = self.QFileDialog.getOpenFileName(
+            self.root,
+            "Import preliminary population names",
+            str(self.project_root),
+            "CSV tables (*.csv);;All files (*)",
+        )
+        if not selected:
+            return
+        base, components = self._population_tables_to_frames()
+        updated, summary = import_base_mapping_csv(
+            selected,
+            base,
+            source_obs=self.population_draft.source_obs,
+            derived_obs=self.population_draft.derived_obs,
+        )
+        self.population_base_mapping = updated
+        self.population_components = components
+        self._set_population_tables(updated, components)
+        self._save_current_population_draft(
+            action="import_preliminary_mapping_csv",
+            details=summary,
+        )
+        self._refresh_population_merge_preview()
+        self.refresh_population_provenance()
+        self.set_status(
+            f"Imported preliminary names for {summary['updated_population_count']} "
+            "source populations."
+        )
+
+    def export_population_mapping(self) -> None:
+        if self.population_draft is None:
+            raise RuntimeError("Create or load a population draft first.")
+        base, _components = self._population_tables_to_frames()
+        selected, _ = self.QFileDialog.getSaveFileName(
+            self.root,
+            "Export editable population mapping",
+            str(
+                self.project_root
+                / f"{self.population_draft.derived_obs}_mapping.csv"
+            ),
+            "CSV tables (*.csv)",
+        )
+        if not selected:
+            return
+        destination = Path(selected).expanduser()
+        if destination.exists():
+            raise FileExistsError(
+                f"Refusing to overwrite existing mapping export: {destination}"
+            )
+        write_dataframe(destination, base)
+        append_population_audit(
+            self.population_workspace_paths,
+            action="export_mapping_csv",
+            draft_id=self.population_draft.draft_id,
+            details={"path": str(destination.resolve(strict=False))},
+        )
+        self.refresh_population_provenance()
+        self.set_status(f"Exported editable mapping CSV to {destination}.")
+
+    def import_population_components(self) -> None:
+        if self.population_draft is None or self.adata is None:
+            raise RuntimeError("Create or load a population draft first.")
+        selected, _ = self.QFileDialog.getOpenFileName(
+            self.root,
+            "Import image/other cell-level split assignments",
+            str(self.project_root),
+            "Cell tables (*.csv *.parquet *.pq);;All files (*)",
+        )
+        if not selected:
+            return
+        current_base, current_components = self._population_tables_to_frames()
+        self.population_base_mapping = current_base
+        assignments = read_dataframe(selected)
+        new_components, new_membership, import_summary = (
+            component_tables_from_assignments(
+                self.adata,
+                source_obs=self.population_draft.source_obs,
+                assignments=assignments,
+                method="image_or_external",
+            )
+        )
+        components, membership, merge_summary = integrate_component_tables(
+            current_components,
+            self.population_membership,
+            new_components,
+            new_membership,
+        )
+        self.population_components = components
+        self.population_membership = membership
+        self._set_population_tables(self.population_base_mapping, components)
+        self._save_current_population_draft(
+            action="import_cell_level_subclusters",
+            details={
+                "path": str(Path(selected).resolve(strict=False)),
+                **import_summary,
+                **merge_summary,
+            },
+        )
+        self._refresh_population_merge_preview()
+        self.refresh_population_provenance()
+        self.set_status(
+            f"Imported {len(new_membership):,} cell assignments as "
+            f"{len(new_components)} editable split components."
+        )
+
+    def import_current_classifier_components(self) -> None:
+        """Bridge finalized/current image-classifier assignments into a draft."""
+
+        if (
+            self.population_draft is None
+            or self.adata is None
+            or self.manifest is None
+            or self.cohort.empty
+        ):
+            raise RuntimeError(
+                "Load a classification experiment and a population draft first."
+            )
+        assignments = build_assignment_table(
+            self.cohort,
+            self.labels,
+            self.scores if not self.scores.empty else None,
+            class_ids=[item.class_id for item in self.manifest.classes],
+        )
+        assignments = assignments.loc[
+            assignments["class_id"].notna()
+            & assignments["assignment_source"].ne("unassigned")
+        ].copy()
+        if assignments.empty:
+            raise ValueError(
+                "The current classifier has no confirmed labels or scored model "
+                "assignments to import."
+            )
+        class_names = {
+            item.class_id: item.name for item in self.manifest.classes
+        }
+        assignments["curated_class_name"] = assignments["class_id"].map(
+            class_names
+        ).fillna(assignments["class_id"])
+        current_base, current_components = self._population_tables_to_frames()
+        self.population_base_mapping = current_base
+        run_id = (
+            str(assignments["model_id"].dropna().iloc[0])
+            if "model_id" in assignments
+            and not assignments["model_id"].dropna().empty
+            else f"labels-{int(time.time())}"
+        )
+        new_components, new_membership, import_summary = (
+            component_tables_from_assignments(
+                self.adata,
+                source_obs=self.population_draft.source_obs,
+                assignments=assignments,
+                method="napari_sbt_image_classifier",
+                run_id=run_id,
+                label_column="curated_class_name",
+            )
+        )
+        components, membership, integration_summary = integrate_component_tables(
+            current_components,
+            self.population_membership,
+            new_components,
+            new_membership,
+        )
+        self.population_components = components
+        self.population_membership = membership
+        self._set_population_tables(self.population_base_mapping, components)
+        self._save_current_population_draft(
+            action="import_current_image_classifier_assignments",
+            details={
+                **import_summary,
+                **integration_summary,
+                "confirmed_label_count": int(
+                    assignments["assignment_source"].eq("confirmed").sum()
+                ),
+                "model_assignment_count": int(
+                    assignments["assignment_source"].eq("model").sum()
+                ),
+            },
+        )
+        self._refresh_population_merge_preview()
+        self.refresh_population_provenance()
+        self.set_status(
+            f"Imported {len(new_membership):,} current classifier assignments "
+            f"as {len(new_components)} editable image-derived components."
+        )
+
+    def remove_selected_population_components(self) -> None:
+        rows = self._selected_population_table_rows(
+            self.population_components_table
+        )
+        if not rows:
+            raise ValueError("Select one or more split-component rows first.")
+        component_ids = {
+            str(
+                self.population_components_table.item(row, 0).data(
+                    self.Qt.UserRole
+                )
+            )
+            for row in rows
+        }
+        current_base, current_components = self._population_tables_to_frames()
+        self.population_base_mapping = current_base
+        self.population_components = current_components
+        removed_cells = int(
+            self.population_membership["component_id"].isin(component_ids).sum()
+        )
+        self.population_components = self.population_components.loc[
+            ~self.population_components["component_id"].isin(component_ids)
+        ].reset_index(drop=True)
+        self.population_membership = self.population_membership.loc[
+            ~self.population_membership["component_id"].isin(component_ids)
+        ].reset_index(drop=True)
+        self._set_population_tables(
+            self.population_base_mapping, self.population_components
+        )
+        self._save_current_population_draft(
+            action="remove_split_components",
+            details={
+                "component_ids": sorted(component_ids),
+                "removed_cell_count": removed_cells,
+            },
+        )
+        self._refresh_population_merge_preview()
+        self.refresh_population_provenance()
+
+    def _population_worker_anndata_path(self) -> Path:
+        if self.population_workspace_paths is None or self.adata is None:
+            raise RuntimeError("A population workspace and AnnData are required.")
+        path_text = self.anndata_edit.text().strip()
+        if path_text and Path(path_text).expanduser().is_file():
+            return Path(path_text).expanduser().resolve(strict=False)
+        fingerprint = source_obs_fingerprint(
+            self.adata, self.population_draft.source_obs
+        )
+        snapshot = (
+            self.population_workspace_paths.inputs
+            / f"source_{fingerprint[:16]}.h5ad"
+        )
+        if not snapshot.is_file():
+            self.set_status(
+                "Writing a population-workspace AnnData snapshot so the monitored "
+                "Scanpy subprocess can read the live notebook data."
+            )
+            _write_anndata_snapshot(self.adata, snapshot)
+        return snapshot
+
+    def start_population_subclustering(self) -> None:
+        if self.population_process is not None:
+            raise RuntimeError("Population subclustering is already running.")
+        if (
+            self.population_draft is None
+            or self.population_workspace_paths is None
+            or self.adata is None
+        ):
+            raise RuntimeError("Create or load a population draft first.")
+        selected_values = [
+            item.text()
+            for item in self.population_split_values_list.selectedItems()
+        ]
+        if not selected_values:
+            raise ValueError("Select at least one source population to subcluster.")
+        neighbor_source = self.population_neighbor_source_combo.currentData()
+        representation_key = None
+        adjacency_key = None
+        if neighbor_source == "rebuild_from_rep":
+            representation_key = (
+                self.population_representation_combo.currentText().strip()
+            )
+            if representation_key not in self.adata.obsm:
+                raise ValueError(
+                    "Choose an existing corrected adata.obsm representation."
+                )
+        else:
+            adjacency_key = self.population_adjacency_combo.currentText().strip()
+            if adjacency_key not in self.adata.obsp:
+                raise ValueError("Choose an existing adata.obsp connectivity graph.")
+            if "distance" in adjacency_key.lower():
+                raise ValueError(
+                    "The selected obsp key appears to be a distance matrix. Leiden "
+                    "needs weighted connectivities/adjacency, not distances."
+                )
+        self._save_current_population_draft(
+            action="save_before_population_subcluster"
+        )
+        run_id = str(uuid4())
+        draft_paths = population_draft_paths(
+            self.population_workspace_paths, self.population_draft
+        )
+        output_folder = draft_paths.runs / run_id
+        request = GraphSubclusterRequest(
+            run_id=run_id,
+            anndata_path=str(self._population_worker_anndata_path()),
+            source_obs=self.population_draft.source_obs,
+            source_fingerprint=self.population_draft.source_fingerprint,
+            selected_values=selected_values,
+            neighbor_source=neighbor_source,
+            representation_key=representation_key,
+            n_neighbors=self.population_n_neighbors_spin.value(),
+            adjacency_key=adjacency_key,
+            resolution=self.population_resolution_spin.value(),
+            mode=self.population_subcluster_mode_combo.currentData(),
+            output_folder=str(output_folder),
+        )
+        output_folder.mkdir(parents=True, exist_ok=False)
+        request_path = save_graph_subcluster_request(
+            request, output_folder / "request.json"
+        )
+        append_population_audit(
+            self.population_workspace_paths,
+            action="start_population_subclustering",
+            draft_id=self.population_draft.draft_id,
+            details=request.model_dump(mode="json"),
+        )
+        from qtpy.QtCore import QProcess
+
+        process = QProcess(self.root)
+        process.setProgram(sys.executable)
+        process.setArguments(
+            [
+                "-m",
+                "SpatialBiologyToolkit.napari_sbt.population_worker",
+                "--request",
+                str(request_path),
+            ]
+        )
+        process.setProcessChannelMode(QProcess.MergedChannels)
+        process.readyReadStandardOutput.connect(
+            self._read_population_subcluster_progress
+        )
+        process.finished.connect(
+            self._guard(
+                self._population_subcluster_finished,
+                pass_signal_args=True,
+            )
+        )
+        self.population_process = process
+        self._population_output_buffer = ""
+        self._population_pending_run = {
+            "request": request,
+            "output_folder": output_folder,
+            "cancelled": False,
+        }
+        self.run_population_subcluster_button.setEnabled(False)
+        self.cancel_population_subcluster_button.setEnabled(True)
+        self.population_subcluster_status.setText(
+            "Starting a separate Python process and validating the corrected "
+            "representation/graph…"
+        )
+        process.start()
+
+    def _read_population_subcluster_progress(self, *, flush: bool = False) -> None:
+        if self.population_process is not None:
+            self._population_output_buffer += bytes(
+                self.population_process.readAllStandardOutput()
+            ).decode(errors="replace")
+        lines = self._population_output_buffer.splitlines(keepends=True)
+        self._population_output_buffer = ""
+        for raw_line in lines:
+            if not flush and not raw_line.endswith(("\n", "\r")):
+                self._population_output_buffer = raw_line
+                continue
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                self.population_subcluster_status.setText(line)
+                continue
+            event_name = event.get("event")
+            if event_name == "population_subcluster_loading":
+                message = "Loading AnnData and validating its frozen source fingerprint…"
+            elif event_name == "population_subcluster_running":
+                if event.get("neighbor_source") == "rebuild_from_rep":
+                    input_text = (
+                        f"rebuilding n={event.get('n_neighbors')} neighbours from "
+                        f"{event.get('representation_key')}"
+                    )
+                else:
+                    input_text = f"reusing graph {event.get('adjacency_key')}"
+                message = (
+                    f"Running {event.get('task_index')}/{event.get('task_count')}: "
+                    f"{event.get('population')} ({event.get('cell_count', 0):,} "
+                    f"cells, {input_text}, resolution {event.get('resolution')}). "
+                    "Process is live."
+                )
+            elif event_name == "population_subcluster_completed":
+                message = (
+                    f"Completed: {event.get('cluster_count')} components for "
+                    f"{event.get('cell_count', 0):,} cells in "
+                    f"{event.get('elapsed_seconds')} s. Importing results…"
+                )
+            elif event_name == "population_subcluster_failed":
+                message = (
+                    f"FAILED — {event.get('error_type')}: {event.get('error')}"
+                )
+            else:
+                message = line
+            self.population_subcluster_status.setText(message)
+            self.set_status(f"POPULATION SUBCLUSTER — {message}")
+
+    def cancel_population_subclustering(self) -> None:
+        if self.population_process is None:
+            return
+        if self._population_pending_run is not None:
+            self._population_pending_run["cancelled"] = True
+        self.population_process.kill()
+        self.population_subcluster_status.setText(
+            "Cancellation requested. No AnnData or draft mapping has been modified."
+        )
+
+    def _population_subcluster_finished(self, exit_code: int, _status) -> None:
+        self._read_population_subcluster_progress(flush=True)
+        pending = self._population_pending_run or {}
+        process_cancelled = bool(pending.get("cancelled"))
+        request = pending.get("request")
+        output_folder = pending.get("output_folder")
+        self.population_process = None
+        self._population_pending_run = None
+        self.run_population_subcluster_button.setEnabled(True)
+        self.cancel_population_subcluster_button.setEnabled(False)
+        if process_cancelled:
+            if self.population_workspace_paths is not None and self.population_draft:
+                append_population_audit(
+                    self.population_workspace_paths,
+                    action="cancel_population_subclustering",
+                    draft_id=self.population_draft.draft_id,
+                    details={"run_id": getattr(request, "run_id", None)},
+                )
+            return
+        assignments_path = (
+            Path(output_folder) / "assignments.csv" if output_folder else None
+        )
+        if exit_code != 0 or assignments_path is None or not assignments_path.is_file():
+            self.population_subcluster_status.setText(
+                f"Population subclustering exited with code {exit_code}; no draft "
+                "membership was changed. Review the progress message above."
+            )
+            if self.population_workspace_paths is not None and self.population_draft:
+                append_population_audit(
+                    self.population_workspace_paths,
+                    action="population_subclustering_failed",
+                    draft_id=self.population_draft.draft_id,
+                    details={
+                        "run_id": getattr(request, "run_id", None),
+                        "exit_code": exit_code,
+                    },
+                )
+            return
+        assignments = read_dataframe(assignments_path)
+        component_method = (
+            "scanpy_rebuilt_neighbors"
+            if request.neighbor_source == "rebuild_from_rep"
+            else "scanpy_existing_graph"
+        )
+        new_components, new_membership, import_summary = (
+            component_tables_from_assignments(
+                self.adata,
+                source_obs=self.population_draft.source_obs,
+                assignments=assignments,
+                method=component_method,
+                run_id=request.run_id,
+                label_column="component_value",
+            )
+        )
+        components, membership, integration_summary = integrate_component_tables(
+            self.population_components,
+            self.population_membership,
+            new_components,
+            new_membership,
+        )
+        self.population_components = components
+        self.population_membership = membership
+        self.population_draft = self.population_draft.model_copy(
+            update={"latest_run_id": request.run_id}, deep=True
+        )
+        self._set_population_tables(self.population_base_mapping, components)
+        self._save_current_population_draft(
+            action="import_population_subclusters",
+            details={
+                **import_summary,
+                **integration_summary,
+                "provenance_path": str(Path(output_folder) / "provenance.json"),
+            },
+        )
+        self._refresh_population_merge_preview()
+        self.refresh_population_provenance()
+        self.population_subcluster_status.setText(
+            f"Imported {len(new_components)} editable components covering "
+            f"{len(new_membership):,} cells. Rename them before applying the draft."
+        )
+
+    def apply_current_population_draft(self) -> None:
+        if self.population_draft is None or self.adata is None:
+            raise RuntimeError("Create or load a population draft first.")
+        target_obs = self.curation_derived_obs_edit.text().strip()
+        if target_obs in self.adata.obs and not self.population_overwrite_check.isChecked():
+            raise ValueError(
+                f"AnnData already contains obs[{target_obs!r}]. Enable the explicit "
+                "overwrite checkbox before replacing it."
+            )
+        draft = self.population_draft.model_copy(
+            update={"status": "applied"}, deep=True
+        )
+        self.population_draft = draft
+        draft = self._save_current_population_draft(action="save_before_live_apply")
+        summary = apply_population_draft(
+            self.adata,
+            draft=draft,
+            base_mapping=self.population_base_mapping,
+            components=self.population_components,
+            membership=self.population_membership,
+            overwrite=self.population_overwrite_check.isChecked(),
+        )
+        append_population_audit(
+            self.population_workspace_paths,
+            action="apply_live_derived_obs",
+            draft_id=draft.draft_id,
+            details=summary,
+        )
+        self._populate_anndata_selectors(
+            source=f"population draft {draft.name!r}"
+        )
+        self.overlay_obs_combo.setCurrentText(draft.derived_obs)
+        self.population_obs_combo.setCurrentText(draft.derived_obs)
+        self.refresh_population_provenance()
+        self.set_status(
+            f"Applied adata.obs[{draft.derived_obs!r}] in memory: "
+            f"{summary['label_count']} populations, "
+            f"{len(summary['merge_groups'])} explicit merge group(s)."
+        )
+
+    def show_curated_population_overlay(self) -> None:
+        if self.population_draft is None or self.adata is None:
+            raise RuntimeError("Create or load a population draft first.")
+        observation = self.population_draft.derived_obs
+        if observation not in self.adata.obs:
+            raise ValueError(
+                "Apply the draft to the live AnnData before showing its overlay."
+            )
+        self.overlay_obs_combo.setCurrentText(observation)
+        self.overlay_full_dataset_check.setChecked(True)
+        self.render_obs_overlay()
+        self.tabs.setCurrentIndex(3)
+
+    def export_curated_anndata(self) -> None:
+        if self.adata is None:
+            raise RuntimeError("No live AnnData is available to export.")
+        default_name = (
+            f"{self.population_draft.derived_obs}_curated.h5ad"
+            if self.population_draft is not None
+            else "napari_sbt_curated.h5ad"
+        )
+        selected, _ = self.QFileDialog.getSaveFileName(
+            self.root,
+            "Export curated AnnData copy",
+            str(self.project_root / default_name),
+            "AnnData (*.h5ad)",
+        )
+        if not selected:
+            return
+        destination = atomic_write_curated_anndata(self.adata, selected)
+        if self.population_workspace_paths is not None:
+            append_population_audit(
+                self.population_workspace_paths,
+                action="export_curated_anndata_copy",
+                draft_id=(
+                    self.population_draft.draft_id
+                    if self.population_draft is not None
+                    else None
+                ),
+                details={"path": str(destination)},
+            )
+        self.refresh_population_provenance()
+        self.set_status(
+            f"Exported a new curated AnnData copy to {destination}; the source "
+            "AnnData file was not overwritten."
+        )
+
+    def refresh_population_provenance(self) -> None:
+        if self.population_workspace_paths is None:
+            self.population_provenance_text.setPlainText(
+                "No population workspace has been created for this source obs."
+            )
+            return
+        events = read_population_audit(self.population_workspace_paths)
+        current_draft_id = (
+            self.population_draft.draft_id
+            if self.population_draft is not None
+            else None
+        )
+        lines = []
+        for event in events[-300:]:
+            if event.get("draft_id") not in {None, current_draft_id}:
+                continue
+            lines.append(
+                f"{event.get('timestamp')}  {event.get('action')}  "
+                f"actor={event.get('actor')}"
+            )
+            details = event.get("details") or {}
+            lines.append(json.dumps(details, indent=2, ensure_ascii=False, default=str))
+            lines.append("")
+        self.population_provenance_text.setPlainText("\n".join(lines))
+
+    def _population_derived_obs_for_qc(self) -> str:
+        if self.population_draft is None or self.adata is None:
+            raise RuntimeError("Create or load a population draft first.")
+        observation = self.population_draft.derived_obs
+        if observation not in self.adata.obs:
+            raise ValueError(
+                "Apply the current draft before generating QC plots. This keeps "
+                "the plotted labels identical to the Explore overlay."
+            )
+        return observation
+
+    def _show_population_figure(self, figure, title: str) -> None:
+        try:
+            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+        except ImportError:  # Matplotlib < 3.5 compatibility
+            from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+        from qtpy.QtWidgets import QVBoxLayout
+
+        dialog = self.QDialog(self.root)
+        dialog.setWindowTitle(title)
+        dialog.resize(980, 760)
+        layout = QVBoxLayout(dialog)
+        canvas = FigureCanvasQTAgg(figure)
+        layout.addWidget(canvas)
+        canvas.draw()
+        dialog.setAttribute(self.Qt.WA_DeleteOnClose, True)
+        self.population_plot_dialogs.append(dialog)
+
+        def forget_dialog(*_args):
+            if dialog in self.population_plot_dialogs:
+                self.population_plot_dialogs.remove(dialog)
+
+        dialog.destroyed.connect(forget_dialog)
+        dialog.show()
+
+    def show_population_embedding_qc(self) -> None:
+        observation = self._population_derived_obs_for_qc()
+        embedding_key = self.population_embedding_combo.currentText().strip()
+        if embedding_key not in self.adata.obsm:
+            raise ValueError("Choose an existing 2-D AnnData embedding.")
+        coordinates = np.asarray(self.adata.obsm[embedding_key])[:, :2]
+        labels = self.adata.obs[observation].astype("string")
+        colours = categorical_colour_map(self.adata, observation)
+        from matplotlib.figure import Figure
+
+        figure = Figure(figsize=(9, 7), constrained_layout=True)
+        axis = figure.add_subplot(111)
+        missing = labels.isna().to_numpy()
+        if bool(missing.any()):
+            axis.scatter(
+                coordinates[missing, 0],
+                coordinates[missing, 1],
+                s=2,
+                c="#d1d5db",
+                alpha=0.35,
+                linewidths=0,
+                label="unassigned",
+            )
+        for population in labels.dropna().drop_duplicates():
+            selected = labels.eq(population).to_numpy()
+            axis.scatter(
+                coordinates[selected, 0],
+                coordinates[selected, 1],
+                s=3,
+                c=colours.get(str(population), "#ffffff"),
+                alpha=0.75,
+                linewidths=0,
+                label=str(population),
+            )
+        axis.set_title(f"{observation} on {embedding_key}")
+        axis.set_xlabel(f"{embedding_key} 1")
+        axis.set_ylabel(f"{embedding_key} 2")
+        if labels.nunique(dropna=True) <= 30:
+            axis.legend(
+                bbox_to_anchor=(1.02, 1),
+                loc="upper left",
+                markerscale=3,
+                frameon=False,
+            )
+        self._show_population_figure(
+            figure, f"NapariSBT population QC — {observation}"
+        )
+
+    def show_population_heatmap_qc(self) -> None:
+        observation = self._population_derived_obs_for_qc()
+        markers = [
+            item.text() for item in self.population_marker_list.selectedItems()
+        ]
+        if not markers:
+            raise ValueError("Select at least one marker of interest.")
+        if len(markers) > 100:
+            raise ValueError("Select at most 100 markers for the live QC heat map.")
+        positions = [self.adata.var_names.get_loc(marker) for marker in markers]
+        matrix = self.adata.X[:, positions]
+        if hasattr(matrix, "toarray"):
+            matrix = matrix.toarray()
+        matrix = np.asarray(matrix, dtype=float)
+        labels = self.adata.obs[observation].astype("string")
+        categories = [str(value) for value in labels.dropna().drop_duplicates()]
+        means = np.vstack(
+            [
+                np.nanmean(matrix[labels.eq(category).to_numpy()], axis=0)
+                for category in categories
+            ]
+        )
+        column_mean = np.nanmean(means, axis=0)
+        column_sd = np.nanstd(means, axis=0)
+        column_sd[column_sd == 0] = 1
+        scaled = (means - column_mean) / column_sd
+        from matplotlib.figure import Figure
+
+        width = max(8, min(20, len(markers) * 0.35 + 4))
+        height = max(5, min(20, len(categories) * 0.32 + 3))
+        figure = Figure(figsize=(width, height), constrained_layout=True)
+        axis = figure.add_subplot(111)
+        image = axis.imshow(scaled, aspect="auto", cmap="coolwarm", vmin=-2, vmax=2)
+        axis.set_xticks(np.arange(len(markers)), labels=markers, rotation=90)
+        axis.set_yticks(np.arange(len(categories)), labels=categories)
+        axis.set_title(
+            f"{observation}: population mean marker expression (marker-wise z-score)"
+        )
+        figure.colorbar(image, ax=axis, label="z-score")
+        self._show_population_figure(
+            figure, f"NapariSBT marker heat map — {observation}"
+        )
 
     def refresh_scope_values(self) -> None:
         self.value_list.clear()
@@ -2678,13 +4502,19 @@ class NapariSBTController:
             ):
                 colormap = "adata.uns categorical palette"
             suffix = f" [{colormap}]" if colormap else ""
+            scope_suffix = (
+                " [full dataset]"
+                if recipe.observation_overlay_full_dataset
+                else " [classification cohort]"
+            )
             entries.append(
                 {
                     "kind": "observation",
                     "name": name,
                     "observation": recipe.observation_overlay,
+                    "full_dataset": recipe.observation_overlay_full_dataset,
                     "description": (
-                        f"AnnData observation{suffix}: "
+                        f"AnnData observation{suffix}{scope_suffix}: "
                         f"{recipe.observation_overlay}"
                     ),
                 }
@@ -2860,6 +4690,7 @@ class NapariSBTController:
                     payload["image_mode"] = "none"
             elif kind == "observation":
                 payload["observation_overlay"] = None
+                payload["observation_overlay_full_dataset"] = False
             elif kind == "population":
                 payload["populations"] = [
                     population
@@ -2918,6 +4749,7 @@ class NapariSBTController:
                 "kind": "observation",
                 "name": name,
                 "observation": name.removeprefix("obs::"),
+                "full_dataset": self.explore_recipe.observation_overlay_full_dataset,
             }
         if name.startswith("adata.X::"):
             return {
@@ -3031,8 +4863,12 @@ class NapariSBTController:
             if descriptor["kind"] == "observation"
         ]
         observation_overlay = None
+        observation_overlay_full_dataset = False
         if observation_layers:
             observation_overlay = observation_layers[-1][1]["observation"]
+            observation_overlay_full_dataset = bool(
+                observation_layers[-1][1].get("full_dataset", False)
+            )
             ignored.extend(
                 descriptor["name"]
                 for _layer, descriptor in observation_layers[:-1]
@@ -3132,6 +4968,7 @@ class NapariSBTController:
             image_mode=image_mode,
             image_channels=image_channels,
             observation_overlay=observation_overlay,
+            observation_overlay_full_dataset=observation_overlay_full_dataset,
             population_observation=population_observation,
             populations=list(dict.fromkeys(populations)),
             marker_overlays=list(dict.fromkeys(marker_overlays)),
@@ -3166,6 +5003,9 @@ class NapariSBTController:
                 and self.overlay_obs_combo.findText(recipe.observation_overlay) >= 0
             ):
                 self.overlay_obs_combo.setCurrentText(recipe.observation_overlay)
+            self.overlay_full_dataset_check.setChecked(
+                recipe.observation_overlay_full_dataset
+            )
             if (
                 recipe.population_observation
                 and self.population_obs_combo.findText(
@@ -3988,7 +5828,12 @@ class NapariSBTController:
         if not observation:
             raise ValueError("Select an AnnData observation.")
         self.explore_recipe = self.explore_recipe.model_copy(
-            update={"observation_overlay": observation},
+            update={
+                "observation_overlay": observation,
+                "observation_overlay_full_dataset": (
+                    self.overlay_full_dataset_check.isChecked()
+                ),
+            },
             deep=True,
         )
         self.replay_explore_view()
@@ -4025,6 +5870,8 @@ class NapariSBTController:
                 f"Saved AnnData observation {observation!r} is no longer available."
             )
             return 0
+        if self.explore_recipe.observation_overlay_full_dataset:
+            selected = object_ids.notna()
         values = rows[observation]
         if pd.api.types.is_numeric_dtype(values):
             mapping = pd.Series(
@@ -4040,6 +5887,7 @@ class NapariSBTController:
                 reload_descriptor={
                     "kind": "observation",
                     "observation": observation,
+                    "full_dataset": self.explore_recipe.observation_overlay_full_dataset,
                 },
                 blending="additive",
                 **self._recipe_display_settings(
@@ -4064,6 +5912,7 @@ class NapariSBTController:
                 reload_descriptor={
                     "kind": "observation",
                     "observation": observation,
+                    "full_dataset": self.explore_recipe.observation_overlay_full_dataset,
                 },
                 colormap=self._direct_label_colormap(
                     {

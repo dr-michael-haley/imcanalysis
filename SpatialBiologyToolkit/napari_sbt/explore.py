@@ -144,6 +144,7 @@ class ExploreViewRecipe(BaseModel):
     image_mode: Literal["none", "grayscale", "six_colour", "rgb"] = "none"
     image_channels: list[str] = Field(default_factory=list)
     observation_overlay: str | None = None
+    observation_overlay_full_dataset: bool = False
     population_observation: str | None = None
     populations: list[str] = Field(default_factory=list)
     marker_overlays: list[str] = Field(default_factory=list)

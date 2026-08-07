@@ -336,6 +336,12 @@ populations can be selected as individual contour layers. Variables in
 `adata.var_names` can also be loaded from cell-level `adata.X` values and
 mapped onto eligible mask objects as quantitative overlays.
 
+Observation overlays are cohort-restricted by default. Enable **Include cells
+outside the classification cohort** to map an observation over every
+identity-matched object in the ROI. Population Curation enables this scope when
+showing a newly crafted observation, allowing the refined population to be seen
+alongside the unchanged broad populations in the tissue.
+
 With **Reload the current Explore view when ROI changes** enabled, navigation
 reconstructs the same images, colormaps, observation overlay, population
 layers, and marker overlays for the new ROI. A view fingerprint tracks which
@@ -387,6 +393,61 @@ The annotated copy includes subclass, assignment source, confidence, and
 uncertainty observations; a full probability matrix with `NaN` outside the
 cohort; and an optional combined broad-population/subclass column. Original
 AnnData and masks are never overwritten by default.
+
+## Naming, merging, and subclustering populations
+
+The **Populations** tab is an auditable observation-crafting workspace. Choose
+one original categorical observation (for example, `leiden`) and create one or
+more sibling drafts from it. The first draft freezes a fingerprint of the cell
+identities and source labels. Every sibling draft in that workspace must remain
+a remapping of that same source; source changes require a new workspace rather
+than silently changing existing results.
+
+The base table starts as an identity mapping. Editing **Proposed name** renames
+a cluster. Assigning the same final name to multiple rows is an explicit merge:
+all contributors are highlighted and listed in the effective-label preview.
+Preliminary mappings can be imported from CSV, including common source columns
+such as the selected obs name, `source_value`, `cluster`, or `leiden`, and label
+columns such as `proposed_label`, `final_population`, `label`, or `name`.
+
+Population source labels are matched after removing leading and trailing
+whitespace. The immutable source fingerprint still records the exact AnnData
+values, and labels that would collide after trimming are rejected rather than
+silently merged.
+
+Subclusters use a second component table because one original population can
+produce several cell groups. The table retains parent population, method, raw
+component, run ID, cell count, editable final name, colour, and notes. Both the
+monitored Scanpy worker and an imported NapariSBT/image-classifier assignment
+table feed this same representation. Later cell assignments replace prior split
+membership only for overlapping cells. **Use current classifier assignments**
+also transfers confirmed/model image classifications directly from the active
+experiment, with confirmed labels taking precedence and unassigned cells omitted.
+
+Interactive Scanpy subclustering defaults to rebuilding neighbours within the
+selected cells from `adata.obsm["X_biobatchnet"]`, using
+`scanpy.pp.neighbors(..., n_neighbors=15)` before Leiden. The cells can therefore
+form new nearest-neighbour relationships after the broad population is isolated,
+while the input representation remains BioBatchNet corrected. Normalization,
+scaling, PCA, BioBatchNet itself, and UMAP are not rerun. The representation and
+neighbour count are selectable, and the effective count is reduced to
+`n_cells - 1` for small subsets. Reusing an existing `adata.obsp` graph remains
+an explicit conservative alternative. The default runs each selected broad
+population separately; an opt-in mode clusters selected populations together.
+
+Applying a draft creates or refreshes only its derived observation in the live
+working AnnData, writes the derived Scanpy colour array, and immediately refreshes
+the Explore and classification selectors. An existing obs is protected unless
+the explicit overwrite checkbox is enabled. Quick pop-ups can redraw an existing
+two-dimensional embedding or a selected-marker population heat map. These are
+live QC aids and do not recompute embeddings or clustering.
+
+Each source workspace owns an append-only `provenance.jsonl`. It records draft
+creation, mapping edits, explicit merge groups, CSV imports, subcluster requests and
+results, failures/cancellation, component replacement, live application, and
+exports. Each subcluster run also retains its request, assignments, and a declaration
+that preprocessing and batch correction were not rerun. Curated AnnData export
+writes a new file and refuses to replace an existing path.
 
 ## Experiment layout
 
