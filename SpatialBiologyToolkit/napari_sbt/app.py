@@ -134,6 +134,47 @@ def _path_text(value: str | Path | None) -> str:
     return "" if value is None else str(Path(value))
 
 
+def _normalise_anndata_input(
+    anndata_path: str | Path | object | None,
+    anndata: object | None,
+) -> tuple[str | Path | None, object | None]:
+    """Separate a filesystem source from a live AnnData object."""
+
+    if anndata_path is not None and anndata is not None:
+        raise ValueError("Supply either anndata_path or anndata, not both.")
+    candidate = anndata if anndata is not None else anndata_path
+    if candidate is None:
+        return None, None
+    if isinstance(candidate, (str, os.PathLike)):
+        return candidate, None
+
+    import anndata as ad
+
+    if not isinstance(candidate, ad.AnnData):
+        raise TypeError(
+            "AnnData input must be a path or an anndata.AnnData object; "
+            f"received {type(candidate).__name__}."
+        )
+    return None, candidate
+
+
+def _write_anndata_snapshot(adata, destination: str | Path) -> Path:
+    """Atomically persist a live AnnData as an experiment-owned input."""
+
+    output = Path(destination).expanduser().resolve(strict=False)
+    if output.exists():
+        raise FileExistsError(f"Refusing to overwrite AnnData snapshot: {output}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(f".{output.stem}.tmp{output.suffix}")
+    try:
+        adata.write_h5ad(temporary)
+        os.replace(temporary, output)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+    return output
+
+
 def _split_paths(value: str) -> list[str]:
     return [item.strip() for item in value.replace(";", "\n").splitlines() if item.strip()]
 
@@ -161,7 +202,8 @@ class NapariSBTController:
         *,
         project_root: str | Path | None = None,
         experiment: str | Path | None = None,
-        anndata_path: str | Path | None = None,
+        anndata_path: str | Path | object | None = None,
+        anndata: object | None = None,
         masks_folder: str | Path | None = None,
         images_folders: Iterable[str | Path] = (),
         extra_images_folders: Iterable[str | Path] = (),
@@ -203,6 +245,11 @@ class NapariSBTController:
             QWidget,
         )
 
+        resolved_anndata_path, in_memory_anndata = _normalise_anndata_input(
+            anndata_path,
+            anndata,
+        )
+
         self.Qt = Qt
         self.QMessageBox = QMessageBox
         self.QFileDialog = QFileDialog
@@ -223,7 +270,8 @@ class NapariSBTController:
         )
         self.manifest: ExperimentManifest | None = None
         self.paths = None
-        self.adata = None
+        self._in_memory_adata = in_memory_anndata
+        self.adata = in_memory_anndata
         self.preview: CohortPreview | None = None
         self.cohort = pd.DataFrame()
         self.labels = empty_labels()
@@ -294,7 +342,15 @@ class NapariSBTController:
         inputs = QGroupBox("Dataset inputs")
         inputs_form = QFormLayout(inputs)
         self.name_edit = QLineEdit("Cell classification")
-        self.anndata_edit = QLineEdit(_path_text(anndata_path))
+        self.anndata_edit = QLineEdit(_path_text(resolved_anndata_path))
+        if in_memory_anndata is not None:
+            self.anndata_edit.setPlaceholderText(
+                f"In-memory AnnData ({in_memory_anndata.n_obs:,} cells)"
+            )
+            self.anndata_edit.setToolTip(
+                "This live AnnData is used directly. Creating an experiment writes "
+                "an experiment-owned snapshot for restart and worker support."
+            )
         self.masks_edit = QLineEdit(_path_text(masks_folder))
         self.images_edit = QTextEdit("\n".join(map(str, images_folders)))
         self.images_edit.setMaximumHeight(70)
@@ -304,7 +360,7 @@ class NapariSBTController:
         self.roi_obs_edit = QLineEdit("ROI")
         self.object_obs_edit = QLineEdit("ObjectNumber")
         inputs_form.addRow("Experiment name", self.name_edit)
-        inputs_form.addRow("AnnData", self.anndata_edit)
+        inputs_form.addRow("AnnData source", self.anndata_edit)
         inputs_form.addRow("Masks folder", self.masks_edit)
         inputs_form.addRow("IMC image folders", self.images_edit)
         inputs_form.addRow("Extra image folders", self.extra_images_edit)
@@ -1164,7 +1220,7 @@ class NapariSBTController:
         self._set_classification_enabled(False)
         if experiment:
             self.load_existing_experiment(Path(experiment))
-        elif anndata_path:
+        elif resolved_anndata_path is not None or in_memory_anndata is not None:
             self.load_anndata_selectors()
 
     def _connect_signals(self) -> None:
@@ -1503,13 +1559,9 @@ class NapariSBTController:
             "eventual classification target."
         )
 
-    def load_anndata_selectors(self) -> None:
-        import anndata as ad
-
-        path = Path(self.anndata_edit.text()).expanduser()
-        if not path.is_file():
-            raise FileNotFoundError(f"AnnData not found: {path}")
-        self.adata = ad.read_h5ad(path)
+    def _populate_anndata_selectors(self, *, source: str) -> None:
+        if self.adata is None:
+            raise RuntimeError("No AnnData object is available.")
         columns = [str(column) for column in self.adata.obs.columns]
         for combo in (
             self.obs_combo,
@@ -1542,7 +1594,27 @@ class NapariSBTController:
         self.refresh_scope_values()
         self.refresh_population_values()
         self.refresh_feature_channel_choices()
-        self.set_status(f"Loaded AnnData selectors for {self.adata.n_obs:,} cells.")
+        self.set_status(
+            f"Loaded AnnData selectors for {self.adata.n_obs:,} cells from {source}."
+        )
+
+    def load_anndata_selectors(self) -> None:
+        path_text = self.anndata_edit.text().strip()
+        if path_text:
+            import anndata as ad
+
+            path = Path(path_text).expanduser()
+            if not path.is_file():
+                raise FileNotFoundError(f"AnnData not found: {path}")
+            self.adata = ad.read_h5ad(path)
+            self._in_memory_adata = None
+            source = str(path)
+        elif self._in_memory_adata is not None:
+            self.adata = self._in_memory_adata
+            source = "the live in-memory object"
+        else:
+            raise ValueError("Supply an AnnData path or launch with an AnnData object.")
+        self._populate_anndata_selectors(source=source)
 
     def refresh_scope_values(self) -> None:
         self.value_list.clear()
@@ -1957,13 +2029,19 @@ class NapariSBTController:
             )
         else:
             trial_text = ""
+        snapshot_text = (
+            " The live AnnData will be copied into the experiment inputs so the "
+            "experiment can be reopened and used by separate feature workers."
+            if self._in_memory_adata is not None
+            else ""
+        )
         reply = self.QMessageBox.question(
             self.root,
             "Freeze cohort",
             (
                 f"Freeze {preview.eligible_cell_count:,} eligible identities across "
                 f"{preview.represented_roi_count} ROIs? Later membership changes "
-                f"require an explicit experiment revision.{trial_text}"
+                f"require an explicit experiment revision.{trial_text}{snapshot_text}"
             ),
         )
         if reply != self.QMessageBox.Yes:
@@ -1981,6 +2059,19 @@ class NapariSBTController:
                 f"Experiment already exists at {root}. Load it or choose a new folder; "
                 "the frozen cohort was not changed."
             )
+        anndata_source = self.anndata_edit.text().strip()
+        if self._in_memory_adata is not None:
+            snapshot = _write_anndata_snapshot(
+                self._in_memory_adata,
+                root / "inputs" / "anndata.h5ad",
+            )
+            anndata_source = str(snapshot)
+            self.anndata_edit.setText(anndata_source)
+            self._in_memory_adata = None
+            self.set_status(
+                "Saved and activated an experiment-owned snapshot of the live "
+                f"AnnData: {snapshot}"
+            )
         provisional_paths = save_cohort_snapshot(
             preview, root / "cohort" / "eligible_cells.parquet"
         )
@@ -1997,7 +2088,7 @@ class NapariSBTController:
         manifest = ExperimentManifest(
             name=name,
             project_root=str(self.project_root),
-            anndata_path=self.anndata_edit.text().strip(),
+            anndata_path=anndata_source,
             images_folders=_split_paths(self.images_edit.toPlainText()),
             extra_images_folders=_split_paths(self.extra_images_edit.toPlainText()),
             masks_folder=self.masks_edit.text().strip(),
@@ -2191,8 +2282,21 @@ class NapariSBTController:
         else:
             self.reviewed_rois = set()
         self._load_explore_review_state()
-        if self.manifest.anndata_path:
+        if self._in_memory_adata is not None:
+            if "obs_name" in self.cohort:
+                frozen_names = set(self.cohort["obs_name"].astype(str))
+                live_names = set(self._in_memory_adata.obs_names.astype(str))
+                missing_names = sorted(frozen_names - live_names)
+                if missing_names:
+                    raise ValueError(
+                        "The supplied in-memory AnnData is missing frozen experiment "
+                        f"cells. Examples: {missing_names[:10]}"
+                    )
+            self.adata = self._in_memory_adata
+            self._populate_anndata_selectors(source="the live in-memory object")
+        elif self.manifest.anndata_path:
             self.load_anndata_selectors()
+        if self.adata is not None:
             self.scope_combo.setCurrentIndex(
                 self.scope_combo.findData(self.manifest.cell_scope.mode)
             )
@@ -5867,12 +5971,13 @@ def launch(
     viewer=None,
     project_root: str | Path | None = None,
     experiment: str | Path | None = None,
-    anndata_path: str | Path | None = None,
+    anndata_path: str | Path | object | None = None,
+    anndata: object | None = None,
     masks_folder: str | Path | None = None,
     images_folders: Iterable[str | Path] = (),
     extra_images_folders: Iterable[str | Path] = (),
 ):
-    """Create the viewer and dock; the caller decides whether to enter napari.run."""
+    """Create the viewer and dock; paths or a live AnnData object are accepted."""
 
     import napari
 
@@ -5883,6 +5988,7 @@ def launch(
         project_root=project_root,
         experiment=experiment,
         anndata_path=anndata_path,
+        anndata=anndata,
         masks_folder=masks_folder,
         images_folders=images_folders,
         extra_images_folders=extra_images_folders,
@@ -5895,4 +6001,35 @@ def launch(
     return viewer, controller, dock
 
 
-__all__ = ["NapariSBTController", "launch"]
+def launch_notebook(
+    adata,
+    *,
+    viewer=None,
+    project_root: str | Path | None = None,
+    experiment: str | Path | None = None,
+    masks_folder: str | Path | None = None,
+    images_folders: Iterable[str | Path] = (),
+    extra_images_folders: Iterable[str | Path] = (),
+):
+    """Launch from Jupyter with a live AnnData and Qt event-loop integration."""
+
+    try:
+        from IPython import get_ipython
+    except ImportError:
+        shell = None
+    else:
+        shell = get_ipython()
+    if shell is not None:
+        shell.run_line_magic("gui", "qt")
+    return launch(
+        viewer=viewer,
+        project_root=project_root,
+        experiment=experiment,
+        anndata=adata,
+        masks_folder=masks_folder,
+        images_folders=images_folders,
+        extra_images_folders=extra_images_folders,
+    )
+
+
+__all__ = ["NapariSBTController", "launch", "launch_notebook"]

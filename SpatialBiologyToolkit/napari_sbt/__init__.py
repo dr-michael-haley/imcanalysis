@@ -31,6 +31,14 @@ def launch(*args, **kwargs):
     return _launch(*args, **kwargs)
 
 
+def launch_notebook(*args, **kwargs):
+    """Launch from Jupyter with a live AnnData without eager Qt imports."""
+
+    from .app import launch_notebook as _launch_notebook
+
+    return _launch_notebook(*args, **kwargs)
+
+
 def __getattr__(name: str):
     try:
         module_name, attribute = _LAZY_EXPORTS[name]
@@ -51,6 +59,7 @@ __all__ = [
     "export_annotated_anndata",
     "high_confidence_queue",
     "launch",
+    "launch_notebook",
     "refine_trial_features",
     "resolve_cohort",
     "score_cohort",

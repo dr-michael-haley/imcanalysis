@@ -64,6 +64,45 @@ viewer, controller, dock = launch(
 )
 ```
 
+### Launch from a Jupyter Notebook with an in-memory AnnData
+
+Use the Notebook launcher when `adata` is already loaded or has unsaved
+in-memory changes:
+
+```python
+from SpatialBiologyToolkit.napari_sbt import launch_notebook
+
+viewer, controller, dock = launch_notebook(
+    adata=adata,
+    project_root=project,
+    masks_folder=project / "masks",
+    images_folders=[project / "images"],
+)
+```
+
+`launch_notebook` enables IPython's Qt event-loop integration when available
+and returns immediately, so do not call `napari.run()` in the Notebook. The
+general launcher also accepts either `anndata=adata` or the compatible
+`anndata_path=adata` form:
+
+```python
+viewer, controller, dock = launch(
+    project_root=project,
+    anndata_path=adata,
+    masks_folder=project / "masks",
+    images_folders=[project / "images"],
+)
+```
+
+The live object is used directly for selectors, overlays, cohort preview, and
+experiment setup. It is not modified. When the experiment is created,
+NapariSBT writes an atomic experiment-owned copy to
+`<experiment>/inputs/anndata.h5ad`; the manifest, restart workflow, feature
+workers, annotated-copy export, and continuing GUI session use that frozen
+snapshot. Later edits to the original Notebook object therefore cannot silently
+change an established experiment. No copy is made merely by opening the
+interface.
+
 ## Setup and the frozen cohort
 
 Cell scope is required. Choose either:

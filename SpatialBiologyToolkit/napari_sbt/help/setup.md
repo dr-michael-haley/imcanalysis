@@ -4,6 +4,12 @@ Setup defines the scientific question before any classification begins. Load the
 AnnData, full segmentation masks, and one or more IMC image folders. ROI and
 object-ID observations must identify every cell uniquely as `(ROI, ObjectNumber)`.
 
+When launched from a Notebook with a live `AnnData`, selectors and previews use
+that object directly and its path field is intentionally blank. Creating the
+experiment writes a frozen copy under `inputs/anndata.h5ad` so the experiment
+can be reopened and used by feature-building subprocesses. The GUI then uses
+that snapshot too; opening the dock alone does not write the object.
+
 ## Cell scope
 
 Choose **All cells** for whole-segmentation QC, or **Selected adata.obs values**

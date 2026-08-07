@@ -13,13 +13,76 @@ napari = pytest.importorskip("napari")
 ad = pytest.importorskip("anndata")
 pytest.importorskip("qtpy")
 
-from SpatialBiologyToolkit.napari_sbt.app import launch
+from SpatialBiologyToolkit.napari_sbt import launch_notebook
+from SpatialBiologyToolkit.napari_sbt.app import _write_anndata_snapshot, launch
 from SpatialBiologyToolkit.napari_sbt.cohort import resolve_cohort
 from SpatialBiologyToolkit.napari_sbt.models import (
     ExperimentManifest,
     segmentation_qc_classes,
 )
 from SpatialBiologyToolkit.napari_sbt.storage import save_experiment
+
+
+def _live_adata():
+    obs = pd.DataFrame(
+        {
+            "ROI": pd.Categorical(["r1", "r1"]),
+            "ObjectNumber": [1, 2],
+            "population": pd.Categorical(["target", "other"]),
+        },
+        index=["cell-1", "cell-2"],
+    )
+    return ad.AnnData(
+        np.zeros((2, 1), dtype=np.float32),
+        obs=obs,
+        var=pd.DataFrame(index=["CD3"]),
+    )
+
+
+def test_launch_accepts_live_anndata_in_anndata_path_argument(tmp_path: Path):
+    data = _live_adata()
+    viewer = napari.Viewer(show=False)
+    try:
+        _, controller, _dock = launch(
+            viewer=viewer,
+            project_root=tmp_path,
+            anndata_path=data,
+            masks_folder=tmp_path / "masks",
+        )
+        assert controller.adata is data
+        assert controller.anndata_edit.text() == ""
+        assert (
+            "In-memory AnnData (2 cells)"
+            in controller.anndata_edit.placeholderText()
+        )
+        assert controller.obs_combo.findText("population") >= 0
+        assert controller.marker_overlay_list.item(0).text() == "CD3"
+    finally:
+        viewer.close()
+
+
+def test_notebook_launcher_uses_live_anndata(tmp_path: Path):
+    data = _live_adata()
+    viewer = napari.Viewer(show=False)
+    try:
+        _, controller, _dock = launch_notebook(
+            adata=data,
+            viewer=viewer,
+            project_root=tmp_path,
+            masks_folder=tmp_path / "masks",
+        )
+        assert controller.adata is data
+    finally:
+        viewer.close()
+
+
+def test_in_memory_anndata_snapshot_is_atomic_and_never_overwritten(tmp_path: Path):
+    destination = tmp_path / "experiment" / "inputs" / "anndata.h5ad"
+    written = _write_anndata_snapshot(_live_adata(), destination)
+    assert written == destination.resolve()
+    assert ad.read_h5ad(written).obs_names.tolist() == ["cell-1", "cell-2"]
+    with pytest.raises(FileExistsError, match="Refusing to overwrite"):
+        _write_anndata_snapshot(_live_adata(), destination)
 
 
 def test_unified_dock_is_cohort_gated_and_rejects_context_clicks(tmp_path: Path):
