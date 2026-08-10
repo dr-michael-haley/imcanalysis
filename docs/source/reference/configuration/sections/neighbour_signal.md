@@ -13,6 +13,7 @@
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
 | `output_adata_path` | `str` | `neighbour_attributable_signal.h5ad` | `basic` | Separate AnnData output whose X matrix contains neighbour-attributable fractions. | Use a path different from general.anndata_path; the input AnnData is never modified. |
+| `source_target_table_path` | `str` | `neighbour_signal_source_target.parquet` | `basic` | Sparse Parquet asset containing non-zero target-marker-source attribution relationships. | Global AnnData row indices and obs_names are authoritative; ROI and mask labels are retained for provenance. |
 | `calculate_classic_intensities` | `bool` | `True` | `basic` | Store conventional mean raw-marker intensity within each segmentation mask. | Internal raw-image reductions still run when this output layer is disabled. |
 
 ## Cell mapping and exemplars
@@ -51,4 +52,5 @@
 | `qc_markers` | `Optional[List[str]]` | `null` | `advanced` | Optional ordered markers used in UMAP and expression-comparison QC figures. | Leave unset to select the most affected markers automatically. |
 | `max_qc_markers` | `int` | `6` | `basic` | Maximum automatically selected markers shown in detailed QC figures. | Profile and score-summary tables still include every marker. |
 | `population_obs` | `Optional[str]` | `null` | `basic` | Optional categorical population observation used for population-by-marker QC. | Null falls back to general.population_obs_primary; missing annotations are skipped cleanly. |
+| `source_target_qc_exclude_same_population` | `bool` | `True` | `advanced` | Exclude same-population relationships from source-to-target population heatmaps. | The Parquet table and aggregate QC tables always retain same-population relationships. |
 | `high_risk_threshold` | `float` | `0.5` | `advanced` | Descriptive score threshold used only for per-cell counts and QC summaries. | This threshold is not a validated biological cutoff and does not alter the score. |

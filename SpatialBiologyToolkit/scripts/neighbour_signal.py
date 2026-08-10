@@ -54,6 +54,17 @@ def _atomic_h5ad(adata, target: Path) -> None:
             temporary.unlink()
 
 
+def _atomic_parquet(table, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_name(f".{target.stem}.{uuid.uuid4().hex}.tmp.parquet")
+    try:
+        table.to_parquet(temporary, index=False)
+        temporary.replace(target)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
 def run_pipeline(argv: list[str] | None = None) -> int:
     """Run both halo passes, write a separate AnnData, and create QC outputs."""
 
@@ -61,6 +72,7 @@ def run_pipeline(argv: list[str] | None = None) -> int:
     from SpatialBiologyToolkit.neighbour_signal import (
         HaloParameters,
         build_output_anndata,
+        build_source_target_table,
         run_neighbour_signal_analysis,
     )
     from SpatialBiologyToolkit.neighbour_signal_reports import (
@@ -87,6 +99,7 @@ def run_pipeline(argv: list[str] | None = None) -> int:
     images_folder = project_asset_path(config.general.raw_images_folder)
     masks_folder = project_asset_path(config.general.masks_folder)
     output_path = project_asset_path(settings.output_adata_path)
+    source_target_path = project_asset_path(settings.source_target_table_path)
     for label, path, expected in (
         ("input AnnData", input_path, "file"),
         ("raw ROI/channel images", images_folder, "directory"),
@@ -98,6 +111,10 @@ def run_pipeline(argv: list[str] | None = None) -> int:
     if input_path.resolve() == output_path.resolve():
         raise ValueError(
             "neighbour_signal.output_adata_path must differ from general.anndata_path"
+        )
+    if source_target_path.resolve() in {input_path.resolve(), output_path.resolve()}:
+        raise ValueError(
+            "neighbour_signal.source_target_table_path must differ from AnnData input/output paths"
         )
 
     if reporter:
@@ -163,12 +180,21 @@ def run_pipeline(argv: list[str] | None = None) -> int:
             "marker_axis": "adata.var_names",
         }
     )
+    source_target_table = build_source_target_table(
+        adata,
+        result,
+        roi_obs=roi_obs,
+        object_id_obs=settings.object_id_obs,
+        population_obs=settings.population_obs,
+    )
     output = build_output_anndata(
         adata,
         result,
         parameters=provenance_parameters,
         calculate_classic_intensities=settings.calculate_classic_intensities,
         high_risk_threshold=settings.high_risk_threshold,
+        source_target_table=source_target_table,
+        source_target_table_path=source_target_path,
     )
 
     direct_root = Path("neighbour_signal_report")
@@ -190,13 +216,20 @@ def run_pipeline(argv: list[str] | None = None) -> int:
         qc_markers=settings.qc_markers,
         max_qc_markers=settings.max_qc_markers,
         population_obs=settings.population_obs,
+        source_target_table=source_target_table,
+        source_target_qc_exclude_same_population=(
+            settings.source_target_qc_exclude_same_population
+        ),
     )
+    _atomic_parquet(source_target_table, source_target_path)
     _atomic_h5ad(output, output_path)
     LOGGER.info(
-        "Neighbour signal analysis complete: %d cells, %d markers, %d learned profiles -> %s",
+        "Neighbour signal analysis complete: %d cells, %d markers, %d learned profiles, "
+        "%d source-target relationships -> %s",
         output.n_obs,
         output.n_vars,
         int(output.var["halo_profile_available"].sum()),
+        len(source_target_table),
         output_path,
     )
 
@@ -205,6 +238,11 @@ def run_pipeline(argv: list[str] | None = None) -> int:
             "neighbour_signal_anndata",
             output_path,
             "Cell- and marker-aligned AnnData whose X contains Neighbour-Attributable Fractions.",
+        )
+        reporter.add_asset(
+            "neighbour_signal_source_target_table",
+            source_target_path,
+            "Sparse non-zero spatial source-to-target marker attribution relationships.",
         )
         for path in report.figures:
             reporter.add_file("figure", path)
@@ -228,6 +266,9 @@ def run_pipeline(argv: list[str] | None = None) -> int:
         )
         reporter.add_note(
             "Input AnnData.X was not used in the halo calculation and is preserved in layers['original_X']."
+        )
+        reporter.add_note(
+            "A reported spatial source is a neighbouring cell whose projected marker halo explains signal inside the target mask; it is not proof of physical transfer."
         )
     return 0
 

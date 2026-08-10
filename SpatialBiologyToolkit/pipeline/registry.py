@@ -871,13 +871,18 @@ STAGES: tuple[StageSpec, ...] = (
     _stage(
         "neighsig",
         "job_neighbour_signal.sh",
-        "Learn empirical marker halos and calculate cell-by-marker neighbour-attributable fractions.",
+        "Learn empirical marker halos, calculate cell-by-marker neighbour-attributable fractions, and retain spatial source-cell provenance.",
         groups=("qc",),
         requires=("anndata", "raw_images", "masks"),
-        produces=("neighbour_signal_anndata", "human_outputs"),
+        produces=(
+            "neighbour_signal_anndata",
+            "neighbour_signal_source_target_table",
+            "human_outputs",
+        ),
         outputs=(
-            "Neighbour-attributable signal AnnData with raw-intensity comparison layers",
-            "Marker halo profiles, score summaries, UMAP/population QC, and expression comparisons",
+            "Neighbour-attributable signal AnnData with raw-intensity and dominant-source layers",
+            "Sparse source-target provenance Parquet table with global AnnData row identities",
+            "Marker halo profiles, score summaries, UMAP/population/source-target QC, and expression comparisons",
         ),
         notes=(
             "No fixed upstream stage is imposed because exemplar annotations and input expression may be curated after any quantification route.",

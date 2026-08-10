@@ -2,7 +2,7 @@
 
 # `neighsig`
 
-Learn empirical marker halos and calculate cell-by-marker neighbour-attributable fractions
+Learn empirical marker halos, calculate neighbour-attributable fractions, and retain spatial source-cell provenance
 
 - Wrapper: [`job_neighbour_signal.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_neighbour_signal.sh)
 - Conda environment: `imc_segmentation`
@@ -16,6 +16,7 @@ Learn empirical marker halos and calculate cell-by-marker neighbour-attributable
 ## Outputs
 
 - neighbour_signal.output_adata_path with halo scores, raw-intensity layers, and marker_halo provenance
+- neighbour_signal.source_target_table_path with sparse source-target provenance for max aggregation
 - outputs/<execution_id>_Neighbour_Attributable_Signal/{figures,tables,summaries}/
 
 ## Configuration

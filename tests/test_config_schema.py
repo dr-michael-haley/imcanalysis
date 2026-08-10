@@ -18,6 +18,19 @@ class ConfigSchemaTests(unittest.TestCase):
         self.assertIn("maxfuse", schema["properties"])
         self.assertIn("spatialdata", schema["properties"])
         self.assertIn("neighbour_signal", schema["properties"])
+        neighbour_properties = schema["$defs"]["NeighbourSignalConfig"][
+            "properties"
+        ]
+        self.assertEqual(
+            neighbour_properties["source_target_table_path"]["default"],
+            "neighbour_signal_source_target.parquet",
+        )
+        self.assertEqual(
+            neighbour_properties[
+                "source_target_qc_exclude_same_population"
+            ]["default"],
+            True,
+        )
         self.assertIn("general", schema["properties"])
         self.assertIn("population_embedding_qc", schema["properties"])
         self.assertIn("napari_sbt", schema["properties"])

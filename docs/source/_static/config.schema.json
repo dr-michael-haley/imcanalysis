@@ -6661,6 +6661,16 @@
           "type": "string",
           "ui_group": "Output asset"
         },
+        "source_target_table_path": {
+          "advice": "Global AnnData row indices and obs_names are authoritative; ROI and mask labels are retained for provenance.",
+          "default": "neighbour_signal_source_target.parquet",
+          "description": "Sparse Parquet asset containing non-zero target-marker-source attribution relationships.",
+          "level": "basic",
+          "stage": "neighsig",
+          "title": "Source Target Table Path",
+          "type": "string",
+          "ui_group": "Output asset"
+        },
         "exemplar_obs": {
           "advice": "Values must exactly match marker names on the AnnData variable axis.",
           "default": "Exemplar_stains",
@@ -6829,6 +6839,16 @@
           "level": "basic",
           "stage": "neighsig",
           "title": "Population Obs",
+          "ui_group": "QC report"
+        },
+        "source_target_qc_exclude_same_population": {
+          "advice": "The Parquet table and aggregate QC tables always retain same-population relationships.",
+          "default": true,
+          "description": "Exclude same-population relationships from source-to-target population heatmaps.",
+          "level": "advanced",
+          "stage": "neighsig",
+          "title": "Source Target Qc Exclude Same Population",
+          "type": "boolean",
           "ui_group": "QC report"
         },
         "high_risk_threshold": {

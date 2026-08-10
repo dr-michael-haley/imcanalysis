@@ -24,6 +24,21 @@ from SpatialBiologyToolkit.napari_sbt.resources import process_cpu_limit
 
 LOGGER = logging.getLogger(__name__)
 FloatArray: TypeAlias = NDArray[np.float32]
+IntArray: TypeAlias = NDArray[np.int64]
+SOURCE_TARGET_COLUMNS = (
+    "target_obs_index",
+    "target_cell_id",
+    "target_roi",
+    "target_segmentation_label",
+    "marker",
+    "source_obs_index",
+    "source_cell_id",
+    "source_roi",
+    "source_segmentation_label",
+    "attributable_intensity",
+    "fraction_of_observed_signal",
+    "fraction_of_attributable_signal",
+)
 
 
 @dataclass(frozen=True)
@@ -114,8 +129,29 @@ class ApplicationWorkerPayload:
     marker_names: tuple[str, ...]
     target_rows: NDArray[np.int64]
     target_labels: NDArray[np.int64]
+    total_cells: int
     profiles: Mapping[str, MarkerHaloProfile]
     parameters: HaloParameters
+
+
+@dataclass(frozen=True)
+class ProjectedHalo:
+    """Pixelwise projected halo and the winning global source row."""
+
+    predicted: FloatArray
+    source_index: IntArray
+
+
+@dataclass(frozen=True)
+class SourceTargetAttribution:
+    """One non-zero source-to-target relationship for one marker."""
+
+    target_obs_index: int
+    marker_index: int
+    source_obs_index: int
+    attributable_intensity: float
+    fraction_of_observed_signal: float
+    fraction_of_attributable_signal: float
 
 
 @dataclass(frozen=True)
@@ -126,6 +162,10 @@ class ApplicationWorkerResult:
     classic_intensities: FloatArray
     attributable_intensities: FloatArray
     residual_intensities: FloatArray
+    dominant_source_indices: IntArray
+    dominant_source_observed_fractions: FloatArray
+    dominant_source_attributable_fractions: FloatArray
+    source_target_attributions: tuple[SourceTargetAttribution, ...]
     background_records: tuple[dict[str, Any], ...]
 
 
@@ -138,6 +178,11 @@ class NeighbourSignalResult:
     classic_intensities: FloatArray
     attributable_intensities: FloatArray
     residual_intensities: FloatArray
+    dominant_source_indices: IntArray
+    dominant_source_observed_fractions: FloatArray
+    dominant_source_attributable_fractions: FloatArray
+    source_target_attributions: tuple[SourceTargetAttribution, ...]
+    source_provenance_available: bool
     profiles: Mapping[str, MarkerHaloProfile]
     exemplar_profiles: tuple[ExemplarProfile, ...]
     background_records: tuple[dict[str, Any], ...]
@@ -538,17 +583,23 @@ def estimate_roi_background(
     return float(np.median(image[candidates])), method, int(np.count_nonzero(candidates))
 
 
-def project_source_halos(
+def project_source_halos_with_sources(
     mask: np.ndarray,
     source_strengths: Mapping[int, float],
     source_labels: Sequence[int],
+    source_obs_indices: Mapping[int, int],
     profile: Any,
     *,
     background: float,
     max_halo_px: int,
     aggregation: str = "max",
-) -> FloatArray:
-    """Project one empirical halo from each source on small local mask patches."""
+) -> ProjectedHalo:
+    """Project halos and retain the winning global AnnData source row per pixel.
+
+    Source provenance is unambiguous only for ``max`` aggregation. ``sum``
+    retains the established predicted intensities but returns only ``-1``
+    source sentinels.
+    """
 
     labels = _validate_mask(mask, path="in-memory mask")
     if aggregation not in {"max", "sum"}:
@@ -560,6 +611,7 @@ def project_source_halos(
         )
     curve = np.nan_to_num(curve, nan=0.0, posinf=0.0, neginf=0.0)
     predicted = np.zeros(labels.shape, dtype=np.float32)
+    source_index = np.full(labels.shape, -1, dtype=np.int64)
     slices = _object_slices(labels)
     for raw_object_id in source_labels:
         object_id = int(raw_object_id)
@@ -582,10 +634,168 @@ def project_source_halos(
         contribution[influence] = curve[bin_index[influence]] * amplitude
         target = predicted[patch_slice]
         if aggregation == "max":
-            np.maximum(target, contribution, out=target)
+            if object_id not in source_obs_indices:
+                raise KeyError(
+                    f"Source segmentation label {object_id} has no global AnnData row mapping"
+                )
+            wins = contribution > target
+            target[wins] = contribution[wins]
+            target_source = source_index[patch_slice]
+            target_source[wins] = int(source_obs_indices[object_id])
         else:
             target += contribution
-    return predicted
+    return ProjectedHalo(predicted=predicted, source_index=source_index)
+
+
+def project_source_halos(
+    mask: np.ndarray,
+    source_strengths: Mapping[int, float],
+    source_labels: Sequence[int],
+    profile: Any,
+    *,
+    background: float,
+    max_halo_px: int,
+    aggregation: str = "max",
+) -> FloatArray:
+    """Project source halos while preserving the original intensity-only API."""
+
+    projected = project_source_halos_with_sources(
+        mask,
+        source_strengths,
+        source_labels,
+        {int(label): int(label) for label in source_labels},
+        profile,
+        background=background,
+        max_halo_px=max_halo_px,
+        aggregation=aggregation,
+    )
+    return projected.predicted
+
+
+def _aggregate_source_target_attribution(
+    *,
+    mask: IntArray,
+    attributable: FloatArray,
+    source_index: IntArray,
+    target_rows: IntArray,
+    target_labels: IntArray,
+    marker_index: int,
+    observed_sums: NDArray[np.float64],
+    attributable_sums: NDArray[np.float64],
+) -> tuple[
+    tuple[SourceTargetAttribution, ...],
+    IntArray,
+    FloatArray,
+    FloatArray,
+]:
+    """Reduce attributable pixels by target label and winning source row."""
+
+    n_cells = len(target_rows)
+    dominant_source: IntArray = np.full(n_cells, -1, dtype=np.int64)
+    dominant_observed_fraction: FloatArray = np.zeros(n_cells, dtype=np.float32)
+    dominant_attributable_fraction: FloatArray = np.zeros(
+        n_cells, dtype=np.float32
+    )
+    valid = (mask > 0) & (source_index >= 0) & (attributable > 0)
+    if not np.any(valid):
+        return (
+            (),
+            dominant_source,
+            dominant_observed_fraction,
+            dominant_attributable_fraction,
+        )
+
+    maximum_label = int(mask.max(initial=0))
+    label_to_row: IntArray = np.full(maximum_label + 1, -1, dtype=np.int64)
+    label_to_local: IntArray = np.full(maximum_label + 1, -1, dtype=np.int64)
+    label_to_row[target_labels] = target_rows
+    label_to_local[target_labels] = np.arange(n_cells, dtype=np.int64)
+    pixel_labels = mask[valid]
+    mapped = label_to_row[pixel_labels] >= 0
+    if not np.any(mapped):
+        return (
+            (),
+            dominant_source,
+            dominant_observed_fraction,
+            dominant_attributable_fraction,
+        )
+    pixel_labels = pixel_labels[mapped]
+    pixel_sources = source_index[valid][mapped]
+    pixel_values = attributable[valid][mapped].astype(np.float64, copy=False)
+    pixel_targets = label_to_row[pixel_labels]
+    if np.any(pixel_targets == pixel_sources):
+        raise RuntimeError(
+            "A source cell was assigned attributable signal inside its own segmentation mask"
+        )
+
+    order = np.lexsort((pixel_sources, pixel_labels))
+    sorted_labels = pixel_labels[order]
+    sorted_sources = pixel_sources[order]
+    sorted_values = pixel_values[order]
+    starts = np.flatnonzero(
+        np.r_[
+            True,
+            (sorted_labels[1:] != sorted_labels[:-1])
+            | (sorted_sources[1:] != sorted_sources[:-1]),
+        ]
+    )
+    grouped_labels = sorted_labels[starts]
+    grouped_sources = sorted_sources[starts]
+    grouped_sums = np.add.reduceat(sorted_values, starts)
+    observed_denominators = observed_sums[grouped_labels]
+    attributable_denominators = attributable_sums[grouped_labels]
+    observed_fractions = np.divide(
+        grouped_sums,
+        observed_denominators,
+        out=np.zeros_like(grouped_sums),
+        where=observed_denominators > 0,
+    )
+    attributable_fractions = np.divide(
+        grouped_sums,
+        attributable_denominators,
+        out=np.zeros_like(grouped_sums),
+        where=attributable_denominators > 0,
+    )
+    grouped_targets = label_to_row[grouped_labels]
+    records = tuple(
+        SourceTargetAttribution(
+            target_obs_index=int(target),
+            marker_index=int(marker_index),
+            source_obs_index=int(source),
+            attributable_intensity=float(intensity),
+            fraction_of_observed_signal=float(observed_fraction),
+            fraction_of_attributable_signal=float(attributable_fraction),
+        )
+        for target, source, intensity, observed_fraction, attributable_fraction in zip(
+            grouped_targets,
+            grouped_sources,
+            grouped_sums,
+            observed_fractions,
+            attributable_fractions,
+            strict=True,
+        )
+    )
+
+    dominant_order = np.lexsort(
+        (grouped_sources, -grouped_sums, grouped_labels)
+    )
+    ranked_labels = grouped_labels[dominant_order]
+    first = np.r_[True, ranked_labels[1:] != ranked_labels[:-1]]
+    winners = dominant_order[first]
+    winner_local = label_to_local[grouped_labels[winners]]
+    dominant_source[winner_local] = grouped_sources[winners]
+    dominant_observed_fraction[winner_local] = observed_fractions[winners].astype(
+        np.float32
+    )
+    dominant_attributable_fraction[winner_local] = attributable_fractions[
+        winners
+    ].astype(np.float32)
+    return (
+        records,
+        dominant_source,
+        dominant_observed_fraction,
+        dominant_attributable_fraction,
+    )
 
 
 def _apply_profiles_to_roi(payload: ApplicationWorkerPayload) -> ApplicationWorkerResult:
@@ -602,11 +812,23 @@ def _apply_profiles_to_roi(payload: ApplicationWorkerPayload) -> ApplicationWork
         )
     n_cells = len(payload.target_labels)
     n_markers = len(payload.marker_names)
+    if np.any((payload.target_rows < 0) | (payload.target_rows >= payload.total_cells)):
+        raise ValueError(f"ROI {payload.roi!r} contains invalid global AnnData row indices")
     scores: FloatArray = np.zeros((n_cells, n_markers), dtype=np.float32)
     classic = np.zeros_like(scores)
     attributable_intensity = np.zeros_like(scores)
     residual_intensity = np.zeros_like(scores)
+    dominant_source_indices: IntArray = np.full(
+        (n_cells, n_markers), -1, dtype=np.int64
+    )
+    dominant_source_observed_fractions = np.zeros_like(scores)
+    dominant_source_attributable_fractions = np.zeros_like(scores)
+    source_target_attributions: list[SourceTargetAttribution] = []
     background_records: list[dict[str, Any]] = []
+    source_obs_indices = {
+        int(label): int(row)
+        for label, row in zip(payload.target_labels, payload.target_rows, strict=True)
+    }
 
     for marker_index, (marker, image_path) in enumerate(
         zip(payload.marker_names, payload.channel_paths, strict=True)
@@ -624,10 +846,20 @@ def _apply_profiles_to_roi(payload: ApplicationWorkerPayload) -> ApplicationWork
         halo = payload.profiles[marker]
         if halo.available:
             source_labels = sorted(
-                label
+                int(label)
                 for label, strength in source_strengths.items()
                 if strength >= halo.source_threshold
             )
+            if payload.parameters.halo_aggregation == "max":
+                unmapped_sources = [
+                    label for label in source_labels if label not in source_obs_indices
+                ]
+                if unmapped_sources:
+                    raise ValueError(
+                        f"ROI {payload.roi!r}, marker {marker!r} has strong source "
+                        "segmentation labels without output AnnData rows; source-resolved "
+                        f"provenance requires a complete mapping. Examples: {unmapped_sources[:10]}"
+                    )
         else:
             source_labels = []
         background, method, background_pixels = estimate_roi_background(
@@ -637,21 +869,27 @@ def _apply_profiles_to_roi(payload: ApplicationWorkerPayload) -> ApplicationWork
             payload.parameters.max_halo_px,
         )
         if halo.available and source_labels:
-            predicted = project_source_halos(
+            projected = project_source_halos_with_sources(
                 mask,
                 source_strengths,
                 source_labels,
+                source_obs_indices,
                 halo.final,
                 background=background,
                 max_halo_px=payload.parameters.max_halo_px,
                 aggregation=payload.parameters.halo_aggregation,
             )
         else:
-            predicted = np.zeros(mask.shape, dtype=np.float32)
+            projected = ProjectedHalo(
+                predicted=np.zeros(mask.shape, dtype=np.float32),
+                source_index=np.full(mask.shape, -1, dtype=np.int64),
+            )
 
         observed_excess = np.maximum(image - background, 0.0).astype(np.float32)
-        attributable = np.minimum(observed_excess, predicted).astype(np.float32)
-        residual = np.maximum(observed_excess - predicted, 0.0).astype(np.float32)
+        attributable = np.minimum(observed_excess, projected.predicted).astype(np.float32)
+        residual = np.maximum(observed_excess - projected.predicted, 0.0).astype(
+            np.float32
+        )
         raw_sums, counts = _label_reductions(image, mask)
         observed_sums, _ = _label_reductions(observed_excess, mask)
         attributable_sums, _ = _label_reductions(attributable, mask)
@@ -675,6 +913,30 @@ def _apply_profiles_to_roi(payload: ApplicationWorkerPayload) -> ApplicationWork
             where=denominators > 0,
         )
         scores[:, marker_index] = np.clip(fractions, 0.0, 1.0).astype(np.float32)
+        if payload.parameters.halo_aggregation == "max":
+            (
+                marker_records,
+                marker_dominant_sources,
+                marker_dominant_observed,
+                marker_dominant_attributable,
+            ) = _aggregate_source_target_attribution(
+                mask=mask,
+                attributable=attributable,
+                source_index=projected.source_index,
+                target_rows=payload.target_rows,
+                target_labels=payload.target_labels,
+                marker_index=marker_index,
+                observed_sums=observed_sums,
+                attributable_sums=attributable_sums,
+            )
+            source_target_attributions.extend(marker_records)
+            dominant_source_indices[:, marker_index] = marker_dominant_sources
+            dominant_source_observed_fractions[:, marker_index] = (
+                marker_dominant_observed
+            )
+            dominant_source_attributable_fractions[:, marker_index] = (
+                marker_dominant_attributable
+            )
         background_records.append(
             {
                 "roi": payload.roi,
@@ -694,6 +956,12 @@ def _apply_profiles_to_roi(payload: ApplicationWorkerPayload) -> ApplicationWork
         classic_intensities=classic,
         attributable_intensities=attributable_intensity,
         residual_intensities=residual_intensity,
+        dominant_source_indices=dominant_source_indices,
+        dominant_source_observed_fractions=dominant_source_observed_fractions,
+        dominant_source_attributable_fractions=(
+            dominant_source_attributable_fractions
+        ),
+        source_target_attributions=tuple(source_target_attributions),
         background_records=tuple(background_records),
     )
 
@@ -876,6 +1144,7 @@ def run_neighbour_signal_analysis(
                 marker_names=marker_names,
                 target_rows=roi_frame["source_obs_position"].to_numpy(dtype=np.int64),
                 target_labels=roi_frame[object_id_obs].to_numpy(dtype=np.int64),
+                total_cells=int(adata.n_obs),
                 profiles=profiles,
                 parameters=parameters,
             )
@@ -891,8 +1160,12 @@ def run_neighbour_signal_analysis(
     classic = np.zeros(shape, dtype=np.float32)
     attributable = np.zeros(shape, dtype=np.float32)
     residual = np.zeros(shape, dtype=np.float32)
+    dominant_source_indices = np.full(shape, -1, dtype=np.int64)
+    dominant_source_observed_fractions = np.zeros(shape, dtype=np.float32)
+    dominant_source_attributable_fractions = np.zeros(shape, dtype=np.float32)
     covered = np.zeros(adata.n_obs, dtype=bool)
     background_records: list[dict[str, Any]] = []
+    source_target_attributions: list[SourceTargetAttribution] = []
     for result in application_results:
         if np.any(covered[result.target_rows]):
             raise RuntimeError(f"ROI result rows overlap while assembling {result.roi!r}")
@@ -900,18 +1173,41 @@ def run_neighbour_signal_analysis(
         classic[result.target_rows] = result.classic_intensities
         attributable[result.target_rows] = result.attributable_intensities
         residual[result.target_rows] = result.residual_intensities
+        dominant_source_indices[result.target_rows] = result.dominant_source_indices
+        dominant_source_observed_fractions[result.target_rows] = (
+            result.dominant_source_observed_fractions
+        )
+        dominant_source_attributable_fractions[result.target_rows] = (
+            result.dominant_source_attributable_fractions
+        )
         covered[result.target_rows] = True
         background_records.extend(result.background_records)
+        source_target_attributions.extend(result.source_target_attributions)
     if not np.all(covered):
         raise RuntimeError("ROI application did not return every AnnData observation")
     if not np.all(np.isfinite(scores)) or np.any((scores < 0) | (scores > 1)):
         raise RuntimeError("Neighbour-attributable fractions are not finite and bounded in [0, 1]")
+    source_provenance_available = parameters.halo_aggregation == "max"
+    if not source_provenance_available:
+        warnings.append(
+            "Detailed source-cell provenance is disabled for halo_aggregation='sum' because "
+            "multiple sources contribute to the same pixel; dominant-source layers use sentinel "
+            "or zero values and the source-target table is empty. Use the recommended 'max' "
+            "aggregation for source-resolved provenance."
+        )
     return NeighbourSignalResult(
         marker_names=marker_names,
         scores=scores,
         classic_intensities=classic,
         attributable_intensities=attributable,
         residual_intensities=residual,
+        dominant_source_indices=dominant_source_indices,
+        dominant_source_observed_fractions=dominant_source_observed_fractions,
+        dominant_source_attributable_fractions=(
+            dominant_source_attributable_fractions
+        ),
+        source_target_attributions=tuple(source_target_attributions),
+        source_provenance_available=source_provenance_available,
         profiles=profiles,
         exemplar_profiles=exemplar_profiles,
         background_records=tuple(background_records),
@@ -972,6 +1268,178 @@ def exemplar_statistics_table(result: NeighbourSignalResult) -> pd.DataFrame:
     return pd.DataFrame(rows, columns=columns)
 
 
+def build_source_target_table(
+    adata: Any,
+    result: NeighbourSignalResult,
+    *,
+    roi_obs: str,
+    object_id_obs: str,
+    population_obs: str | None = None,
+) -> pd.DataFrame:
+    """Build the sparse source-target provenance table from worker reductions."""
+
+    missing = [
+        column
+        for column in (roi_obs, object_id_obs)
+        if column not in adata.obs.columns
+    ]
+    if missing:
+        raise KeyError(f"AnnData is missing source-target identity columns: {missing}")
+    include_population = bool(
+        population_obs is not None and population_obs in adata.obs.columns
+    )
+    columns = list(SOURCE_TARGET_COLUMNS)
+    if include_population:
+        columns.extend(["target_population", "source_population"])
+    records = result.source_target_attributions
+    if not records:
+        if result.source_provenance_available and np.any(result.scores > 2e-6):
+            raise RuntimeError(
+                "Neighbour-attributable scores are non-zero but max-aggregation source "
+                "provenance contains no relationships"
+            )
+        dtypes: dict[str, str] = {
+            "target_obs_index": "int64",
+            "target_cell_id": "string",
+            "target_roi": "string",
+            "target_segmentation_label": "int64",
+            "marker": "string",
+            "source_obs_index": "int64",
+            "source_cell_id": "string",
+            "source_roi": "string",
+            "source_segmentation_label": "int64",
+            "attributable_intensity": "float64",
+            "fraction_of_observed_signal": "float64",
+            "fraction_of_attributable_signal": "float64",
+            "target_population": "string",
+            "source_population": "string",
+        }
+        return pd.DataFrame(
+            {column: pd.Series(dtype=dtypes[column]) for column in columns}
+        )
+
+    target_indices = np.fromiter(
+        (record.target_obs_index for record in records),
+        dtype=np.int64,
+        count=len(records),
+    )
+    marker_indices = np.fromiter(
+        (record.marker_index for record in records),
+        dtype=np.int64,
+        count=len(records),
+    )
+    source_indices = np.fromiter(
+        (record.source_obs_index for record in records),
+        dtype=np.int64,
+        count=len(records),
+    )
+    if np.any(
+        (target_indices < 0)
+        | (target_indices >= adata.n_obs)
+        | (source_indices < 0)
+        | (source_indices >= adata.n_obs)
+    ):
+        raise RuntimeError("Source-target provenance contains invalid global AnnData rows")
+    if np.any((marker_indices < 0) | (marker_indices >= adata.n_vars)):
+        raise RuntimeError("Source-target provenance contains invalid marker indices")
+    attributable_intensities = np.fromiter(
+        (record.attributable_intensity for record in records),
+        dtype=np.float64,
+        count=len(records),
+    )
+    observed_fractions = np.fromiter(
+        (record.fraction_of_observed_signal for record in records),
+        dtype=np.float64,
+        count=len(records),
+    )
+    attributable_fractions = np.fromiter(
+        (record.fraction_of_attributable_signal for record in records),
+        dtype=np.float64,
+        count=len(records),
+    )
+    if not np.all(np.isfinite(attributable_intensities)) or np.any(
+        attributable_intensities <= 0
+    ):
+        raise RuntimeError("Source-target attributable intensities must be finite and positive")
+    for name, values in (
+        ("fraction_of_observed_signal", observed_fractions),
+        ("fraction_of_attributable_signal", attributable_fractions),
+    ):
+        if not np.all(np.isfinite(values)) or np.any((values < 0) | (values > 1)):
+            raise RuntimeError(f"Source-target {name} values must be finite and bounded")
+
+    observed_by_target = np.zeros(result.scores.shape, dtype=np.float64)
+    attributable_by_target = np.zeros(result.scores.shape, dtype=np.float64)
+    np.add.at(
+        observed_by_target,
+        (target_indices, marker_indices),
+        observed_fractions,
+    )
+    np.add.at(
+        attributable_by_target,
+        (target_indices, marker_indices),
+        attributable_fractions,
+    )
+    if result.source_provenance_available and not np.allclose(
+        observed_by_target,
+        result.scores,
+        rtol=2e-5,
+        atol=2e-6,
+    ):
+        raise RuntimeError(
+            "Source-specific observed fractions do not reconstruct NeighbourAttributableFraction"
+        )
+    affected = observed_by_target > 0
+    if result.source_provenance_available and np.any(affected) and not np.allclose(
+        attributable_by_target[affected],
+        1.0,
+        rtol=2e-5,
+        atol=2e-6,
+    ):
+        raise RuntimeError(
+            "Source-specific attributable fractions do not sum to one for affected targets"
+        )
+
+    obs_names = adata.obs_names.astype(str).to_numpy()
+    roi_values = adata.obs[roi_obs].astype(str).to_numpy()
+    segmentation_labels = pd.to_numeric(
+        adata.obs[object_id_obs], errors="raise"
+    ).to_numpy(dtype=np.int64)
+    marker_values = np.asarray(result.marker_names, dtype=object)[marker_indices]
+    frame = pd.DataFrame(
+        {
+            "target_obs_index": target_indices,
+            "target_cell_id": pd.array(obs_names[target_indices], dtype="string"),
+            "target_roi": pd.array(roi_values[target_indices], dtype="string"),
+            "target_segmentation_label": segmentation_labels[target_indices],
+            "marker": pd.array(marker_values, dtype="string"),
+            "source_obs_index": source_indices,
+            "source_cell_id": pd.array(obs_names[source_indices], dtype="string"),
+            "source_roi": pd.array(roi_values[source_indices], dtype="string"),
+            "source_segmentation_label": segmentation_labels[source_indices],
+            "attributable_intensity": attributable_intensities,
+            "fraction_of_observed_signal": observed_fractions,
+            "fraction_of_attributable_signal": attributable_fractions,
+        }
+    )
+    if not frame["target_roi"].equals(frame["source_roi"]):
+        raise RuntimeError("Source-target provenance crosses ROI boundaries")
+    if include_population and population_obs is not None:
+        populations = adata.obs[population_obs].astype("string").to_numpy()
+        frame["target_population"] = pd.array(
+            populations[target_indices], dtype="string"
+        )
+        frame["source_population"] = pd.array(
+            populations[source_indices], dtype="string"
+        )
+    frame["_marker_index"] = marker_indices
+    frame = frame.sort_values(
+        ["target_obs_index", "_marker_index", "source_obs_index"],
+        kind="stable",
+    ).drop(columns="_marker_index")
+    return frame.loc[:, columns].reset_index(drop=True)
+
+
 def _safe_uns_value(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {
@@ -993,6 +1461,8 @@ def build_output_anndata(
     parameters: Mapping[str, Any],
     calculate_classic_intensities: bool,
     high_risk_threshold: float,
+    source_target_table: pd.DataFrame | None = None,
+    source_target_table_path: str | Path | None = None,
 ) -> Any:
     """Copy input AnnData and attach scores, layers, summaries, and provenance."""
 
@@ -1020,6 +1490,16 @@ def build_output_anndata(
     output.layers["residual_excess_intensity"] = result.residual_intensities.astype(
         np.float32,
         copy=False,
+    )
+    output.layers["dominant_source_index"] = result.dominant_source_indices.astype(
+        np.int64,
+        copy=False,
+    )
+    output.layers["dominant_source_observed_fraction"] = (
+        result.dominant_source_observed_fractions.astype(np.float32, copy=False)
+    )
+    output.layers["dominant_source_attributable_fraction"] = (
+        result.dominant_source_attributable_fractions.astype(np.float32, copy=False)
     )
     output.X = result.scores.astype(np.float32, copy=False)
 
@@ -1049,8 +1529,36 @@ def build_output_anndata(
     unknown_table = pd.DataFrame(
         {"unknown_exemplar_marker": list(result.unknown_exemplar_values)}
     )
-    output.uns["marker_halo"] = {
+    source_table = source_target_table
+    if source_table is None:
+        source_table = pd.DataFrame()
+    source_table_metadata = {
         "schema_version": 1,
+        "available": bool(result.source_provenance_available),
+        "path": str(source_target_table_path) if source_target_table_path else "",
+        "format": "parquet",
+        "relationships": int(len(source_table)),
+        "columns": [str(column) for column in source_table.columns],
+        "dtypes": {
+            str(column): str(dtype)
+            for column, dtype in source_table.dtypes.items()
+        },
+        "authoritative_identity": (
+            "target_obs_index/source_obs_index are zero-based global rows of this output AnnData; "
+            "cell IDs are the corresponding obs_names."
+        ),
+        "interpretation": (
+            "A source cell is a neighbouring cell whose projected marker halo spatially explains "
+            "signal observed inside the target cell mask; this does not prove physical transfer."
+        ),
+        "disabled_reason": (
+            "Source-resolved provenance is unambiguous only for halo_aggregation='max'."
+            if not result.source_provenance_available
+            else ""
+        ),
+    }
+    output.uns["marker_halo"] = {
+        "schema_version": 2,
         "score_name": "NeighbourAttributableFraction",
         "interpretation": (
             "Spatial explainability/QC score: the fraction of observed background-subtracted "
@@ -1070,6 +1578,7 @@ def build_output_anndata(
         "exemplar_statistics": exemplar_statistics_table(result),
         "roi_marker_backgrounds": background_table,
         "unknown_exemplar_markers": unknown_table,
+        "source_target_table": source_table_metadata,
         "parameters": _safe_uns_value(dict(parameters)),
         "worker_usage": {
             "requested": result.worker_usage.requested,
@@ -1086,6 +1595,17 @@ def build_output_anndata(
                 "Mean max(observed excess - projected neighbour halo, 0) per cell pixel."
             ),
             "original_X": "Unmodified input AnnData.X expression/confidence matrix.",
+            "dominant_source_index": (
+                "Zero-based global AnnData row of the neighbouring source contributing the largest "
+                "attributable intensity for each cell and marker; -1 means no attributable source."
+            ),
+            "dominant_source_observed_fraction": (
+                "Fraction of target observed excess signal explained by its dominant spatial source."
+            ),
+            "dominant_source_attributable_fraction": (
+                "Fraction of the target's total neighbour-attributable component assigned to its "
+                "dominant spatial source."
+            ),
         },
         "preexisting_original_X_backup_layer": backup_layer,
     }
@@ -1096,15 +1616,19 @@ __all__ = [
     "HaloParameters",
     "MarkerHaloProfile",
     "NeighbourSignalResult",
+    "ProjectedHalo",
+    "SourceTargetAttribution",
     "WorkerUsage",
     "aggregate_marker_profiles",
     "build_output_anndata",
+    "build_source_target_table",
     "estimate_roi_background",
     "exemplar_statistics_table",
     "extract_exemplar_profiles",
     "label_quantiles",
     "marker_profile_summary",
     "project_source_halos",
+    "project_source_halos_with_sources",
     "resolve_analysis_workers",
     "run_neighbour_signal_analysis",
     "source_anchor_labels",

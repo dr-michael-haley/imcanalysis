@@ -18,6 +18,20 @@ It ranges from zero to one. Zero means that essentially none of the observed
 background-subtracted marker signal in the target mask coincides with a
 plausible neighbouring halo; one means that essentially all of it does.
 
+The stage now retains two complementary results:
+
+1. **How much of this target cell's marker signal is spatially explainable by
+   neighbouring sources?** `NeighbourAttributableFraction` answers this in
+   `X`.
+2. **Which neighbouring cell(s) provide that spatial explanation?** The sparse
+   source-target Parquet table retains every non-zero relationship, while
+   dominant-source layers provide immediate cell-by-marker access in AnnData.
+
+A source cell is a neighbouring cell whose projected marker halo spatially
+explains signal observed inside the target cell mask. This identifies a
+predicted spatial source; it does not prove that signal physically transferred
+from one cell to another.
+
 This is a spatial contamination/uncertainty metric. It is not isotopic-channel
 spillover compensation, a calibrated probability, or proof that signal is
 artefactual.
@@ -71,6 +85,13 @@ and existing layers, with these changes:
   per cell pixel captured by the neighbouring-halo model;
 - `layers['residual_excess_intensity']`: mean per-pixel excess remaining after
   the projected halo is subtracted and clipped at zero;
+- `layers['dominant_source_index']`: zero-based global AnnData row of the
+  source contributing the largest attributable intensity for each target and
+  marker, or `-1` when there is no attributable source;
+- `layers['dominant_source_observed_fraction']`: fraction of the target's
+  observed excess signal explained by its dominant source;
+- `layers['dominant_source_attributable_fraction']`: fraction of all
+  neighbour-attributable signal assigned to its dominant source;
 - marker profile availability, exemplar count, source threshold, and effective
   extent in `.var`;
 - `halo_max_score`, `halo_mean_score`, and the descriptive
@@ -78,6 +99,17 @@ and existing layers, with these changes:
 - profiles, IQRs, exemplar statistics, backgrounds, parameters, worker
   allocation, score interpretation, and layer semantics in
   `.uns['marker_halo']`.
+
+The stage also writes `neighbour_signal.source_target_table_path` (default
+`neighbour_signal_source_target.parquet`). This sparse long-form asset contains
+only non-zero target-marker-source relationships. Global zero-based AnnData row
+indices and `obs_names` are authoritative; ROI and segmentation-label columns
+are retained for provenance and sanity checks. Each row records total
+attributable intensity, its fraction of the target's observed excess, and its
+fraction of the target's total attributable component. Configured population
+labels are included when available. The Parquet path, schema, relationship
+count, identity semantics, and cautious interpretation are recorded in
+`.uns['marker_halo']['source_target_table']`.
 
 If the input already has an `original_X` layer, it is retained under a unique
 `preexisting_original_X*` name before the current input `X` is stored.
@@ -97,6 +129,11 @@ The managed execution report contains:
   set, plus `halo_max_score` and `halo_mean_score`, when `X_umap` exists;
 - a Scanpy population-by-marker matrix plot when a suitable categorical
   population observation is available;
+- a source-population-to-target-population marker summary and concise heatmaps
+  for the most affected markers, optionally excluding same-population routes;
+- a dominant-source summary reporting concentration above 50% of attributable
+  signal, the median number of contributing sources, and common population
+  routes;
 - sampled classic-intensity versus original-`X` plots coloured by the halo
   score; and
 - a concise interpretation/provenance summary linking the output AnnData and
@@ -111,6 +148,7 @@ biological cutoffs.
 neighbour_signal:
   enabled: true
   output_adata_path: neighbour_attributable_signal.h5ad
+  source_target_table_path: neighbour_signal_source_target.parquet
   exemplar_obs: Exemplar_stains
   object_id_obs: ObjectNumber
   max_halo_px: 8
@@ -124,6 +162,7 @@ neighbour_signal:
   qc_markers: null
   max_qc_markers: 6
   population_obs: null
+  source_target_qc_exclude_same_population: true
   high_risk_threshold: 0.5
 ```
 
@@ -140,8 +179,17 @@ source strengths. Projected excess is scaled by
 median and are not forced to decrease monotonically; a membrane marker can
 legitimately peak outside a conservative nucleus-centred mask.
 
-Overlapping halos use their pixelwise maximum by default. `sum` is supported
-but more aggressively attributes signal in dense source regions.
+Overlapping halos use their pixelwise maximum by default. Whenever a source
+replaces the current maximum at a pixel, both predicted intensity and its
+global AnnData source row are updated. Attributable pixels are then reduced by
+target segmentation label and source row before the temporary pixel maps are
+discarded; no second neighbour search is performed.
+
+`sum` remains supported for the original score and is more aggressive in dense
+source regions, but multiple sources contribute simultaneously to a pixel.
+Source-resolved provenance is therefore disabled for `sum` with a clear
+warning: the sparse table is empty and dominant-source layers use `-1`/zero
+sentinels. Use the recommended `max` behavior when source identity is needed.
 
 ## Environment and resources
 
@@ -171,6 +219,15 @@ pixels. Compare classic intensity and independent input `X` to determine
 whether the existing expression method already suppresses these spatially
 suspicious measurements.
 
+Use the sparse source-target table or dominant-source layers to ask which
+neighbouring cell provides the spatial explanation. For example, an overall
+fraction of 0.72, a dominant-source observed fraction of 0.54, and a
+dominant-source attributable fraction of 0.75 mean that neighbouring sources
+spatially explain 72% of the target signal, one source alone explains 54% of
+the observed signal, and that source accounts for 75% of the attributable
+component. These remain model-based spatial explanations, not assertions that
+the source physically contaminated the target.
+
 Use the score as QC evidence alongside image review and biological context. Do
 not automatically delete, compensate, or relabel cells from this score alone.
 
@@ -188,6 +245,8 @@ not automatically delete, compensate, or relabel cells from this score alone.
 - Maximum overlap asks whether the strongest source could explain a pixel. It
   deliberately avoids adding many weak sources and may understate genuinely
   additive contamination.
+- Source provenance is source-resolved only for maximum overlap. Summed halos
+  retain scores but cannot make an unambiguous single-source pixel assignment.
 - A high fraction can occur on a low absolute signal denominator. Use the
   attributable/classic intensity layers alongside the fraction.
 - Raw marker images and masks must be on the same native grid; the stage never

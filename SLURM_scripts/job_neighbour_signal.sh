@@ -10,10 +10,11 @@
 
 set -euo pipefail
 
-#@DESC: Learn empirical marker halos and calculate cell-by-marker neighbour-attributable fractions
+#@DESC: Learn empirical marker halos, calculate neighbour-attributable fractions, and retain spatial source-cell provenance
 #@IN:   general.anndata_path with neighbour_signal.exemplar_obs and ROI/object-label mapping
 #@IN:   general.raw_images_folder ROI/channel TIFFs and general.masks_folder label masks
 #@OUT:  neighbour_signal.output_adata_path with halo scores, raw-intensity layers, and marker_halo provenance
+#@OUT:  neighbour_signal.source_target_table_path with sparse source-target provenance for max aggregation
 #@OUT:  outputs/<execution_id>_Neighbour_Attributable_Signal/{figures,tables,summaries}/
 #@ENV:  imc_segmentation
 #@MODULE:  SpatialBiologyToolkit.scripts.neighbour_signal

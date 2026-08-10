@@ -134,6 +134,12 @@ ASSET_SPECS: tuple[AssetSpec, ...] = (
         "file",
         "generated_output",
     ),
+    AssetSpec(
+        "neighbour_signal_source_target_table",
+        "neighbour_signal.source_target_table_path",
+        "file",
+        "generated_output",
+    ),
 )
 
 
@@ -319,6 +325,17 @@ def resolve_assets(
             role="neighbour_signal_anndata",
             path=resolve_project_path(
                 root, config.neighbour_signal.output_adata_path
+            ),
+            kind="file",
+            lifecycle="generated_output",
+            count_limit=count_limit,
+        )
+    )
+    assets.append(
+        inspect_asset(
+            role="neighbour_signal_source_target_table",
+            path=resolve_project_path(
+                root, config.neighbour_signal.source_target_table_path
             ),
             kind="file",
             lifecycle="generated_output",

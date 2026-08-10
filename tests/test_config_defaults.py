@@ -59,6 +59,15 @@ class ConfigDefaultsTests(unittest.TestCase):
         self.assertEqual(resolved["spatialdata"]["action"], "plan")
         self.assertEqual(resolved["neighbour_signal"]["max_halo_px"], 8)
         self.assertEqual(resolved["neighbour_signal"]["n_jobs"], "auto")
+        self.assertEqual(
+            resolved["neighbour_signal"]["source_target_table_path"],
+            "neighbour_signal_source_target.parquet",
+        )
+        self.assertTrue(
+            resolved["neighbour_signal"][
+                "source_target_qc_exclude_same_population"
+            ]
+        )
 
     def test_sparse_data_fills_missing_sections_and_fields(self):
         config = load_config_data(

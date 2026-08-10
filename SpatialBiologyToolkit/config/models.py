@@ -1154,6 +1154,14 @@ class NeighbourSignalConfig(ConfigModel):
         ui_group="Output asset",
         advice="Use a path different from general.anndata_path; the input AnnData is never modified.",
     )
+    source_target_table_path: str = config_field(
+        "neighbour_signal_source_target.parquet",
+        description="Sparse Parquet asset containing non-zero target-marker-source attribution relationships.",
+        level="basic",
+        stage="neighsig",
+        ui_group="Output asset",
+        advice="Global AnnData row indices and obs_names are authoritative; ROI and mask labels are retained for provenance.",
+    )
     exemplar_obs: str = config_field(
         "Exemplar_stains",
         description="Categorical AnnData observation whose non-null values name convincing positive marker exemplars.",
@@ -1269,6 +1277,14 @@ class NeighbourSignalConfig(ConfigModel):
         ui_group="QC report",
         advice="Null falls back to general.population_obs_primary; missing annotations are skipped cleanly.",
     )
+    source_target_qc_exclude_same_population: bool = config_field(
+        True,
+        description="Exclude same-population relationships from source-to-target population heatmaps.",
+        level="advanced",
+        stage="neighsig",
+        ui_group="QC report",
+        advice="The Parquet table and aggregate QC tables always retain same-population relationships.",
+    )
     high_risk_threshold: float = config_field(
         0.5,
         description="Descriptive score threshold used only for per-cell counts and QC summaries.",
@@ -1293,6 +1309,13 @@ class NeighbourSignalConfig(ConfigModel):
             raise ValueError("neighbour_signal.output_adata_path cannot be empty")
         if not output.lower().endswith(".h5ad"):
             raise ValueError("neighbour_signal.output_adata_path must end with .h5ad")
+        source_table = self.source_target_table_path.strip()
+        if not source_table:
+            raise ValueError("neighbour_signal.source_target_table_path cannot be empty")
+        if not source_table.lower().endswith((".parquet", ".pq")):
+            raise ValueError(
+                "neighbour_signal.source_target_table_path must end with .parquet or .pq"
+            )
         if not self.exemplar_obs.strip() or not self.object_id_obs.strip():
             raise ValueError("neighbour_signal observation column names cannot be empty")
         if self.qc_markers is not None:

@@ -85,6 +85,125 @@ def profile_values_table(adata: Any) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def population_source_target_summary(source_target_table: pd.DataFrame) -> pd.DataFrame:
+    """Aggregate sparse relationships by spatial source/target population and marker."""
+
+    columns = [
+        "source_population",
+        "target_population",
+        "marker",
+        "source_target_relationships",
+        "unique_target_cells",
+        "total_attributable_intensity",
+        "mean_fraction_of_observed_signal",
+        "median_fraction_of_observed_signal",
+        "total_fraction_of_attributable_signal",
+        "mean_fraction_of_attributable_signal",
+    ]
+    required = {"source_population", "target_population", "marker"}
+    if source_target_table.empty or not required.issubset(source_target_table.columns):
+        return pd.DataFrame(columns=columns)
+    usable = source_target_table.dropna(
+        subset=["source_population", "target_population"]
+    )
+    if usable.empty:
+        return pd.DataFrame(columns=columns)
+    summary = (
+        usable.groupby(
+            ["source_population", "target_population", "marker"],
+            observed=True,
+            sort=True,
+        )
+        .agg(
+            source_target_relationships=("source_obs_index", "size"),
+            unique_target_cells=("target_obs_index", "nunique"),
+            total_attributable_intensity=("attributable_intensity", "sum"),
+            mean_fraction_of_observed_signal=(
+                "fraction_of_observed_signal",
+                "mean",
+            ),
+            median_fraction_of_observed_signal=(
+                "fraction_of_observed_signal",
+                "median",
+            ),
+            total_fraction_of_attributable_signal=(
+                "fraction_of_attributable_signal",
+                "sum",
+            ),
+            mean_fraction_of_attributable_signal=(
+                "fraction_of_attributable_signal",
+                "mean",
+            ),
+        )
+        .reset_index()
+    )
+    return summary.loc[:, columns]
+
+
+def dominant_source_summary(
+    adata: Any,
+    source_target_table: pd.DataFrame,
+) -> pd.DataFrame:
+    """Summarize dominant-source concentration and common population routes."""
+
+    dominant: np.ndarray = _dense_matrix(
+        adata.layers["dominant_source_attributable_fraction"]
+    ).astype(float, copy=False)
+    rows = []
+    population_columns = {
+        "source_population",
+        "target_population",
+    }.issubset(source_target_table.columns)
+    for marker_index, marker in enumerate(adata.var_names.astype(str)):
+        marker_rows = source_target_table.loc[
+            source_target_table["marker"].astype(str).eq(marker)
+        ]
+        counts = marker_rows.groupby("target_obs_index", sort=False).size()
+        affected_targets = counts.index.to_numpy(dtype=np.int64)
+        if len(affected_targets):
+            dominant_values = dominant[affected_targets, marker_index]
+            dominant_gt_half = float(np.mean(dominant_values > 0.5))
+            median_sources = float(np.median(counts.to_numpy(dtype=float)))
+        else:
+            dominant_gt_half = 0.0
+            median_sources = 0.0
+        common_relationships = ""
+        if population_columns and not marker_rows.empty:
+            relationship_counts = (
+                marker_rows.dropna(
+                    subset=["source_population", "target_population"]
+                )
+                .groupby(
+                    ["source_population", "target_population"],
+                    observed=True,
+                    sort=True,
+                )
+                .size()
+                .sort_values(ascending=False)
+                .head(3)
+            )
+            common_relationships = "; ".join(
+                f"{source} → {target} ({int(count)})"
+                for (source, target), count in relationship_counts.items()
+            )
+        rows.append(
+            {
+                "marker": marker,
+                "affected_target_cells": int(len(affected_targets)),
+                "fraction_affected_targets_dominant_source_gt_0.5": (
+                    dominant_gt_half
+                ),
+                "median_contributing_source_cells_per_affected_target": (
+                    median_sources
+                ),
+                "most_common_source_target_population_relationships": (
+                    common_relationships
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
 def select_qc_markers(
     adata: Any,
     requested: Sequence[str] | None,
@@ -263,6 +382,88 @@ def _plot_population_matrix(
     return path
 
 
+def _plot_source_target_population_heatmaps(
+    population_summary: pd.DataFrame,
+    markers: Sequence[str],
+    path: Path,
+    *,
+    exclude_same_population: bool,
+) -> Path | None:
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
+
+    selected = population_summary.loc[
+        population_summary["marker"].astype(str).isin(markers)
+    ].copy()
+    if exclude_same_population:
+        selected = selected.loc[
+            selected["source_population"].astype(str)
+            != selected["target_population"].astype(str)
+        ]
+    available_markers = [
+        marker for marker in markers if selected["marker"].astype(str).eq(marker).any()
+    ]
+    if not available_markers:
+        return None
+    columns = min(3, len(available_markers))
+    rows = int(math.ceil(len(available_markers) / columns))
+    fig, axes = plt.subplots(
+        rows,
+        columns,
+        figsize=(5.2 * columns, 4.6 * rows),
+        squeeze=False,
+    )
+    for axis, marker in zip(axes.flat, available_markers, strict=False):
+        marker_frame = selected.loc[selected["marker"].astype(str).eq(marker)]
+        matrix = marker_frame.pivot_table(
+            index="source_population",
+            columns="target_population",
+            values="total_attributable_intensity",
+            aggfunc="sum",
+            fill_value=0.0,
+            observed=True,
+        )
+        values = matrix.to_numpy(dtype=float)
+        image = axis.imshow(values, aspect="auto", cmap="magma")
+        axis.set_xticks(np.arange(matrix.shape[1]), matrix.columns.astype(str))
+        axis.set_yticks(np.arange(matrix.shape[0]), matrix.index.astype(str))
+        axis.tick_params(axis="x", rotation=45, labelsize=8)
+        axis.tick_params(axis="y", labelsize=8)
+        axis.set_xlabel("Target population")
+        axis.set_ylabel("Spatial source population")
+        axis.set_title(marker)
+        if not exclude_same_population:
+            column_positions = {
+                str(value): index for index, value in enumerate(matrix.columns)
+            }
+            for row_index, source in enumerate(matrix.index.astype(str)):
+                column_index = column_positions.get(source)
+                if column_index is not None:
+                    axis.add_patch(
+                        Rectangle(
+                            (column_index - 0.5, row_index - 0.5),
+                            1,
+                            1,
+                            fill=False,
+                            edgecolor="#65c7d0",
+                            linewidth=1.5,
+                        )
+                    )
+        colorbar = fig.colorbar(image, ax=axis, shrink=0.75)
+        colorbar.set_label("Total attributable intensity")
+    for axis in axes.flat[len(available_markers) :]:
+        axis.axis("off")
+    title_suffix = " (cross-population only)" if exclude_same_population else ""
+    fig.suptitle(
+        "Spatial source population → target population" + title_suffix,
+        y=1.01,
+    )
+    fig.tight_layout()
+    fig.savefig(path, dpi=160, bbox_inches="tight")
+    plt.close(fig)
+    return path
+
+
 def _matrix_column(matrix: Any, index: int) -> np.ndarray:
     values = matrix[:, index]
     if hasattr(values, "toarray"):
@@ -322,6 +523,7 @@ def _plot_expression_comparison(
 def _write_summary(
     adata: Any,
     score_summary: pd.DataFrame,
+    dominant_summary: pd.DataFrame,
     selected_markers: Sequence[str],
     output_adata_path: Path,
     path: Path,
@@ -330,12 +532,15 @@ def _write_summary(
     marker_summary = halo["marker_summary"]
     skipped = marker_summary.loc[~marker_summary["halo_profile_available"].astype(bool)]
     usage = halo["worker_usage"]
+    source_table = halo["source_target_table"]
     lines = [
         "# Neighbour-attributable signal QC",
         "",
         "The Neighbour-Attributable Fraction is the fraction of background-subtracted raw marker signal inside a cell mask that spatially coincides with an empirical halo projected from a strong neighbouring cell.",
         "",
         "It is a QC/uncertainty score describing spatial explainability. It is not a calibrated probability and does not prove that signal is artefactual.",
+        "",
+        "The sparse source-target table and dominant-source layers answer the complementary question of which neighbouring cell(s) provide that spatial explanation. A spatial source is a neighbouring cell whose projected marker halo explains observed signal inside the target mask; this wording does not assert physical transfer.",
         "",
         "## Run summary",
         "",
@@ -345,6 +550,9 @@ def _write_summary(
         f"- Skipped markers: {len(skipped):,}",
         f"- ROI workers: {usage['effective']} (limit {usage['cpu_limit']} from {usage['limit_source']})",
         f"- Detailed QC markers: {', '.join(selected_markers) if selected_markers else 'none'}",
+        f"- Source-resolved provenance available: {bool(source_table['available'])}",
+        f"- Source-target relationships: {int(source_table['relationships']):,}",
+        f"- Source-target Parquet: `{source_table['path'] or 'not configured'}`",
         "",
         "## Exemplar and source definition",
         "",
@@ -366,6 +574,29 @@ def _write_summary(
         lines.extend(["", "## Skipped markers", ""])
         for marker, row in skipped.iterrows():
             lines.append(f"- `{marker}`: {row['halo_skip_reason']}")
+    affected_dominant = dominant_summary.loc[
+        dominant_summary["affected_target_cells"] > 0
+    ].sort_values(
+        "fraction_affected_targets_dominant_source_gt_0.5",
+        ascending=False,
+    )
+    if len(affected_dominant):
+        lines.extend(
+            [
+                "",
+                "## Dominant spatial sources",
+                "",
+                "| Marker | Affected targets | Dominant source >50% of attributable signal | Median contributing sources | Common population routes |",
+                "|---|---:|---:|---:|---|",
+            ]
+        )
+        for _index, row in affected_dominant.head(10).iterrows():
+            lines.append(
+                f"| {row['marker']} | {int(row['affected_target_cells'])} | "
+                f"{row['fraction_affected_targets_dominant_source_gt_0.5']:.3f} | "
+                f"{row['median_contributing_source_cells_per_affected_target']:.2f} | "
+                f"{row['most_common_source_target_population_relationships'] or 'not available'} |"
+            )
     lines.extend(
         [
             "",
@@ -375,6 +606,9 @@ def _write_summary(
             "- `neighbour_attributable_intensity`: mean observed excess per mask pixel captured by neighbouring halos.",
             "- `residual_excess_intensity`: mean excess remaining after subtracting the projected halo, clipped at zero.",
             "- `original_X`: independent input expression/confidence values preserved unchanged.",
+            "- `dominant_source_index`: global AnnData row of the largest attributable spatial source; `-1` means none.",
+            "- `dominant_source_observed_fraction`: fraction of target observed excess explained by that dominant source.",
+            "- `dominant_source_attributable_fraction`: fraction of all neighbour-attributable signal assigned to that dominant source.",
             "",
         ]
     )
@@ -392,6 +626,8 @@ def generate_neighbour_signal_report(
     qc_markers: Sequence[str] | None,
     max_qc_markers: int,
     population_obs: str | None,
+    source_target_table: pd.DataFrame,
+    source_target_qc_exclude_same_population: bool,
 ) -> NeighbourSignalReport:
     """Generate compact tables and figures without altering the AnnData asset."""
 
@@ -403,6 +639,16 @@ def generate_neighbour_signal_report(
     score_path = tables_dir / "neighbour_attributable_score_summary.csv"
     summary.to_csv(score_path, index=False)
     report.tables.append(score_path)
+    dominant_summary = dominant_source_summary(adata, source_target_table)
+    dominant_path = tables_dir / "dominant_source_summary.csv"
+    dominant_summary.to_csv(dominant_path, index=False)
+    report.tables.append(dominant_path)
+    population_provenance = population_source_target_summary(source_target_table)
+    population_provenance_path = (
+        tables_dir / "source_target_population_marker_summary.csv"
+    )
+    population_provenance.to_csv(population_provenance_path, index=False)
+    report.tables.append(population_provenance_path)
 
     profiles = profile_values_table(adata)
     profile_path = tables_dir / "marker_halo_profiles.csv"
@@ -426,6 +672,11 @@ def generate_neighbour_signal_report(
     report.figures.append(_plot_score_distributions(adata, summary, distribution_path))
     selected, selection_warnings = select_qc_markers(adata, qc_markers, max_qc_markers)
     report.warnings.extend(selection_warnings)
+    if not bool(adata.uns["marker_halo"]["source_target_table"]["available"]):
+        report.warnings.append(
+            "Source-resolved provenance QC is unavailable for halo_aggregation='sum'; "
+            "use the recommended 'max' aggregation to identify spatial source cells."
+        )
 
     if "X_umap" in adata.obsm:
         report.figures.append(
@@ -447,6 +698,21 @@ def generate_neighbour_signal_report(
                     figures_dir / "scanpy_population_marker_halo_matrixplot.png",
                 )
             )
+            source_target_heatmap = _plot_source_target_population_heatmaps(
+                population_provenance,
+                selected,
+                figures_dir / "source_target_population_marker_heatmaps.png",
+                exclude_same_population=(
+                    source_target_qc_exclude_same_population
+                ),
+            )
+            if source_target_heatmap is not None:
+                report.figures.append(source_target_heatmap)
+            elif not source_target_table.empty:
+                report.warnings.append(
+                    "Skipped source-to-target population heatmaps because no selected marker "
+                    "had usable relationships after the configured population filter."
+                )
     else:
         report.warnings.append("Skipped population-by-marker QC because no population observation is configured.")
     if selected and "classic_intensities" in adata.layers:
@@ -467,6 +733,7 @@ def generate_neighbour_signal_report(
         _write_summary(
             adata,
             summary,
+            dominant_summary,
             selected,
             output_adata_path,
             summary_path,
@@ -479,6 +746,12 @@ def generate_neighbour_signal_report(
             "markers_with_profiles": int(adata.var["halo_profile_available"].sum()),
             "skipped_markers": int((~adata.var["halo_profile_available"].astype(bool)).sum()),
             "qc_markers": len(selected),
+            "source_target_relationships": int(len(source_target_table)),
+            "affected_target_marker_pairs": int(
+                source_target_table[["target_obs_index", "marker"]]
+                .drop_duplicates()
+                .shape[0]
+            ),
         }
     )
     return report
@@ -486,8 +759,10 @@ def generate_neighbour_signal_report(
 
 __all__ = [
     "NeighbourSignalReport",
+    "dominant_source_summary",
     "generate_neighbour_signal_report",
     "marker_score_summary",
+    "population_source_target_summary",
     "profile_values_table",
     "select_qc_markers",
 ]

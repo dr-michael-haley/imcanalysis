@@ -48,7 +48,7 @@ for ordering and usage guidance.
 | [`cellfeat`](cellfeat.md) | Build resumable cohort-only IMC cell features using full-segmentation context | `imc_segmentation` | general, napari_sbt, logging |
 | [`maxfuse`](maxfuse.md) | Match one scRNA-seq reference to IMC cells with MaxFuse and generate transfer/QC assets | `imc_maxfuse` | general, maxfuse, logging |
 | [`spatialdata`](spatialdata.md) | Discover or explicitly select spatial assets and optionally build a validated SpatialData Zarr | `imc_segmentation` | general, spatialdata, logging |
-| [`neighsig`](neighsig.md) | Learn empirical marker halos and calculate cell-by-marker neighbour-attributable fractions | `imc_segmentation` | general, neighbour_signal, logging |
+| [`neighsig`](neighsig.md) | Learn empirical marker halos, calculate neighbour-attributable fractions, and retain spatial source-cell provenance | `imc_segmentation` | general, neighbour_signal, logging |
 
 ```{toctree}
 :maxdepth: 1
