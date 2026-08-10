@@ -6671,14 +6671,84 @@
           "type": "string",
           "ui_group": "Output asset"
         },
+        "exemplar_mode": {
+          "advice": "Automatic selection affects only which cells train the raw-pixel halo; it does not use X to calculate halo values or final scores.",
+          "default": "automatic",
+          "description": "Choose exemplars from input AnnData.X, from exemplar_obs, or by retaining manual exemplars and filling automatically.",
+          "enum": [
+            "automatic",
+            "manual",
+            "augment"
+          ],
+          "level": "basic",
+          "stage": "neighsig",
+          "title": "Exemplar Mode",
+          "type": "string",
+          "ui_group": "Cell mapping and exemplars"
+        },
         "exemplar_obs": {
           "advice": "Values must exactly match marker names on the AnnData variable axis.",
           "default": "Exemplar_stains",
-          "description": "Categorical AnnData observation whose non-null values name convincing positive marker exemplars.",
+          "description": "Categorical AnnData observation whose non-null values name convincing positive marker exemplars in manual or augment mode.",
           "level": "basic",
           "stage": "neighsig",
           "title": "Exemplar Obs",
           "type": "string",
+          "ui_group": "Cell mapping and exemplars"
+        },
+        "automatic_positive_threshold": {
+          "advice": "The default suits the usual 0-1 Nimbus inference score; change it when X uses another scale.",
+          "default": 0.5,
+          "description": "Minimum input AnnData.X marker score for an automatic exemplar candidate.",
+          "level": "basic",
+          "stage": "neighsig",
+          "title": "Automatic Positive Threshold",
+          "type": "number",
+          "ui_group": "Cell mapping and exemplars"
+        },
+        "automatic_same_marker_clearance_px": {
+          "advice": "Other cells are allowed nearby because their segmented pixels are excluded from radial halo averages.",
+          "default": 10.0,
+          "description": "Minimum mask-to-mask pixel distance from another X-positive cell for the same marker.",
+          "level": "basic",
+          "maximum": 256,
+          "minimum": 0,
+          "stage": "neighsig",
+          "title": "Automatic Same Marker Clearance Px",
+          "type": "number",
+          "ui_group": "Cell mapping and exemplars"
+        },
+        "automatic_target_exemplars_per_marker": {
+          "advice": "Selection is balanced across ROIs and thirds of the positive X-score range rather than taking only the highest scores.",
+          "default": 30,
+          "description": "Target number of reproducibly sampled automatic exemplars per marker.",
+          "level": "basic",
+          "minimum": 1,
+          "stage": "neighsig",
+          "title": "Automatic Target Exemplars Per Marker",
+          "type": "integer",
+          "ui_group": "Cell mapping and exemplars"
+        },
+        "automatic_max_exemplars_per_roi": {
+          "advice": "Increase this for datasets with few ROIs; the minimum exemplar rule still applies globally.",
+          "default": 5,
+          "description": "Maximum selected automatic exemplars for one marker from one ROI.",
+          "level": "advanced",
+          "minimum": 1,
+          "stage": "neighsig",
+          "title": "Automatic Max Exemplars Per Roi",
+          "type": "integer",
+          "ui_group": "Cell mapping and exemplars"
+        },
+        "automatic_min_pixels_per_bin": {
+          "advice": "This permits nearby cells while rejecting candidates whose radial profile is too heavily occluded to estimate.",
+          "default": 8,
+          "description": "Minimum unassigned pixels required in every outward halo-distance bin for an automatic candidate.",
+          "level": "advanced",
+          "minimum": 1,
+          "stage": "neighsig",
+          "title": "Automatic Min Pixels Per Bin",
+          "type": "integer",
           "ui_group": "Cell mapping and exemplars"
         },
         "object_id_obs": {
@@ -6821,6 +6891,40 @@
           "minimum": 1,
           "stage": "neighsig",
           "title": "Max Qc Markers",
+          "type": "integer",
+          "ui_group": "QC report"
+        },
+        "create_cell_galleries": {
+          "advice": "Galleries are qualitative model checks and do not change halo profiles or cell scores.",
+          "default": true,
+          "description": "Create bounded exemplar, target-source, and automatic-selection image galleries for selected QC markers.",
+          "level": "basic",
+          "stage": "neighsig",
+          "title": "Create Cell Galleries",
+          "type": "boolean",
+          "ui_group": "QC report"
+        },
+        "gallery_examples_per_marker": {
+          "advice": "Examples cover dominant, competing-source, disagreement, isolated-positive, and self-control cases where available.",
+          "default": 6,
+          "description": "Maximum stratified target-cell examples rendered for each selected QC marker.",
+          "level": "basic",
+          "maximum": 12,
+          "minimum": 1,
+          "stage": "neighsig",
+          "title": "Gallery Examples Per Marker",
+          "type": "integer",
+          "ui_group": "QC report"
+        },
+        "gallery_crop_margin_px": {
+          "advice": "Increase this only when more tissue context is needed; it does not change max_halo_px.",
+          "default": 8,
+          "description": "Additional native-image pixels shown around the target/source masks and modeled halo extent.",
+          "level": "advanced",
+          "maximum": 128,
+          "minimum": 0,
+          "stage": "neighsig",
+          "title": "Gallery Crop Margin Px",
           "type": "integer",
           "ui_group": "QC report"
         },

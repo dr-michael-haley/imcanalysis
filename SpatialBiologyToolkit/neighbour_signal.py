@@ -1,15 +1,17 @@
 """Empirical marker halos and neighbour-attributable signal scores.
 
-The analysis intentionally uses raw marker pixels and segmentation geometry.
-It never uses the input AnnData expression matrix to learn sources, profiles,
-backgrounds, or scores; the matrix is preserved only for downstream QC.
+Automatic exemplar selection may use the input AnnData expression matrix to
+identify convincing marker-positive candidates.  Halo intensities, source
+strengths, backgrounds, projected sources, and final scores are still learned
+exclusively from raw marker pixels and segmentation geometry.
 """
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, TypeAlias
 
@@ -51,6 +53,12 @@ class HaloParameters:
     min_exemplars: int = 5
     source_threshold_quantile: float = 0.10
     halo_aggregation: str = "max"
+    exemplar_mode: str = "automatic"
+    automatic_positive_threshold: float = 0.5
+    automatic_same_marker_clearance_px: float = 10.0
+    automatic_target_exemplars_per_marker: int = 30
+    automatic_max_exemplars_per_roi: int = 5
+    automatic_min_pixels_per_bin: int = 8
 
     def validate(self) -> None:
         if self.max_halo_px < 1:
@@ -67,6 +75,23 @@ class HaloParameters:
             raise ValueError("source_threshold_quantile must be in [0, 1]")
         if self.halo_aggregation not in {"max", "sum"}:
             raise ValueError("halo_aggregation must be 'max' or 'sum'")
+        if self.exemplar_mode not in {"automatic", "manual", "augment"}:
+            raise ValueError("exemplar_mode must be 'automatic', 'manual', or 'augment'")
+        if not np.isfinite(self.automatic_positive_threshold):
+            raise ValueError("automatic_positive_threshold must be finite")
+        if self.automatic_same_marker_clearance_px < 0:
+            raise ValueError("automatic_same_marker_clearance_px cannot be negative")
+        if (
+            self.exemplar_mode in {"automatic", "augment"}
+            and self.automatic_target_exemplars_per_marker < self.min_exemplars
+        ):
+            raise ValueError(
+                "automatic_target_exemplars_per_marker cannot be below min_exemplars"
+            )
+        if self.automatic_max_exemplars_per_roi < 1:
+            raise ValueError("automatic_max_exemplars_per_roi must be positive")
+        if self.automatic_min_pixels_per_bin < 1:
+            raise ValueError("automatic_min_pixels_per_bin must be positive")
 
 
 @dataclass(frozen=True)
@@ -92,6 +117,26 @@ class ExemplarProfile:
     source_excess_strength: float
     background_method: str
     valid: bool
+    reason: str
+
+
+@dataclass(frozen=True)
+class ExemplarSelectionRecord:
+    """Candidate- and selection-level provenance for one marker/cell pair."""
+
+    marker: str
+    roi: str
+    object_id: int
+    source_obs_index: int
+    source_cell_id: str
+    selection_origin: str
+    input_x_value: float
+    positive_threshold: float
+    nearest_same_marker_positive_distance_px: float
+    min_unassigned_pixels_per_bin: int
+    min_unassigned_fraction: float
+    eligible: bool
+    selected: bool
     reason: str
 
 
@@ -122,6 +167,14 @@ class ProfileWorkerPayload:
 
 
 @dataclass(frozen=True)
+class CandidateWorkerPayload:
+    roi: str
+    mask_path: str
+    positive_cells: Mapping[str, tuple[tuple[int, int, float, str], ...]]
+    parameters: HaloParameters
+
+
+@dataclass(frozen=True)
 class ApplicationWorkerPayload:
     roi: str
     mask_path: str
@@ -140,6 +193,21 @@ class ProjectedHalo:
 
     predicted: FloatArray
     source_index: IntArray
+
+
+@dataclass(frozen=True)
+class MarkerHaloMaps:
+    """Transient pixel maps for one ROI/marker application or targeted QC crop."""
+
+    observed_excess: FloatArray
+    projected: ProjectedHalo
+    attributable: FloatArray
+    residual: FloatArray
+    source_strengths: Mapping[int, float]
+    source_labels: tuple[int, ...]
+    background: float
+    background_method: str
+    background_pixels: int
 
 
 @dataclass(frozen=True)
@@ -185,6 +253,7 @@ class NeighbourSignalResult:
     source_provenance_available: bool
     profiles: Mapping[str, MarkerHaloProfile]
     exemplar_profiles: tuple[ExemplarProfile, ...]
+    exemplar_selection: tuple[ExemplarSelectionRecord, ...]
     background_records: tuple[dict[str, Any], ...]
     unknown_exemplar_values: tuple[str, ...]
     warnings: tuple[str, ...]
@@ -337,6 +406,155 @@ def _expanded_slice(
             min(shape[1], int(object_slice[1].stop) + radius),
         ),
     )
+
+
+def _automatic_candidate_geometry(
+    mask: NDArray[np.int64],
+    object_id: int,
+    object_slice: tuple[slice, slice],
+    *,
+    max_halo_px: int,
+) -> tuple[int, float]:
+    """Summarise radial pixels remaining after other cell masks are excluded."""
+
+    patch_slice = _expanded_slice(
+        object_slice,
+        (int(mask.shape[0]), int(mask.shape[1])),
+        max_halo_px,
+    )
+    patch_mask = mask[patch_slice]
+    source = patch_mask == int(object_id)
+    distance = ndimage.distance_transform_edt(~source)
+    unassigned = patch_mask == 0
+    counts: list[int] = []
+    fractions: list[float] = []
+    for bin_index in range(max_halo_px):
+        ring = (distance > float(bin_index)) & (distance <= float(bin_index + 1))
+        total = int(np.count_nonzero(ring))
+        usable = int(np.count_nonzero(ring & unassigned))
+        counts.append(usable)
+        fractions.append(float(usable / total) if total else 0.0)
+    return min(counts, default=0), min(fractions, default=0.0)
+
+
+def _nearest_other_positive_distance(
+    mask: NDArray[np.int64],
+    object_id: int,
+    object_slice: tuple[slice, slice],
+    positive_lookup: NDArray[np.bool_],
+    *,
+    clearance_px: float,
+) -> float:
+    """Return local boundary distance to another positive cell, or infinity."""
+
+    if clearance_px <= 0:
+        return float("inf")
+    radius = max(1, int(np.ceil(clearance_px)))
+    patch_slice = _expanded_slice(
+        object_slice,
+        (int(mask.shape[0]), int(mask.shape[1])),
+        radius,
+    )
+    patch_mask = mask[patch_slice]
+    source = patch_mask == int(object_id)
+    other_positive = (
+        (patch_mask >= 0)
+        & (patch_mask < len(positive_lookup))
+        & positive_lookup[np.clip(patch_mask, 0, len(positive_lookup) - 1)]
+        & (patch_mask != int(object_id))
+    )
+    if not np.any(other_positive):
+        return float("inf")
+    distance = ndimage.distance_transform_edt(~source)
+    return float(np.min(distance[other_positive]))
+
+
+def inspect_automatic_exemplar_candidates(
+    payload: CandidateWorkerPayload,
+) -> tuple[ExemplarSelectionRecord, ...]:
+    """Inspect one ROI's X-positive cells without loading any marker image."""
+
+    from tifffile import imread
+
+    mask = _validate_mask(imread(payload.mask_path), path=payload.mask_path)
+    slices = _object_slices(mask)
+    maximum_label = int(mask.max(initial=0))
+    geometry_cache: dict[int, tuple[int, float]] = {}
+    records: list[ExemplarSelectionRecord] = []
+    for marker, cells in payload.positive_cells.items():
+        positive_lookup = np.zeros(maximum_label + 1, dtype=bool)
+        for _obs_index, raw_label, _x_value, _cell_id in cells:
+            label = int(raw_label)
+            if 0 < label <= maximum_label:
+                positive_lookup[label] = True
+        for obs_index, raw_label, x_value, cell_id in cells:
+            object_id = int(raw_label)
+            object_slice = slices.get(object_id)
+            if object_slice is None:
+                records.append(
+                    ExemplarSelectionRecord(
+                        marker=str(marker),
+                        roi=payload.roi,
+                        object_id=object_id,
+                        source_obs_index=int(obs_index),
+                        source_cell_id=str(cell_id),
+                        selection_origin="automatic",
+                        input_x_value=float(x_value),
+                        positive_threshold=float(
+                            payload.parameters.automatic_positive_threshold
+                        ),
+                        nearest_same_marker_positive_distance_px=float("nan"),
+                        min_unassigned_pixels_per_bin=0,
+                        min_unassigned_fraction=0.0,
+                        eligible=False,
+                        selected=False,
+                        reason="segmentation_label_missing_from_mask",
+                    )
+                )
+                continue
+            if object_id not in geometry_cache:
+                geometry_cache[object_id] = _automatic_candidate_geometry(
+                    mask,
+                    object_id,
+                    object_slice,
+                    max_halo_px=payload.parameters.max_halo_px,
+                )
+            minimum_pixels, minimum_fraction = geometry_cache[object_id]
+            nearest = _nearest_other_positive_distance(
+                mask,
+                object_id,
+                object_slice,
+                positive_lookup,
+                clearance_px=(
+                    payload.parameters.automatic_same_marker_clearance_px
+                ),
+            )
+            reasons: list[str] = []
+            if nearest < payload.parameters.automatic_same_marker_clearance_px:
+                reasons.append("same_marker_positive_within_clearance")
+            if minimum_pixels < payload.parameters.automatic_min_pixels_per_bin:
+                reasons.append("insufficient_unassigned_radial_pixels")
+            records.append(
+                ExemplarSelectionRecord(
+                    marker=str(marker),
+                    roi=payload.roi,
+                    object_id=object_id,
+                    source_obs_index=int(obs_index),
+                    source_cell_id=str(cell_id),
+                    selection_origin="automatic",
+                    input_x_value=float(x_value),
+                    positive_threshold=float(
+                        payload.parameters.automatic_positive_threshold
+                    ),
+                    nearest_same_marker_positive_distance_px=nearest,
+                    min_unassigned_pixels_per_bin=minimum_pixels,
+                    min_unassigned_fraction=minimum_fraction,
+                    eligible=not reasons,
+                    selected=False,
+                    reason=";".join(reasons),
+                )
+            )
+    return tuple(records)
 
 
 def _radial_profile(
@@ -798,6 +1016,101 @@ def _aggregate_source_target_attribution(
     )
 
 
+def calculate_marker_halo_maps(
+    mask: np.ndarray,
+    image: np.ndarray,
+    anchors: np.ndarray,
+    halo: MarkerHaloProfile,
+    parameters: HaloParameters,
+    source_obs_indices: Mapping[int, int],
+    *,
+    roi: str,
+    marker: str,
+) -> MarkerHaloMaps:
+    """Apply one learned marker halo and return transient pixel-level maps.
+
+    The application worker and targeted QC gallery renderer share this helper,
+    ensuring that visualized predicted, attributable, and residual maps use the
+    exact scientific calculation that produces the AnnData scores.
+    """
+
+    labels = _validate_mask(mask, path=f"{roi} segmentation mask")
+    values = _validate_image(
+        image,
+        path=f"{roi}/{marker} raw marker image",
+        expected_shape=(int(labels.shape[0]), int(labels.shape[1])),
+    )
+    anchor_labels = np.asarray(anchors, dtype=np.int64)
+    if anchor_labels.shape != labels.shape:
+        raise ValueError(
+            f"ROI {roi!r} source-anchor labels have shape {anchor_labels.shape}; "
+            f"expected {labels.shape}"
+        )
+    source_strengths = label_quantiles(
+        values,
+        anchor_labels,
+        parameters.source_anchor_quantile,
+    )
+    if halo.available:
+        source_labels = tuple(
+            sorted(
+                int(label)
+                for label, strength in source_strengths.items()
+                if strength >= halo.source_threshold
+            )
+        )
+        if parameters.halo_aggregation == "max":
+            unmapped_sources = [
+                label for label in source_labels if label not in source_obs_indices
+            ]
+            if unmapped_sources:
+                raise ValueError(
+                    f"ROI {roi!r}, marker {marker!r} has strong source segmentation "
+                    "labels without output AnnData rows; source-resolved provenance "
+                    f"requires a complete mapping. Examples: {unmapped_sources[:10]}"
+                )
+    else:
+        source_labels = ()
+    background, method, background_pixels = estimate_roi_background(
+        values,
+        labels,
+        source_labels,
+        parameters.max_halo_px,
+    )
+    if halo.available and source_labels:
+        projected = project_source_halos_with_sources(
+            labels,
+            source_strengths,
+            source_labels,
+            source_obs_indices,
+            halo.final,
+            background=background,
+            max_halo_px=parameters.max_halo_px,
+            aggregation=parameters.halo_aggregation,
+        )
+    else:
+        projected = ProjectedHalo(
+            predicted=np.zeros(labels.shape, dtype=np.float32),
+            source_index=np.full(labels.shape, -1, dtype=np.int64),
+        )
+    observed_excess = np.maximum(values - background, 0.0).astype(np.float32)
+    attributable = np.minimum(observed_excess, projected.predicted).astype(np.float32)
+    residual = np.maximum(observed_excess - projected.predicted, 0.0).astype(
+        np.float32
+    )
+    return MarkerHaloMaps(
+        observed_excess=observed_excess,
+        projected=projected,
+        attributable=attributable,
+        residual=residual,
+        source_strengths=source_strengths,
+        source_labels=source_labels,
+        background=background,
+        background_method=method,
+        background_pixels=background_pixels,
+    )
+
+
 def _apply_profiles_to_roi(payload: ApplicationWorkerPayload) -> ApplicationWorkerResult:
     from tifffile import imread
 
@@ -838,58 +1151,24 @@ def _apply_profiles_to_roi(payload: ApplicationWorkerPayload) -> ApplicationWork
             path=image_path,
             expected_shape=(int(mask.shape[0]), int(mask.shape[1])),
         )
-        source_strengths = label_quantiles(
+        halo = payload.profiles[marker]
+        maps = calculate_marker_halo_maps(
+            mask,
             image,
             anchors,
-            payload.parameters.source_anchor_quantile,
+            halo,
+            payload.parameters,
+            source_obs_indices,
+            roi=payload.roi,
+            marker=marker,
         )
-        halo = payload.profiles[marker]
-        if halo.available:
-            source_labels = sorted(
-                int(label)
-                for label, strength in source_strengths.items()
-                if strength >= halo.source_threshold
-            )
-            if payload.parameters.halo_aggregation == "max":
-                unmapped_sources = [
-                    label for label in source_labels if label not in source_obs_indices
-                ]
-                if unmapped_sources:
-                    raise ValueError(
-                        f"ROI {payload.roi!r}, marker {marker!r} has strong source "
-                        "segmentation labels without output AnnData rows; source-resolved "
-                        f"provenance requires a complete mapping. Examples: {unmapped_sources[:10]}"
-                    )
-        else:
-            source_labels = []
-        background, method, background_pixels = estimate_roi_background(
-            image,
-            mask,
-            source_labels,
-            payload.parameters.max_halo_px,
-        )
-        if halo.available and source_labels:
-            projected = project_source_halos_with_sources(
-                mask,
-                source_strengths,
-                source_labels,
-                source_obs_indices,
-                halo.final,
-                background=background,
-                max_halo_px=payload.parameters.max_halo_px,
-                aggregation=payload.parameters.halo_aggregation,
-            )
-        else:
-            projected = ProjectedHalo(
-                predicted=np.zeros(mask.shape, dtype=np.float32),
-                source_index=np.full(mask.shape, -1, dtype=np.int64),
-            )
-
-        observed_excess = np.maximum(image - background, 0.0).astype(np.float32)
-        attributable = np.minimum(observed_excess, projected.predicted).astype(np.float32)
-        residual = np.maximum(observed_excess - projected.predicted, 0.0).astype(
-            np.float32
-        )
+        source_strengths = maps.source_strengths
+        source_labels = maps.source_labels
+        background = maps.background
+        projected = maps.projected
+        observed_excess = maps.observed_excess
+        attributable = maps.attributable
+        residual = maps.residual
         raw_sums, counts = _label_reductions(image, mask)
         observed_sums, _ = _label_reductions(observed_excess, mask)
         attributable_sums, _ = _label_reductions(attributable, mask)
@@ -942,8 +1221,8 @@ def _apply_profiles_to_roi(payload: ApplicationWorkerPayload) -> ApplicationWork
                 "roi": payload.roi,
                 "marker": marker,
                 "background": background,
-                "background_method": method,
-                "background_pixels": background_pixels,
+                "background_method": maps.background_method,
+                "background_pixels": maps.background_pixels,
                 "source_cells": len(source_labels),
                 "segmented_cells": len(source_strengths),
             }
@@ -1022,6 +1301,111 @@ def _canonical_exemplars(
     return resolved, tuple(sorted(unknown))
 
 
+def _dense_input_x(adata: Any) -> np.ndarray:
+    if adata.X is None:
+        raise ValueError("Input AnnData.X is required for exemplar selection and preservation")
+    values = adata.X.toarray() if hasattr(adata.X, "toarray") else np.asarray(adata.X)
+    matrix = np.asarray(values, dtype=np.float64)
+    if matrix.shape != (adata.n_obs, adata.n_vars):
+        raise ValueError(
+            f"Input AnnData.X has shape {matrix.shape}; expected {(adata.n_obs, adata.n_vars)}"
+        )
+    return matrix
+
+
+def _stable_candidate_order(record: ExemplarSelectionRecord) -> int:
+    token = (
+        f"{record.marker}\0{record.roi}\0{record.source_obs_index}\0"
+        f"{record.source_cell_id}"
+    ).encode("utf-8")
+    return int.from_bytes(hashlib.blake2b(token, digest_size=8).digest(), "little")
+
+
+def _balanced_automatic_selection(
+    records: Sequence[ExemplarSelectionRecord],
+    marker_names: Sequence[str],
+    parameters: HaloParameters,
+    manual_pairs: set[tuple[int, str]],
+    manual_roi_counts: Mapping[tuple[str, str], int],
+) -> tuple[ExemplarSelectionRecord, ...]:
+    """Select reproducible X-score/ROI-balanced automatic exemplars."""
+
+    updated = list(records)
+    for marker in marker_names:
+        marker_indices = [
+            index
+            for index, record in enumerate(updated)
+            if record.marker == marker
+            and record.eligible
+            and (record.source_obs_index, marker) not in manual_pairs
+        ]
+        existing = sum(1 for _row, selected_marker in manual_pairs if selected_marker == marker)
+        target = max(0, parameters.automatic_target_exemplars_per_marker - existing)
+        if target == 0 or not marker_indices:
+            continue
+        values = np.asarray(
+            [updated[index].input_x_value for index in marker_indices], dtype=float
+        )
+        if len(np.unique(values)) > 1:
+            cut_points = np.unique(np.quantile(values, [1 / 3, 2 / 3]))
+            bands = np.searchsorted(cut_points, values, side="right").astype(int)
+        else:
+            bands = np.zeros(len(values), dtype=int)
+        band_for_index = {
+            index: int(band) for index, band in zip(marker_indices, bands, strict=True)
+        }
+        selected_by_roi: dict[str, int] = {
+            roi: int(count)
+            for (selected_marker, roi), count in manual_roi_counts.items()
+            if selected_marker == marker
+        }
+        selected_by_band: dict[int, int] = {}
+        remaining = set(marker_indices)
+        chosen = 0
+        while remaining and chosen < target:
+            usable = [
+                index
+                for index in remaining
+                if selected_by_roi.get(updated[index].roi, 0)
+                < parameters.automatic_max_exemplars_per_roi
+            ]
+            if not usable:
+                break
+            winner = min(
+                usable,
+                key=lambda index: (
+                    selected_by_roi.get(updated[index].roi, 0),
+                    selected_by_band.get(band_for_index[index], 0),
+                    _stable_candidate_order(updated[index]),
+                ),
+            )
+            updated[winner] = replace(updated[winner], selected=True)
+            selected_by_roi[updated[winner].roi] = (
+                selected_by_roi.get(updated[winner].roi, 0) + 1
+            )
+            band = band_for_index[winner]
+            selected_by_band[band] = selected_by_band.get(band, 0) + 1
+            remaining.remove(winner)
+            chosen += 1
+
+    manual_duplicates = {
+        (record.source_obs_index, record.marker)
+        for record in updated
+        if (record.source_obs_index, record.marker) in manual_pairs
+    }
+    return tuple(
+        replace(
+            record,
+            reason=(
+                ";".join(filter(None, [record.reason, "already_selected_manually"]))
+                if (record.source_obs_index, record.marker) in manual_duplicates
+                else record.reason
+            ),
+        )
+        for record in updated
+    )
+
+
 def run_neighbour_signal_analysis(
     adata: Any,
     roi_inputs: Sequence[ROIInput],
@@ -1065,16 +1449,129 @@ def run_neighbour_signal_analysis(
                 f"AnnData marker order {marker_names}"
             )
 
-    exemplars, unknown_values = _canonical_exemplars(adata, marker_names, exemplar_obs)
-    configured_counts = {marker: 0 for marker in marker_names}
-    for marker in exemplars.values():
-        configured_counts[marker] += 1
     worker_usage = resolve_analysis_workers(n_jobs, len(roi_inputs))
     LOGGER.info(
         "Neighbour signal analysis uses %d ROI worker(s); CPU limit=%d from %s.",
         worker_usage.effective,
         worker_usage.cpu_limit,
         worker_usage.limit_source,
+    )
+
+    input_x = _dense_input_x(adata)
+    manual_exemplars: dict[int, str] = {}
+    unknown_values: tuple[str, ...] = ()
+    if parameters.exemplar_mode in {"manual", "augment"}:
+        manual_exemplars, unknown_values = _canonical_exemplars(
+            adata, marker_names, exemplar_obs
+        )
+    identity_by_position = identity.set_index("source_obs_position", drop=False)
+    marker_to_index = {marker: index for index, marker in enumerate(marker_names)}
+    manual_records: list[ExemplarSelectionRecord] = []
+    manual_pairs: set[tuple[int, str]] = set()
+    manual_roi_counts: dict[tuple[str, str], int] = {}
+    for position, marker in manual_exemplars.items():
+        row = identity_by_position.loc[position]
+        roi_name = str(row[roi_obs])
+        pair = (int(position), marker)
+        manual_pairs.add(pair)
+        manual_roi_counts[(marker, roi_name)] = (
+            manual_roi_counts.get((marker, roi_name), 0) + 1
+        )
+        manual_records.append(
+            ExemplarSelectionRecord(
+                marker=marker,
+                roi=roi_name,
+                object_id=int(row[object_id_obs]),
+                source_obs_index=int(position),
+                source_cell_id=str(adata.obs_names[position]),
+                selection_origin="manual",
+                input_x_value=float(input_x[position, marker_to_index[marker]]),
+                positive_threshold=float("nan"),
+                nearest_same_marker_positive_distance_px=float("nan"),
+                min_unassigned_pixels_per_bin=-1,
+                min_unassigned_fraction=float("nan"),
+                eligible=True,
+                selected=True,
+                reason="",
+            )
+        )
+
+    automatic_records: tuple[ExemplarSelectionRecord, ...] = ()
+    nonfinite_automatic_values = 0
+    if parameters.exemplar_mode in {"automatic", "augment"}:
+        candidate_payloads: list[CandidateWorkerPayload] = []
+        for roi, roi_frame in identity.groupby(roi_obs, sort=True, observed=True):
+            roi_name = str(roi)
+            positions_for_roi = roi_frame["source_obs_position"].to_numpy(
+                dtype=np.int64
+            )
+            labels_for_roi = roi_frame[object_id_obs].to_numpy(dtype=np.int64)
+            positive_cells: dict[
+                str, tuple[tuple[int, int, float, str], ...]
+            ] = {}
+            for marker_index, marker in enumerate(marker_names):
+                marker_values = input_x[positions_for_roi, marker_index]
+                finite = np.isfinite(marker_values)
+                nonfinite_automatic_values += int(np.count_nonzero(~finite))
+                positive = finite & (
+                    marker_values >= parameters.automatic_positive_threshold
+                )
+                if not np.any(positive):
+                    continue
+                positive_cells[marker] = tuple(
+                    (
+                        int(position),
+                        int(label),
+                        float(value),
+                        str(adata.obs_names[int(position)]),
+                    )
+                    for position, label, value in zip(
+                        positions_for_roi[positive],
+                        labels_for_roi[positive],
+                        marker_values[positive],
+                        strict=True,
+                    )
+                )
+            if positive_cells:
+                candidate_payloads.append(
+                    CandidateWorkerPayload(
+                        roi=roi_name,
+                        mask_path=str(contexts[roi_name].mask_path),
+                        positive_cells=positive_cells,
+                        parameters=parameters,
+                    )
+                )
+        inspected_chunks = _run_roi_workers(
+            candidate_payloads,
+            inspect_automatic_exemplar_candidates,
+            workers=worker_usage.effective,
+            phase="automatic exemplar eligibility",
+        )
+        inspected = tuple(record for chunk in inspected_chunks for record in chunk)
+        automatic_records = _balanced_automatic_selection(
+            inspected,
+            marker_names,
+            parameters,
+            manual_pairs,
+            manual_roi_counts,
+        )
+
+    exemplar_selection = tuple(manual_records) + automatic_records
+    selected_pairs = {
+        (record.source_obs_index, record.marker)
+        for record in exemplar_selection
+        if record.selected
+    }
+    selected_by_position: dict[int, list[str]] = {}
+    configured_counts = {marker: 0 for marker in marker_names}
+    for position, marker in sorted(selected_pairs):
+        selected_by_position.setdefault(position, []).append(marker)
+        configured_counts[marker] += 1
+    LOGGER.info(
+        "Exemplar mode %s selected %d marker/cell pairs from %d recorded candidates.",
+        parameters.exemplar_mode,
+        len(selected_pairs),
+        len(exemplar_selection),
     )
 
     eligible_markers = {
@@ -1089,11 +1586,11 @@ def run_neighbour_signal_analysis(
         exemplar_labels: dict[str, list[int]] = {}
         for _row_index, row in roi_frame.iterrows():
             position = int(row["source_obs_position"])
-            exemplar_marker = exemplars.get(position)
-            if exemplar_marker is not None and exemplar_marker in eligible_markers:
-                exemplar_labels.setdefault(exemplar_marker, []).append(
-                    int(row[object_id_obs])
-                )
+            for exemplar_marker in selected_by_position.get(position, []):
+                if exemplar_marker in eligible_markers:
+                    exemplar_labels.setdefault(exemplar_marker, []).append(
+                        int(row[object_id_obs])
+                    )
         if not exemplar_labels:
             continue
         channel_paths = {
@@ -1130,6 +1627,12 @@ def run_neighbour_signal_analysis(
             0,
             "Ignored exemplar marker value(s) absent from AnnData.var_names: "
             + ", ".join(unknown_values),
+        )
+    if nonfinite_automatic_values:
+        warnings.insert(
+            0,
+            f"Ignored {nonfinite_automatic_values} non-finite AnnData.X value(s) during "
+            "automatic exemplar candidate discovery.",
         )
 
     application_payloads: list[ApplicationWorkerPayload] = []
@@ -1210,6 +1713,7 @@ def run_neighbour_signal_analysis(
         source_provenance_available=source_provenance_available,
         profiles=profiles,
         exemplar_profiles=exemplar_profiles,
+        exemplar_selection=exemplar_selection,
         background_records=tuple(background_records),
         unknown_exemplar_values=unknown_values,
         warnings=tuple(warnings),
@@ -1244,6 +1748,10 @@ def exemplar_statistics_table(result: NeighbourSignalResult) -> pd.DataFrame:
         "marker",
         "roi",
         "object_id",
+        "source_obs_index",
+        "source_cell_id",
+        "selection_origin",
+        "input_x_value",
         "source_strength",
         "background",
         "source_excess_strength",
@@ -1251,21 +1759,143 @@ def exemplar_statistics_table(result: NeighbourSignalResult) -> pd.DataFrame:
         "valid",
         "reason",
     ]
-    rows = [
-        {
+    selection_lookup = {
+        (record.marker, record.roi, record.object_id): record
+        for record in result.exemplar_selection
+        if record.selected
+    }
+    rows = []
+    for profile in result.exemplar_profiles:
+        selection = selection_lookup.get((profile.marker, profile.roi, profile.object_id))
+        rows.append({
             "marker": profile.marker,
             "roi": profile.roi,
             "object_id": profile.object_id,
+            "source_obs_index": (
+                selection.source_obs_index if selection is not None else -1
+            ),
+            "source_cell_id": (
+                selection.source_cell_id if selection is not None else ""
+            ),
+            "selection_origin": (
+                selection.selection_origin if selection is not None else "unknown"
+            ),
+            "input_x_value": (
+                selection.input_x_value if selection is not None else float("nan")
+            ),
             "source_strength": profile.source_strength,
             "background": profile.background,
             "source_excess_strength": profile.source_excess_strength,
             "background_method": profile.background_method,
             "valid": profile.valid,
             "reason": profile.reason,
+        })
+    return pd.DataFrame(rows, columns=columns)
+
+
+def exemplar_profile_values_table(result: NeighbourSignalResult) -> pd.DataFrame:
+    """Return each selected exemplar's normalized radial values in long form."""
+
+    rows = []
+    for profile in result.exemplar_profiles:
+        for bin_index, value in enumerate(profile.profile):
+            rows.append(
+                {
+                    "marker": profile.marker,
+                    "roi": profile.roi,
+                    "object_id": profile.object_id,
+                    "distance_start_px": int(bin_index),
+                    "distance_end_px": int(bin_index + 1),
+                    "normalized_excess": float(value),
+                    "valid": bool(profile.valid),
+                }
+            )
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "marker",
+            "roi",
+            "object_id",
+            "distance_start_px",
+            "distance_end_px",
+            "normalized_excess",
+            "valid",
+        ],
+    )
+
+
+def exemplar_selection_table(result: NeighbourSignalResult) -> pd.DataFrame:
+    """Return automatic/manual candidate decisions and spatial eligibility evidence."""
+
+    columns = [
+        "marker",
+        "roi",
+        "object_id",
+        "source_obs_index",
+        "source_cell_id",
+        "selection_origin",
+        "input_x_value",
+        "positive_threshold",
+        "nearest_same_marker_positive_distance_px",
+        "min_unassigned_pixels_per_bin",
+        "min_unassigned_fraction",
+        "eligible",
+        "selected",
+        "reason",
+    ]
+    rows = [
+        {
+            "marker": record.marker,
+            "roi": record.roi,
+            "object_id": record.object_id,
+            "source_obs_index": record.source_obs_index,
+            "source_cell_id": record.source_cell_id,
+            "selection_origin": record.selection_origin,
+            "input_x_value": record.input_x_value,
+            "positive_threshold": record.positive_threshold,
+            "nearest_same_marker_positive_distance_px": (
+                record.nearest_same_marker_positive_distance_px
+            ),
+            "min_unassigned_pixels_per_bin": record.min_unassigned_pixels_per_bin,
+            "min_unassigned_fraction": record.min_unassigned_fraction,
+            "eligible": record.eligible,
+            "selected": record.selected,
+            "reason": record.reason,
         }
-        for profile in result.exemplar_profiles
+        for record in result.exemplar_selection
     ]
     return pd.DataFrame(rows, columns=columns)
+
+
+def exemplar_selection_summary_table(result: NeighbourSignalResult) -> pd.DataFrame:
+    """Summarise candidate filtering and final selection for every marker."""
+
+    decisions = exemplar_selection_table(result)
+    rows = []
+    for marker in result.marker_names:
+        marker_rows = decisions.loc[decisions["marker"].eq(marker)]
+        automatic = marker_rows.loc[marker_rows["selection_origin"].eq("automatic")]
+        reasons = automatic["reason"].fillna("").astype(str)
+        rows.append(
+            {
+                "marker": marker,
+                "automatic_x_positive_candidates": int(len(automatic)),
+                "automatic_spatially_eligible": int(automatic["eligible"].sum()),
+                "automatic_selected": int(automatic["selected"].sum()),
+                "manual_selected": int(
+                    marker_rows.loc[
+                        marker_rows["selection_origin"].eq("manual"), "selected"
+                    ].sum()
+                ),
+                "rejected_same_marker_clearance": int(
+                    reasons.str.contains("same_marker_positive_within_clearance").sum()
+                ),
+                "rejected_radial_pixel_coverage": int(
+                    reasons.str.contains("insufficient_unassigned_radial_pixels").sum()
+                ),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def build_source_target_table(
@@ -1558,7 +2188,7 @@ def build_output_anndata(
         ),
     }
     output.uns["marker_halo"] = {
-        "schema_version": 2,
+        "schema_version": 4,
         "score_name": "NeighbourAttributableFraction",
         "interpretation": (
             "Spatial explainability/QC score: the fraction of observed background-subtracted "
@@ -1576,6 +2206,16 @@ def build_output_anndata(
         "profile_q75": q75_matrix,
         "marker_summary": marker_summary.copy(),
         "exemplar_statistics": exemplar_statistics_table(result),
+        "exemplar_profile_values": exemplar_profile_values_table(result),
+        "exemplar_selection": exemplar_selection_table(result),
+        "exemplar_selection_summary": exemplar_selection_summary_table(result),
+        "exemplar_selection_interpretation": (
+            "Automatic candidates are positive in the preserved input AnnData.X, sufficiently "
+            "far from another X-positive cell for the same marker, and retain enough unassigned "
+            "radial pixels after other segmented cells are excluded. Selection is reproducibly "
+            "balanced across ROIs and X-score ranges. X chooses candidates only; learned halo "
+            "values and final scores come from raw pixels and masks."
+        ),
         "roi_marker_backgrounds": background_table,
         "unknown_exemplar_markers": unknown_table,
         "source_target_table": source_table_metadata,
@@ -1613,7 +2253,10 @@ def build_output_anndata(
 
 
 __all__ = [
+    "CandidateWorkerPayload",
+    "ExemplarSelectionRecord",
     "HaloParameters",
+    "MarkerHaloMaps",
     "MarkerHaloProfile",
     "NeighbourSignalResult",
     "ProjectedHalo",
@@ -1622,10 +2265,15 @@ __all__ = [
     "aggregate_marker_profiles",
     "build_output_anndata",
     "build_source_target_table",
+    "calculate_marker_halo_maps",
     "estimate_roi_background",
+    "exemplar_selection_summary_table",
+    "exemplar_selection_table",
+    "exemplar_profile_values_table",
     "exemplar_statistics_table",
     "extract_exemplar_profiles",
     "label_quantiles",
+    "inspect_automatic_exemplar_candidates",
     "marker_profile_summary",
     "project_source_halos",
     "project_source_halos_with_sources",

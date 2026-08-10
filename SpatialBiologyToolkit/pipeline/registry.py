@@ -885,7 +885,7 @@ STAGES: tuple[StageSpec, ...] = (
             "Marker halo profiles, score summaries, UMAP/population/source-target QC, and expression comparisons",
         ),
         notes=(
-            "No fixed upstream stage is imposed because exemplar annotations and input expression may be curated after any quantification route.",
+            "No fixed upstream stage is imposed because automatic exemplars may use input X, while manual annotations and expression may be curated after any quantification route.",
             "The score is spatial explainability/contamination risk, not proof of artefact or isotopic spillover compensation.",
         ),
     ),

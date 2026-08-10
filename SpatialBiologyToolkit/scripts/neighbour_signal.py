@@ -121,7 +121,7 @@ def run_pipeline(argv: list[str] | None = None) -> int:
         reporter.add_input(
             "anndata",
             input_path,
-            "Source AnnData providing exact cell/marker order, exemplar labels, and independent original X values.",
+            "Source AnnData providing exact cell/marker order, optional manual labels, and X values used for automatic exemplar candidate positivity.",
         )
         reporter.add_input(
             "raw_images",
@@ -159,6 +159,18 @@ def run_pipeline(argv: list[str] | None = None) -> int:
         min_exemplars=settings.min_exemplars,
         source_threshold_quantile=settings.source_threshold_quantile,
         halo_aggregation=settings.halo_aggregation,
+        exemplar_mode=settings.exemplar_mode,
+        automatic_positive_threshold=settings.automatic_positive_threshold,
+        automatic_same_marker_clearance_px=(
+            settings.automatic_same_marker_clearance_px
+        ),
+        automatic_target_exemplars_per_marker=(
+            settings.automatic_target_exemplars_per_marker
+        ),
+        automatic_max_exemplars_per_roi=(
+            settings.automatic_max_exemplars_per_roi
+        ),
+        automatic_min_pixels_per_bin=settings.automatic_min_pixels_per_bin,
     )
     result = run_neighbour_signal_analysis(
         adata,
@@ -220,6 +232,12 @@ def run_pipeline(argv: list[str] | None = None) -> int:
         source_target_qc_exclude_same_population=(
             settings.source_target_qc_exclude_same_population
         ),
+        roi_inputs=roi_inputs,
+        roi_obs=roi_obs,
+        object_id_obs=settings.object_id_obs,
+        create_cell_galleries=settings.create_cell_galleries,
+        gallery_examples_per_marker=settings.gallery_examples_per_marker,
+        gallery_crop_margin_px=settings.gallery_crop_margin_px,
     )
     _atomic_parquet(source_target_table, source_target_path)
     _atomic_h5ad(output, output_path)
@@ -265,7 +283,7 @@ def run_pipeline(argv: list[str] | None = None) -> int:
             "Neighbour-Attributable Fraction is a spatial explainability/QC score, not a calibrated probability or proof of artefact."
         )
         reporter.add_note(
-            "Input AnnData.X was not used in the halo calculation and is preserved in layers['original_X']."
+            "In automatic/augment mode, input AnnData.X was used only to identify marker-positive exemplar candidates. Halo values, source strengths, backgrounds, projected sources, and final scores were calculated from raw images and masks; X is preserved in layers['original_X']."
         )
         reporter.add_note(
             "A reported spatial source is a neighbouring cell whose projected marker halo explains signal inside the target mask; it is not proof of physical transfer."

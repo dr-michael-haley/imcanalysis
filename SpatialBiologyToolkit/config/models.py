@@ -8,6 +8,7 @@ first when extending these models.
 from __future__ import annotations
 
 import logging
+import math
 from typing import Any, Dict, List, Literal, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -1162,13 +1163,66 @@ class NeighbourSignalConfig(ConfigModel):
         ui_group="Output asset",
         advice="Global AnnData row indices and obs_names are authoritative; ROI and mask labels are retained for provenance.",
     )
+    exemplar_mode: Literal["automatic", "manual", "augment"] = config_field(
+        "automatic",
+        description="Choose exemplars from input AnnData.X, from exemplar_obs, or by retaining manual exemplars and filling automatically.",
+        level="basic",
+        stage="neighsig",
+        ui_group="Cell mapping and exemplars",
+        advice="Automatic selection affects only which cells train the raw-pixel halo; it does not use X to calculate halo values or final scores.",
+    )
     exemplar_obs: str = config_field(
         "Exemplar_stains",
-        description="Categorical AnnData observation whose non-null values name convincing positive marker exemplars.",
+        description="Categorical AnnData observation whose non-null values name convincing positive marker exemplars in manual or augment mode.",
         level="basic",
         stage="neighsig",
         ui_group="Cell mapping and exemplars",
         advice="Values must exactly match marker names on the AnnData variable axis.",
+    )
+    automatic_positive_threshold: float = config_field(
+        0.5,
+        description="Minimum input AnnData.X marker score for an automatic exemplar candidate.",
+        level="basic",
+        stage="neighsig",
+        ui_group="Cell mapping and exemplars",
+        advice="The default suits the usual 0-1 Nimbus inference score; change it when X uses another scale.",
+    )
+    automatic_same_marker_clearance_px: float = config_field(
+        10.0,
+        description="Minimum mask-to-mask pixel distance from another X-positive cell for the same marker.",
+        level="basic",
+        stage="neighsig",
+        ui_group="Cell mapping and exemplars",
+        advice="Other cells are allowed nearby because their segmented pixels are excluded from radial halo averages.",
+        ge=0,
+        le=256,
+    )
+    automatic_target_exemplars_per_marker: int = config_field(
+        30,
+        description="Target number of reproducibly sampled automatic exemplars per marker.",
+        level="basic",
+        stage="neighsig",
+        ui_group="Cell mapping and exemplars",
+        advice="Selection is balanced across ROIs and thirds of the positive X-score range rather than taking only the highest scores.",
+        ge=1,
+    )
+    automatic_max_exemplars_per_roi: int = config_field(
+        5,
+        description="Maximum selected automatic exemplars for one marker from one ROI.",
+        level="advanced",
+        stage="neighsig",
+        ui_group="Cell mapping and exemplars",
+        advice="Increase this for datasets with few ROIs; the minimum exemplar rule still applies globally.",
+        ge=1,
+    )
+    automatic_min_pixels_per_bin: int = config_field(
+        8,
+        description="Minimum unassigned pixels required in every outward halo-distance bin for an automatic candidate.",
+        level="advanced",
+        stage="neighsig",
+        ui_group="Cell mapping and exemplars",
+        advice="This permits nearby cells while rejecting candidates whose radial profile is too heavily occluded to estimate.",
+        ge=1,
     )
     object_id_obs: str = config_field(
         "ObjectNumber",
@@ -1269,6 +1323,34 @@ class NeighbourSignalConfig(ConfigModel):
         ge=1,
         le=50,
     )
+    create_cell_galleries: bool = config_field(
+        True,
+        description="Create bounded exemplar, target-source, and automatic-selection image galleries for selected QC markers.",
+        level="basic",
+        stage="neighsig",
+        ui_group="QC report",
+        advice="Galleries are qualitative model checks and do not change halo profiles or cell scores.",
+    )
+    gallery_examples_per_marker: int = config_field(
+        6,
+        description="Maximum stratified target-cell examples rendered for each selected QC marker.",
+        level="basic",
+        stage="neighsig",
+        ui_group="QC report",
+        advice="Examples cover dominant, competing-source, disagreement, isolated-positive, and self-control cases where available.",
+        ge=1,
+        le=12,
+    )
+    gallery_crop_margin_px: int = config_field(
+        8,
+        description="Additional native-image pixels shown around the target/source masks and modeled halo extent.",
+        level="advanced",
+        stage="neighsig",
+        ui_group="QC report",
+        advice="Increase this only when more tissue context is needed; it does not change max_halo_px.",
+        ge=0,
+        le=128,
+    )
     population_obs: Optional[str] = config_field(
         None,
         description="Optional categorical population observation used for population-by-marker QC.",
@@ -1300,9 +1382,20 @@ class NeighbourSignalConfig(ConfigModel):
     def validate_neighbour_signal(self) -> "NeighbourSignalConfig":
         if isinstance(self.n_jobs, int) and self.n_jobs < 1:
             raise ValueError("neighbour_signal.n_jobs must be 'auto' or a positive integer")
+        if not math.isfinite(self.automatic_positive_threshold):
+            raise ValueError(
+                "neighbour_signal.automatic_positive_threshold must be finite"
+            )
         if self.source_anchor_dilation_px > self.max_halo_px:
             raise ValueError(
                 "neighbour_signal.source_anchor_dilation_px cannot exceed max_halo_px"
+            )
+        if (
+            self.exemplar_mode in {"automatic", "augment"}
+            and self.automatic_target_exemplars_per_marker < self.min_exemplars
+        ):
+            raise ValueError(
+                "neighbour_signal.automatic_target_exemplars_per_marker cannot be below min_exemplars"
             )
         output = self.output_adata_path.strip()
         if not output:

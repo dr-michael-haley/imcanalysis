@@ -2,8 +2,8 @@
 
 ## What this stage does
 
-`neighsig` learns an empirical, marker-specific spatial halo from manually or
-previously selected convincing positive cells, projects that halo from other
+`neighsig` learns an empirical, marker-specific spatial halo from convincing
+positive cells selected automatically or manually, projects that halo from other
 strong raw-image sources, and measures how much observed signal inside every
 target cell mask is spatially explainable by those neighbours.
 
@@ -45,17 +45,23 @@ spatial profile depends on marker localisation and imaging behaviour, this
 stage learns each marker's halo directly from positive exemplar cells rather
 than imposing one decay curve across the panel.
 
-The input expression matrix may contain Nimbus confidence or another derived
-measurement. It is not used in halo learning, source selection, background
-estimation, or scoring, so it remains an independent comparison.
+By default the input expression matrix supplies only the marker-positive call
+used to find automatic exemplar candidates. This is normally a Nimbus inference
+score. Halo values, raw-image source selection, background estimation, and final
+scores do not use `X`. The original matrix is preserved for comparison, but the
+selected training cells are not an independent validation of the `X` positivity
+call; held-out cells and ROIs remain useful comparisons.
 
 ## Main inputs
 
 - `general.anndata_path`: input AnnData, read without modification. Its cell and
   marker order defines the output axes.
-- `adata.obs[neighbour_signal.exemplar_obs]`, default `Exemplar_stains`:
-  non-null values must exactly match `adata.var_names` and identify convincing
-  positive exemplars.
+- `adata.X`: marker-positive evidence for automatic and augment exemplar modes.
+  The default candidate cutoff is 0.5, appropriate for the usual 0-1 Nimbus
+  inference score, and must be changed when `X` uses another scale.
+- `adata.obs[neighbour_signal.exemplar_obs]`, default `Exemplar_stains`: used in
+  manual and augment modes. Non-null values must exactly match `adata.var_names`
+  and identify convincing positive exemplars.
 - `general.raw_images_folder`: the existing ROI/channel TIFF layout. Marker
   names are resolved with the same suffix-aware image discovery used by
   CellVision.
@@ -64,8 +70,16 @@ estimation, or scoring, so it remains an independent comparison.
   and `ObjectNumber`: the exact AnnData-to-mask mapping. Every pair must be
   unique and present in its ROI mask.
 
-Unknown exemplar values are reported and ignored. A marker is skipped when
-fewer than `min_exemplars` valid exemplar profiles remain. Missing images,
+In automatic mode, an X-positive candidate is rejected when another X-positive
+cell for the same marker is closer than the configured 10-pixel mask distance.
+Other segmented cells may be nearby: their pixels are excluded from the radial
+average, and the candidate remains eligible when every halo bin retains enough
+unassigned pixels. Eligible cells are sampled deterministically across ROIs and
+thirds of the positive X-score range rather than selecting only the highest
+scores. The same cell may be an exemplar for more than one marker.
+
+Unknown manual exemplar values are reported and ignored. A marker is skipped when
+fewer than `min_exemplars` valid selected profiles remain. Missing images,
 masks, mapped labels, or shape agreement are input errors because pixel-level
 alignment is required.
 
@@ -96,7 +110,8 @@ and existing layers, with these changes:
   extent in `.var`;
 - `halo_max_score`, `halo_mean_score`, and the descriptive
   `halo_n_high_risk` summary in `.obs`;
-- profiles, IQRs, exemplar statistics, backgrounds, parameters, worker
+- profiles, IQRs, complete automatic/manual candidate decisions, exemplar
+  statistics, backgrounds, parameters, worker
   allocation, score interpretation, and layer semantics in
   `.uns['marker_halo']`.
 
@@ -123,8 +138,10 @@ The managed execution report contains:
 - all-marker score distributions and a CSV with median, 90th/95th percentiles,
   fractions above descriptive 0.25/0.5/0.75 thresholds, exemplar counts, and
   source thresholds;
-- long-form profile, exemplar, ROI-background, skipped-marker, and unknown
-  exemplar tables;
+- long-form profile, selected-exemplar, automatic candidate/selection,
+  ROI-background, skipped-marker, and unknown manual-exemplar tables;
+- a concise plot of input-X score versus nearest same-marker-positive distance,
+  distinguishing rejected, eligible-unsampled, and selected candidates;
 - Scanpy UMAP panels for a configured or automatically selected small marker
   set, plus `halo_max_score` and `halo_mean_score`, when `X_umap` exists;
 - a Scanpy population-by-marker matrix plot when a suitable categorical
@@ -134,6 +151,16 @@ The managed execution report contains:
 - a dominant-source summary reporting concentration above 50% of attributable
   signal, the median number of contributing sources, and common population
   routes;
+- bounded native-pixel contact sheets for the selected QC markers:
+  target-source sheets compare raw signal, observed excess, projected halo,
+  attributable signal, residual signal, and the pixelwise winning source;
+  exemplar sheets show the source mask, unassigned radial pixels, and the
+  individual profile against the marker median/IQR; automatic-decision sheets
+  show selected and rejected X-positive candidates, nearby same-marker
+  X-positive cells, and the unassigned pixels available in each halo bin;
+- `cell_gallery_manifest.csv`, linking every displayed crop to its marker, ROI,
+  authoritative AnnData row/cell identifiers, selection category, crop bounds,
+  source relationship, and relevant quantitative scores;
 - sampled classic-intensity versus original-`X` plots coloured by the halo
   score; and
 - a concise interpretation/provenance summary linking the output AnnData and
@@ -149,7 +176,13 @@ neighbour_signal:
   enabled: true
   output_adata_path: neighbour_attributable_signal.h5ad
   source_target_table_path: neighbour_signal_source_target.parquet
+  exemplar_mode: automatic
   exemplar_obs: Exemplar_stains
+  automatic_positive_threshold: 0.5
+  automatic_same_marker_clearance_px: 10
+  automatic_target_exemplars_per_marker: 30
+  automatic_max_exemplars_per_roi: 5
+  automatic_min_pixels_per_bin: 8
   object_id_obs: ObjectNumber
   max_halo_px: 8
   source_anchor_dilation_px: 2
@@ -161,6 +194,9 @@ neighbour_signal:
   n_jobs: auto
   qc_markers: null
   max_qc_markers: 6
+  create_cell_galleries: true
+  gallery_examples_per_marker: 6
+  gallery_crop_margin_px: 8
   population_obs: null
   source_target_qc_exclude_same_population: true
   high_risk_threshold: 0.5
@@ -199,8 +235,9 @@ environment or package is required.
 
 The initial wrapper requests 8 CPUs, 64 GB RAM, and 24 hours on the CPU
 high-memory partition. `n_jobs: auto` resolves the available worker count from
-the SLURM allocation, process affinity, and host CPU count. Profile extraction
-and profile application are parallelized independently by ROI. Every worker
+the SLURM allocation, process affinity, and host CPU count. Automatic candidate
+inspection, profile extraction, and profile application are parallelized
+independently by ROI. Every worker
 loads one mask once, reads marker TIFFs sequentially, and projects sources on
 small radius-expanded bounding boxes. BLAS/OpenMP threads are fixed to one to
 avoid nested oversubscription.
@@ -212,12 +249,32 @@ reasonably supported curve and adequate exemplar IQR before its cell scores are
 trusted. A peak just outside the segmentation boundary can be biologically
 reasonable for membrane or cytoplasmic localisation.
 
-Next inspect the all-marker score table and UMAP/population views. A high score
+Next inspect the automatic exemplar selection table/plot, followed by the
+cell galleries, all-marker score table, and UMAP/population views. The
+target-source gallery is a direct visual decomposition of the same pixels used
+for the score: cyan outlines identify the target, magenta the dominant spatial
+source, and orange any other contributing sources. The winning-source panel is
+categorical provenance under `halo_aggregation: max`; it should be read with
+the attributable and residual panels rather than as a standalone segmentation
+classification. The exemplar and automatic-decision galleries help identify
+profiles learned from background structure, truncated radial support, or
+unrepresentative positives before interpreting cell-level results.
+
+Gallery examples are selected deterministically and stratified across useful
+QC cases and ROIs where possible. They are not a random or exhaustive sample;
+use `cell_gallery_manifest.csv` to audit the selection and join displayed cells
+back to the AnnData and source-target Parquet table. Increasing
+`gallery_crop_margin_px` changes only the displayed context, never the learned
+profile or score.
+
+A high score
 means that the strongest nearby source, or the configured overlap aggregate,
 could spatially explain much of the observed target-mask excess at the same
-pixels. Compare classic intensity and independent input `X` to determine
+pixels. Compare classic intensity and preserved input `X` to determine
 whether the existing expression method already suppresses these spatially
-suspicious measurements.
+suspicious measurements. Because automatic selection uses the original `X` to
+define exemplar positivity, treat agreement on selected cells as expected and
+give more weight to held-out cells and ROIs when assessing Nimbus behaviour.
 
 Use the sparse source-target table or dominant-source layers to ask which
 neighbouring cell provides the spatial explanation. For example, an overall
@@ -233,8 +290,10 @@ not automatically delete, compensate, or relabel cells from this score alone.
 
 ## Common problems and limitations
 
-- Too few or spatially unrepresentative exemplars produce a skipped marker or
-  an unstable profile. Add convincing exemplars across representative ROIs.
+- Too few spatially eligible automatic exemplars produce a skipped marker.
+  Review the candidate table, adjust the X cutoff only when justified by its
+  measurement scale, increase the per-ROI cap for few-ROI datasets, or use
+  `augment`/`manual` with convincing cells across representative ROIs.
 - An exemplar with no intensity above its local background is invalid and does
   not contribute to the source threshold.
 - Background and source-strength units are raw image units. Strong ROI-level

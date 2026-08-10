@@ -10,7 +10,7 @@ Learn empirical marker halos, calculate neighbour-attributable fractions, and re
 
 ## Inputs
 
-- general.anndata_path with neighbour_signal.exemplar_obs and ROI/object-label mapping
+- general.anndata_path with marker-aligned X, optional manual exemplar_obs, and ROI/object-label mapping
 - general.raw_images_folder ROI/channel TIFFs and general.masks_folder label masks
 
 ## Outputs

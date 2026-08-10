@@ -31,6 +31,7 @@ from SpatialBiologyToolkit.neighbour_signal_reports import (
     _plot_source_target_population_heatmaps,
     dominant_source_summary,
     population_source_target_summary,
+    select_cell_gallery_examples,
 )
 from SpatialBiologyToolkit.pipeline.assets import resolve_assets
 from SpatialBiologyToolkit.pipeline.planner import build_run_plan
@@ -124,8 +125,22 @@ def _adata(rois: list[str], *, unknown_exemplar: bool = False) -> ad.AnnData:
             )
             obs_names.append(f"{roi}_cell_{object_id}")
     n_cells = len(rows)
+    x_values = np.zeros((n_cells, 2), dtype=np.float32)
+    for row_index, row in enumerate(rows):
+        object_id = int(row["ObjectNumber"])
+        x_values[row_index, 0] = {
+            1: 0.55,
+            2: 0.65,
+            3: 0.75,
+            4: 0.85,
+            5: 0.95,
+            6: 0.20,
+            7: 0.10,
+            8: 0.05,
+        }[object_id]
+        x_values[row_index, 1] = 0.90 if object_id == 7 else 0.05
     source = ad.AnnData(
-        X=np.linspace(0.05, 0.95, n_cells * 2, dtype=np.float32).reshape(n_cells, 2),
+        X=x_values,
         obs=pd.DataFrame(rows, index=obs_names),
         var=pd.DataFrame({"panel_role": ["vascular", "lymphoid"]}, index=["CD31", "CD3"]),
     )
@@ -164,6 +179,9 @@ def _run(
     n_jobs: int,
     unknown_exemplar: bool = False,
     aggregation: str = "max",
+    exemplar_mode: str = "manual",
+    automatic_target_exemplars_per_marker: int = 30,
+    automatic_max_exemplars_per_roi: int = 5,
 ):
     source, identity, contexts = _analysis_inputs(
         root,
@@ -184,6 +202,14 @@ def _run(
             min_exemplars=5,
             source_threshold_quantile=0.1,
             halo_aggregation=aggregation,
+            exemplar_mode=exemplar_mode,
+            automatic_positive_threshold=0.5,
+            automatic_same_marker_clearance_px=10.0,
+            automatic_target_exemplars_per_marker=(
+                automatic_target_exemplars_per_marker
+            ),
+            automatic_max_exemplars_per_roi=automatic_max_exemplars_per_roi,
+            automatic_min_pixels_per_bin=8,
         ),
         n_jobs=n_jobs,
     )
@@ -245,6 +271,7 @@ def _check_learns_known_halo_scores_near_target_and_preserves_output_contract(tm
     np.testing.assert_array_equal(output.obsm["X_umap"], source.obsm["X_umap"])
     assert output.uns["existing_metadata"]["retained"]
     assert "marker_halo" in output.uns
+    assert "exemplar_profile_values" in output.uns["marker_halo"]
     assert output.obs.loc["ROI_1_cell_6", "halo_max_score"] > 0.85
     source_target = build_source_target_table(
         source,
@@ -328,6 +355,119 @@ def _check_learns_known_halo_scores_near_target_and_preserves_output_contract(tm
     assert restored.uns["marker_halo"]["source_target_table"]["relationships"] == len(
         source_target
     )
+
+
+def _check_automatic_exemplars_use_x_clearance_coverage_and_balanced_sampling(
+    tmp_path: Path,
+):
+    source, result = _run(
+        tmp_path / "automatic",
+        ["ROI_1", "ROI_2"],
+        n_jobs=1,
+        exemplar_mode="automatic",
+        automatic_target_exemplars_per_marker=6,
+        automatic_max_exemplars_per_roi=3,
+    )
+    decisions = pd.DataFrame(
+        [record.__dict__ for record in result.exemplar_selection]
+    )
+    cd31 = decisions.loc[decisions["marker"].eq("CD31")]
+    selected = cd31.loc[cd31["selected"]]
+    assert len(cd31) == 10
+    assert len(selected) == 6
+    assert selected.groupby("roi", observed=True).size().to_dict() == {
+        "ROI_1": 3,
+        "ROI_2": 3,
+    }
+    assert set(selected["input_x_value"].round(2)).intersection({0.55, 0.65})
+    assert set(selected["input_x_value"].round(2)).intersection({0.85, 0.95})
+    assert result.profiles["CD31"].available
+    assert result.profiles["CD31"].n_configured_exemplars == 6
+    assert result.profiles["CD3"].n_configured_exemplars == 2
+    assert not result.profiles["CD3"].available
+    assert result.unknown_exemplar_values == ()
+    assert all(record.selection_origin == "automatic" for record in result.exemplar_selection)
+
+    repeated_source, repeated = _run(
+        tmp_path / "automatic_repeat",
+        ["ROI_1", "ROI_2"],
+        n_jobs=1,
+        exemplar_mode="automatic",
+        automatic_target_exemplars_per_marker=6,
+        automatic_max_exemplars_per_roi=3,
+    )
+    assert repeated_source.obs_names.equals(source.obs_names)
+    repeated_selected = {
+        (record.source_obs_index, record.marker)
+        for record in repeated.exemplar_selection
+        if record.selected
+    }
+    selected_pairs = {
+        (record.source_obs_index, record.marker)
+        for record in result.exemplar_selection
+        if record.selected
+    }
+    assert repeated_selected == selected_pairs
+
+    crowded_source, crowded_identity, crowded_contexts = _analysis_inputs(
+        tmp_path / "crowded",
+        ["ROI_1"],
+    )
+    crowded_source.X[crowded_source.obs_names.get_loc("ROI_1_cell_6"), 0] = 0.80
+    crowded = run_neighbour_signal_analysis(
+        crowded_source,
+        crowded_contexts,
+        crowded_identity,
+        roi_obs="ROI",
+        object_id_obs="ObjectNumber",
+        exemplar_obs="Exemplar_stains",
+        parameters=HaloParameters(
+            max_halo_px=4,
+            source_anchor_dilation_px=2,
+            min_exemplars=5,
+            exemplar_mode="automatic",
+            automatic_positive_threshold=0.5,
+            automatic_same_marker_clearance_px=10.0,
+            automatic_target_exemplars_per_marker=5,
+            automatic_max_exemplars_per_roi=5,
+            automatic_min_pixels_per_bin=8,
+        ),
+        n_jobs=1,
+    )
+    crowded_decisions = pd.DataFrame(
+        [record.__dict__ for record in crowded.exemplar_selection]
+    )
+    rejected = crowded_decisions.loc[
+        crowded_decisions["marker"].eq("CD31")
+        & crowded_decisions["object_id"].isin([1, 6])
+    ]
+    assert len(rejected) == 2
+    assert not rejected["eligible"].any()
+    assert rejected["reason"].str.contains(
+        "same_marker_positive_within_clearance"
+    ).all()
+    assert not crowded.profiles["CD31"].available
+    assert "insufficient configured exemplars" in crowded.profiles["CD31"].skip_reason
+
+
+def _check_augment_mode_keeps_manual_exemplars_and_fills_automatically(tmp_path: Path):
+    source, result = _run(
+        tmp_path,
+        ["ROI_1"],
+        n_jobs=1,
+        exemplar_mode="augment",
+        automatic_target_exemplars_per_marker=5,
+        automatic_max_exemplars_per_roi=5,
+    )
+    selected = [record for record in result.exemplar_selection if record.selected]
+    cd31 = [record for record in selected if record.marker == "CD31"]
+    cd3 = [record for record in selected if record.marker == "CD3"]
+    assert len(cd31) == 5
+    assert all(record.selection_origin == "manual" for record in cd31)
+    assert len(cd3) == 1
+    assert cd3[0].selection_origin == "manual"
+    assert result.profiles["CD31"].available
+    assert source.obs_names[int(cd31[0].source_obs_index)].startswith("ROI_1_cell_")
 
 
 def _check_projection_uses_max_by_default_and_never_projects_inside_own_mask():
@@ -555,7 +695,15 @@ def _check_sum_aggregation_disables_source_resolved_provenance(tmp_path: Path):
 
 def _check_config_registry_assets_wrapper_environment_and_plan_align(tmp_path: Path):
     settings = NeighbourSignalConfig()
+    assert settings.exemplar_mode == "automatic"
     assert settings.exemplar_obs == "Exemplar_stains"
+    assert settings.automatic_positive_threshold == 0.5
+    assert settings.automatic_same_marker_clearance_px == 10.0
+    assert settings.automatic_target_exemplars_per_marker == 30
+    assert settings.automatic_max_exemplars_per_roi == 5
+    assert settings.create_cell_galleries
+    assert settings.gallery_examples_per_marker == 6
+    assert settings.gallery_crop_margin_px == 8
     assert settings.max_halo_px == 8
     assert settings.n_jobs == "auto"
     assert settings.source_target_table_path == "neighbour_signal_source_target.parquet"
@@ -572,6 +720,25 @@ def _check_config_registry_assets_wrapper_environment_and_plan_align(tmp_path: P
         assert "cannot exceed" in str(exc)
     else:
         raise AssertionError("anchor dilation above max_halo_px should fail")
+    try:
+        NeighbourSignalConfig(
+            min_exemplars=5,
+            automatic_target_exemplars_per_marker=4,
+        )
+    except ValueError as exc:
+        assert "cannot be below min_exemplars" in str(exc)
+    else:
+        raise AssertionError("automatic target below min_exemplars should fail")
+    assert NeighbourSignalConfig(
+        exemplar_mode="manual",
+        min_exemplars=40,
+    ).min_exemplars == 40
+    try:
+        NeighbourSignalConfig(automatic_positive_threshold=float("inf"))
+    except ValueError as exc:
+        assert "must be finite" in str(exc)
+    else:
+        raise AssertionError("infinite automatic threshold should fail")
     try:
         NeighbourSignalConfig(output_adata_path="scores.csv")
     except ValueError as exc:
@@ -720,6 +887,102 @@ def _check_direct_stage_smoke_writes_asset_and_concise_qc(tmp_path: Path):
         / "neighbour_signal"
         / "marker_halo_profiles_01.png"
     ).is_file()
+    assert (
+        report_root
+        / "tables"
+        / "neighbour_signal"
+        / "exemplar_selection.csv"
+    ).is_file()
+    gallery_manifest_path = (
+        report_root
+        / "tables"
+        / "neighbour_signal"
+        / "cell_gallery_manifest.csv"
+    )
+    assert gallery_manifest_path.is_file()
+    gallery_manifest = pd.read_csv(gallery_manifest_path)
+    assert {
+        "gallery_type",
+        "example_category",
+        "marker",
+        "target_obs_index",
+        "target_cell_id",
+        "target_roi",
+        "target_segmentation_label",
+        "figure_path",
+    }.issubset(gallery_manifest.columns)
+    assert {
+        "target_source",
+        "exemplar_halo",
+        "automatic_decision",
+    }.issubset(set(gallery_manifest["gallery_type"]))
+    gallery_dir = report_root / "figures" / "neighbour_signal" / "cell_galleries"
+    assert (gallery_dir / "CD31_target_source_gallery.png").is_file()
+    assert (gallery_dir / "CD31_exemplar_halo_gallery.png").is_file()
+    assert (gallery_dir / "CD31_automatic_exemplar_decisions.png").is_file()
+    assert gallery_manifest["figure_path"].map(
+        lambda value: (tmp_path / Path(value)).is_file()
+    ).all()
+    assert restored.uns["marker_halo"]["parameters"]["exemplar_mode"] == "automatic"
+    assert int(
+        restored.uns["marker_halo"]["exemplar_selection_summary"]
+        .set_index("marker")
+        .loc["CD31", "automatic_selected"]
+    ) == 5
+
+
+def _check_gallery_selection_is_stratified_unique_and_bounded(tmp_path: Path):
+    source, result = _run(
+        tmp_path,
+        ["ROI_1", "ROI_2"],
+        n_jobs=1,
+        exemplar_mode="automatic",
+        automatic_target_exemplars_per_marker=6,
+        automatic_max_exemplars_per_roi=3,
+    )
+    source_target = build_source_target_table(
+        source,
+        result,
+        roi_obs="ROI",
+        object_id_obs="ObjectNumber",
+        population_obs="Population",
+    )
+    output = build_output_anndata(
+        source,
+        result,
+        parameters={
+            "exemplar_mode": "automatic",
+            "automatic_positive_threshold": 0.5,
+            "max_halo_px": 4,
+        },
+        calculate_classic_intensities=True,
+        high_risk_threshold=0.5,
+        source_target_table=source_target,
+    )
+    selected = select_cell_gallery_examples(
+        output,
+        source_target,
+        ["CD31"],
+        examples_per_marker=6,
+        roi_obs="ROI",
+        object_id_obs="ObjectNumber",
+        population_obs="Population",
+    )
+    assert 1 <= len(selected) <= 6
+    assert selected["target_obs_index"].is_unique
+    assert "high_dominant_source" in set(selected["example_category"])
+    assert "source_self_control" in set(selected["example_category"])
+    assert selected["target_roi"].nunique() == 2
+    repeated = select_cell_gallery_examples(
+        output,
+        source_target,
+        ["CD31"],
+        examples_per_marker=6,
+        roi_obs="ROI",
+        object_id_obs="ObjectNumber",
+        population_obs="Population",
+    )
+    pd.testing.assert_frame_equal(selected, repeated)
 
 
 class NeighbourSignalTests(unittest.TestCase):
@@ -731,6 +994,18 @@ class NeighbourSignalTests(unittest.TestCase):
 
     def test_projection_overlap_and_self_exclusion(self):
         _check_projection_uses_max_by_default_and_never_projects_inside_own_mask()
+
+    def test_automatic_exemplar_selection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            _check_automatic_exemplars_use_x_clearance_coverage_and_balanced_sampling(
+                Path(temporary)
+            )
+
+    def test_augment_exemplar_selection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            _check_augment_mode_keeps_manual_exemplars_and_fills_automatically(
+                Path(temporary)
+            )
 
     def test_competing_source_provenance(self):
         _check_competing_sources_preserve_pixel_and_cell_provenance()
@@ -756,6 +1031,10 @@ class NeighbourSignalTests(unittest.TestCase):
     def test_direct_stage_smoke(self):
         with tempfile.TemporaryDirectory() as temporary:
             _check_direct_stage_smoke_writes_asset_and_concise_qc(Path(temporary))
+
+    def test_gallery_selection(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            _check_gallery_selection_is_stratified_unique_and_bounded(Path(temporary))
 
 
 if __name__ == "__main__":

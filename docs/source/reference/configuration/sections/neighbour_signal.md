@@ -20,7 +20,13 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `exemplar_obs` | `str` | `Exemplar_stains` | `basic` | Categorical AnnData observation whose non-null values name convincing positive marker exemplars. | Values must exactly match marker names on the AnnData variable axis. |
+| `exemplar_mode` | `Literal['automatic', 'manual', 'augment']` | `automatic` | `basic` | Choose exemplars from input AnnData.X, from exemplar_obs, or by retaining manual exemplars and filling automatically. | Automatic selection affects only which cells train the raw-pixel halo; it does not use X to calculate halo values or final scores. |
+| `exemplar_obs` | `str` | `Exemplar_stains` | `basic` | Categorical AnnData observation whose non-null values name convincing positive marker exemplars in manual or augment mode. | Values must exactly match marker names on the AnnData variable axis. |
+| `automatic_positive_threshold` | `float` | `0.5` | `basic` | Minimum input AnnData.X marker score for an automatic exemplar candidate. | The default suits the usual 0-1 Nimbus inference score; change it when X uses another scale. |
+| `automatic_same_marker_clearance_px` | `float` | `10.0` | `basic` | Minimum mask-to-mask pixel distance from another X-positive cell for the same marker. | Other cells are allowed nearby because their segmented pixels are excluded from radial halo averages. |
+| `automatic_target_exemplars_per_marker` | `int` | `30` | `basic` | Target number of reproducibly sampled automatic exemplars per marker. | Selection is balanced across ROIs and thirds of the positive X-score range rather than taking only the highest scores. |
+| `automatic_max_exemplars_per_roi` | `int` | `5` | `advanced` | Maximum selected automatic exemplars for one marker from one ROI. | Increase this for datasets with few ROIs; the minimum exemplar rule still applies globally. |
+| `automatic_min_pixels_per_bin` | `int` | `8` | `advanced` | Minimum unassigned pixels required in every outward halo-distance bin for an automatic candidate. | This permits nearby cells while rejecting candidates whose radial profile is too heavily occluded to estimate. |
 | `object_id_obs` | `str` | `ObjectNumber` | `basic` | AnnData observation containing the positive integer label used in each ROI segmentation mask. | Each (ROI, object ID) pair must be unique and present in the corresponding mask. |
 
 ## Halo model
@@ -51,6 +57,9 @@
 |---|---|---|---|---|---|
 | `qc_markers` | `Optional[List[str]]` | `null` | `advanced` | Optional ordered markers used in UMAP and expression-comparison QC figures. | Leave unset to select the most affected markers automatically. |
 | `max_qc_markers` | `int` | `6` | `basic` | Maximum automatically selected markers shown in detailed QC figures. | Profile and score-summary tables still include every marker. |
+| `create_cell_galleries` | `bool` | `True` | `basic` | Create bounded exemplar, target-source, and automatic-selection image galleries for selected QC markers. | Galleries are qualitative model checks and do not change halo profiles or cell scores. |
+| `gallery_examples_per_marker` | `int` | `6` | `basic` | Maximum stratified target-cell examples rendered for each selected QC marker. | Examples cover dominant, competing-source, disagreement, isolated-positive, and self-control cases where available. |
+| `gallery_crop_margin_px` | `int` | `8` | `advanced` | Additional native-image pixels shown around the target/source masks and modeled halo extent. | Increase this only when more tissue context is needed; it does not change max_halo_px. |
 | `population_obs` | `Optional[str]` | `null` | `basic` | Optional categorical population observation used for population-by-marker QC. | Null falls back to general.population_obs_primary; missing annotations are skipped cleanly. |
 | `source_target_qc_exclude_same_population` | `bool` | `True` | `advanced` | Exclude same-population relationships from source-to-target population heatmaps. | The Parquet table and aggregate QC tables always retain same-population relationships. |
 | `high_risk_threshold` | `float` | `0.5` | `advanced` | Descriptive score threshold used only for per-cell counts and QC summaries. | This threshold is not a validated biological cutoff and does not alter the score. |
