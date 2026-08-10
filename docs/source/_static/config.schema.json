@@ -6638,6 +6638,215 @@
       "title": "NapariSBTConfig",
       "type": "object"
     },
+    "NeighbourSignalConfig": {
+      "description": "Empirical marker-halo and neighbour-attributable signal analysis.",
+      "properties": {
+        "enabled": {
+          "advice": "Disable only when a planned workflow should retain the stage without executing it.",
+          "default": true,
+          "description": "Run neighbour-attributable signal analysis when the stage is selected.",
+          "level": "basic",
+          "stage": "neighsig",
+          "title": "Enabled",
+          "type": "boolean",
+          "ui_group": "Stage control"
+        },
+        "output_adata_path": {
+          "advice": "Use a path different from general.anndata_path; the input AnnData is never modified.",
+          "default": "neighbour_attributable_signal.h5ad",
+          "description": "Separate AnnData output whose X matrix contains neighbour-attributable fractions.",
+          "level": "basic",
+          "stage": "neighsig",
+          "title": "Output Adata Path",
+          "type": "string",
+          "ui_group": "Output asset"
+        },
+        "exemplar_obs": {
+          "advice": "Values must exactly match marker names on the AnnData variable axis.",
+          "default": "Exemplar_stains",
+          "description": "Categorical AnnData observation whose non-null values name convincing positive marker exemplars.",
+          "level": "basic",
+          "stage": "neighsig",
+          "title": "Exemplar Obs",
+          "type": "string",
+          "ui_group": "Cell mapping and exemplars"
+        },
+        "object_id_obs": {
+          "advice": "Each (ROI, object ID) pair must be unique and present in the corresponding mask.",
+          "default": "ObjectNumber",
+          "description": "AnnData observation containing the positive integer label used in each ROI segmentation mask.",
+          "level": "basic",
+          "stage": "neighsig",
+          "title": "Object Id Obs",
+          "type": "string",
+          "ui_group": "Cell mapping and exemplars"
+        },
+        "max_halo_px": {
+          "advice": "Interpret this in the native pixel grid of the configured raw images and masks.",
+          "default": 8,
+          "description": "Maximum outward distance in pixels learned and projected from each source-cell mask.",
+          "level": "basic",
+          "maximum": 128,
+          "minimum": 1,
+          "stage": "neighsig",
+          "title": "Max Halo Px",
+          "type": "integer",
+          "ui_group": "Halo model"
+        },
+        "source_anchor_dilation_px": {
+          "advice": "Unassigned pixels are allocated to their nearest cell; pixels assigned to other cells are excluded.",
+          "default": 2,
+          "description": "Small outward dilation used to calculate each cell's robust raw-image source strength.",
+          "level": "basic",
+          "maximum": 32,
+          "minimum": 0,
+          "stage": "neighsig",
+          "title": "Source Anchor Dilation Px",
+          "type": "integer",
+          "ui_group": "Source definition"
+        },
+        "source_anchor_quantile": {
+          "advice": "High quantiles remain robust to conservative nuclear masks for membrane or cytoplasmic markers.",
+          "default": 0.95,
+          "description": "Raw-image quantile within the source anchor used as source strength.",
+          "exclusiveMinimum": 0,
+          "level": "basic",
+          "maximum": 1,
+          "stage": "neighsig",
+          "title": "Source Anchor Quantile",
+          "type": "number",
+          "ui_group": "Source definition"
+        },
+        "min_exemplars": {
+          "advice": "Markers below this count are reported and assigned zero neighbour-attributable fractions.",
+          "default": 5,
+          "description": "Minimum number of valid exemplar profiles required to model one marker.",
+          "level": "basic",
+          "minimum": 1,
+          "stage": "neighsig",
+          "title": "Min Exemplars",
+          "type": "integer",
+          "ui_group": "Halo model"
+        },
+        "source_threshold_quantile": {
+          "advice": "The default admits cells in the lower edge of the exemplar-positive brightness regime.",
+          "default": 0.1,
+          "description": "Quantile of valid exemplar source strengths used as the marker-specific source threshold.",
+          "level": "basic",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "neighsig",
+          "title": "Source Threshold Quantile",
+          "type": "number",
+          "ui_group": "Source definition"
+        },
+        "halo_aggregation": {
+          "advice": "Use max normally; sum is more aggressive when several source halos overlap.",
+          "default": "max",
+          "description": "Pixel-level rule for overlapping projected source halos.",
+          "enum": [
+            "max",
+            "sum"
+          ],
+          "level": "basic",
+          "stage": "neighsig",
+          "title": "Halo Aggregation",
+          "type": "string",
+          "ui_group": "Halo model"
+        },
+        "calculate_classic_intensities": {
+          "advice": "Internal raw-image reductions still run when this output layer is disabled.",
+          "default": true,
+          "description": "Store conventional mean raw-marker intensity within each segmentation mask.",
+          "level": "basic",
+          "stage": "neighsig",
+          "title": "Calculate Classic Intensities",
+          "type": "boolean",
+          "ui_group": "Output asset"
+        },
+        "n_jobs": {
+          "advice": "Workers load one mask and marker images lazily; avoid nested multiprocessing.",
+          "anyOf": [
+            {
+              "const": "auto",
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "default": "auto",
+          "description": "ROI-level worker processes, or auto to follow the current SLURM/CPU allocation.",
+          "level": "basic",
+          "stage": "neighsig",
+          "title": "N Jobs",
+          "ui_group": "Resources"
+        },
+        "qc_markers": {
+          "advice": "Leave unset to select the most affected markers automatically.",
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional ordered markers used in UMAP and expression-comparison QC figures.",
+          "level": "advanced",
+          "stage": "neighsig",
+          "title": "Qc Markers",
+          "ui_group": "QC report"
+        },
+        "max_qc_markers": {
+          "advice": "Profile and score-summary tables still include every marker.",
+          "default": 6,
+          "description": "Maximum automatically selected markers shown in detailed QC figures.",
+          "level": "basic",
+          "maximum": 50,
+          "minimum": 1,
+          "stage": "neighsig",
+          "title": "Max Qc Markers",
+          "type": "integer",
+          "ui_group": "QC report"
+        },
+        "population_obs": {
+          "advice": "Null falls back to general.population_obs_primary; missing annotations are skipped cleanly.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional categorical population observation used for population-by-marker QC.",
+          "level": "basic",
+          "stage": "neighsig",
+          "title": "Population Obs",
+          "ui_group": "QC report"
+        },
+        "high_risk_threshold": {
+          "advice": "This threshold is not a validated biological cutoff and does not alter the score.",
+          "default": 0.5,
+          "description": "Descriptive score threshold used only for per-cell counts and QC summaries.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "neighsig",
+          "title": "High Risk Threshold",
+          "type": "number",
+          "ui_group": "QC report"
+        }
+      },
+      "title": "NeighbourSignalConfig",
+      "type": "object"
+    },
     "NetworkxSpatialConfig": {
       "properties": {
         "input_adata_path": {
@@ -11935,6 +12144,14 @@
       "$ref": "#/$defs/NimbusConfig",
       "advice": "",
       "description": "Configuration value for nimbus.",
+      "level": "advanced",
+      "stage": "pipeline",
+      "ui_group": "Pipeline"
+    },
+    "neighbour_signal": {
+      "$ref": "#/$defs/NeighbourSignalConfig",
+      "advice": "",
+      "description": "Configuration value for neighbour signal.",
       "level": "advanced",
       "stage": "pipeline",
       "ui_group": "Pipeline"

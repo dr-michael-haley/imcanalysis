@@ -196,6 +196,12 @@ STAGE_PRESENTATION: dict[str, tuple[str, int, str, str]] = {
         "SpatialData_Assembly",
         "spatialdata.md",
     ),
+    "neighsig": (
+        "Neighbour-Attributable Signal",
+        40,
+        "Neighbour_Attributable_Signal",
+        "neighbour_signal.md",
+    ),
 }
 
 STAGE_MODULES: dict[str, tuple[str, ...]] = {
@@ -246,6 +252,7 @@ STAGE_MODULES: dict[str, tuple[str, ...]] = {
     "cellfeat": ("SpatialBiologyToolkit.scripts.cell_features",),
     "maxfuse": ("SpatialBiologyToolkit.scripts.maxfuse_matching",),
     "spatialdata": ("SpatialBiologyToolkit.scripts.spatialdata_builder",),
+    "neighsig": ("SpatialBiologyToolkit.scripts.neighbour_signal",),
 }
 
 STAGE_CONFIG_SECTIONS: dict[str, tuple[str, ...]] = {
@@ -288,6 +295,7 @@ STAGE_CONFIG_SECTIONS: dict[str, tuple[str, ...]] = {
     "cellfeat": ("general", "napari_sbt"),
     "maxfuse": ("general", "maxfuse"),
     "spatialdata": ("general", "spatialdata"),
+    "neighsig": ("general", "neighbour_signal"),
 }
 
 # Non-blocking context that is common in a conventional end-to-end project but
@@ -858,6 +866,22 @@ STAGES: tuple[StageSpec, ...] = (
             "No fixed upstream stage is imposed because image, mask, AnnData, histology, label, and MaxFuse assets may be curated externally.",
             "The default plan action is read-only and does not create the configured SpatialData Zarr.",
             "Existing SpatialData output paths are never overwritten.",
+        ),
+    ),
+    _stage(
+        "neighsig",
+        "job_neighbour_signal.sh",
+        "Learn empirical marker halos and calculate cell-by-marker neighbour-attributable fractions.",
+        groups=("qc",),
+        requires=("anndata", "raw_images", "masks"),
+        produces=("neighbour_signal_anndata", "human_outputs"),
+        outputs=(
+            "Neighbour-attributable signal AnnData with raw-intensity comparison layers",
+            "Marker halo profiles, score summaries, UMAP/population QC, and expression comparisons",
+        ),
+        notes=(
+            "No fixed upstream stage is imposed because exemplar annotations and input expression may be curated after any quantification route.",
+            "The score is spatial explainability/contamination risk, not proof of artefact or isotopic spillover compensation.",
         ),
     ),
 )

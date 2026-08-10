@@ -70,7 +70,7 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `raster_chunks` | `tuple[int, int]` | `(512, 512)` | `advanced` | Y/X Dask chunk dimensions used for raster elements. | - |
+| `raster_chunks` | `Tuple[int, int]` | `(512, 512)` | `advanced` | Y/X Dask chunk dimensions used for raster elements. | - |
 | `scale_factors` | `Optional[List[int]]` | `null` | `advanced` | Optional multiscale pyramid factors passed to SpatialData raster parsers. | - |
 
 ## Discovery bounds

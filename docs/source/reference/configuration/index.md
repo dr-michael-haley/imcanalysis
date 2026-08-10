@@ -20,6 +20,7 @@ sections/denoising
 sections/createmasks
 sections/segmentation
 sections/nimbus
+sections/neighbour_signal
 sections/batch_integration
 sections/rapids
 sections/maxfuse

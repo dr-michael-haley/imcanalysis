@@ -25,6 +25,8 @@ This reference is split by module so the site navigation stays compact.
    maxfuse_reports
    napari_cellpose_qc_active_learning
    napari_imc_explorer
+   neighbour_signal
+   neighbour_signal_reports
    pcf
    plotting
    population_identification

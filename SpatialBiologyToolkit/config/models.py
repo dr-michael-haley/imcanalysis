@@ -8,7 +8,7 @@ first when extending these models.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Literal, Optional, Tuple, Type
+from typing import Any, Dict, List, Literal, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -1132,6 +1132,177 @@ class NimbusConfig(ConfigModel):
             "available CPUs, and values above 1 request that many workers subject to ROI and CPU counts."
         ),
     )
+
+
+@config_section("neighbour_signal")
+class NeighbourSignalConfig(ConfigModel):
+    """Empirical marker-halo and neighbour-attributable signal analysis."""
+
+    enabled: bool = config_field(
+        True,
+        description="Run neighbour-attributable signal analysis when the stage is selected.",
+        level="basic",
+        stage="neighsig",
+        ui_group="Stage control",
+        advice="Disable only when a planned workflow should retain the stage without executing it.",
+    )
+    output_adata_path: str = config_field(
+        "neighbour_attributable_signal.h5ad",
+        description="Separate AnnData output whose X matrix contains neighbour-attributable fractions.",
+        level="basic",
+        stage="neighsig",
+        ui_group="Output asset",
+        advice="Use a path different from general.anndata_path; the input AnnData is never modified.",
+    )
+    exemplar_obs: str = config_field(
+        "Exemplar_stains",
+        description="Categorical AnnData observation whose non-null values name convincing positive marker exemplars.",
+        level="basic",
+        stage="neighsig",
+        ui_group="Cell mapping and exemplars",
+        advice="Values must exactly match marker names on the AnnData variable axis.",
+    )
+    object_id_obs: str = config_field(
+        "ObjectNumber",
+        description="AnnData observation containing the positive integer label used in each ROI segmentation mask.",
+        level="basic",
+        stage="neighsig",
+        ui_group="Cell mapping and exemplars",
+        advice="Each (ROI, object ID) pair must be unique and present in the corresponding mask.",
+    )
+    max_halo_px: int = config_field(
+        8,
+        description="Maximum outward distance in pixels learned and projected from each source-cell mask.",
+        level="basic",
+        stage="neighsig",
+        ui_group="Halo model",
+        advice="Interpret this in the native pixel grid of the configured raw images and masks.",
+        ge=1,
+        le=128,
+    )
+    source_anchor_dilation_px: int = config_field(
+        2,
+        description="Small outward dilation used to calculate each cell's robust raw-image source strength.",
+        level="basic",
+        stage="neighsig",
+        ui_group="Source definition",
+        advice="Unassigned pixels are allocated to their nearest cell; pixels assigned to other cells are excluded.",
+        ge=0,
+        le=32,
+    )
+    source_anchor_quantile: float = config_field(
+        0.95,
+        description="Raw-image quantile within the source anchor used as source strength.",
+        level="basic",
+        stage="neighsig",
+        ui_group="Source definition",
+        advice="High quantiles remain robust to conservative nuclear masks for membrane or cytoplasmic markers.",
+        gt=0,
+        le=1,
+    )
+    min_exemplars: int = config_field(
+        5,
+        description="Minimum number of valid exemplar profiles required to model one marker.",
+        level="basic",
+        stage="neighsig",
+        ui_group="Halo model",
+        advice="Markers below this count are reported and assigned zero neighbour-attributable fractions.",
+        ge=1,
+    )
+    source_threshold_quantile: float = config_field(
+        0.10,
+        description="Quantile of valid exemplar source strengths used as the marker-specific source threshold.",
+        level="basic",
+        stage="neighsig",
+        ui_group="Source definition",
+        advice="The default admits cells in the lower edge of the exemplar-positive brightness regime.",
+        ge=0,
+        le=1,
+    )
+    halo_aggregation: Literal["max", "sum"] = config_field(
+        "max",
+        description="Pixel-level rule for overlapping projected source halos.",
+        level="basic",
+        stage="neighsig",
+        ui_group="Halo model",
+        advice="Use max normally; sum is more aggressive when several source halos overlap.",
+    )
+    calculate_classic_intensities: bool = config_field(
+        True,
+        description="Store conventional mean raw-marker intensity within each segmentation mask.",
+        level="basic",
+        stage="neighsig",
+        ui_group="Output asset",
+        advice="Internal raw-image reductions still run when this output layer is disabled.",
+    )
+    n_jobs: Union[Literal["auto"], int] = config_field(
+        "auto",
+        description="ROI-level worker processes, or auto to follow the current SLURM/CPU allocation.",
+        level="basic",
+        stage="neighsig",
+        ui_group="Resources",
+        advice="Workers load one mask and marker images lazily; avoid nested multiprocessing.",
+    )
+    qc_markers: Optional[List[str]] = config_field(
+        None,
+        description="Optional ordered markers used in UMAP and expression-comparison QC figures.",
+        level="advanced",
+        stage="neighsig",
+        ui_group="QC report",
+        advice="Leave unset to select the most affected markers automatically.",
+    )
+    max_qc_markers: int = config_field(
+        6,
+        description="Maximum automatically selected markers shown in detailed QC figures.",
+        level="basic",
+        stage="neighsig",
+        ui_group="QC report",
+        advice="Profile and score-summary tables still include every marker.",
+        ge=1,
+        le=50,
+    )
+    population_obs: Optional[str] = config_field(
+        None,
+        description="Optional categorical population observation used for population-by-marker QC.",
+        level="basic",
+        stage="neighsig",
+        ui_group="QC report",
+        advice="Null falls back to general.population_obs_primary; missing annotations are skipped cleanly.",
+    )
+    high_risk_threshold: float = config_field(
+        0.5,
+        description="Descriptive score threshold used only for per-cell counts and QC summaries.",
+        level="advanced",
+        stage="neighsig",
+        ui_group="QC report",
+        advice="This threshold is not a validated biological cutoff and does not alter the score.",
+        ge=0,
+        le=1,
+    )
+
+    @model_validator(mode="after")
+    def validate_neighbour_signal(self) -> "NeighbourSignalConfig":
+        if isinstance(self.n_jobs, int) and self.n_jobs < 1:
+            raise ValueError("neighbour_signal.n_jobs must be 'auto' or a positive integer")
+        if self.source_anchor_dilation_px > self.max_halo_px:
+            raise ValueError(
+                "neighbour_signal.source_anchor_dilation_px cannot exceed max_halo_px"
+            )
+        output = self.output_adata_path.strip()
+        if not output:
+            raise ValueError("neighbour_signal.output_adata_path cannot be empty")
+        if not output.lower().endswith(".h5ad"):
+            raise ValueError("neighbour_signal.output_adata_path must end with .h5ad")
+        if not self.exemplar_obs.strip() or not self.object_id_obs.strip():
+            raise ValueError("neighbour_signal observation column names cannot be empty")
+        if self.qc_markers is not None:
+            cleaned = [str(marker).strip() for marker in self.qc_markers]
+            if any(not marker for marker in cleaned):
+                raise ValueError("neighbour_signal.qc_markers cannot contain empty names")
+            if len({marker.casefold() for marker in cleaned}) != len(cleaned):
+                raise ValueError("neighbour_signal.qc_markers must be unique case-insensitively")
+        return self
+
 
 @config_section("batch_integration")
 class BatchIntegrationConfig(ConfigModel):
@@ -5690,6 +5861,7 @@ class PipelineConfig(ConfigModel):
     createmasks: CreateMasksConfig = Field(default_factory=CreateMasksConfig)
     segmentation: SegmentationConfig = Field(default_factory=SegmentationConfig)
     nimbus: NimbusConfig = Field(default_factory=NimbusConfig)
+    neighbour_signal: NeighbourSignalConfig = Field(default_factory=NeighbourSignalConfig)
     batch_integration: BatchIntegrationConfig = Field(default_factory=BatchIntegrationConfig)
     rapids: RapidsProcessConfig = Field(default_factory=RapidsProcessConfig)
     maxfuse: MaxFuseConfig = Field(default_factory=MaxFuseConfig)
@@ -5719,6 +5891,7 @@ DEFAULT_CONFIG_CLASSES = {
     "createmasks": CreateMasksConfig,
     "segmentation": SegmentationConfig,
     "nimbus": NimbusConfig,
+    "neighbour_signal": NeighbourSignalConfig,
     "batch_integration": BatchIntegrationConfig,
     "rapids": RapidsProcessConfig,
     "maxfuse": MaxFuseConfig,
@@ -5759,6 +5932,7 @@ __all__ = [
     "MaxFuseGeneListConfig",
     "NapariSBTConfig",
     "NetworkxSpatialConfig",
+    "NeighbourSignalConfig",
     "NimbusConfig",
     "PairwiseSpatialConfig",
     "PipelineConfig",
