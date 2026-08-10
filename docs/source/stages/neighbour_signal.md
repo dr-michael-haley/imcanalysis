@@ -83,6 +83,16 @@ fewer than `min_exemplars` valid selected profiles remain. Missing images,
 masks, mapped labels, or shape agreement are input errors because pixel-level
 alignment is required.
 
+Segmentation masks may contain additional labels absent from the input AnnData,
+for example small objects deliberately removed during cell-size filtering.
+These mask-only objects remain occupied segmentation geometry: their pixels are
+excluded from exemplar radial averages, and neighbourhoods around strong
+mask-only labels are excluded from ROI background selection. They do not
+project halos or appear in source provenance because every reported source must
+map to an authoritative row of the output AnnData. The stage records mapped,
+mask-only, projected, and strong mask-only counts for every ROI and marker
+rather than treating this expected filtering pattern as an error.
+
 ## Reusable assets produced or modified
 
 The stage writes a separate AnnData to
@@ -111,7 +121,7 @@ and existing layers, with these changes:
 - `halo_max_score`, `halo_mean_score`, and the descriptive
   `halo_n_high_risk` summary in `.obs`;
 - profiles, IQRs, complete automatic/manual candidate decisions, exemplar
-  statistics, backgrounds, parameters, worker
+  statistics, backgrounds, mapped/mask-only segmentation counts, parameters, worker
   allocation, score interpretation, and layer semantics in
   `.uns['marker_halo']`.
 
@@ -139,7 +149,8 @@ The managed execution report contains:
   fractions above descriptive 0.25/0.5/0.75 thresholds, exemplar counts, and
   source thresholds;
 - long-form profile, selected-exemplar, automatic candidate/selection,
-  ROI-background, skipped-marker, and unknown manual-exemplar tables;
+  ROI-background/source-mapping, skipped-marker, and unknown manual-exemplar
+  tables;
 - a concise plot of input-X score versus nearest same-marker-positive distance,
   distinguishing rejected, eligible-unsampled, and selected candidates;
 - Scanpy UMAP panels for a configured or automatically selected small marker
@@ -220,6 +231,13 @@ replaces the current maximum at a pixel, both predicted intensity and its
 global AnnData source row are updated. Attributable pixels are then reduced by
 target segmentation label and source row before the temporary pixel maps are
 discarded; no second neighbour search is performed.
+
+Only cells represented in the input/output AnnData are eligible to project
+named halos. Strong mask-only labels are still used to protect background
+estimation from their local signal, but excluding them from projection preserves
+the deliberate upstream cell filter and the invariant that every source index
+identifies an output AnnData row. Inspect `roi_marker_backgrounds.csv` and stage
+warnings to quantify this exclusion.
 
 `sum` remains supported for the original score and is more aggressive in dense
 source regions, but multiple sources contribute simultaneously to a pixel.

@@ -20,9 +20,11 @@ from SpatialBiologyToolkit.cellvision import discover_roi_inputs, select_source_
 from SpatialBiologyToolkit.config import NeighbourSignalConfig, PipelineConfig
 from SpatialBiologyToolkit.neighbour_signal import (
     HaloParameters,
+    MarkerHaloProfile,
     _aggregate_source_target_attribution,
     build_output_anndata,
     build_source_target_table,
+    calculate_marker_halo_maps,
     project_source_halos,
     project_source_halos_with_sources,
     run_neighbour_signal_analysis,
@@ -63,7 +65,7 @@ def _paint_halo(
     image[source] = background + strength_excess
 
 
-def _write_roi(root: Path, roi: str) -> None:
+def _write_roi(root: Path, roi: str, *, include_mask_only_source: bool = False) -> None:
     mask_folder = root / "masks"
     image_folder = root / "tiffs" / roi
     mask_folder.mkdir(parents=True, exist_ok=True)
@@ -81,6 +83,8 @@ def _write_roi(root: Path, roi: str) -> None:
     }
     for object_id, (row, column) in positions.items():
         mask[row : row + 3, column : column + 3] = object_id
+    if include_mask_only_source:
+        mask[62:64, 35:37] = 99
 
     cd31 = np.full(mask.shape, 2.0, dtype=np.float32)
     for object_id in range(1, 6):
@@ -93,6 +97,15 @@ def _write_roi(root: Path, roi: str) -> None:
         )
     cd31[mask == 7] = 52.0  # genuine but sub-threshold far-cell signal
     cd31[mask == 8] = 2.0
+    if include_mask_only_source:
+        _paint_halo(
+            cd31,
+            mask,
+            99,
+            background=2.0,
+            strength_excess=300.0,
+            curve=np.asarray([0.2, 0.1, 0.05, 0.0], dtype=np.float32),
+        )
 
     cd3 = np.full(mask.shape, 1.0, dtype=np.float32)
     _paint_halo(
@@ -152,9 +165,15 @@ def _adata(rois: list[str], *, unknown_exemplar: bool = False) -> ad.AnnData:
     return source
 
 
-def _analysis_inputs(root: Path, rois: list[str], *, unknown_exemplar: bool = False):
+def _analysis_inputs(
+    root: Path,
+    rois: list[str],
+    *,
+    unknown_exemplar: bool = False,
+    include_mask_only_source: bool = False,
+):
     for roi in rois:
-        _write_roi(root, roi)
+        _write_roi(root, roi, include_mask_only_source=include_mask_only_source)
     source = _adata(rois, unknown_exemplar=unknown_exemplar)
     identity = select_source_cells(
         source,
@@ -182,11 +201,13 @@ def _run(
     exemplar_mode: str = "manual",
     automatic_target_exemplars_per_marker: int = 30,
     automatic_max_exemplars_per_roi: int = 5,
+    include_mask_only_source: bool = False,
 ):
     source, identity, contexts = _analysis_inputs(
         root,
         rois,
         unknown_exemplar=unknown_exemplar,
+        include_mask_only_source=include_mask_only_source,
     )
     result = run_neighbour_signal_analysis(
         source,
@@ -508,6 +529,87 @@ def _check_projection_uses_max_by_default_and_never_projects_inside_own_mask():
     assert np.all(maximum <= summed)
 
 
+def _check_mask_only_sources_remain_geometry_but_do_not_project():
+    mask = np.zeros((20, 20), dtype=np.int64)
+    mask[8:11, 10:13] = 1
+    mask[8:10, 5:7] = 99
+    image = np.zeros(mask.shape, dtype=np.float32)
+    image[mask == 1] = 30.0
+    image[mask == 99] = 200.0
+    parameters = HaloParameters(
+        max_halo_px=4,
+        source_anchor_dilation_px=0,
+        source_anchor_quantile=0.95,
+        min_exemplars=1,
+    )
+    profile_values = np.ones(4, dtype=np.float32)
+    profile = MarkerHaloProfile(
+        marker="CD31",
+        available=True,
+        raw_median=profile_values,
+        final=profile_values,
+        q25=profile_values,
+        q75=profile_values,
+        n_configured_exemplars=1,
+        n_valid_exemplars=1,
+        source_threshold=100.0,
+        effective_extent_px=4.0,
+        skip_reason="",
+    )
+    maps = calculate_marker_halo_maps(
+        mask,
+        image,
+        mask,
+        profile,
+        parameters,
+        {1: 0},
+        roi="ROI_filtered",
+        marker="CD31",
+    )
+    assert maps.source_labels == ()
+    assert maps.unmapped_source_labels == (99,)
+    assert np.all(maps.projected.predicted == 0)
+    assert np.all(maps.projected.source_index == -1)
+    assert np.all(maps.attributable[mask == 1] == 0)
+    assert np.all(maps.residual[mask == 1] > 0)
+
+
+def _check_filtered_anndata_ignores_orphans_and_reports_counts(tmp_path: Path):
+    source, result = _run(
+        tmp_path,
+        ["ROI_1"],
+        n_jobs=1,
+        include_mask_only_source=True,
+    )
+    target = source.obs_names.get_loc("ROI_1_cell_8")
+    assert result.classic_intensities[target, 0] > 2.0
+    assert result.scores[target, 0] == 0.0
+    assert result.dominant_source_indices[target, 0] == -1
+    backgrounds = pd.DataFrame(result.background_records).set_index(["roi", "marker"])
+    cd31 = backgrounds.loc[("ROI_1", "CD31")]
+    assert cd31["segmented_cells"] == 9
+    assert cd31["mapped_segmented_cells"] == 8
+    assert cd31["mask_only_segmented_cells"] == 1
+    assert cd31["strong_source_cells_total"] == 6
+    assert cd31["projected_source_cells"] == 5
+    assert cd31["unmapped_strong_source_cells"] == 1
+    assert any("strong mask-only source" in warning for warning in result.warnings)
+
+    output = build_output_anndata(
+        source,
+        result,
+        parameters={"max_halo_px": 4},
+        calculate_classic_intensities=True,
+        high_risk_threshold=0.5,
+    )
+    assert output.uns["marker_halo"]["schema_version"] == 5
+    restored_backgrounds = output.uns["marker_halo"]["roi_marker_backgrounds"]
+    assert "unmapped_strong_source_cells" in restored_backgrounds.columns
+    assert "authoritative output AnnData row" in output.uns["marker_halo"][
+        "mask_only_source_interpretation"
+    ]
+
+
 def _check_competing_sources_preserve_pixel_and_cell_provenance():
     mask = np.zeros((24, 24), dtype=np.int64)
     mask[10:13, 2:5] = 1
@@ -800,7 +902,11 @@ def _check_config_registry_assets_wrapper_environment_and_plan_align(tmp_path: P
 
 
 def _check_direct_stage_smoke_writes_asset_and_concise_qc(tmp_path: Path):
-    source, _identity, _contexts = _analysis_inputs(tmp_path, ["ROI_1"])
+    source, _identity, _contexts = _analysis_inputs(
+        tmp_path,
+        ["ROI_1"],
+        include_mask_only_source=True,
+    )
     del source.obsm["X_umap"]
     source_path = tmp_path / "input.h5ad"
     source.write_h5ad(source_path)
@@ -875,12 +981,16 @@ def _check_direct_stage_smoke_writes_asset_and_concise_qc(tmp_path: Path):
         / "neighbour_signal"
         / "neighbour_attributable_score_summary.csv"
     ).is_file()
-    assert (
+    summary_path = (
         report_root
         / "summaries"
         / "neighbour_signal"
         / "neighbour_signal_summary.md"
-    ).is_file()
+    )
+    assert summary_path.is_file()
+    assert "Strong mask-only source occurrences excluded from projection: 1" in (
+        summary_path.read_text(encoding="utf-8")
+    )
     assert (
         report_root
         / "figures"
@@ -893,6 +1003,13 @@ def _check_direct_stage_smoke_writes_asset_and_concise_qc(tmp_path: Path):
         / "neighbour_signal"
         / "exemplar_selection.csv"
     ).is_file()
+    backgrounds = pd.read_csv(
+        report_root
+        / "tables"
+        / "neighbour_signal"
+        / "roi_marker_backgrounds.csv"
+    ).set_index(["roi", "marker"])
+    assert backgrounds.loc[("ROI_1", "CD31"), "unmapped_strong_source_cells"] == 1
     gallery_manifest_path = (
         report_root
         / "tables"
@@ -994,6 +1111,15 @@ class NeighbourSignalTests(unittest.TestCase):
 
     def test_projection_overlap_and_self_exclusion(self):
         _check_projection_uses_max_by_default_and_never_projects_inside_own_mask()
+
+    def test_mask_only_source_projection(self):
+        _check_mask_only_sources_remain_geometry_but_do_not_project()
+
+    def test_filtered_anndata_mask_orphans(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            _check_filtered_anndata_ignores_orphans_and_reports_counts(
+                Path(temporary)
+            )
 
     def test_automatic_exemplar_selection(self):
         with tempfile.TemporaryDirectory() as temporary:

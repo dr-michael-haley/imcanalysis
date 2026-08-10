@@ -28,6 +28,20 @@ def _dense_matrix(value: Any) -> np.ndarray:
     return np.asarray(value)
 
 
+def _mask_only_source_metrics(adata: Any) -> tuple[int, int]:
+    """Return strong mask-only source occurrences and affected ROI-marker pairs."""
+
+    backgrounds = adata.uns.get("marker_halo", {}).get("roi_marker_backgrounds")
+    if not isinstance(backgrounds, pd.DataFrame):
+        return 0, 0
+    if "unmapped_strong_source_cells" not in backgrounds.columns:
+        return 0, 0
+    counts = pd.to_numeric(
+        backgrounds["unmapped_strong_source_cells"], errors="coerce"
+    ).fillna(0)
+    return int(counts.sum()), int((counts > 0).sum())
+
+
 def marker_score_summary(adata: Any) -> pd.DataFrame:
     """Return the requested all-marker descriptive score table."""
 
@@ -1783,6 +1797,9 @@ def _write_summary(
     selection_summary = halo["exemplar_selection_summary"]
     automatic_selected = int(selection_summary["automatic_selected"].sum())
     manual_selected = int(selection_summary["manual_selected"].sum())
+    mask_only_source_occurrences, mask_only_source_pairs = (
+        _mask_only_source_metrics(adata)
+    )
     lines = [
         "# Neighbour-attributable signal QC",
         "",
@@ -1804,6 +1821,9 @@ def _write_summary(
         f"- Source-resolved provenance available: {bool(source_table['available'])}",
         f"- Source-target relationships: {int(source_table['relationships']):,}",
         f"- Source-target Parquet: `{source_table['path'] or 'not configured'}`",
+        f"- Strong mask-only source occurrences excluded from projection: "
+        f"{mask_only_source_occurrences:,} across {mask_only_source_pairs:,} "
+        "ROI-marker pairs",
         "",
         "## Exemplar and source definition",
         "",
@@ -1818,6 +1838,8 @@ def _write_summary(
         "AnnData.X was used only for automatic exemplar candidate positivity. Each selected cell's halo profile, source strength, background, projected spatial sources, and final score were calculated from raw pixels and masks. The original matrix is preserved in `layers['original_X']`; comparisons involving selected training cells are therefore not independent validation of X positivity.",
         "",
         "Each exemplar profile was background-subtracted and divided by its robust dilated-anchor source strength. Marker source thresholds were derived only from valid selected exemplar source strengths.",
+        "",
+        "Segmentation labels absent from the input AnnData were retained as occupied geometry. Their pixels remained excluded from exemplar radial measurements, and strong mask-only source neighbourhoods remained excluded from ROI background estimation. They did not project named halos because every reported source must map to an output AnnData row; per-ROI/marker counts are available in `roi_marker_backgrounds.csv`.",
         "",
         "## Cell-based image galleries",
         "",
@@ -2049,6 +2071,7 @@ def generate_neighbour_signal_report(
             summary_path,
         )
     )
+    mask_only_occurrences, mask_only_pairs = _mask_only_source_metrics(adata)
     report.metrics.update(
         {
             "cells": int(adata.n_obs),
@@ -2071,6 +2094,8 @@ def generate_neighbour_signal_report(
             "cell_gallery_figures": int(
                 sum("cell_galleries" in str(path) for path in report.figures)
             ),
+            "unmapped_strong_source_occurrences": mask_only_occurrences,
+            "roi_marker_pairs_with_unmapped_strong_sources": mask_only_pairs,
             "affected_target_marker_pairs": int(
                 source_target_table[["target_obs_index", "marker"]]
                 .drop_duplicates()

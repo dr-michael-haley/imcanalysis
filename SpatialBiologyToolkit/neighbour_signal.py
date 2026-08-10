@@ -205,6 +205,7 @@ class MarkerHaloMaps:
     residual: FloatArray
     source_strengths: Mapping[int, float]
     source_labels: tuple[int, ...]
+    unmapped_source_labels: tuple[int, ...]
     background: float
     background_method: str
     background_pixels: int
@@ -1031,7 +1032,10 @@ def calculate_marker_halo_maps(
 
     The application worker and targeted QC gallery renderer share this helper,
     ensuring that visualized predicted, attributable, and residual maps use the
-    exact scientific calculation that produces the AnnData scores.
+    exact scientific calculation that produces the AnnData scores. Strong mask
+    labels absent from the AnnData remain segmented geometry and inform
+    background exclusion, but only mapped cells can project attributable halos
+    and appear in source provenance.
     """
 
     labels = _validate_mask(mask, path=f"{roi} segmentation mask")
@@ -1052,29 +1056,27 @@ def calculate_marker_halo_maps(
         parameters.source_anchor_quantile,
     )
     if halo.available:
-        source_labels = tuple(
+        strong_source_labels = tuple(
             sorted(
                 int(label)
                 for label, strength in source_strengths.items()
                 if strength >= halo.source_threshold
             )
         )
-        if parameters.halo_aggregation == "max":
-            unmapped_sources = [
-                label for label in source_labels if label not in source_obs_indices
-            ]
-            if unmapped_sources:
-                raise ValueError(
-                    f"ROI {roi!r}, marker {marker!r} has strong source segmentation "
-                    "labels without output AnnData rows; source-resolved provenance "
-                    f"requires a complete mapping. Examples: {unmapped_sources[:10]}"
-                )
+        source_labels = tuple(
+            label for label in strong_source_labels if label in source_obs_indices
+        )
+        unmapped_source_labels = tuple(
+            label for label in strong_source_labels if label not in source_obs_indices
+        )
     else:
+        strong_source_labels = ()
         source_labels = ()
+        unmapped_source_labels = ()
     background, method, background_pixels = estimate_roi_background(
         values,
         labels,
-        source_labels,
+        strong_source_labels,
         parameters.max_halo_px,
     )
     if halo.available and source_labels:
@@ -1105,6 +1107,7 @@ def calculate_marker_halo_maps(
         residual=residual,
         source_strengths=source_strengths,
         source_labels=source_labels,
+        unmapped_source_labels=unmapped_source_labels,
         background=background,
         background_method=method,
         background_pixels=background_pixels,
@@ -1224,6 +1227,15 @@ def _apply_profiles_to_roi(payload: ApplicationWorkerPayload) -> ApplicationWork
                 "background_method": maps.background_method,
                 "background_pixels": maps.background_pixels,
                 "source_cells": len(source_labels),
+                "projected_source_cells": len(source_labels),
+                "strong_source_cells_total": (
+                    len(source_labels) + len(maps.unmapped_source_labels)
+                ),
+                "unmapped_strong_source_cells": len(maps.unmapped_source_labels),
+                "mapped_segmented_cells": len(source_obs_indices),
+                "mask_only_segmented_cells": (
+                    len(set(source_strengths).difference(source_obs_indices))
+                ),
                 "segmented_cells": len(source_strengths),
             }
         )
@@ -1690,6 +1702,23 @@ def run_neighbour_signal_analysis(
         raise RuntimeError("ROI application did not return every AnnData observation")
     if not np.all(np.isfinite(scores)) or np.any((scores < 0) | (scores > 1)):
         raise RuntimeError("Neighbour-attributable fractions are not finite and bounded in [0, 1]")
+    unmapped_source_occurrences = sum(
+        int(record.get("unmapped_strong_source_cells", 0))
+        for record in background_records
+    )
+    unmapped_source_pairs = sum(
+        int(record.get("unmapped_strong_source_cells", 0)) > 0
+        for record in background_records
+    )
+    if unmapped_source_occurrences:
+        warnings.append(
+            f"Ignored {unmapped_source_occurrences} strong mask-only source occurrence(s) "
+            f"across {unmapped_source_pairs} ROI-marker combination(s) because those "
+            "segmentation labels have no output AnnData row. Their pixels remained "
+            "segmented geometry and their strong-source neighbourhoods were excluded "
+            "from ROI background estimation; only AnnData-mapped cells projected halos "
+            "or appeared in source provenance."
+        )
     source_provenance_available = parameters.halo_aggregation == "max"
     if not source_provenance_available:
         warnings.append(
@@ -2188,7 +2217,7 @@ def build_output_anndata(
         ),
     }
     output.uns["marker_halo"] = {
-        "schema_version": 4,
+        "schema_version": 5,
         "score_name": "NeighbourAttributableFraction",
         "interpretation": (
             "Spatial explainability/QC score: the fraction of observed background-subtracted "
@@ -2215,6 +2244,14 @@ def build_output_anndata(
             "radial pixels after other segmented cells are excluded. Selection is reproducibly "
             "balanced across ROIs and X-score ranges. X chooses candidates only; learned halo "
             "values and final scores come from raw pixels and masks."
+        ),
+        "mask_only_source_interpretation": (
+            "Segmentation labels absent from the input AnnData may remain after cell "
+            "filtering. They remain occupied segmented geometry and strong mask-only "
+            "labels are excluded when selecting ROI background pixels, but they do not "
+            "project halos or appear as named sources because source provenance must map "
+            "to an authoritative output AnnData row. Counts are stored per ROI and marker "
+            "in roi_marker_backgrounds."
         ),
         "roi_marker_backgrounds": background_table,
         "unknown_exemplar_markers": unknown_table,
