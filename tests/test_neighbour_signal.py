@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from unittest.mock import patch
 
 import anndata as ad
@@ -30,9 +32,15 @@ from SpatialBiologyToolkit.neighbour_signal import (
     run_neighbour_signal_analysis,
 )
 from SpatialBiologyToolkit.neighbour_signal_reports import (
+    _plot_population_matrix,
+    _plot_profiles,
+    _plot_score_distributions,
     _plot_source_target_population_heatmaps,
+    _plot_umap,
     dominant_source_summary,
+    marker_score_summary,
     population_source_target_summary,
+    select_qc_markers,
     select_cell_gallery_examples,
 )
 from SpatialBiologyToolkit.pipeline.assets import resolve_assets
@@ -345,17 +353,14 @@ def _check_learns_known_halo_scores_near_target_and_preserves_output_contract(tm
     ]
     assert len(route) == 1
     assert int(route.iloc[0]["unique_target_cells"]) >= 1
-    heatmap_path = tmp_path / "source_target_population_heatmap.png"
-    assert (
-        _plot_source_target_population_heatmaps(
-            population_summary,
-            ["CD31"],
-            heatmap_path,
-            exclude_same_population=True,
-        )
-        == heatmap_path
+    heatmap_paths = _plot_source_target_population_heatmaps(
+        population_summary,
+        ["CD31"],
+        tmp_path / "source_target_population_heatmaps",
+        exclude_same_population=True,
     )
-    assert heatmap_path.is_file()
+    assert len(heatmap_paths) == 1
+    assert heatmap_paths[0].is_file()
     dominant_summary = dominant_source_summary(output, source_target).set_index("marker")
     assert dominant_summary.loc["CD31", "affected_target_cells"] >= 1
     assert (
@@ -364,6 +369,24 @@ def _check_learns_known_halo_scores_near_target_and_preserves_output_contract(tm
         ]
         > 0
     )
+
+    all_markers, selection_warnings = select_qc_markers(
+        output,
+        requested=["CD31"],
+        maximum=1,
+    )
+    assert all_markers == ["CD31", "CD3"]
+    assert len(selection_warnings) == 2
+    profile_paths = _plot_profiles(output, tmp_path / "marker_halo_profiles")
+    distribution_paths = _plot_score_distributions(
+        output,
+        marker_score_summary(output),
+        tmp_path / "score_distributions",
+    )
+    assert len(profile_paths) == len(distribution_paths) == output.n_vars
+    assert all(path.is_file() for path in [*profile_paths, *distribution_paths])
+    assert any("002_CD3" in path.name for path in profile_paths)
+    assert any("002_CD3" in path.name for path in distribution_paths)
 
     output_path = tmp_path / "roundtrip.h5ad"
     output.write_h5ad(output_path)
@@ -469,6 +492,72 @@ def _check_automatic_exemplars_use_x_clearance_coverage_and_balanced_sampling(
     ).all()
     assert not crowded.profiles["CD31"].available
     assert "insufficient configured exemplars" in crowded.profiles["CD31"].skip_reason
+
+
+def _check_per_marker_scanpy_qc_uses_point_size_dendrogram_and_native_scale(
+    tmp_path: Path,
+) -> None:
+    plotting = _adata(["ROI_1"])
+    plotting.X = np.column_stack(
+        [
+            np.linspace(0.0, 0.9, plotting.n_obs, dtype=np.float32),
+            np.zeros(plotting.n_obs, dtype=np.float32),
+        ]
+    )
+    plotting.var["halo_profile_available"] = [True, False]
+    plotting.obs["halo_max_score"] = np.max(plotting.X, axis=1)
+    plotting.obs["halo_mean_score"] = np.mean(plotting.X, axis=1)
+
+    umap_calls: list[dict[str, object]] = []
+    matrix_calls: list[dict[str, object]] = []
+    dendrogram_calls: list[dict[str, object]] = []
+
+    class FakeFigure:
+        def savefig(self, path, **_kwargs):
+            Path(path).write_bytes(b"fake figure")
+
+    def fake_umap(_adata, **kwargs):
+        umap_calls.append(kwargs)
+        return FakeFigure()
+
+    def fake_matrixplot(_adata, **kwargs):
+        matrix_calls.append(kwargs)
+        return FakeFigure()
+
+    def fake_dendrogram(_adata, **kwargs):
+        dendrogram_calls.append(kwargs)
+
+    fake_scanpy = ModuleType("scanpy")
+    fake_scanpy.pl = SimpleNamespace(umap=fake_umap, matrixplot=fake_matrixplot)
+    fake_scanpy.tl = SimpleNamespace(dendrogram=fake_dendrogram)
+    with patch.dict(sys.modules, {"scanpy": fake_scanpy}), patch(
+        "matplotlib.pyplot.close"
+    ):
+        umap_paths = _plot_umap(
+            plotting,
+            ["CD31", "CD3"],
+            tmp_path / "umaps",
+            point_size=3.25,
+        )
+        population_paths, population_warnings = _plot_population_matrix(
+            plotting,
+            ["CD31", "CD3"],
+            "Population",
+            tmp_path / "population_matrixplots",
+        )
+
+    assert len(umap_paths) == 4
+    assert len(umap_calls) == 4
+    assert all(call["size"] == 3.25 for call in umap_calls)
+    assert all(path.is_file() for path in umap_paths)
+    assert len(dendrogram_calls) == 1
+    assert dendrogram_calls[0]["var_names"] == ["CD31"]
+    assert len(population_paths) == len(matrix_calls) == 2
+    assert all(call["dendrogram"] is True for call in matrix_calls)
+    assert all(call["vmin"] == 0 for call in matrix_calls)
+    assert all("vmax" not in call for call in matrix_calls)
+    assert all(path.is_file() for path in population_paths)
+    assert population_warnings == []
 
 
 def _check_augment_mode_keeps_manual_exemplars_and_fills_automatically(tmp_path: Path):
@@ -808,6 +897,9 @@ def _check_config_registry_assets_wrapper_environment_and_plan_align(tmp_path: P
     assert settings.gallery_crop_margin_px == 8
     assert settings.max_halo_px == 8
     assert settings.n_jobs == "auto"
+    assert settings.qc_markers is None
+    assert settings.max_qc_markers is None
+    assert settings.umap_point_size is None
     assert settings.source_target_table_path == "neighbour_signal_source_target.parquet"
     assert settings.source_target_qc_exclude_same_population
     try:
@@ -853,6 +945,12 @@ def _check_config_registry_assets_wrapper_environment_and_plan_align(tmp_path: P
         assert "must end with .parquet or .pq" in str(exc)
     else:
         raise AssertionError("non-Parquet source-target output should fail validation")
+    try:
+        NeighbourSignalConfig(umap_point_size=0)
+    except ValueError as exc:
+        assert "greater than 0" in str(exc)
+    else:
+        raise AssertionError("non-positive UMAP point size should fail validation")
 
     stage = STAGE_REGISTRY["neighsig"]
     assert stage.catalogue_order == 40
@@ -869,8 +967,8 @@ def _check_config_registry_assets_wrapper_environment_and_plan_align(tmp_path: P
     assert all("neighsig" not in mode.stages for mode in MODES)
     assert (REPO_ROOT / stage.documentation_path).is_file()
     wrapper = (REPO_ROOT / stage.slurm_script).read_text(encoding="utf-8")
-    assert "#SBATCH --cpus-per-task=8" in wrapper
-    assert "#SBATCH --mem=64G" in wrapper
+    assert "#SBATCH --cpus-per-task=6" in wrapper
+    assert "#SBATCH --mem=256G" in wrapper
     assert "#@ENV:  imc_segmentation" in wrapper
     assert "OMP_NUM_THREADS=1" in wrapper
     environments = yaml.safe_load(
@@ -991,12 +1089,26 @@ def _check_direct_stage_smoke_writes_asset_and_concise_qc(tmp_path: Path):
     assert "Strong mask-only source occurrences excluded from projection: 1" in (
         summary_path.read_text(encoding="utf-8")
     )
-    assert (
-        report_root
-        / "figures"
-        / "neighbour_signal"
-        / "marker_halo_profiles_01.png"
-    ).is_file()
+    summary_text = summary_path.read_text(encoding="utf-8")
+    assert "complete AnnData marker axis" in summary_text
+    figures_root = report_root / "figures" / "neighbour_signal"
+    for marker_index, marker in enumerate(("CD31", "CD3"), start=1):
+        stem = f"{marker_index:03d}_{marker}"
+        assert (
+            figures_root
+            / "marker_halo_profiles"
+            / f"marker_halo_profile_{stem}.png"
+        ).is_file()
+        assert (
+            figures_root
+            / "score_distributions"
+            / f"neighbour_attributable_score_distribution_{stem}.png"
+        ).is_file()
+        assert (
+            figures_root
+            / "classic_originalX_halo_comparisons"
+            / f"classic_originalX_halo_comparison_{stem}.png"
+        ).is_file()
     assert (
         report_root
         / "tables"
@@ -1124,6 +1236,12 @@ class NeighbourSignalTests(unittest.TestCase):
     def test_automatic_exemplar_selection(self):
         with tempfile.TemporaryDirectory() as temporary:
             _check_automatic_exemplars_use_x_clearance_coverage_and_balanced_sampling(
+                Path(temporary)
+            )
+
+    def test_per_marker_scanpy_qc(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            _check_per_marker_scanpy_qc_uses_point_size_dendrogram_and_native_scale(
                 Path(temporary)
             )
 

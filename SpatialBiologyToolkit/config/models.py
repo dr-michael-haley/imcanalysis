@@ -1307,25 +1307,34 @@ class NeighbourSignalConfig(ConfigModel):
     )
     qc_markers: Optional[List[str]] = config_field(
         None,
-        description="Optional ordered markers used in UMAP and expression-comparison QC figures.",
+        description="Deprecated compatibility setting; neighbour-signal QC now plots every marker.",
         level="advanced",
         stage="neighsig",
         ui_group="QC report",
-        advice="Leave unset to select the most affected markers automatically.",
+        advice="Retained so older config files still validate; configured values no longer restrict report figures.",
     )
-    max_qc_markers: int = config_field(
-        6,
-        description="Maximum automatically selected markers shown in detailed QC figures.",
-        level="basic",
+    max_qc_markers: Optional[int] = config_field(
+        None,
+        description="Deprecated compatibility limit; neighbour-signal QC now plots every marker.",
+        level="advanced",
         stage="neighsig",
         ui_group="QC report",
-        advice="Profile and score-summary tables still include every marker.",
+        advice="Retained so older config files still validate; integer values are ignored by report generation.",
         ge=1,
         le=50,
     )
+    umap_point_size: Optional[float] = config_field(
+        None,
+        description="Optional point size for every Scanpy neighbour-signal UMAP.",
+        level="basic",
+        stage="neighsig",
+        ui_group="QC report",
+        advice="This is passed to Scanpy as size (the scatter-plot s value); null uses Scanpy's dataset-size-aware default.",
+        gt=0,
+    )
     create_cell_galleries: bool = config_field(
         True,
-        description="Create bounded exemplar, target-source, and automatic-selection image galleries for selected QC markers.",
+        description="Create bounded exemplar, target-source, and automatic-selection image galleries for every marker.",
         level="basic",
         stage="neighsig",
         ui_group="QC report",
@@ -1333,7 +1342,7 @@ class NeighbourSignalConfig(ConfigModel):
     )
     gallery_examples_per_marker: int = config_field(
         6,
-        description="Maximum stratified target-cell examples rendered for each selected QC marker.",
+        description="Maximum stratified target-cell examples rendered for each marker.",
         level="basic",
         stage="neighsig",
         ui_group="QC report",

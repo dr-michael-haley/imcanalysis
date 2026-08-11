@@ -55,10 +55,11 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `qc_markers` | `Optional[List[str]]` | `null` | `advanced` | Optional ordered markers used in UMAP and expression-comparison QC figures. | Leave unset to select the most affected markers automatically. |
-| `max_qc_markers` | `int` | `6` | `basic` | Maximum automatically selected markers shown in detailed QC figures. | Profile and score-summary tables still include every marker. |
-| `create_cell_galleries` | `bool` | `True` | `basic` | Create bounded exemplar, target-source, and automatic-selection image galleries for selected QC markers. | Galleries are qualitative model checks and do not change halo profiles or cell scores. |
-| `gallery_examples_per_marker` | `int` | `6` | `basic` | Maximum stratified target-cell examples rendered for each selected QC marker. | Examples cover dominant, competing-source, disagreement, isolated-positive, and self-control cases where available. |
+| `qc_markers` | `Optional[List[str]]` | `null` | `advanced` | Deprecated compatibility setting; neighbour-signal QC now plots every marker. | Retained so older config files still validate; configured values no longer restrict report figures. |
+| `max_qc_markers` | `Optional[int]` | `null` | `advanced` | Deprecated compatibility limit; neighbour-signal QC now plots every marker. | Retained so older config files still validate; integer values are ignored by report generation. |
+| `umap_point_size` | `Optional[float]` | `null` | `basic` | Optional point size for every Scanpy neighbour-signal UMAP. | This is passed to Scanpy as size (the scatter-plot s value); null uses Scanpy's dataset-size-aware default. |
+| `create_cell_galleries` | `bool` | `True` | `basic` | Create bounded exemplar, target-source, and automatic-selection image galleries for every marker. | Galleries are qualitative model checks and do not change halo profiles or cell scores. |
+| `gallery_examples_per_marker` | `int` | `6` | `basic` | Maximum stratified target-cell examples rendered for each marker. | Examples cover dominant, competing-source, disagreement, isolated-positive, and self-control cases where available. |
 | `gallery_crop_margin_px` | `int` | `8` | `advanced` | Additional native-image pixels shown around the target/source masks and modeled halo extent. | Increase this only when more tissue context is needed; it does not change max_halo_px. |
 | `population_obs` | `Optional[str]` | `null` | `basic` | Optional categorical population observation used for population-by-marker QC. | Null falls back to general.population_obs_primary; missing annotations are skipped cleanly. |
 | `source_target_qc_exclude_same_population` | `bool` | `True` | `advanced` | Exclude same-population relationships from source-to-target population heatmaps. | The Parquet table and aggregate QC tables always retain same-population relationships. |

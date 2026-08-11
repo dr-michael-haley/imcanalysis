@@ -223,33 +223,23 @@ def dominant_source_summary(
 def select_qc_markers(
     adata: Any,
     requested: Sequence[str] | None,
-    maximum: int,
+    maximum: int | None,
 ) -> tuple[list[str], list[str]]:
-    """Validate explicit QC markers or choose the most affected available markers."""
+    """Return the complete marker axis while accepting legacy subset settings."""
 
     available = [str(value) for value in adata.var_names]
     warnings: list[str] = []
     if requested:
-        selected = []
-        for marker in requested:
-            if marker not in available:
-                warnings.append(
-                    f"Configured QC marker {marker!r} is absent from AnnData.var_names and was skipped."
-                )
-            elif marker not in selected:
-                selected.append(marker)
-        return selected[:maximum], warnings
-    scores: np.ndarray = _dense_matrix(adata.X).astype(float, copy=False)
-    profile_available = adata.var["halo_profile_available"].to_numpy(dtype=bool)
-    ranked = sorted(
-        (
-            (float(np.quantile(scores[:, index], 0.95)), available[index])
-            for index in range(adata.n_vars)
-            if profile_available[index]
-        ),
-        reverse=True,
-    )
-    return [marker for _score, marker in ranked[:maximum]], warnings
+        warnings.append(
+            "neighbour_signal.qc_markers is retained for config compatibility but "
+            "no longer restricts report figures; every AnnData marker was plotted."
+        )
+    if maximum is not None:
+        warnings.append(
+            "neighbour_signal.max_qc_markers is retained for config compatibility but "
+            "no longer limits report figures; every AnnData marker was plotted."
+        )
+    return available, warnings
 
 
 def _select_gallery_record(
@@ -586,33 +576,30 @@ def select_automatic_decision_gallery_examples(
     return pd.DataFrame(selected).reset_index(drop=True) if selected else pd.DataFrame()
 
 
-def _plot_profiles(adata: Any, output_dir: Path, *, per_figure: int = 12) -> list[Path]:
+def _marker_plot_stem(marker_index: int, marker: str) -> str:
+    """Return an ordered, collision-resistant stem for a marker QC figure."""
+
+    return f"{marker_index + 1:03d}_{_gallery_filename(marker)}"
+
+
+def _plot_profiles(adata: Any, output_dir: Path) -> list[Path]:
+    """Write one empirical halo-profile figure for every marker."""
+
     import matplotlib.pyplot as plt
 
+    output_dir.mkdir(parents=True, exist_ok=True)
     halo = adata.uns["marker_halo"]
     markers = [str(value) for value in halo["marker_names"]]
     available = adata.var["halo_profile_available"].to_numpy(dtype=bool)
-    selected_indices = [index for index, value in enumerate(available) if value]
-    if not selected_indices:
-        return []
     edges = np.asarray(halo["distance_bin_edges_px"], dtype=float)
     centers = (edges[:-1] + edges[1:]) / 2
     final = np.asarray(halo["final_profile"], dtype=float)
     q25 = np.asarray(halo["profile_q25"], dtype=float)
     q75 = np.asarray(halo["profile_q75"], dtype=float)
     paths: list[Path] = []
-    for page, start in enumerate(range(0, len(selected_indices), per_figure), start=1):
-        indices = selected_indices[start : start + per_figure]
-        columns = min(3, len(indices))
-        rows = int(math.ceil(len(indices) / columns))
-        fig, axes = plt.subplots(
-            rows,
-            columns,
-            figsize=(5.0 * columns, 3.7 * rows),
-            squeeze=False,
-        )
-        for axis, marker_index in zip(axes.flat, indices, strict=False):
-            marker = markers[marker_index]
+    for marker_index, marker in enumerate(markers):
+        fig, axis = plt.subplots(figsize=(6.4, 4.5))
+        if available[marker_index]:
             axis.fill_between(
                 centers,
                 q25[marker_index],
@@ -632,21 +619,30 @@ def _plot_profiles(adata: Any, output_dir: Path, *, per_figure: int = 12) -> lis
             )
             n_exemplars = int(adata.var.iloc[marker_index]["halo_n_exemplars"])
             threshold = float(adata.var.iloc[marker_index]["halo_source_threshold"])
-            axis.set_title(f"{marker}  n={n_exemplars}, source≥{threshold:.3g}")
-            axis.set_xlabel("Outward distance from source mask (px)")
-            axis.set_ylabel("Normalized excess signal")
-            axis.set_xlim(edges[0], edges[-1])
-            axis.axhline(0, color="#777777", linewidth=0.7)
-        for axis in axes.flat[len(indices) :]:
-            axis.axis("off")
-        handles, labels = axes.flat[0].get_legend_handles_labels()
-        fig.legend(handles, labels, loc="upper center", ncol=2, frameon=False)
-        fig.suptitle(
-            "Empirical marker-specific halos (not forced monotonic)",
-            y=1.01,
-        )
+            axis.set_title(
+                f"{marker}: empirical halo (n={n_exemplars}, source≥{threshold:.3g})"
+            )
+            axis.legend(frameon=False)
+        else:
+            reason = str(adata.var.iloc[marker_index]["halo_skip_reason"])
+            axis.text(
+                0.5,
+                0.5,
+                f"Halo profile unavailable\n{reason or 'No reliable exemplar profile was learned.'}",
+                ha="center",
+                va="center",
+                transform=axis.transAxes,
+                wrap=True,
+            )
+            axis.set_title(f"{marker}: halo profile unavailable")
+        axis.set_xlabel("Outward distance from source mask (px)")
+        axis.set_ylabel("Normalized excess signal")
+        axis.set_xlim(edges[0], edges[-1])
+        axis.axhline(0, color="#777777", linewidth=0.7)
         fig.tight_layout()
-        path = output_dir / f"marker_halo_profiles_{page:02d}.png"
+        path = output_dir / (
+            f"marker_halo_profile_{_marker_plot_stem(marker_index, marker)}.png"
+        )
         fig.savefig(path, dpi=160, bbox_inches="tight")
         plt.close(fig)
         paths.append(path)
@@ -656,36 +652,21 @@ def _plot_profiles(adata: Any, output_dir: Path, *, per_figure: int = 12) -> lis
 def _plot_exemplar_selection(
     adata: Any,
     markers: Sequence[str],
-    path: Path,
-) -> Path | None:
-    """Plot X-positive candidate clearance and final exemplar decisions."""
+    output_dir: Path,
+) -> list[Path]:
+    """Write one X-positive candidate/selection figure for every marker."""
 
     import matplotlib.pyplot as plt
 
+    output_dir.mkdir(parents=True, exist_ok=True)
     decisions = adata.uns["marker_halo"]["exemplar_selection"]
-    if decisions.empty:
-        return None
-    decisions = decisions.loc[
-        decisions["selection_origin"].astype(str).eq("automatic")
-        & decisions["marker"].astype(str).isin([str(marker) for marker in markers])
-    ].copy()
-    if decisions.empty:
-        return None
-    available_markers = [
-        marker
-        for marker in markers
-        if decisions["marker"].astype(str).eq(str(marker)).any()
-    ]
-    if not available_markers:
-        return None
-    ncols = min(3, len(available_markers))
-    nrows = math.ceil(len(available_markers) / ncols)
-    fig, axes = plt.subplots(
-        nrows,
-        ncols,
-        figsize=(4.2 * ncols, 3.5 * nrows),
-        squeeze=False,
-    )
+    if not decisions.empty:
+        decisions = decisions.loc[
+            decisions["selection_origin"].astype(str).eq("automatic")
+            & decisions["marker"].astype(str).isin(
+                [str(marker) for marker in markers]
+            )
+        ].copy()
     parameters = adata.uns["marker_halo"]["parameters"]
     clearance = float(parameters.get("automatic_same_marker_clearance_px", 10.0))
     capped_distance = max(clearance * 1.25, clearance + 1.0)
@@ -699,50 +680,71 @@ def _plot_exemplar_selection(
         ),
         ("selected", "#de2d26", lambda frame: frame["selected"].astype(bool)),
     )
-    for axis, marker in zip(axes.flat, available_markers, strict=False):
-        frame = decisions.loc[decisions["marker"].astype(str).eq(str(marker))]
-        distances = pd.to_numeric(
-            frame["nearest_same_marker_positive_distance_px"], errors="coerce"
-        ).to_numpy(dtype=float)
-        distances = np.where(np.isfinite(distances), distances, capped_distance)
-        for label, color, selector in styles:
-            selected_rows = selector(frame).to_numpy(dtype=bool)
-            if np.any(selected_rows):
-                axis.scatter(
-                    distances[selected_rows],
-                    pd.to_numeric(frame.loc[selected_rows, "input_x_value"]).to_numpy(
-                        dtype=float
-                    ),
-                    s=22,
-                    alpha=0.75,
-                    color=color,
-                    edgecolors="none",
-                    label=label,
+    paths: list[Path] = []
+    for marker_index, marker in enumerate(markers):
+        fig, axis = plt.subplots(figsize=(6.4, 4.5))
+        frame = decisions.loc[
+            decisions["marker"].astype(str).eq(str(marker))
+        ] if not decisions.empty else decisions
+        if frame.empty:
+            axis.text(
+                0.5,
+                0.5,
+                "No automatic exemplar-candidate records\n"
+                "(manual mode or no X-positive candidates).",
+                ha="center",
+                va="center",
+                transform=axis.transAxes,
+            )
+        else:
+            distances = pd.to_numeric(
+                frame["nearest_same_marker_positive_distance_px"], errors="coerce"
+            ).to_numpy(dtype=float)
+            distances = np.where(np.isfinite(distances), distances, capped_distance)
+            for label, color, selector in styles:
+                selected_rows = selector(frame).to_numpy(dtype=bool)
+                if np.any(selected_rows):
+                    axis.scatter(
+                        distances[selected_rows],
+                        pd.to_numeric(
+                            frame.loc[selected_rows, "input_x_value"]
+                        ).to_numpy(dtype=float),
+                        s=22,
+                        alpha=0.75,
+                        color=color,
+                        edgecolors="none",
+                        label=label,
+                    )
+            threshold_values = pd.to_numeric(
+                frame["positive_threshold"], errors="coerce"
+            ).to_numpy(dtype=float)
+            finite_thresholds = threshold_values[np.isfinite(threshold_values)]
+            if finite_thresholds.size:
+                axis.axhline(
+                    float(finite_thresholds[0]),
+                    color="black",
+                    linestyle=":",
+                    lw=1,
                 )
-        threshold_values = pd.to_numeric(
-            frame["positive_threshold"], errors="coerce"
-        ).to_numpy(dtype=float)
-        finite_thresholds = threshold_values[np.isfinite(threshold_values)]
-        if finite_thresholds.size:
-            axis.axhline(float(finite_thresholds[0]), color="black", linestyle=":", lw=1)
+            handles, labels = axis.get_legend_handles_labels()
+            if handles:
+                axis.legend(handles, labels, frameon=False)
         axis.axvline(clearance, color="black", linestyle="--", lw=1)
-        axis.set_title(str(marker))
+        axis.set_title(
+            f"{marker}: automatic exemplar candidates and selection"
+        )
         axis.set_xlabel("Nearest same-marker X-positive cell (px)")
         axis.set_ylabel("Input AnnData.X score")
         axis.set_xlim(left=0, right=capped_distance * 1.03)
-    for axis in axes.flat[len(available_markers) :]:
-        axis.axis("off")
-    handles, labels = axes.flat[0].get_legend_handles_labels()
-    if handles:
-        fig.legend(handles, labels, loc="upper center", ncol=3, frameon=False)
-    fig.suptitle(
-        "Automatic exemplar candidates: X positivity and same-marker clearance",
-        y=1.02,
-    )
-    fig.tight_layout()
-    fig.savefig(path, dpi=160, bbox_inches="tight")
-    plt.close(fig)
-    return path
+        fig.tight_layout()
+        path = output_dir / (
+            "automatic_exemplar_selection_"
+            f"{_marker_plot_stem(marker_index, str(marker))}.png"
+        )
+        fig.savefig(path, dpi=160, bbox_inches="tight")
+        plt.close(fig)
+        paths.append(path)
+    return paths
 
 
 def _gallery_filename(value: str) -> str:
@@ -1561,95 +1563,201 @@ def generate_cell_qc_galleries(
     return paths, manifest, warnings
 
 
-def _plot_score_distributions(adata: Any, summary: pd.DataFrame, path: Path) -> Path:
+def _plot_score_distributions(
+    adata: Any,
+    summary: pd.DataFrame,
+    output_dir: Path,
+) -> list[Path]:
+    """Write one explicit score-distribution figure for every marker."""
+
     import matplotlib.pyplot as plt
 
+    output_dir.mkdir(parents=True, exist_ok=True)
     scores: np.ndarray = _dense_matrix(adata.X).astype(float, copy=False)
-    order = summary.sort_values(["p95_score", "median_score"], ascending=False).index
-    marker_indices = [adata.var_names.get_loc(summary.loc[index, "marker"]) for index in order]
-    labels = [str(summary.loc[index, "marker"]) for index in order]
+    summary_by_marker = summary.set_index("marker")
     if adata.n_obs > 50000:
         sampled = np.linspace(0, adata.n_obs - 1, 50000, dtype=int)
     else:
         sampled = np.arange(adata.n_obs)
-    values = [scores[sampled, index] for index in marker_indices]
-    fig, ax = plt.subplots(figsize=(9, max(5, 0.28 * len(labels) + 2)))
-    ax.boxplot(
-        values,
-        orientation="horizontal",
-        tick_labels=labels,
-        showfliers=False,
-        widths=0.65,
-    )
-    ax.set_xlim(0, 1)
-    ax.set_xlabel("Neighbour-Attributable Fraction")
-    ax.set_ylabel("Marker")
-    ax.set_title("Cell score distributions by marker")
-    for threshold in (0.25, 0.5, 0.75):
-        ax.axvline(threshold, color="#888888", linewidth=0.6, linestyle="--")
-    fig.tight_layout()
-    fig.savefig(path, dpi=160, bbox_inches="tight")
-    plt.close(fig)
-    return path
+    paths: list[Path] = []
+    bins = np.linspace(0.0, 1.0, 41)
+    for marker_index, marker_value in enumerate(adata.var_names.astype(str)):
+        marker = str(marker_value)
+        all_values = scores[:, marker_index]
+        values = all_values[sampled]
+        weights = np.full(values.shape, 100.0 / max(1, len(values)), dtype=float)
+        row = summary_by_marker.loc[marker]
+        profile_available = bool(adata.var.iloc[marker_index]["halo_profile_available"])
+        fig, axis = plt.subplots(figsize=(6.4, 4.5))
+        axis.hist(
+            values,
+            bins=bins,
+            weights=weights,
+            color="#4c78a8",
+            edgecolor="white",
+            linewidth=0.35,
+        )
+        axis.set_xlim(0, 1)
+        axis.set_xlabel("Neighbour-Attributable Fraction")
+        axis.set_ylabel("Cells (%)")
+        axis.set_title(f"{marker}: cell score distribution")
+        for threshold in (0.25, 0.5, 0.75):
+            axis.axvline(threshold, color="#888888", linewidth=0.6, linestyle="--")
+        status = "profile available" if profile_available else "profile unavailable"
+        annotation = (
+            f"{status}\nmedian={float(row['median_score']):.3f}; "
+            f"p95={float(row['p95_score']):.3f}; "
+            f"cells ≥0.5={float(row['fraction_above_0.50']):.1%}"
+        )
+        if not np.any(all_values > 0):
+            if profile_available:
+                annotation += "\nAll cell scores are zero: no attributable signal was found."
+            else:
+                reason = str(adata.var.iloc[marker_index]["halo_skip_reason"])
+                annotation += f"\nAll cell scores are zero: {reason}."
+        axis.text(
+            0.98,
+            0.96,
+            annotation,
+            ha="right",
+            va="top",
+            transform=axis.transAxes,
+            fontsize=9,
+            bbox={"facecolor": "white", "alpha": 0.85, "edgecolor": "#cccccc"},
+            wrap=True,
+        )
+        fig.tight_layout()
+        path = output_dir / (
+            "neighbour_attributable_score_distribution_"
+            f"{_marker_plot_stem(marker_index, marker)}.png"
+        )
+        fig.savefig(path, dpi=160, bbox_inches="tight")
+        plt.close(fig)
+        paths.append(path)
+    return paths
 
 
-def _plot_umap(adata: Any, markers: Sequence[str], path: Path) -> Path:
+def _plot_umap(
+    adata: Any,
+    markers: Sequence[str],
+    output_dir: Path,
+    *,
+    point_size: float | None,
+) -> list[Path]:
+    """Write one Scanpy UMAP for every marker and cell-level halo summary."""
+
     import matplotlib.pyplot as plt
     import scanpy as sc
 
-    colors = [*markers, "halo_max_score", "halo_mean_score"]
-    figure = sc.pl.umap(
-        adata,
-        color=colors,
-        cmap="magma",
-        ncols=3,
-        show=False,
-        return_fig=True,
-        frameon=False,
-    )
-    figure.savefig(path, dpi=160, bbox_inches="tight")
-    plt.close(figure)
-    return path
+    output_dir.mkdir(parents=True, exist_ok=True)
+    marker_list = list(markers)
+    colors = [*marker_list, "halo_max_score", "halo_mean_score"]
+    paths: list[Path] = []
+    for color in colors:
+        kwargs: dict[str, Any] = {
+            "color": color,
+            "cmap": "magma",
+            "show": False,
+            "return_fig": True,
+            "frameon": False,
+            "title": f"{color}: neighbour-attributable signal",
+        }
+        if point_size is not None:
+            kwargs["size"] = float(point_size)
+        figure = sc.pl.umap(adata, **kwargs)
+        if color in marker_list:
+            marker_index = marker_list.index(color)
+            stem = _marker_plot_stem(marker_index, color)
+        else:
+            stem = f"summary_{_gallery_filename(color)}"
+        path = output_dir / f"scanpy_umap_halo_{stem}.png"
+        figure.savefig(path, dpi=160, bbox_inches="tight")
+        plt.close(figure)
+        paths.append(path)
+    return paths
 
 
 def _plot_population_matrix(
     adata: Any,
     markers: Sequence[str],
     population_obs: str,
-    path: Path,
-) -> Path:
+    output_dir: Path,
+) -> tuple[list[Path], list[str]]:
+    """Write one natively scaled matrix plot per marker with clustered populations."""
+
     import matplotlib.pyplot as plt
     import scanpy as sc
 
+    output_dir.mkdir(parents=True, exist_ok=True)
     plotting = adata.copy()
-    plotting.obs[population_obs] = plotting.obs[population_obs].astype("category")
-    matrix_plot = sc.pl.matrixplot(
-        plotting,
-        var_names=list(markers),
-        groupby=population_obs,
-        use_raw=False,
-        cmap="magma",
-        vmin=0,
-        vmax=1,
-        colorbar_title="Mean neighbour-attributable fraction",
-        show=False,
-        return_fig=True,
+    plotting.obs[population_obs] = (
+        plotting.obs[population_obs].astype("category").cat.remove_unused_categories()
     )
-    matrix_plot.savefig(path, dpi=160, bbox_inches="tight")
-    plt.close("all")
-    return path
+    population_count = int(plotting.obs[population_obs].nunique(dropna=True))
+    profile_markers = [
+        marker
+        for marker in markers
+        if bool(plotting.var.loc[marker, "halo_profile_available"])
+    ]
+    dendrogram_markers = profile_markers or list(markers)
+    warnings: list[str] = []
+    dendrogram_enabled = population_count > 1 and bool(dendrogram_markers)
+    if dendrogram_enabled:
+        try:
+            sc.tl.dendrogram(
+                plotting,
+                groupby=population_obs,
+                var_names=dendrogram_markers,
+                use_raw=False,
+            )
+        except (FloatingPointError, ValueError) as exc:
+            dendrogram_enabled = False
+            warnings.append(
+                "Population dendrogram could not be calculated from neighbour-attributable "
+                f"scores ({exc}); population marker plots use categorical order instead."
+            )
+    else:
+        warnings.append(
+            "Population dendrogram was skipped because fewer than two populated categories "
+            "or no marker features were available."
+        )
+    paths: list[Path] = []
+    for marker_index, marker in enumerate(markers):
+        matrix_plot = sc.pl.matrixplot(
+            plotting,
+            var_names=[marker],
+            groupby=population_obs,
+            use_raw=False,
+            cmap="magma",
+            vmin=0,
+            colorbar_title="Mean neighbour-attributable fraction",
+            dendrogram=dendrogram_enabled,
+            show=False,
+            return_fig=True,
+        )
+        path = output_dir / (
+            "scanpy_population_marker_halo_matrixplot_"
+            f"{_marker_plot_stem(marker_index, marker)}.png"
+        )
+        matrix_plot.savefig(path, dpi=160, bbox_inches="tight")
+        plt.close("all")
+        paths.append(path)
+    return paths, warnings
 
 
 def _plot_source_target_population_heatmaps(
     population_summary: pd.DataFrame,
     markers: Sequence[str],
-    path: Path,
+    output_dir: Path,
     *,
     exclude_same_population: bool,
-) -> Path | None:
+) -> list[Path]:
+    """Write one source-population to target-population heatmap per marker."""
+
     import matplotlib.pyplot as plt
     from matplotlib.patches import Rectangle
 
+    output_dir.mkdir(parents=True, exist_ok=True)
     selected = population_summary.loc[
         population_summary["marker"].astype(str).isin(markers)
     ].copy()
@@ -1658,68 +1766,75 @@ def _plot_source_target_population_heatmaps(
             selected["source_population"].astype(str)
             != selected["target_population"].astype(str)
         ]
-    available_markers = [
-        marker for marker in markers if selected["marker"].astype(str).eq(marker).any()
-    ]
-    if not available_markers:
-        return None
-    columns = min(3, len(available_markers))
-    rows = int(math.ceil(len(available_markers) / columns))
-    fig, axes = plt.subplots(
-        rows,
-        columns,
-        figsize=(5.2 * columns, 4.6 * rows),
-        squeeze=False,
-    )
-    for axis, marker in zip(axes.flat, available_markers, strict=False):
+    paths: list[Path] = []
+    for marker_index, marker in enumerate(markers):
+        fig, axis = plt.subplots(figsize=(6.4, 5.2))
         marker_frame = selected.loc[selected["marker"].astype(str).eq(marker)]
-        matrix = marker_frame.pivot_table(
-            index="source_population",
-            columns="target_population",
-            values="total_attributable_intensity",
-            aggfunc="sum",
-            fill_value=0.0,
-            observed=True,
-        )
-        values = matrix.to_numpy(dtype=float)
-        image = axis.imshow(values, aspect="auto", cmap="magma")
-        axis.set_xticks(np.arange(matrix.shape[1]), matrix.columns.astype(str))
-        axis.set_yticks(np.arange(matrix.shape[0]), matrix.index.astype(str))
-        axis.tick_params(axis="x", rotation=45, labelsize=8)
-        axis.tick_params(axis="y", labelsize=8)
-        axis.set_xlabel("Target population")
-        axis.set_ylabel("Spatial source population")
-        axis.set_title(marker)
-        if not exclude_same_population:
-            column_positions = {
-                str(value): index for index, value in enumerate(matrix.columns)
-            }
-            for row_index, source in enumerate(matrix.index.astype(str)):
-                column_index = column_positions.get(source)
-                if column_index is not None:
-                    axis.add_patch(
-                        Rectangle(
-                            (column_index - 0.5, row_index - 0.5),
-                            1,
-                            1,
-                            fill=False,
-                            edgecolor="#65c7d0",
-                            linewidth=1.5,
+        if marker_frame.empty:
+            axis.axis("off")
+            filter_text = (
+                " after excluding same-population relationships"
+                if exclude_same_population
+                else ""
+            )
+            axis.text(
+                0.5,
+                0.5,
+                f"No source-target population relationships{filter_text}.",
+                ha="center",
+                va="center",
+                transform=axis.transAxes,
+                wrap=True,
+            )
+        else:
+            matrix = marker_frame.pivot_table(
+                index="source_population",
+                columns="target_population",
+                values="total_attributable_intensity",
+                aggfunc="sum",
+                fill_value=0.0,
+                observed=True,
+            )
+            values = matrix.to_numpy(dtype=float)
+            image = axis.imshow(values, aspect="auto", cmap="magma")
+            axis.set_xticks(np.arange(matrix.shape[1]), matrix.columns.astype(str))
+            axis.set_yticks(np.arange(matrix.shape[0]), matrix.index.astype(str))
+            axis.tick_params(axis="x", rotation=45, labelsize=8)
+            axis.tick_params(axis="y", labelsize=8)
+            axis.set_xlabel("Target population")
+            axis.set_ylabel("Spatial source population")
+            if not exclude_same_population:
+                column_positions = {
+                    str(value): index for index, value in enumerate(matrix.columns)
+                }
+                for row_index, source in enumerate(matrix.index.astype(str)):
+                    column_index = column_positions.get(source)
+                    if column_index is not None:
+                        axis.add_patch(
+                            Rectangle(
+                                (column_index - 0.5, row_index - 0.5),
+                                1,
+                                1,
+                                fill=False,
+                                edgecolor="#65c7d0",
+                                linewidth=1.5,
+                            )
                         )
-                    )
-        colorbar = fig.colorbar(image, ax=axis, shrink=0.75)
-        colorbar.set_label("Total attributable intensity")
-    for axis in axes.flat[len(available_markers) :]:
-        axis.axis("off")
-    title_suffix = " (cross-population only)" if exclude_same_population else ""
-    fig.suptitle(
-        "Spatial source population → target population" + title_suffix,
-        y=1.01,
-    )
-    fig.tight_layout()
-    fig.savefig(path, dpi=160, bbox_inches="tight")
-    plt.close(fig)
-    return path
+            colorbar = fig.colorbar(image, ax=axis, shrink=0.75)
+            colorbar.set_label("Total attributable intensity")
+        title_suffix = " (cross-population only)" if exclude_same_population else ""
+        axis.set_title(
+            f"{marker}: spatial source population → target population{title_suffix}"
+        )
+        fig.tight_layout()
+        path = output_dir / (
+            "source_target_population_heatmap_"
+            f"{_marker_plot_stem(marker_index, marker)}.png"
+        )
+        fig.savefig(path, dpi=160, bbox_inches="tight")
+        plt.close(fig)
+        paths.append(path)
+    return paths
 
 
 def _matrix_column(matrix: Any, index: int) -> np.ndarray:
@@ -1732,23 +1847,20 @@ def _matrix_column(matrix: Any, index: int) -> np.ndarray:
 def _plot_expression_comparison(
     adata: Any,
     markers: Sequence[str],
-    path: Path,
-) -> Path:
+    output_dir: Path,
+) -> list[Path]:
+    """Write one classic/original-X/halo comparison per marker."""
+
     import matplotlib.pyplot as plt
 
-    columns = min(3, len(markers))
-    rows = int(math.ceil(len(markers) / columns))
-    fig, axes = plt.subplots(
-        rows,
-        columns,
-        figsize=(5.1 * columns, 4.4 * rows),
-        squeeze=False,
-    )
+    output_dir.mkdir(parents=True, exist_ok=True)
     if adata.n_obs > 20000:
         sampled = np.linspace(0, adata.n_obs - 1, 20000, dtype=int)
     else:
         sampled = np.arange(adata.n_obs)
-    for axis, marker in zip(axes.flat, markers, strict=False):
+    paths: list[Path] = []
+    for axis_index, marker in enumerate(markers):
+        fig, axis = plt.subplots(figsize=(6.4, 5.0))
         marker_index = adata.var_names.get_loc(marker)
         classic = _matrix_column(adata.layers["classic_intensities"], marker_index)[sampled]
         original = _matrix_column(adata.layers["original_X"], marker_index)[sampled]
@@ -1768,14 +1880,18 @@ def _plot_expression_comparison(
         axis.set_title(marker)
         axis.set_xlabel("log1p classic raw-mask intensity")
         axis.set_ylabel("Original X expression/confidence")
-    for axis in axes.flat[len(markers) :]:
-        axis.axis("off")
-    colorbar = fig.colorbar(scatter, ax=list(axes.flat), shrink=0.75)
-    colorbar.set_label("Neighbour-Attributable Fraction")
-    fig.suptitle("Raw mask intensity vs preserved input expression", y=1.01)
-    fig.savefig(path, dpi=160, bbox_inches="tight")
-    plt.close(fig)
-    return path
+        colorbar = fig.colorbar(scatter, ax=axis, shrink=0.75)
+        colorbar.set_label("Neighbour-Attributable Fraction")
+        fig.suptitle("Raw mask intensity vs preserved input expression", y=1.01)
+        fig.tight_layout()
+        output_path = output_dir / (
+            "classic_originalX_halo_comparison_"
+            f"{_marker_plot_stem(axis_index, marker)}.png"
+        )
+        fig.savefig(output_path, dpi=160, bbox_inches="tight")
+        plt.close(fig)
+        paths.append(output_path)
+    return paths
 
 
 def _write_summary(
@@ -1816,7 +1932,8 @@ def _write_summary(
         f"- Markers with learned profiles: {int(marker_summary['halo_profile_available'].sum()):,}",
         f"- Skipped markers: {len(skipped):,}",
         f"- ROI workers: {usage['effective']} (limit {usage['cpu_limit']} from {usage['limit_source']})",
-        f"- Detailed QC markers: {', '.join(selected_markers) if selected_markers else 'none'}",
+        f"- Markers receiving per-marker QC figures: {len(selected_markers):,} "
+        "(the complete AnnData marker axis)",
         f"- Cell-gallery panels: {len(gallery_manifest):,}",
         f"- Source-resolved provenance available: {bool(source_table['available'])}",
         f"- Source-target relationships: {int(source_table['relationships']):,}",
@@ -1909,7 +2026,8 @@ def generate_neighbour_signal_report(
     summaries_dir: Path,
     output_adata_path: Path,
     qc_markers: Sequence[str] | None,
-    max_qc_markers: int,
+    max_qc_markers: int | None,
+    umap_point_size: float | None,
     population_obs: str | None,
     source_target_table: pd.DataFrame,
     source_target_qc_exclude_same_population: bool,
@@ -1961,18 +2079,25 @@ def generate_neighbour_signal_report(
         table.to_csv(path, index=False)
         report.tables.append(path)
 
-    report.figures.extend(_plot_profiles(adata, figures_dir))
-    distribution_path = figures_dir / "neighbour_attributable_score_distributions.png"
-    report.figures.append(_plot_score_distributions(adata, summary, distribution_path))
     selected, selection_warnings = select_qc_markers(adata, qc_markers, max_qc_markers)
     report.warnings.extend(selection_warnings)
-    selection_figure = _plot_exemplar_selection(
-        adata,
-        selected,
-        figures_dir / "automatic_exemplar_selection.png",
+    report.figures.extend(
+        _plot_profiles(adata, figures_dir / "marker_halo_profiles")
     )
-    if selection_figure is not None:
-        report.figures.append(selection_figure)
+    report.figures.extend(
+        _plot_score_distributions(
+            adata,
+            summary,
+            figures_dir / "score_distributions",
+        )
+    )
+    report.figures.extend(
+        _plot_exemplar_selection(
+            adata,
+            selected,
+            figures_dir / "automatic_exemplar_selection",
+        )
+    )
     gallery_manifest = pd.DataFrame()
     if create_cell_galleries:
         if roi_inputs is None:
@@ -2010,8 +2135,13 @@ def generate_neighbour_signal_report(
         )
 
     if "X_umap" in adata.obsm:
-        report.figures.append(
-            _plot_umap(adata, selected, figures_dir / "scanpy_umap_halo_scores.png")
+        report.figures.extend(
+            _plot_umap(
+                adata,
+                selected,
+                figures_dir / "scanpy_umap_halo_scores",
+                point_size=umap_point_size,
+            )
         )
     elif "X_umap" not in adata.obsm:
         report.warnings.append("Skipped Scanpy UMAP QC because adata.obsm['X_umap'] is absent.")
@@ -2021,37 +2151,32 @@ def generate_neighbour_signal_report(
                 f"Skipped population-by-marker QC because adata.obs[{population_obs!r}] is absent."
             )
         elif selected and adata.obs[population_obs].notna().any():
-            report.figures.append(
-                _plot_population_matrix(
-                    adata,
-                    selected,
-                    population_obs,
-                    figures_dir / "scanpy_population_marker_halo_matrixplot.png",
-                )
-            )
-            source_target_heatmap = _plot_source_target_population_heatmaps(
-                population_provenance,
+            population_paths, population_warnings = _plot_population_matrix(
+                adata,
                 selected,
-                figures_dir / "source_target_population_marker_heatmaps.png",
-                exclude_same_population=(
-                    source_target_qc_exclude_same_population
-                ),
+                population_obs,
+                figures_dir / "scanpy_population_marker_halo_matrixplots",
             )
-            if source_target_heatmap is not None:
-                report.figures.append(source_target_heatmap)
-            elif not source_target_table.empty:
-                report.warnings.append(
-                    "Skipped source-to-target population heatmaps because no selected marker "
-                    "had usable relationships after the configured population filter."
+            report.figures.extend(population_paths)
+            report.warnings.extend(population_warnings)
+            report.figures.extend(
+                _plot_source_target_population_heatmaps(
+                    population_provenance,
+                    selected,
+                    figures_dir / "source_target_population_marker_heatmaps",
+                    exclude_same_population=(
+                        source_target_qc_exclude_same_population
+                    ),
                 )
+            )
     else:
         report.warnings.append("Skipped population-by-marker QC because no population observation is configured.")
     if selected and "classic_intensities" in adata.layers:
-        report.figures.append(
+        report.figures.extend(
             _plot_expression_comparison(
                 adata,
                 selected,
-                figures_dir / "classic_originalX_halo_comparison.png",
+                figures_dir / "classic_originalX_halo_comparisons",
             )
         )
     elif "classic_intensities" not in adata.layers:

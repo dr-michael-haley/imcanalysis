@@ -6863,7 +6863,7 @@
           "ui_group": "Resources"
         },
         "qc_markers": {
-          "advice": "Leave unset to select the most affected markers automatically.",
+          "advice": "Retained so older config files still validate; configured values no longer restrict report figures.",
           "anyOf": [
             {
               "items": {
@@ -6876,28 +6876,53 @@
             }
           ],
           "default": null,
-          "description": "Optional ordered markers used in UMAP and expression-comparison QC figures.",
+          "description": "Deprecated compatibility setting; neighbour-signal QC now plots every marker.",
           "level": "advanced",
           "stage": "neighsig",
           "title": "Qc Markers",
           "ui_group": "QC report"
         },
         "max_qc_markers": {
-          "advice": "Profile and score-summary tables still include every marker.",
-          "default": 6,
-          "description": "Maximum automatically selected markers shown in detailed QC figures.",
-          "level": "basic",
-          "maximum": 50,
-          "minimum": 1,
+          "advice": "Retained so older config files still validate; integer values are ignored by report generation.",
+          "anyOf": [
+            {
+              "maximum": 50,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Deprecated compatibility limit; neighbour-signal QC now plots every marker.",
+          "level": "advanced",
           "stage": "neighsig",
           "title": "Max Qc Markers",
-          "type": "integer",
+          "ui_group": "QC report"
+        },
+        "umap_point_size": {
+          "advice": "This is passed to Scanpy as size (the scatter-plot s value); null uses Scanpy's dataset-size-aware default.",
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional point size for every Scanpy neighbour-signal UMAP.",
+          "level": "basic",
+          "stage": "neighsig",
+          "title": "Umap Point Size",
           "ui_group": "QC report"
         },
         "create_cell_galleries": {
           "advice": "Galleries are qualitative model checks and do not change halo profiles or cell scores.",
           "default": true,
-          "description": "Create bounded exemplar, target-source, and automatic-selection image galleries for selected QC markers.",
+          "description": "Create bounded exemplar, target-source, and automatic-selection image galleries for every marker.",
           "level": "basic",
           "stage": "neighsig",
           "title": "Create Cell Galleries",
@@ -6907,7 +6932,7 @@
         "gallery_examples_per_marker": {
           "advice": "Examples cover dominant, competing-source, disagreement, isolated-positive, and self-control cases where available.",
           "default": 6,
-          "description": "Maximum stratified target-cell examples rendered for each selected QC marker.",
+          "description": "Maximum stratified target-cell examples rendered for each marker.",
           "level": "basic",
           "maximum": 12,
           "minimum": 1,

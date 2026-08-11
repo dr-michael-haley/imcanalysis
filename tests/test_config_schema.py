@@ -31,6 +31,8 @@ class ConfigSchemaTests(unittest.TestCase):
             ]["default"],
             True,
         )
+        self.assertIsNone(neighbour_properties["max_qc_markers"]["default"])
+        self.assertIsNone(neighbour_properties["umap_point_size"]["default"])
         self.assertIn("general", schema["properties"])
         self.assertIn("population_embedding_qc", schema["properties"])
         self.assertIn("napari_sbt", schema["properties"])

@@ -143,26 +143,32 @@ If the input already has an `original_X` layer, it is retained under a unique
 
 The managed execution report contains:
 
-- multi-panel empirical halo curves with exemplar IQR, exemplar count, and
-  source threshold;
-- all-marker score distributions and a CSV with median, 90th/95th percentiles,
-  fractions above descriptive 0.25/0.5/0.75 thresholds, exemplar counts, and
-  source thresholds;
+- one empirical halo-curve figure per marker with exemplar IQR, exemplar count,
+  and source threshold; skipped markers receive an explicit unavailable-profile
+  panel with the reason instead of silently disappearing;
+- one score-distribution figure per marker and an all-marker CSV with median,
+  90th/95th percentiles, fractions above descriptive 0.25/0.5/0.75 thresholds,
+  exemplar counts, and source thresholds; all-zero distributions explicitly
+  distinguish unavailable profiles from valid profiles with no attributable
+  cells;
 - long-form profile, selected-exemplar, automatic candidate/selection,
   ROI-background/source-mapping, skipped-marker, and unknown manual-exemplar
   tables;
-- a concise plot of input-X score versus nearest same-marker-positive distance,
-  distinguishing rejected, eligible-unsampled, and selected candidates;
-- Scanpy UMAP panels for a configured or automatically selected small marker
-  set, plus `halo_max_score` and `halo_mean_score`, when `X_umap` exists;
-- a Scanpy population-by-marker matrix plot when a suitable categorical
-  population observation is available;
-- a source-population-to-target-population marker summary and concise heatmaps
-  for the most affected markers, optionally excluding same-population routes;
+- one plot per marker of input-X score versus nearest same-marker-positive
+  distance, distinguishing rejected, eligible-unsampled, and selected
+  candidates;
+- one Scanpy UMAP per marker, plus separate `halo_max_score` and
+  `halo_mean_score` UMAPs, when `X_umap` exists; point size is configurable;
+- one Scanpy population matrix plot per marker when a suitable categorical
+  population observation is available. Populations use a shared dendrogram
+  learned from all available halo-score markers, while each marker uses its own
+  native colour maximum;
+- a source-population-to-target-population marker summary and one heatmap per
+  marker, optionally excluding same-population routes;
 - a dominant-source summary reporting concentration above 50% of attributable
   signal, the median number of contributing sources, and common population
   routes;
-- bounded native-pixel contact sheets for the selected QC markers:
+- bounded native-pixel contact sheets for every marker with suitable examples:
   target-source sheets compare raw signal, observed excess, projected halo,
   attributable signal, residual signal, and the pixelwise winning source;
   exemplar sheets show the source mask, unassigned radial pixels, and the
@@ -172,8 +178,8 @@ The managed execution report contains:
 - `cell_gallery_manifest.csv`, linking every displayed crop to its marker, ROI,
   authoritative AnnData row/cell identifiers, selection category, crop bounds,
   source relationship, and relevant quantitative scores;
-- sampled classic-intensity versus original-`X` plots coloured by the halo
-  score; and
+- one sampled classic-intensity versus original-`X` plot per marker, coloured
+  by the halo score; and
 - a concise interpretation/provenance summary linking the output AnnData and
   CPU allocation.
 
@@ -203,8 +209,7 @@ neighbour_signal:
   halo_aggregation: max
   calculate_classic_intensities: true
   n_jobs: auto
-  qc_markers: null
-  max_qc_markers: 6
+  umap_point_size: null
   create_cell_galleries: true
   gallery_examples_per_marker: 6
   gallery_crop_margin_px: 8
@@ -212,6 +217,10 @@ neighbour_signal:
   source_target_qc_exclude_same_population: true
   high_risk_threshold: 0.5
 ```
+
+Legacy `qc_markers` and `max_qc_markers` values are still accepted so existing
+configuration files validate, but they no longer restrict report generation.
+Every marker on the AnnData axis receives the applicable per-marker QC output.
 
 Source strength is the raw-image anchor quantile. The anchor includes the cell
 mask plus nearby unassigned pixels allocated to their nearest cell, so pixels
@@ -251,7 +260,7 @@ The stage reuses `imc_segmentation`; its existing NumPy, SciPy, tifffile,
 AnnData, Scanpy, pandas, and matplotlib stack covers the analysis. No new
 environment or package is required.
 
-The initial wrapper requests 8 CPUs, 64 GB RAM, and 24 hours on the CPU
+The active wrapper requests 6 CPUs, 256 GB RAM, and 24 hours on the CPU
 high-memory partition. `n_jobs: auto` resolves the available worker count from
 the SLURM allocation, process affinity, and host CPU count. Automatic candidate
 inspection, profile extraction, and profile application are parallelized
@@ -312,6 +321,11 @@ not automatically delete, compensate, or relabel cells from this score alone.
   Review the candidate table, adjust the X cutoff only when justified by its
   measurement scale, increase the per-ROI cap for few-ROI datasets, or use
   `augment`/`manual` with convincing cells across representative ROIs.
+- An all-zero score distribution means either that no reliable marker halo was
+  learned or that a valid learned halo explained no signal in any target cell.
+  Per-marker distribution figures state which case applies; confirm it with
+  `halo_profile_available` and `halo_skip_reason` in the marker metadata table
+  or output AnnData `.var`.
 - An exemplar with no intensity above its local background is invalid and does
   not contribute to the source threshold.
 - Background and source-strength units are raw image units. Strong ROI-level

@@ -227,6 +227,7 @@ def run_pipeline(argv: list[str] | None = None) -> int:
         output_adata_path=output_path,
         qc_markers=settings.qc_markers,
         max_qc_markers=settings.max_qc_markers,
+        umap_point_size=settings.umap_point_size,
         population_obs=settings.population_obs,
         source_target_table=source_target_table,
         source_target_qc_exclude_same_population=(
