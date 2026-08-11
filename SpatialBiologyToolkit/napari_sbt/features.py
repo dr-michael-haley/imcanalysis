@@ -347,6 +347,53 @@ def _measurement_regions(
     )
 
 
+def classifier_seen_mask(
+    full_mask: np.ndarray,
+    eligible_ids: set[int] | list[int] | tuple[int, ...],
+    recipe: SyntheticFeatureRecipe,
+) -> np.ndarray:
+    """Return pixels whose staining can contribute to cohort classification.
+
+    The returned mask always includes the original eligible cell bodies because
+    original-mask shape features may be classifier inputs.  Intensity measurement
+    regions follow the recipe's signed offset and positive-overlap policy.  When
+    region-image features are enabled, their local-background ring is included and
+    excludes every segmented object, exactly as it does during feature extraction.
+    """
+
+    mask = np.asarray(full_mask)
+    eligible = {int(value) for value in eligible_ids if int(value) > 0}
+    original_cohort = np.isin(mask, list(eligible))
+    if not eligible:
+        return np.zeros(mask.shape, dtype=bool)
+
+    if recipe.mask_offset_px > 0 and recipe.allow_positive_offset_overlap:
+        # The union of independent per-object expansions is the distance transform
+        # of the union.  Unlike expand_labels, this intentionally crosses other
+        # segmented objects when overlap is enabled.
+        measurement = distance_transform_edt(~original_cohort) <= float(
+            recipe.mask_offset_px
+        )
+    else:
+        measurement_labels, _vanished = _measurement_labels(
+            mask,
+            eligible,
+            recipe.mask_offset_px,
+        )
+        measurement = np.isin(measurement_labels, list(eligible))
+
+    seen = original_cohort | measurement
+    if recipe.region_features and np.any(measurement):
+        ring = binary_dilation(
+            measurement,
+            iterations=int(recipe.background_ring_px),
+        )
+        ring &= ~measurement
+        ring &= mask == 0
+        seen |= ring
+    return seen
+
+
 def _region_image_features(
     row: dict[str, Any],
     image: np.ndarray,
@@ -817,5 +864,6 @@ __all__ = [
     "add_distribution_features",
     "build_feature_dictionary",
     "build_roi_features",
+    "classifier_seen_mask",
     "gradient_magnitude",
 ]

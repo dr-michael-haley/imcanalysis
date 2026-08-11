@@ -145,6 +145,10 @@ disposition. The Segmentation QC template creates `good` and `artifact`
 classes. Stable class and cohort semantics are locked after confirmed labels
 exist.
 
+The Setup class table renders each colour as a readable swatch. Double-click
+the swatch, or select its row and use **Pick selected colour…**, to open the
+colour picker; the saved hexadecimal value remains visible on the swatch.
+
 ## Feature sources and calculation
 
 Feature work has its own **🧬 Feature Building** tab; it is not required for
@@ -234,9 +238,20 @@ synthetic measurements and imported columns, and requires a new full feature
 build before training or scoring. Three trial ROIs support preliminary
 evaluation; five or more representative ROIs are preferable when feasible.
 
-Every workflow tab includes **Help for this tab**. These dialogs and the
-[`napari_sbt` interface help](napari_sbt_help.md) documentation read the same
-packaged Markdown sources.
+Every workflow tab includes **Help for this tab**, and every coloured workflow
+box has a prominent **❓ Help** button for focused instructions. Numbered box
+titles use larger, heavier type and successive boxes use different accent colours
+to make long panels easier to scan. The complete tab guides, focused box pop-ups,
+and [`napari_sbt` interface help](napari_sbt_help.md) documentation all read the
+same packaged Markdown sources.
+
+The **NapariSBT Readiness** tracker is a separate Napari dock, placed beneath the
+built-in Layers selector on the left by default. It paints an action-start
+message before a synchronous callback begins, shows elapsed time and a heartbeat,
+reports live background-process names and PIDs, and changes to a clear finished
+or failed state. It can be moved, floated, or hidden like any other Napari dock;
+hiding it is respected by subsequent heartbeat updates. The feature-building
+panel retains its more detailed per-ROI progress display.
 
 For large datasets, configure the active experiment and run:
 
@@ -258,10 +273,15 @@ visible; it is hidden by default so it does not obscure staining. The selected
 eligible cell is shown with a configurable outline.
 
 The **Click action** radio buttons control what a viewer click does using the
-currently selected class: **Select only**, **Set proposed on click**, or **Set
-confirmed on click**. Proposed-on-click is the default so cells can be labelled
-rapidly without repeatedly returning to a button, while confirmation remains
-an explicit choice. Class shortcuts continue to change the active class.
+currently selected class: **Select only**, **Set proposed on click**, **Set
+confirmed on click**, or **Clear proposed on click**. A separate **Clear proposed**
+button applies the same action to the selected cell. Clearing is deliberately
+proposal-specific and cannot erase a confirmed label. Proposed-on-click is the
+default so cells can be labelled rapidly without repeatedly returning to a button,
+while confirmation remains an explicit choice. Class shortcuts continue to change
+the active class. **Clear all proposals (all ROIs)…** reports the proposal count,
+requires confirmation, and clears reversible proposals across the experiment while
+preserving every confirmed label.
 
 The live label tally reports proposed and confirmed cells separately for every
 class. Only confirmed labels train the model. HistGradientBoosting uses 20
@@ -295,10 +315,19 @@ shown (capped at 250) and the total number of cells matching the active filters.
 
 **Classifier display & cell-picking options** opens the compact legacy-style
 display panel. It independently controls visibility and opacity for the cohort,
-excluded context, confirmed, proposed, predicted, uncertainty/probability, and
-selected-cell layers. Label layers also expose contour width: zero displays
-filled cells, while positive widths show outlines. Proposed cells default to a
-two-pixel contour, and these settings are retained in the ROI reload recipe.
+excluded context, confirmed, proposed, predicted, uncertainty/probability,
+selected-cell, and `noncontext_mask` layers. Label layers also expose contour
+width: zero displays filled cells, while positive widths show outlines. Proposed
+cells default to a two-pixel contour, and these settings are retained in the ROI
+reload recipe.
+
+`noncontext_mask` is a hidden-by-default, opaque black focus layer. It inverts the
+pixels available to the classifier's cohort: original eligible cell bodies,
+recipe-offset intensity regions, and local-background rings when region-image
+features are enabled remain visible. Positive offsets follow the configured
+overlap policy and background rings exclude all segmented cells. Negative offsets
+do not hide the original cell body because original-mask shape features may still
+be classifier inputs. The layer is rebuilt per ROI and never modifies source masks.
 
 HistGradientBoosting is the default model. Random Forest, XGBoost, and LightGBM
 are explicit alternatives. Scores contain the predicted class, every class
@@ -311,6 +340,47 @@ scores still use the colormap's lowest colour.
 The uncertainty queue ranks ambiguous unlabelled cohort cells. High-confidence
 cells can be bulk-added as proposals for one predicted class. Confirmed labels
 always override predictions.
+
+The Classify pane contains a three-step workflow: **Annotate**, **Train & review
+predictions**, and **Finalize & export**. A display-only minimum/maximum confidence
+range controls which raw argmax predictions appear in `predicted_classes`; it does
+not alter scores or final identities. Queue confidence and bulk-proposal confidence
+remain independent controls for their respective actions.
+
+Final identities use three explicit rules: minimum maximum-class probability,
+maximum normalized entropy, and minimum top-two probability margin. All three must
+pass for a model prediction to be accepted. Confirmed labels take precedence,
+proposals are ignored, and other cohort cells remain unassigned. **Create / refresh
+final cell identities** writes a canonical Parquet table and decision JSON with
+thresholds and counts in the experiment exports folder. Exports are blocked if a
+confirmed label, score, class definition, or threshold changes afterward.
+
+The same pane exports CSV/Parquet, writes an atomic annotated AnnData copy, or—when
+an AnnData object is live in a notebook—applies the annotations to that in-memory
+object without writing its source file. Thresholds and precedence are stored with
+the output provenance.
+
+## Building explicit cell lists with Labeler
+
+The **Labeler** tab reuses Classify's direct mask-based cell picking for tasks that
+do not need a trained model. Define one or more named, coloured labels, choose an
+assign/select/clear click action, and click eligible cells anywhere in the viewer.
+The cohort layer can remain hidden. Labeler assignments are independent from
+classifier proposals and confirmations, and assigning a second label to a cell
+replaces its first Labeler assignment.
+
+The live tally reports cell count, represented eligible ROIs, and current-ROI count
+for every label. Previous/Next controls use the shared ROI ordering. **Next ROI
+without this label** searches forward for an eligible ROI that has not contributed
+a cell to the current label, making balanced visual sampling easier without
+claiming that every biological population must occur in every ROI.
+
+The in-tab results table shows AnnData cell identity, ROI, original mask object ID,
+label name, stable label ID, and assignment time. Results can be atomically exported
+to CSV or explicitly applied as a categorical observation to the live AnnData;
+unlabelled and out-of-cohort cells remain missing. Existing observations require an
+explicit overwrite choice. Labeler data is session-local until one of these actions
+is used, so it does not reintroduce general workspace persistence.
 
 ## Explore, regions, layers, and export
 
@@ -352,6 +422,28 @@ a different review set.
 The **Layers re-added when the ROI changes** list is the explicit reload
 contract. It shows every replayable Explore layer, including its colormap,
 visibility, opacity, applicable contour width, and image contrast limits.
+Switching recipes within one ROI first compares each requested layer with its
+existing reload metadata. Matching image arrays and overlays are reused in place
+and receive only display settings that actually changed. Layers removed by a
+different recipe can be restored from a least-recently-used current-ROI memory
+cache instead of being read or calculated again. The cache is bounded to 48 arrays
+or 512 MiB and is cleared when the ROI or live AnnData inputs are refreshed. Image
+identity includes path, size, and modification time. Changing ROI, source data, or
+the requested semantic overlay still triggers the necessary load or recalculation.
+The working view can be saved as any number of named recipes. Each recipe may
+have one unique F1–F12 shortcut; pressing that key while the Napari viewer has
+keyboard focus immediately activates and renders the recipe for the current ROI
+without moving away from the currently selected workflow tab. The selector provides
+the same switching operation without a shortcut.
+
+**Save current view as new recipe** creates a preset from the complete working
+view. **Update selected recipe from current view** explicitly writes later layer,
+display, name, or shortcut changes back to that preset. The active-status line
+marks unsaved changes as `MODIFIED`; ordinary layer edits never silently overwrite
+the stored recipe. Deleting a preset requires confirmation, unbinds its F-key, and
+does not delete currently displayed layers. Duplicate names and shortcuts are
+rejected.
+
 Select one or more entries and use **Delete/reset selected recipe items** to
 remove Explore entries from both the recipe and the current replayed view;
 selecting a managed classifier entry resets its display settings to the
@@ -367,25 +459,36 @@ immediately. Manual-region and unsupported derived layers remain separately
 managed or are reported as ignored rather than being silently added to the
 recipe.
 
+Recipes persist the actual continuous and direct-label colormap values currently
+used by their Napari layers, not merely the palette assigned when a marker or
+population was first loaded. Loading a named or population recipe therefore
+restores later recolouring. Saving and explicit updating take a final live-layer
+snapshot as protection against colormap changes that a Napari version does not
+emit as a layer event.
+
 The first rendered contrast limits for each image layer are frozen into the
 recipe, even if the contrast slider is not touched. This prevents a channel
 from being automatically rescaled when the next ROI is loaded. Later manual
-contrast changes replace those stored limits.
+contrast changes replace those stored limits. Scalar disk-image channels are
+normalized to 0â€“1, so recipe replay restores the saved contrast handles while
+keeping Napari's slider range at 0â€“1. Do not use Napari's contrast-reset action to
+inspect that scale: reset deliberately replaces the saved handles.
 
 **Save current view for selected population** stores a population-specific
 verification recipe inside the experiment. Selecting that observation and
 population later automatically retrieves the recipe; the explicit load button
-does the same. Only these review recipes and their viewed-ROI sets are stored.
-This is not a general Napari workspace save/load mechanism.
+does the same. Named recipes, population verification recipes, their shortcut
+assignments, and viewed-ROI sets are stored in `explore/review_state.json`. This
+is intentional Explore-view persistence, not a general Napari workspace save/load
+mechanism.
 
 **Use this population as classification cohort** transfers the population
 selector back to Setup and requires a new preview and confirmation.
 
 The **Regions & Export** tab stores manual polygon regions and synchronizes
-their contained cell identities. It exports:
+their contained cell identities. Classification table and AnnData outputs now
+live in **Classify → Finalize & export**. Regions & Export provides:
 
-- a cohort-only assignment table;
-- an atomic annotated AnnData copy;
 - optional cohort-only masks preserving original IDs;
 - optional cleaned masks for classes marked `exclude`.
 

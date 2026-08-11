@@ -83,10 +83,19 @@ remain proposals in this population draft until you review, rename, and apply it
 
 ## Preview, apply, and QC
 
+### Applying a draft
+
 The preview always shows effective cell counts, split coverage, and each explicit
 merge. **Apply draft** adds or refreshes only the derived observation in the live
 working AnnData and refreshes Explore and Classify selectors. Existing columns
 are protected unless the overwrite checkbox is deliberately enabled.
+
+Apply only after reviewing the base mapping, split components, and explicit merge
+list. Use the overwrite checkbox only when intentionally revising the same derived
+observation. Export creates a new AnnData file and refuses to replace an existing
+file.
+
+### Live QC plots
 
 **Show in Explore** renders the same derived observation over the current tissue
 ROI and enables the full-dataset overlay scope, so broad populations outside a
@@ -96,7 +105,10 @@ pop-up shows population means for selected `adata.X` markers and z-scores each
 marker across populations. These plots are quick QC views, not publication
 outputs, and they never recompute the embedding or clustering.
 
-Export writes a new AnnData file and refuses to overwrite an existing file.
+Choose an existing two-dimensional embedding for the scatter plot. Select a small,
+biologically informative marker set for the heat map; regenerate these quick views
+after naming, merging, or subclustering changes to check that the interpretation
+still makes sense in expression and tissue space.
 
 ## Provenance
 

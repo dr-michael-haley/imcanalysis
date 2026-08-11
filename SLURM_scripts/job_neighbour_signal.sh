@@ -2,8 +2,8 @@
 #SBATCH -p himem
 #SBATCH -t 1-0
 #SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
+#SBATCH --cpus-per-task=6
+#SBATCH --mem=256G
 
 #SBATCH --mail-user=${IMC_EMAIL}
 #SBATCH --mail-type=ALL

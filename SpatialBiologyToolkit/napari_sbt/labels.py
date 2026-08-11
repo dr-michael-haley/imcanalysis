@@ -121,6 +121,32 @@ def remove_label(
     return labels.loc[keep, LABEL_COLUMNS].reset_index(drop=True)
 
 
+def remove_proposed_label(
+    labels: pd.DataFrame, *, roi: str, object_number: int
+) -> pd.DataFrame:
+    """Remove one proposed label while leaving confirmed labels untouched."""
+
+    if labels.empty:
+        return empty_labels()
+    remove = (
+        labels["ROI"].astype(str).eq(str(roi))
+        & pd.to_numeric(labels["ObjectNumber"], errors="coerce").eq(
+            int(object_number)
+        )
+        & labels["state"].astype(str).eq("proposed")
+    )
+    return labels.loc[~remove, LABEL_COLUMNS].reset_index(drop=True)
+
+
+def remove_all_proposed_labels(labels: pd.DataFrame) -> pd.DataFrame:
+    """Remove every reversible proposal while preserving confirmed labels."""
+
+    if labels.empty:
+        return empty_labels()
+    keep = ~labels["state"].astype(str).eq("proposed")
+    return labels.loc[keep, LABEL_COLUMNS].reset_index(drop=True)
+
+
 def confirm_proposed(labels: pd.DataFrame) -> pd.DataFrame:
     result = labels.copy()
     result.loc[result["state"] == "proposed", "state"] = "confirmed"
@@ -134,7 +160,9 @@ __all__ = [
     "LABEL_COLUMNS",
     "confirm_proposed",
     "empty_labels",
+    "remove_all_proposed_labels",
     "remove_label",
+    "remove_proposed_label",
     "set_label",
     "validate_labels",
 ]

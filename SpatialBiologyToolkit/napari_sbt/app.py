@@ -6,6 +6,7 @@ import json
 import os
 import sys
 import time
+from collections import OrderedDict
 from collections.abc import Iterable
 from pathlib import Path
 from uuid import uuid4
@@ -40,27 +41,52 @@ from .cohort import (
     save_cohort_snapshot,
     validate_mask_coverage,
 )
+from .explore import (
+    EXPLORE_RECIPE_FUNCTION_KEYS,
+    EXPLORE_STATE_VERSION,
+    SIX_COLOUR_COLORMAPS,
+    ExploreRecipePreset,
+    ExploreReviewState,
+    ExploreViewRecipe,
+    categorical_colour_map,
+    marker_values,
+    population_recipe_key,
+    recipe_layer_data_is_current,
+)
 from .exports import (
+    apply_assignments_to_anndata,
     build_assignment_table,
     export_annotated_anndata,
     export_assignment_table,
     export_cleaned_masks,
     materialize_cohort_masks,
 )
-from .explore import (
-    SIX_COLOUR_COLORMAPS,
-    ExploreReviewState,
-    ExploreViewRecipe,
-    categorical_colour_map,
-    marker_values,
-    population_recipe_key,
-)
 from .feature_catalog import (
     FEATURE_FAMILY_CATALOG,
     FEATURE_FAMILY_DESCRIPTIONS,
 )
+from .features import classifier_seen_mask
 from .feature_refinement import compact_synthetic_recipe
-from .labels import confirm_proposed, empty_labels, set_label, validate_labels
+from .help import load_help_markdown
+from .labeler import (
+    LabelerClass,
+    apply_labeler_to_anndata,
+    build_labeler_export_table,
+    default_labeler_classes,
+    empty_labeler_records,
+    labeler_summary,
+    remove_labeler_record,
+    set_labeler_record,
+    validate_labeler_classes,
+)
+from .labels import (
+    confirm_proposed,
+    empty_labels,
+    remove_all_proposed_labels,
+    remove_proposed_label,
+    set_label,
+    validate_labels,
+)
 from .models import (
     ClassificationClass,
     ExperimentManifest,
@@ -81,7 +107,6 @@ from .population_curation import (
     apply_population_draft,
     atomic_write_curated_anndata,
     component_tables_from_assignments,
-    create_population_draft as create_population_draft_asset,
     empty_components,
     empty_membership,
     ensure_population_workspace,
@@ -97,6 +122,9 @@ from .population_curation import (
     save_population_draft,
     source_obs_fingerprint,
     synthesize_population_labels,
+)
+from .population_curation import (
+    create_population_draft as create_population_draft_asset,
 )
 from .resources import resolve_worker_count
 from .storage import (
@@ -116,10 +144,16 @@ CLASS_LAYER_NAMES = {
 }
 
 SELECTED_CELL_LAYER_NAME = "selected_cell_outline"
+NONCONTEXT_MASK_LAYER_NAME = "noncontext_mask"
+LABELER_LAYER_NAME = "labeler_assignments"
+LABELER_SELECTED_CELL_LAYER_NAME = "labeler_selected_cell_outline"
+EXPLORE_DATA_CACHE_MAX_BYTES = 512 * 1024 * 1024
+EXPLORE_DATA_CACHE_MAX_ITEMS = 48
 
 MANAGED_RECIPE_LAYERS = {
     "classification_cohort": "Eligible-cell classification mask",
     "excluded_segmentation_context": "Excluded-cell segmentation context",
+    NONCONTEXT_MASK_LAYER_NAME: "Classifier: opaque mask outside feature context",
     CLASS_LAYER_NAMES["confirmed"]: "Classifier: confirmed classes",
     CLASS_LAYER_NAMES["proposed"]: "Classifier: proposed classes",
     CLASS_LAYER_NAMES["predicted"]: "Classifier: predicted classes",
@@ -127,35 +161,46 @@ MANAGED_RECIPE_LAYERS = {
         "Classifier: uncertainty or selected-class probability"
     ),
     SELECTED_CELL_LAYER_NAME: "Classifier: currently selected cell",
+    LABELER_LAYER_NAME: "Labeler: assigned cells",
+    LABELER_SELECTED_CELL_LAYER_NAME: "Labeler: currently selected cell",
 }
 
 MANAGED_LAYER_DEFAULT_VISIBILITY = {
     "classification_cohort": False,
     "excluded_segmentation_context": False,
+    NONCONTEXT_MASK_LAYER_NAME: False,
     CLASS_LAYER_NAMES["confirmed"]: True,
     CLASS_LAYER_NAMES["proposed"]: True,
     CLASS_LAYER_NAMES["predicted"]: False,
     CLASS_LAYER_NAMES["uncertainty"]: True,
     SELECTED_CELL_LAYER_NAME: True,
+    LABELER_LAYER_NAME: True,
+    LABELER_SELECTED_CELL_LAYER_NAME: True,
 }
 
 MANAGED_LAYER_DEFAULT_OPACITY = {
     "classification_cohort": 1.0,
     "excluded_segmentation_context": 0.18,
+    NONCONTEXT_MASK_LAYER_NAME: 1.0,
     CLASS_LAYER_NAMES["confirmed"]: 1.0,
     CLASS_LAYER_NAMES["proposed"]: 1.0,
     CLASS_LAYER_NAMES["predicted"]: 1.0,
     CLASS_LAYER_NAMES["uncertainty"]: 1.0,
     SELECTED_CELL_LAYER_NAME: 1.0,
+    LABELER_LAYER_NAME: 1.0,
+    LABELER_SELECTED_CELL_LAYER_NAME: 1.0,
 }
 
 MANAGED_LAYER_DEFAULT_CONTOUR = {
     "classification_cohort": 1,
     "excluded_segmentation_context": 1,
+    NONCONTEXT_MASK_LAYER_NAME: 0,
     CLASS_LAYER_NAMES["confirmed"]: 0,
     CLASS_LAYER_NAMES["proposed"]: 2,
     CLASS_LAYER_NAMES["predicted"]: 1,
     SELECTED_CELL_LAYER_NAME: 2,
+    LABELER_LAYER_NAME: 2,
+    LABELER_SELECTED_CELL_LAYER_NAME: 3,
 }
 
 
@@ -237,10 +282,11 @@ class NapariSBTController:
         images_folders: Iterable[str | Path] = (),
         extra_images_folders: Iterable[str | Path] = (),
     ) -> None:
-        from qtpy.QtCore import QTimer, Qt
+        from qtpy.QtCore import Qt, QTimer
         from qtpy.QtGui import QColor, QFont, QIcon, QPixmap
         from qtpy.QtWidgets import (
             QAbstractItemView,
+            QApplication,
             QButtonGroup,
             QCheckBox,
             QColorDialog,
@@ -250,6 +296,7 @@ class NapariSBTController:
             QDoubleSpinBox,
             QFileDialog,
             QFormLayout,
+            QFrame,
             QGridLayout,
             QGroupBox,
             QHBoxLayout,
@@ -259,8 +306,8 @@ class NapariSBTController:
             QLineEdit,
             QListWidget,
             QMessageBox,
-            QPushButton,
             QProgressBar,
+            QPushButton,
             QRadioButton,
             QScrollArea,
             QSpinBox,
@@ -282,6 +329,8 @@ class NapariSBTController:
 
         self.Qt = Qt
         self.QMessageBox = QMessageBox
+        self.QApplication = QApplication
+        self.QFrame = QFrame
         self.QFileDialog = QFileDialog
         self.QColorDialog = QColorDialog
         self.QDialog = QDialog
@@ -306,12 +355,19 @@ class NapariSBTController:
         self.preview: CohortPreview | None = None
         self.cohort = pd.DataFrame()
         self.labels = empty_labels()
+        self.labeler_classes = default_labeler_classes()
+        self.labeler_records = empty_labeler_records()
+        self._labeler_experiment_id: str | None = None
         self.scores = pd.DataFrame()
+        self.final_assignments = pd.DataFrame()
+        self.final_identity_signature: str | None = None
+        self.final_identity_decision: dict[str, object] = {}
         self.model_bundle = None
         self.current_roi: str | None = None
         self.current_mask: np.ndarray | None = None
         self.current_mask_path: Path | None = None
         self.current_selected_object: int | None = None
+        self.current_labeler_object: int | None = None
         self.feature_process = None
         self.source_validation_process = None
         self.refinement_process = None
@@ -334,10 +390,17 @@ class NapariSBTController:
         self.population_plot_dialogs: list[object] = []
         self.reviewed_rois: set[str] = set()
         self._class_shortcuts: list[str] = []
+        self._explore_recipe_shortcuts: list[str] = []
         self.current_image_paths: dict[str, Path] = {}
         self.explore_recipe = ExploreViewRecipe()
         self.explore_review_state = ExploreReviewState()
         self._explore_layer_names: set[str] = set()
+        self._explore_reused_layer_count = 0
+        self._explore_cached_layer_count = 0
+        self._explore_layer_data_cache: OrderedDict[str, np.ndarray] = OrderedDict()
+        self._explore_layer_data_cache_bytes = 0
+        self._recipe_list_refresh_pending = False
+        self._roi_review_refresh_pending = False
         self._applying_explore_recipe = False
         self._updating_recipe_layer_state = False
         self._updating_queue_controls = False
@@ -349,6 +412,12 @@ class NapariSBTController:
         self._retained_feature_source_columns: dict[
             tuple[str, str, str, str], list[str]
         ] = {}
+        self.activity_state = "idle"
+        self.activity_action = "Ready"
+        self.activity_detail = "No active operation."
+        self.activity_started_at: float | None = None
+        self.activity_finished_at: float | None = None
+        self.activity_waiting_for_process = False
 
         self.root = QWidget()
         self.feature_health_timer = QTimer(self.root)
@@ -361,10 +430,84 @@ class NapariSBTController:
         self.tabs = QTabWidget()
         root_layout.addWidget(self.tabs)
 
+        class WorkflowGroupBox(QGroupBox):
+            """A coloured workflow box with an always-visible help affordance."""
+
+            def __init__(
+                group_self,
+                title: str,
+                *,
+                accent: str,
+                numbered: bool,
+                help_callback,
+            ) -> None:
+                super().__init__(title)
+                group_self.setProperty("sbtWorkflowBox", "true")
+                group_self.setProperty("sbtAccent", accent)
+                group_self.setProperty(
+                    "sbtNumbered", "true" if numbered else "false"
+                )
+                group_self.help_button = QPushButton("❓ Help", group_self)
+                group_self.help_button.setObjectName("sbtBoxHelpButton")
+                group_self.help_button.setCursor(Qt.PointingHandCursor)
+                group_self.help_button.setToolTip(
+                    f"Open focused instructions for: {title}"
+                )
+                group_self.help_button.setAccessibleName(f"Help for {title}")
+                group_self.help_button.setFixedHeight(28)
+                group_self.help_button.setMinimumWidth(88)
+                group_self.help_button.clicked.connect(help_callback)
+                group_self.help_button.raise_()
+                group_self._position_help_button()
+
+            def _position_help_button(group_self) -> None:
+                width = max(
+                    group_self.help_button.minimumWidth(),
+                    group_self.help_button.sizeHint().width(),
+                )
+                group_self.help_button.setGeometry(
+                    max(8, group_self.width() - width - 12),
+                    1,
+                    width,
+                    group_self.help_button.height(),
+                )
+                group_self.help_button.raise_()
+
+            def resizeEvent(group_self, event) -> None:  # noqa: N802 - Qt API
+                super().resizeEvent(event)
+                group_self._position_help_button()
+
+            def showEvent(group_self, event) -> None:  # noqa: N802 - Qt API
+                super().showEvent(event)
+                group_self._position_help_button()
+
+        group_help_counts: dict[str, int] = {}
+        group_help_accents = ("blue", "violet", "teal", "amber", "rose", "cyan")
+
+        def workflow_group(title: str, help_topic: str, help_section: str):
+            accent_index = group_help_counts.get(help_topic, 0)
+            group_help_counts[help_topic] = accent_index + 1
+            stripped_title = title.lstrip()
+            numbered = len(stripped_title) > 1 and stripped_title[0].isdigit()
+            return WorkflowGroupBox(
+                title,
+                accent=group_help_accents[accent_index % len(group_help_accents)],
+                numbered=numbered,
+                help_callback=self._guard(
+                    lambda: self.show_help(
+                        help_topic,
+                        title,
+                        section=help_section,
+                    )
+                ),
+            )
+
         def add_tab(widget, title: str, help_topic: str) -> None:
             help_row = QHBoxLayout()
             help_row.addStretch(1)
             help_button = QPushButton("❓ Help for this tab")
+            help_button.setObjectName("sbtTabHelpButton")
+            help_button.setCursor(Qt.PointingHandCursor)
             help_button.clicked.connect(
                 lambda _checked=False, topic=help_topic, tab_title=title: (
                     self.show_tab_help(topic, tab_title)
@@ -380,7 +523,7 @@ class NapariSBTController:
         # Setup
         setup = QWidget()
         setup_layout = QVBoxLayout(setup)
-        inputs = QGroupBox("Dataset inputs")
+        inputs = workflow_group("Dataset inputs", "setup", "Dataset inputs")
         inputs_form = QFormLayout(inputs)
         self.name_edit = QLineEdit("Cell classification")
         self.anndata_edit = QLineEdit(_path_text(resolved_anndata_path))
@@ -410,7 +553,9 @@ class NapariSBTController:
         inputs_form.addRow("Mask object-ID observation", self.object_obs_edit)
         setup_layout.addWidget(inputs)
 
-        scope_group = QGroupBox("1. Required cell scope")
+        scope_group = workflow_group(
+            "1. Required cell scope", "setup", "Cell scope"
+        )
         scope_grid = QGridLayout(scope_group)
         self.scope_combo = QComboBox()
         self.scope_combo.addItem("All cells", "all_cells")
@@ -435,7 +580,11 @@ class NapariSBTController:
         scope_grid.addWidget(self.preview_text, 4, 0, 1, 3)
         setup_layout.addWidget(scope_group)
 
-        trial_group = QGroupBox("2. Experiment mode and feature-discovery ROIs")
+        trial_group = workflow_group(
+            "2. Experiment mode and feature-discovery ROIs",
+            "setup",
+            "Full experiment or Feature Discovery Trial",
+        )
         trial_form = QFormLayout(trial_group)
         self.experiment_mode_combo = QComboBox()
         self.experiment_mode_combo.addItem("Full experiment", "full")
@@ -468,22 +617,41 @@ class NapariSBTController:
         trial_form.addRow("Trial scope", self.trial_roi_summary)
         setup_layout.addWidget(trial_group)
 
-        class_group = QGroupBox("3. Mutually exclusive classes (2–8)")
+        class_group = workflow_group(
+            "3. Mutually exclusive classes (2–8)", "setup", "Classes"
+        )
         class_layout = QVBoxLayout(class_group)
         self.class_table = QTableWidget(0, 5)
         self.class_table.setHorizontalHeaderLabels(
-            ["Stable ID", "Name", "Colour", "Shortcut", "Mask disposition"]
+            [
+                "Stable ID",
+                "Name",
+                "Colour (double-click)",
+                "Shortcut",
+                "Mask disposition",
+            ]
         )
         self.class_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        class_colour_help = QLabel(
+            "Each class colour is shown as a swatch. Double-click a swatch, or "
+            "select its row and use the colour-picker button."
+        )
+        class_colour_help.setWordWrap(True)
         class_buttons = QHBoxLayout()
         self.add_class_button = QPushButton("Add class")
         self.remove_class_button = QPushButton("Remove selected class")
+        self.pick_class_colour_button = QPushButton("🎨 Pick selected colour…")
+        self.pick_class_colour_button.setToolTip(
+            "Choose the display colour for the selected class."
+        )
         self.qc_template_button = QPushButton("Segmentation QC template")
         self.apply_classes_button = QPushButton("Apply class edits")
         class_buttons.addWidget(self.add_class_button)
         class_buttons.addWidget(self.remove_class_button)
+        class_buttons.addWidget(self.pick_class_colour_button)
         class_buttons.addWidget(self.qc_template_button)
         class_buttons.addWidget(self.apply_classes_button)
+        class_layout.addWidget(class_colour_help)
         class_layout.addWidget(self.class_table)
         class_layout.addLayout(class_buttons)
         setup_layout.addWidget(class_group)
@@ -500,7 +668,9 @@ class NapariSBTController:
         feature_builder = QWidget()
         feature_builder_layout = QVBoxLayout(feature_builder)
 
-        source_group = QGroupBox("1. Imported feature sources")
+        source_group = workflow_group(
+            "1. Imported feature sources", "feature_building", "Imported sources"
+        )
         source_form = QFormLayout(source_group)
         self.feature_tables_edit = QTextEdit()
         self.feature_tables_edit.setPlaceholderText(
@@ -543,7 +713,9 @@ class NapariSBTController:
         source_form.addRow("Validation results", self.source_validation_table)
         feature_builder_layout.addWidget(source_group)
 
-        channel_group = QGroupBox("2. IMC channels")
+        channel_group = workflow_group(
+            "2. IMC channels", "feature_building", "IMC channels"
+        )
         channel_layout = QVBoxLayout(channel_group)
         channel_explanation = QLabel(
             "Select channels from the AnnData panel and discovered ROI images. "
@@ -573,7 +745,9 @@ class NapariSBTController:
         channel_layout.addWidget(self.channels_edit)
         feature_builder_layout.addWidget(channel_group)
 
-        feature_group = QGroupBox("3. Synthetic feature recipe")
+        feature_group = workflow_group(
+            "3. Synthetic feature recipe", "feature_building", "Synthetic features"
+        )
         feature_form = QFormLayout(feature_group)
         self.offset_spin = QSpinBox()
         self.offset_spin.setRange(-1000, 1000)
@@ -673,7 +847,11 @@ class NapariSBTController:
         )
         feature_builder_layout.addWidget(feature_group)
 
-        progress_group = QGroupBox("4. Build progress and process health")
+        progress_group = workflow_group(
+            "4. Build progress and process health",
+            "feature_building",
+            "Execution and progress",
+        )
         progress_layout = QVBoxLayout(progress_group)
         self.feature_progress_bar = QProgressBar()
         self.feature_progress_bar.setRange(0, 100)
@@ -726,7 +904,9 @@ class NapariSBTController:
         refinement_intro.setWordWrap(True)
         refinement_layout.addWidget(refinement_intro)
 
-        readiness_group = QGroupBox("1. Trial readiness")
+        readiness_group = workflow_group(
+            "1. Trial readiness", "feature_refinement", "Readiness"
+        )
         readiness_layout = QVBoxLayout(readiness_group)
         self.refinement_scope_label = QLabel(
             "Create or load a Feature Discovery Trial first."
@@ -747,7 +927,9 @@ class NapariSBTController:
         readiness_layout.addWidget(self.refinement_class_table)
         refinement_layout.addWidget(readiness_group)
 
-        refine_controls_group = QGroupBox("2. Grouped evaluation settings")
+        refine_controls_group = workflow_group(
+            "2. Grouped evaluation settings", "feature_refinement", "Evaluation"
+        )
         refine_controls = QFormLayout(refine_controls_group)
         self.refine_candidate_spin = QSpinBox()
         self.refine_candidate_spin.setRange(10, 2000)
@@ -786,7 +968,9 @@ class NapariSBTController:
         )
         refinement_layout.addWidget(refine_controls_group)
 
-        refinement_progress_group = QGroupBox("3. Analysis progress")
+        refinement_progress_group = workflow_group(
+            "3. Analysis progress", "feature_refinement", "Analysis progress"
+        )
         refinement_progress_layout = QVBoxLayout(refinement_progress_group)
         self.refinement_progress_bar = QProgressBar()
         self.refinement_progress_bar.setRange(0, 100)
@@ -812,7 +996,11 @@ class NapariSBTController:
         refinement_progress_layout.addLayout(refinement_actions)
         refinement_layout.addWidget(refinement_progress_group)
 
-        refinement_results_group = QGroupBox("4. Recommended feature set")
+        refinement_results_group = workflow_group(
+            "4. Recommended feature set",
+            "feature_refinement",
+            "Choosing and promoting features",
+        )
         refinement_results_layout = QVBoxLayout(refinement_results_group)
         self.refinement_metrics_label = QLabel("No refinement results yet.")
         self.refinement_metrics_label.setWordWrap(True)
@@ -899,15 +1087,59 @@ class NapariSBTController:
         layer_actions.addWidget(self.delete_all_layers_button)
         explore_layout.addLayout(layer_actions)
 
-        reload_recipe_group = QGroupBox("Layers re-added when the ROI changes")
+        reload_recipe_group = workflow_group(
+            "Layers re-added when the ROI changes",
+            "explore",
+            "ROI reload recipe",
+        )
         reload_recipe_layout = QVBoxLayout(reload_recipe_group)
         self.reload_recipe_help = QLabel(
-            "This is the exact ROI reload recipe. Classifier layers are "
+            "Save multiple named recipes and optionally assign each one a unique "
+            "F1–F12 shortcut. The list below is the exact active ROI reload "
+            "recipe. Classifier layers are "
             "regenerated from labels and scores, while their visible/hidden "
             "state, opacity, contour style, and image contrast limits are "
             "replayed from this list."
         )
         self.reload_recipe_help.setWordWrap(True)
+        preset_selector = QWidget()
+        preset_selector_layout = QHBoxLayout(preset_selector)
+        preset_selector_layout.setContentsMargins(0, 0, 0, 0)
+        self.recipe_preset_combo = QComboBox()
+        self.recipe_preset_combo.setMinimumWidth(230)
+        self.load_recipe_preset_button = QPushButton("Load selected recipe")
+        preset_selector_layout.addWidget(self.recipe_preset_combo, 1)
+        preset_selector_layout.addWidget(self.load_recipe_preset_button)
+        preset_editor = QWidget()
+        preset_editor_layout = QHBoxLayout(preset_editor)
+        preset_editor_layout.setContentsMargins(0, 0, 0, 0)
+        self.recipe_preset_name_edit = QLineEdit()
+        self.recipe_preset_name_edit.setPlaceholderText(
+            "e.g. T-cell verification"
+        )
+        self.recipe_preset_shortcut_combo = QComboBox()
+        self.recipe_preset_shortcut_combo.addItem("No F-key", None)
+        for shortcut in EXPLORE_RECIPE_FUNCTION_KEYS:
+            self.recipe_preset_shortcut_combo.addItem(shortcut, shortcut)
+        preset_editor_layout.addWidget(QLabel("Name"))
+        preset_editor_layout.addWidget(self.recipe_preset_name_edit, 1)
+        preset_editor_layout.addWidget(QLabel("Shortcut"))
+        preset_editor_layout.addWidget(self.recipe_preset_shortcut_combo)
+        preset_actions = QHBoxLayout()
+        self.save_new_recipe_preset_button = QPushButton(
+            "Save current view as new recipe"
+        )
+        self.update_recipe_preset_button = QPushButton(
+            "Update selected recipe from current view"
+        )
+        self.delete_recipe_preset_button = QPushButton("Delete selected recipe…")
+        preset_actions.addWidget(self.save_new_recipe_preset_button)
+        preset_actions.addWidget(self.update_recipe_preset_button)
+        preset_actions.addWidget(self.delete_recipe_preset_button)
+        self.active_recipe_preset_label = QLabel(
+            "Working view is not saved as a named recipe."
+        )
+        self.active_recipe_preset_label.setWordWrap(True)
         self.reload_recipe_list = QListWidget()
         self.reload_recipe_list.setSelectionMode(
             QAbstractItemView.ExtendedSelection
@@ -923,11 +1155,19 @@ class NapariSBTController:
         reload_recipe_actions.addWidget(self.delete_recipe_items_button)
         reload_recipe_actions.addWidget(self.update_recipe_from_layers_button)
         reload_recipe_layout.addWidget(self.reload_recipe_help)
+        reload_recipe_layout.addWidget(preset_selector)
+        reload_recipe_layout.addWidget(preset_editor)
+        reload_recipe_layout.addLayout(preset_actions)
+        reload_recipe_layout.addWidget(self.active_recipe_preset_label)
         reload_recipe_layout.addWidget(self.reload_recipe_list)
         reload_recipe_layout.addLayout(reload_recipe_actions)
         explore_layout.addWidget(reload_recipe_group)
 
-        overlay_group = QGroupBox("AnnData overlays and population-to-cohort transfer")
+        overlay_group = workflow_group(
+            "AnnData overlays and population-to-cohort transfer",
+            "explore",
+            "AnnData and population overlays",
+        )
         overlay_form = QFormLayout(overlay_group)
         self.overlay_obs_combo = QComboBox()
         self.overlay_full_dataset_check = QCheckBox(
@@ -980,7 +1220,11 @@ class NapariSBTController:
         population_view_actions_layout.addWidget(self.load_population_view_button)
         overlay_form.addRow("Population verification view", population_view_actions)
         explore_layout.addWidget(overlay_group)
-        image_group = QGroupBox("Raw, extra, greyscale, and multicolour images")
+        image_group = workflow_group(
+            "Raw, extra, greyscale, and multicolour images",
+            "explore",
+            "Image channels",
+        )
         image_layout = QVBoxLayout(image_group)
         self.image_coverage_label = QLabel("No ROI images discovered yet.")
         self.image_coverage_label.setWordWrap(True)
@@ -1001,6 +1245,7 @@ class NapariSBTController:
         image_layout.addLayout(image_actions)
         explore_layout.addWidget(image_group)
         add_tab(explore, "🔬 Explore", "explore")
+        self.explore_tab_index = self.tabs.count() - 1
 
         # Population Curation
         populations = QWidget()
@@ -1013,8 +1258,10 @@ class NapariSBTController:
         populations_intro.setWordWrap(True)
         populations_layout.addWidget(populations_intro)
 
-        population_workspace_group = QGroupBox(
-            "1. Source-locked workspace and derived observations"
+        population_workspace_group = workflow_group(
+            "1. Source-locked workspace and derived observations",
+            "populations",
+            "1. Source workspace and drafts",
         )
         population_workspace_form = QFormLayout(population_workspace_group)
         self.curation_source_combo = QComboBox()
@@ -1122,7 +1369,11 @@ class NapariSBTController:
 
         split_page = QWidget()
         split_layout = QVBoxLayout(split_page)
-        split_controls = QGroupBox("Batch-correction-preserving Scanpy subclustering")
+        split_controls = workflow_group(
+            "Batch-correction-preserving Scanpy subclustering",
+            "populations",
+            "Subclusters",
+        )
         split_form = QFormLayout(split_controls)
         split_explanation = QLabel(
             "Default: isolate the selected cells, rebuild their neighbours from "
@@ -1260,7 +1511,11 @@ class NapariSBTController:
         self.population_merge_preview = QTextEdit()
         self.population_merge_preview.setReadOnly(True)
         self.population_merge_preview.setMinimumHeight(220)
-        population_apply_group = QGroupBox("Apply to the live working AnnData")
+        population_apply_group = workflow_group(
+            "Apply to the live working AnnData",
+            "populations",
+            "Applying a draft",
+        )
         population_apply_form = QFormLayout(population_apply_group)
         self.population_overwrite_check = QCheckBox(
             "Allow replacing an existing derived obs with the same name"
@@ -1288,7 +1543,11 @@ class NapariSBTController:
         preview_layout.addWidget(self.population_merge_preview)
         preview_layout.addWidget(population_apply_group)
 
-        qc_group = QGroupBox("Live QC plots (simple, regenerable pop-ups)")
+        qc_group = workflow_group(
+            "Live QC plots (simple, regenerable pop-ups)",
+            "populations",
+            "Live QC plots",
+        )
         qc_form = QFormLayout(qc_group)
         self.population_embedding_combo = QComboBox()
         self.population_marker_list = QListWidget()
@@ -1335,34 +1594,54 @@ class NapariSBTController:
         # Classify
         classify = QWidget()
         classify_layout = QVBoxLayout(classify)
-        selection_group = QGroupBox("Selected cell annotation")
+        classify_intro = QLabel(
+            "Work left to right: annotate cells, train and review the raw model "
+            "predictions, then apply explicit decision thresholds to create final "
+            "cell identities and export them."
+        )
+        classify_intro.setWordWrap(True)
+        classify_layout.addWidget(classify_intro)
+        self.classify_workflow_tabs = QTabWidget()
+        classify_layout.addWidget(self.classify_workflow_tabs)
+
+        annotation_page = QWidget()
+        annotation_page_layout = QVBoxLayout(annotation_page)
+        selection_group = workflow_group(
+            "1. Selected-cell annotation and proposals",
+            "classify",
+            "Cell annotation",
+        )
         selection_form = QFormLayout(selection_group)
         self.selected_cell_label = QLabel("No cohort cell selected")
         self.cell_picking_help = QLabel(
             "Click any eligible cell in the viewer while this Classify tab is "
             "active. The selected click action is applied using the current "
             "class. The classification_cohort layer may remain hidden and does "
-            "not need to be selected."
+            "not need to be selected. Clear proposed removes only reversible "
+            "proposals and will not erase confirmed labels."
         )
         self.cell_picking_help.setWordWrap(True)
         self.class_combo = QComboBox()
         click_behavior_widget = QWidget()
-        click_behavior_layout = QHBoxLayout(click_behavior_widget)
+        click_behavior_layout = QGridLayout(click_behavior_widget)
         click_behavior_layout.setContentsMargins(0, 0, 0, 0)
         self.click_behavior_group = QButtonGroup(click_behavior_widget)
         self.click_behavior_radios = {}
-        for behavior, text in (
-            ("select", "Select only"),
-            ("proposed", "Set proposed on click"),
-            ("confirmed", "Set confirmed on click"),
+        for index, (behavior, text) in enumerate(
+            (
+                ("select", "Select only"),
+                ("proposed", "Set proposed on click"),
+                ("confirmed", "Set confirmed on click"),
+                ("clear_proposed", "Clear proposed on click"),
+            )
         ):
             radio = QRadioButton(text)
             radio.setProperty("napari_sbt_click_behavior", behavior)
             self.click_behavior_group.addButton(radio)
             self.click_behavior_radios[behavior] = radio
-            click_behavior_layout.addWidget(radio)
+            click_behavior_layout.addWidget(radio, index // 2, index % 2)
         self.click_behavior_radios["proposed"].setChecked(True)
-        click_behavior_layout.addStretch(1)
+        click_behavior_layout.setColumnStretch(2, 1)
         self.classifier_display_button = QPushButton(
             "Classifier display & cell-picking options..."
         )
@@ -1382,19 +1661,32 @@ class NapariSBTController:
             )
         self.class_tally_table.setMaximumHeight(210)
         annotation_buttons = QWidget()
-        annotation_layout = QHBoxLayout(annotation_buttons)
+        annotation_layout = QGridLayout(annotation_buttons)
         annotation_layout.setContentsMargins(0, 0, 0, 0)
         self.propose_button = QPushButton("Set proposed")
         self.confirm_button = QPushButton("Set confirmed")
+        self.clear_proposed_button = QPushButton("Clear proposed")
+        self.clear_proposed_button.setToolTip(
+            "Remove the selected cell's proposed label; confirmed labels are protected."
+        )
+        self.clear_all_proposals_button = QPushButton(
+            "Clear all proposals (all ROIs)…"
+        )
+        self.clear_all_proposals_button.setToolTip(
+            "Remove every proposed label in this experiment after confirmation; "
+            "confirmed labels are protected."
+        )
         self.confirm_proposed_button = QPushButton("Confirm all proposals")
         self.mark_reviewed_button = QPushButton("Mark current ROI reviewed")
         self.seed_obs_button = QPushButton(
             "Seed matching classes as proposals from overlay observation"
         )
-        annotation_layout.addWidget(self.propose_button)
-        annotation_layout.addWidget(self.confirm_button)
-        annotation_layout.addWidget(self.confirm_proposed_button)
-        annotation_layout.addWidget(self.mark_reviewed_button)
+        annotation_layout.addWidget(self.propose_button, 0, 0)
+        annotation_layout.addWidget(self.confirm_button, 0, 1)
+        annotation_layout.addWidget(self.clear_proposed_button, 0, 2)
+        annotation_layout.addWidget(self.confirm_proposed_button, 1, 0, 1, 2)
+        annotation_layout.addWidget(self.mark_reviewed_button, 1, 2)
+        annotation_layout.addWidget(self.clear_all_proposals_button, 2, 0, 1, 3)
         selection_form.addRow("Cell", self.selected_cell_label)
         selection_form.addRow("Picking", self.cell_picking_help)
         selection_form.addRow("Class", self.class_combo)
@@ -1403,8 +1695,17 @@ class NapariSBTController:
         selection_form.addRow("Label tally", self.class_tally_table)
         selection_form.addRow("", self.classifier_display_button)
         selection_form.addRow("", self.seed_obs_button)
-        classify_layout.addWidget(selection_group)
-        model_group = QGroupBox("Model and active-learning queues")
+        annotation_page_layout.addWidget(selection_group)
+        annotation_page_layout.addStretch(1)
+        self.classify_workflow_tabs.addTab(annotation_page, "1. Annotate")
+
+        prediction_page = QWidget()
+        prediction_page_layout = QVBoxLayout(prediction_page)
+        model_group = workflow_group(
+            "2. Model and active-learning queues",
+            "classify",
+            "Models and active-learning queues",
+        )
         model_form = QFormLayout(model_group)
         self.model_combo = QComboBox()
         for name, key in (
@@ -1466,18 +1767,315 @@ class NapariSBTController:
         model_form.addRow("Queue filters (ROI/class/review/conf.)", queue_filters)
         model_form.addRow("Queue result", self.queue_result_label)
         model_form.addRow("Ambiguous unlabelled cells", self.queue_list)
-        model_form.addRow("High-confidence threshold", self.confidence_spin)
+        model_form.addRow("Bulk-proposal minimum confidence", self.confidence_spin)
         model_form.addRow("", self.bulk_propose_button)
         model_form.addRow("Probability class", self.probability_class_combo)
         model_form.addRow("", self.show_probability_button)
-        classify_layout.addWidget(model_group)
+        prediction_page_layout.addWidget(model_group)
+
+        prediction_display_group = workflow_group(
+            "3. Predicted-class display controls",
+            "classify",
+            "Prediction display controls",
+        )
+        prediction_display_form = QFormLayout(prediction_display_group)
+        prediction_display_explanation = QLabel(
+            "This range changes only which raw argmax predictions are visible in "
+            "the predicted_classes layer. It does not alter scores or decide final "
+            "cell identities."
+        )
+        prediction_display_explanation.setWordWrap(True)
+        prediction_range = QWidget()
+        prediction_range_layout = QHBoxLayout(prediction_range)
+        prediction_range_layout.setContentsMargins(0, 0, 0, 0)
+        self.prediction_review_min_confidence_spin = QDoubleSpinBox()
+        self.prediction_review_min_confidence_spin.setRange(0, 1)
+        self.prediction_review_min_confidence_spin.setSingleStep(0.05)
+        self.prediction_review_min_confidence_spin.setValue(0)
+        self.prediction_review_max_confidence_spin = QDoubleSpinBox()
+        self.prediction_review_max_confidence_spin.setRange(0, 1)
+        self.prediction_review_max_confidence_spin.setSingleStep(0.05)
+        self.prediction_review_max_confidence_spin.setValue(1)
+        prediction_range_layout.addWidget(QLabel("Minimum"))
+        prediction_range_layout.addWidget(
+            self.prediction_review_min_confidence_spin
+        )
+        prediction_range_layout.addWidget(QLabel("Maximum"))
+        prediction_range_layout.addWidget(
+            self.prediction_review_max_confidence_spin
+        )
+        self.apply_prediction_review_button = QPushButton(
+            "Apply range to predicted-class layer"
+        )
+        self.reset_prediction_review_button = QPushButton("Show all predictions")
+        prediction_display_actions = QWidget()
+        prediction_display_actions_layout = QHBoxLayout(prediction_display_actions)
+        prediction_display_actions_layout.setContentsMargins(0, 0, 0, 0)
+        prediction_display_actions_layout.addWidget(
+            self.apply_prediction_review_button
+        )
+        prediction_display_actions_layout.addWidget(
+            self.reset_prediction_review_button
+        )
+        self.prediction_review_summary_label = QLabel(
+            "Score the cohort to review predicted-class coverage."
+        )
+        self.prediction_review_summary_label.setWordWrap(True)
+        prediction_display_form.addRow(prediction_display_explanation)
+        prediction_display_form.addRow("Visible confidence range", prediction_range)
+        prediction_display_form.addRow("", prediction_display_actions)
+        prediction_display_form.addRow("Layer coverage", self.prediction_review_summary_label)
+        prediction_page_layout.addWidget(prediction_display_group)
+        prediction_page_layout.addStretch(1)
+        self.classify_workflow_tabs.addTab(
+            prediction_page, "2. Train & review predictions"
+        )
+
+        finalize_page = QWidget()
+        finalize_page_layout = QVBoxLayout(finalize_page)
+        final_group = workflow_group(
+            "4. Final identity decision rules",
+            "classify",
+            "Final identities and export",
+        )
+        final_form = QFormLayout(final_group)
+        final_explanation = QLabel(
+            "A model prediction becomes a final identity only when it passes all "
+            "three rules below. Confirmed labels always override the model; proposed "
+            "labels are never final. Raw scores remain available if you change these "
+            "rules later."
+        )
+        final_explanation.setWordWrap(True)
+        self.final_min_confidence_spin = QDoubleSpinBox()
+        self.final_min_confidence_spin.setRange(0, 1)
+        self.final_min_confidence_spin.setSingleStep(0.05)
+        self.final_min_confidence_spin.setValue(0.9)
+        self.final_max_uncertainty_spin = QDoubleSpinBox()
+        self.final_max_uncertainty_spin.setRange(0, 1)
+        self.final_max_uncertainty_spin.setSingleStep(0.05)
+        self.final_max_uncertainty_spin.setValue(1.0)
+        self.final_min_margin_spin = QDoubleSpinBox()
+        self.final_min_margin_spin.setRange(0, 1)
+        self.final_min_margin_spin.setSingleStep(0.05)
+        self.final_min_margin_spin.setValue(0.0)
+        self.create_final_identities_button = QPushButton(
+            "Create / refresh final cell identities"
+        )
+        self.create_final_identities_button.setObjectName("sbtPrimaryActionButton")
+        self.final_identity_summary_label = QLabel(
+            "Not created. Set the rules, then create final identities before export."
+        )
+        self.final_identity_summary_label.setWordWrap(True)
+        final_form.addRow(final_explanation)
+        final_form.addRow("Minimum model confidence", self.final_min_confidence_spin)
+        final_form.addRow("Maximum normalized entropy", self.final_max_uncertainty_spin)
+        final_form.addRow("Minimum top-two probability margin", self.final_min_margin_spin)
+        final_form.addRow("", self.create_final_identities_button)
+        final_form.addRow("Final identity status", self.final_identity_summary_label)
+        finalize_page_layout.addWidget(final_group)
+
+        final_export_group = workflow_group(
+            "5. Export final identities",
+            "classify",
+            "Final identities and export",
+        )
+        final_export_form = QFormLayout(final_export_group)
+        self.assignment_path_edit = QLineEdit(
+            str(self.project_root / "napari_sbt_final_identities.csv")
+        )
+        self.annotated_path_edit = QLineEdit(
+            str(self.project_root / "napari_sbt_annotated.h5ad")
+        )
+        self.export_assignments_button = QPushButton("Export final identities CSV")
+        self.export_adata_button = QPushButton("Export annotated AnnData copy")
+        self.apply_live_adata_button = QPushButton(
+            "Apply to live AnnData object (memory only)…"
+        )
+        final_export_form.addRow("CSV/Parquet destination", self.assignment_path_edit)
+        final_export_form.addRow("Annotated AnnData destination", self.annotated_path_edit)
+        final_export_form.addRow("", self.export_assignments_button)
+        final_export_form.addRow("", self.export_adata_button)
+        final_export_form.addRow("", self.apply_live_adata_button)
+        finalize_page_layout.addWidget(final_export_group)
+        finalize_page_layout.addStretch(1)
+        self.classify_workflow_tabs.addTab(finalize_page, "3. Finalize & export")
         add_tab(classify, "🏷 Classify", "classify")
         self.classify_tab_index = self.tabs.count() - 1
+
+        # Labeler
+        labeler = QWidget()
+        labeler_layout = QVBoxLayout(labeler)
+        labeler_intro = QLabel(
+            "Build simple, mutually exclusive cell lists without training a "
+            "classifier. Labeler uses the active experiment's frozen cohort and "
+            "the same direct cell-picking behaviour as Classify. Assignments stay "
+            "in memory until you export them or apply them to the live AnnData."
+        )
+        labeler_intro.setWordWrap(True)
+        labeler_layout.addWidget(labeler_intro)
+
+        label_definition_group = workflow_group(
+            "1. Define labels", "labeler", "Define labels"
+        )
+        label_definition_layout = QVBoxLayout(label_definition_group)
+        self.labeler_class_table = QTableWidget(0, 3)
+        self.labeler_class_table.setHorizontalHeaderLabels(
+            ["Stable ID", "Name", "Colour (double-click)"]
+        )
+        self.labeler_class_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.Stretch
+        )
+        self.labeler_class_table.setMaximumHeight(180)
+        label_definition_buttons = QHBoxLayout()
+        self.add_labeler_class_button = QPushButton("Add label")
+        self.remove_labeler_class_button = QPushButton("Remove selected label")
+        self.pick_labeler_colour_button = QPushButton("Pick selected colour...")
+        self.apply_labeler_classes_button = QPushButton("Apply label edits")
+        label_definition_buttons.addWidget(self.add_labeler_class_button)
+        label_definition_buttons.addWidget(self.remove_labeler_class_button)
+        label_definition_buttons.addWidget(self.pick_labeler_colour_button)
+        label_definition_buttons.addWidget(self.apply_labeler_classes_button)
+        label_definition_layout.addWidget(self.labeler_class_table)
+        label_definition_layout.addLayout(label_definition_buttons)
+        labeler_layout.addWidget(label_definition_group)
+
+        label_cells_group = workflow_group(
+            "2. Label cells", "labeler", "Label cells"
+        )
+        label_cells_form = QFormLayout(label_cells_group)
+        self.labeler_selected_cell_label = QLabel("No cohort cell selected")
+        labeler_picking_help = QLabel(
+            "While Labeler is active, click any eligible cell in the viewer. "
+            "The cohort layer can remain hidden and does not need to be selected."
+        )
+        labeler_picking_help.setWordWrap(True)
+        self.labeler_class_combo = QComboBox()
+        labeler_click_widget = QWidget()
+        labeler_click_layout = QHBoxLayout(labeler_click_widget)
+        labeler_click_layout.setContentsMargins(0, 0, 0, 0)
+        self.labeler_click_behavior_group = QButtonGroup(labeler_click_widget)
+        self.labeler_click_behavior_radios = {}
+        for behavior, text in (
+            ("assign", "Assign selected label"),
+            ("select", "Select only"),
+            ("clear", "Clear label"),
+        ):
+            radio = QRadioButton(text)
+            radio.setProperty("napari_sbt_labeler_click_behavior", behavior)
+            self.labeler_click_behavior_group.addButton(radio)
+            self.labeler_click_behavior_radios[behavior] = radio
+            labeler_click_layout.addWidget(radio)
+        self.labeler_click_behavior_radios["assign"].setChecked(True)
+        labeler_click_layout.addStretch(1)
+        labeler_annotation_buttons = QWidget()
+        labeler_annotation_layout = QHBoxLayout(labeler_annotation_buttons)
+        labeler_annotation_layout.setContentsMargins(0, 0, 0, 0)
+        self.assign_labeler_cell_button = QPushButton("Assign selected label")
+        self.clear_labeler_cell_button = QPushButton("Clear selected cell label")
+        self.clear_all_labeler_button = QPushButton("Clear all labels...")
+        labeler_annotation_layout.addWidget(self.assign_labeler_cell_button)
+        labeler_annotation_layout.addWidget(self.clear_labeler_cell_button)
+        labeler_annotation_layout.addWidget(self.clear_all_labeler_button)
+        label_cells_form.addRow("Cell", self.labeler_selected_cell_label)
+        label_cells_form.addRow("Picking", labeler_picking_help)
+        label_cells_form.addRow("Current label", self.labeler_class_combo)
+        label_cells_form.addRow("Click action", labeler_click_widget)
+        label_cells_form.addRow("", labeler_annotation_buttons)
+        labeler_layout.addWidget(label_cells_group)
+
+        sampling_group = workflow_group(
+            "3. ROI sampling guidance", "labeler", "ROI sampling guidance"
+        )
+        sampling_form = QFormLayout(sampling_group)
+        self.labeler_roi_combo = QComboBox()
+        labeler_roi_buttons = QWidget()
+        labeler_roi_buttons_layout = QHBoxLayout(labeler_roi_buttons)
+        labeler_roi_buttons_layout.setContentsMargins(0, 0, 0, 0)
+        self.previous_labeler_roi_button = QPushButton("Previous ROI")
+        self.next_labeler_roi_button = QPushButton("Next ROI")
+        self.next_unsampled_labeler_roi_button = QPushButton(
+            "Next ROI without this label"
+        )
+        labeler_roi_buttons_layout.addWidget(self.previous_labeler_roi_button)
+        labeler_roi_buttons_layout.addWidget(self.next_labeler_roi_button)
+        labeler_roi_buttons_layout.addWidget(self.next_unsampled_labeler_roi_button)
+        self.labeler_tally_table = QTableWidget(0, 4)
+        self.labeler_tally_table.setHorizontalHeaderLabels(
+            ["Label", "Cells", "ROIs sampled", "In current ROI"]
+        )
+        self.labeler_tally_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.labeler_tally_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.labeler_tally_table.verticalHeader().setVisible(False)
+        self.labeler_tally_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.Stretch
+        )
+        for column in (1, 2, 3):
+            self.labeler_tally_table.horizontalHeader().setSectionResizeMode(
+                column, QHeaderView.ResizeToContents
+            )
+        self.labeler_tally_table.setMaximumHeight(210)
+        self.labeler_sampling_summary_label = QLabel(
+            "Create or load an experiment to begin ROI sampling."
+        )
+        self.labeler_sampling_summary_label.setWordWrap(True)
+        sampling_form.addRow("ROI", self.labeler_roi_combo)
+        sampling_form.addRow("", labeler_roi_buttons)
+        sampling_form.addRow("Coverage", self.labeler_tally_table)
+        sampling_form.addRow("Sampling status", self.labeler_sampling_summary_label)
+        labeler_layout.addWidget(sampling_group)
+
+        labeler_export_group = workflow_group(
+            "4. Results and export", "labeler", "Results and export"
+        )
+        labeler_export_layout = QVBoxLayout(labeler_export_group)
+        self.labeler_results_table = QTableWidget(0, 6)
+        self.labeler_results_table.setHorizontalHeaderLabels(
+            ["AnnData cell", "ROI", "ObjectNumber", "Label", "Stable ID", "Time"]
+        )
+        self.labeler_results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.labeler_results_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeToContents
+        )
+        self.labeler_results_table.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.Stretch
+        )
+        self.labeler_results_table.setMaximumHeight(260)
+        labeler_export_form = QFormLayout()
+        self.labeler_csv_path_edit = QLineEdit(
+            str(self.project_root / "napari_sbt_cell_labels.csv")
+        )
+        labeler_csv_destination = QWidget()
+        labeler_csv_destination_layout = QHBoxLayout(labeler_csv_destination)
+        labeler_csv_destination_layout.setContentsMargins(0, 0, 0, 0)
+        self.choose_labeler_csv_button = QPushButton("Choose...")
+        self.export_labeler_csv_button = QPushButton("Export CSV")
+        labeler_csv_destination_layout.addWidget(self.labeler_csv_path_edit)
+        labeler_csv_destination_layout.addWidget(self.choose_labeler_csv_button)
+        labeler_csv_destination_layout.addWidget(self.export_labeler_csv_button)
+        self.labeler_obs_name_edit = QLineEdit("napari_sbt_labels")
+        self.labeler_overwrite_obs_check = QCheckBox(
+            "Allow explicit overwrite if this obs already exists"
+        )
+        self.apply_labeler_to_adata_button = QPushButton(
+            "Apply as categorical obs to live AnnData..."
+        )
+        labeler_export_form.addRow("CSV destination", labeler_csv_destination)
+        labeler_export_form.addRow("AnnData obs name", self.labeler_obs_name_edit)
+        labeler_export_form.addRow("", self.labeler_overwrite_obs_check)
+        labeler_export_form.addRow("", self.apply_labeler_to_adata_button)
+        labeler_export_layout.addWidget(self.labeler_results_table)
+        labeler_export_layout.addLayout(labeler_export_form)
+        labeler_layout.addWidget(labeler_export_group)
+        labeler_layout.addStretch(1)
+        add_tab(labeler, "📍 Labeler", "labeler")
+        self.labeler_tab_index = self.tabs.count() - 1
 
         # Regions & Export
         regions = QWidget()
         regions_layout = QVBoxLayout(regions)
-        region_group = QGroupBox("Manual tissue regions")
+        region_group = workflow_group(
+            "Manual tissue regions", "regions_export", "Manual tissue regions"
+        )
         region_form = QFormLayout(region_group)
         self.region_name_edit = QLineEdit("region")
         self.create_regions_button = QPushButton("Create/select regions layer")
@@ -1486,18 +2084,18 @@ class NapariSBTController:
         region_form.addRow("", self.create_regions_button)
         region_form.addRow("", self.sync_regions_button)
         regions_layout.addWidget(region_group)
-        export_group = QGroupBox("Cohort results")
-        export_form = QFormLayout(export_group)
-        self.annotated_path_edit = QLineEdit(
-            str(self.project_root / "napari_sbt_annotated.h5ad")
+        export_group = workflow_group(
+            "Derived mask exports", "regions_export", "Cohort results and exports"
         )
-        self.export_assignments_button = QPushButton("Export assignment table")
-        self.export_adata_button = QPushButton("Export annotated AnnData copy")
+        export_form = QFormLayout(export_group)
+        classification_export_note = QLabel(
+            "Create and export classification identities from Classify → "
+            "Finalize & export. This panel contains only derived mask outputs."
+        )
+        classification_export_note.setWordWrap(True)
         self.export_cohort_masks_button = QPushButton("Export cohort masks")
         self.export_clean_masks_button = QPushButton("Export cleaned masks")
-        export_form.addRow("Annotated AnnData destination", self.annotated_path_edit)
-        export_form.addRow("", self.export_assignments_button)
-        export_form.addRow("", self.export_adata_button)
+        export_form.addRow(classification_export_note)
         export_form.addRow("", self.export_cohort_masks_button)
         export_form.addRow("", self.export_clean_masks_button)
         regions_layout.addWidget(export_group)
@@ -1506,7 +2104,11 @@ class NapariSBTController:
         # Layers & Status
         layers = QWidget()
         layers_layout = QVBoxLayout(layers)
-        utility_group = QGroupBox("Selected-layer utilities")
+        utility_group = workflow_group(
+            "Selected-layer utilities",
+            "layers_status",
+            "Selected-layer utilities",
+        )
         utility_layout = QGridLayout(utility_group)
         self.colormap_combo = QComboBox()
         self.colormap_combo.addItems(
@@ -1547,6 +2149,94 @@ class NapariSBTController:
         add_tab(layers, "🎨 Layers & Status", "layers_status")
         self.tabs.setStyleSheet(
             """
+            QGroupBox[sbtWorkflowBox="true"] {
+                border: 2px solid #94a3b8;
+                border-radius: 9px;
+                margin-top: 20px;
+                padding: 15px 10px 10px 10px;
+            }
+            QGroupBox[sbtWorkflowBox="true"]::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 10px;
+                padding: 4px 9px;
+                border: 1px solid #64748b;
+                border-radius: 5px;
+                background-color: #e2e8f0;
+                color: #0f172a;
+                font-size: 14px;
+                font-weight: 700;
+            }
+            QGroupBox[sbtNumbered="true"]::title {
+                padding: 5px 10px;
+                font-size: 16px;
+                font-weight: 800;
+            }
+            QGroupBox[sbtAccent="blue"] { border-color: #60a5fa; }
+            QGroupBox[sbtAccent="blue"]::title {
+                border-color: #3b82f6;
+                background-color: #dbeafe;
+                color: #1e3a8a;
+            }
+            QGroupBox[sbtAccent="violet"] { border-color: #a78bfa; }
+            QGroupBox[sbtAccent="violet"]::title {
+                border-color: #8b5cf6;
+                background-color: #ede9fe;
+                color: #4c1d95;
+            }
+            QGroupBox[sbtAccent="teal"] { border-color: #2dd4bf; }
+            QGroupBox[sbtAccent="teal"]::title {
+                border-color: #14b8a6;
+                background-color: #ccfbf1;
+                color: #134e4a;
+            }
+            QGroupBox[sbtAccent="amber"] { border-color: #fbbf24; }
+            QGroupBox[sbtAccent="amber"]::title {
+                border-color: #f59e0b;
+                background-color: #fef3c7;
+                color: #78350f;
+            }
+            QGroupBox[sbtAccent="rose"] { border-color: #fb7185; }
+            QGroupBox[sbtAccent="rose"]::title {
+                border-color: #f43f5e;
+                background-color: #ffe4e6;
+                color: #881337;
+            }
+            QGroupBox[sbtAccent="cyan"] { border-color: #22d3ee; }
+            QGroupBox[sbtAccent="cyan"]::title {
+                border-color: #06b6d4;
+                background-color: #cffafe;
+                color: #164e63;
+            }
+            QPushButton#sbtBoxHelpButton,
+            QPushButton#sbtTabHelpButton {
+                border: 1px solid #1d4ed8;
+                border-radius: 6px;
+                padding: 4px 10px;
+                background-color: #2563eb;
+                color: #ffffff;
+                font-weight: 800;
+            }
+            QPushButton#sbtBoxHelpButton:hover,
+            QPushButton#sbtTabHelpButton:hover {
+                background-color: #1d4ed8;
+                border-color: #bfdbfe;
+            }
+            QPushButton#sbtBoxHelpButton:pressed,
+            QPushButton#sbtTabHelpButton:pressed {
+                background-color: #1e3a8a;
+            }
+            QPushButton#sbtPrimaryActionButton {
+                background-color: #047857;
+                color: white;
+                font-weight: 800;
+                padding: 7px 12px;
+                border: 2px solid #6ee7b7;
+                border-radius: 5px;
+            }
+            QPushButton#sbtPrimaryActionButton:hover {
+                background-color: #065f46;
+            }
             QTabBar::tab {
                 color: #202124;
                 border: 1px solid #9aa0a6;
@@ -1562,6 +2252,7 @@ class NapariSBTController:
             QTabBar::tab:nth-child(6) { background: #e0f2fe; }
             QTabBar::tab:nth-child(7) { background: #ecfccb; }
             QTabBar::tab:nth-child(8) { background: #f1f5f9; }
+            QTabBar::tab:nth-child(9) { background: #ffedd5; }
             QTabBar::tab:selected {
                 font-weight: bold;
                 border: 2px solid #5f6368;
@@ -1582,11 +2273,46 @@ class NapariSBTController:
             "#4d7c0f",
             "#0369a1",
             "#475569",
+            "#c2410c",
         )
         for index, colour in enumerate(tab_text_colours):
             self.tabs.tabBar().setTabTextColor(index, self.QColor(colour))
 
+        # This widget is installed in its own Napari dock by ``launch``.  Keeping
+        # it parentless here lets QDockWidget take ownership without leaving a
+        # floating overlay inside the main workflow panel.
+        self.activity_widget = QFrame()
+        self.activity_dock = None
+        self.activity_widget.setObjectName("sbtActivityPanel")
+        self.activity_widget.setMinimumWidth(240)
+        self.activity_widget.setMinimumHeight(82)
+        self.activity_widget.setStyleSheet(
+            "QFrame#sbtActivityPanel { background: rgba(25, 31, 42, 235); "
+            "border: 2px solid #60a5fa; border-radius: 8px; } "
+            "QLabel { color: white; background: transparent; }"
+        )
+        activity_layout = QVBoxLayout(self.activity_widget)
+        activity_layout.setContentsMargins(10, 7, 10, 7)
+        activity_layout.setSpacing(2)
+        self.activity_title_label = QLabel("● Ready")
+        self.activity_title_label.setWordWrap(True)
+        activity_title_font = QFont(self.activity_title_label.font())
+        activity_title_font.setBold(True)
+        self.activity_title_label.setFont(activity_title_font)
+        self.activity_detail_label = QLabel("No active operation.")
+        self.activity_detail_label.setWordWrap(True)
+        activity_layout.addWidget(self.activity_title_label)
+        activity_layout.addWidget(self.activity_detail_label)
+        self.activity_widget.adjustSize()
+        self.activity_timer = QTimer(self.root)
+        self.activity_timer.setInterval(1000)
+        self.activity_timer.timeout.connect(self._update_activity_monitor)
+        self.activity_timer.start()
+        self._update_activity_monitor()
+
         self._set_class_rows(segmentation_qc_classes())
+        self._set_labeler_class_rows(self.labeler_classes)
+        self._refresh_labeler_controls()
         self._connect_signals()
         self._bind_viewer_cell_picking()
         for family, checkbox in self.feature_family_checks.items():
@@ -1601,6 +2327,7 @@ class NapariSBTController:
             self.load_anndata_selectors()
 
     def _connect_signals(self) -> None:
+        self.tabs.currentChanged.connect(self._workflow_tab_changed)
         self.load_adata_button.clicked.connect(self._guard(self.load_anndata_selectors))
         self.obs_combo.currentTextChanged.connect(self._guard(self.refresh_scope_values))
         self.scope_combo.currentIndexChanged.connect(self._update_scope_widget_state)
@@ -1625,7 +2352,29 @@ class NapariSBTController:
         )
         self.add_class_button.clicked.connect(self.add_class_row)
         self.remove_class_button.clicked.connect(self.remove_class_row)
+        self.pick_class_colour_button.clicked.connect(
+            self._guard(self.pick_selected_class_colour)
+        )
+        self.class_table.cellDoubleClicked.connect(
+            self._guard(self.pick_class_colour_from_cell, pass_signal_args=True)
+        )
         self.apply_classes_button.clicked.connect(self._guard(self.apply_class_edits))
+        self.add_labeler_class_button.clicked.connect(self.add_labeler_class_row)
+        self.remove_labeler_class_button.clicked.connect(
+            self._guard(self.remove_labeler_class_row)
+        )
+        self.pick_labeler_colour_button.clicked.connect(
+            self._guard(self.pick_selected_labeler_colour)
+        )
+        self.labeler_class_table.cellDoubleClicked.connect(
+            self._guard(
+                self.pick_labeler_colour_from_cell,
+                pass_signal_args=True,
+            )
+        )
+        self.apply_labeler_classes_button.clicked.connect(
+            self._guard(self.apply_labeler_class_edits)
+        )
         self.create_button.clicked.connect(self._guard(self.create_experiment))
         self.load_experiment_button.clicked.connect(
             self._guard(self.choose_and_load_experiment)
@@ -1689,6 +2438,17 @@ class NapariSBTController:
         self.next_roi_button.clicked.connect(
             lambda: self.move_roi(1)
         )
+        self.labeler_roi_combo.currentTextChanged.connect(
+            self._guard(self.load_labeler_roi, pass_signal_args=True)
+        )
+        self.previous_labeler_roi_button.clicked.connect(lambda: self.move_roi(-1))
+        self.next_labeler_roi_button.clicked.connect(lambda: self.move_roi(1))
+        self.next_unsampled_labeler_roi_button.clicked.connect(
+            self._guard(self.move_to_next_unsampled_labeler_roi)
+        )
+        self.labeler_class_combo.currentIndexChanged.connect(
+            self._refresh_labeler_tally
+        )
         self.show_empty_rois.toggled.connect(self._guard(self.refresh_rois))
         self.context_check_display.toggled.connect(self.toggle_context)
         self.auto_reload_view_check.toggled.connect(
@@ -1704,6 +2464,21 @@ class NapariSBTController:
         )
         self.update_recipe_from_layers_button.clicked.connect(
             self._guard(self.update_recipe_from_current_layers)
+        )
+        self.recipe_preset_combo.currentIndexChanged.connect(
+            self._recipe_preset_selection_changed
+        )
+        self.load_recipe_preset_button.clicked.connect(
+            self._guard(self.load_selected_recipe_preset)
+        )
+        self.save_new_recipe_preset_button.clicked.connect(
+            self._guard(self.save_new_recipe_preset)
+        )
+        self.update_recipe_preset_button.clicked.connect(
+            self._guard(self.update_selected_recipe_preset)
+        )
+        self.delete_recipe_preset_button.clicked.connect(
+            self._guard(self.delete_selected_recipe_preset)
         )
         self.overlay_obs_combo.currentTextChanged.connect(
             lambda: self.set_status("Overlay selection changed.")
@@ -1828,8 +2603,18 @@ class NapariSBTController:
         self.refresh_population_provenance_button.clicked.connect(
             self._guard(self.refresh_population_provenance)
         )
-        self.propose_button.clicked.connect(lambda: self.annotate_selected("proposed"))
-        self.confirm_button.clicked.connect(lambda: self.annotate_selected("confirmed"))
+        self.propose_button.clicked.connect(
+            self._guard(lambda: self.annotate_selected("proposed"))
+        )
+        self.confirm_button.clicked.connect(
+            self._guard(lambda: self.annotate_selected("confirmed"))
+        )
+        self.clear_proposed_button.clicked.connect(
+            self._guard(self.clear_selected_proposed)
+        )
+        self.clear_all_proposals_button.clicked.connect(
+            self._guard(self.clear_all_proposals)
+        )
         self.classifier_display_button.clicked.connect(
             self._guard(self.show_classifier_display_options)
         )
@@ -1852,6 +2637,42 @@ class NapariSBTController:
         self.bulk_propose_button.clicked.connect(self._guard(self.bulk_propose))
         self.show_probability_button.clicked.connect(
             self._guard(self.show_selected_probability)
+        )
+        self.apply_prediction_review_button.clicked.connect(
+            self._guard(self.apply_prediction_review_filter)
+        )
+        self.reset_prediction_review_button.clicked.connect(
+            self._guard(self.reset_prediction_review_filter)
+        )
+        for threshold_signal in (
+            self.final_min_confidence_spin.valueChanged,
+            self.final_max_uncertainty_spin.valueChanged,
+            self.final_min_margin_spin.valueChanged,
+        ):
+            threshold_signal.connect(self._mark_final_identities_stale)
+        self.create_final_identities_button.clicked.connect(
+            self._guard(self.create_final_identities)
+        )
+        self.apply_live_adata_button.clicked.connect(
+            self._guard(self.apply_final_identities_to_live_anndata)
+        )
+        self.assign_labeler_cell_button.clicked.connect(
+            self._guard(self.assign_selected_labeler_cell)
+        )
+        self.clear_labeler_cell_button.clicked.connect(
+            self._guard(self.clear_selected_labeler_cell)
+        )
+        self.clear_all_labeler_button.clicked.connect(
+            self._guard(self.clear_all_labeler_records)
+        )
+        self.choose_labeler_csv_button.clicked.connect(
+            self._guard(self.choose_labeler_csv_destination)
+        )
+        self.export_labeler_csv_button.clicked.connect(
+            self._guard(self.export_labeler_csv)
+        )
+        self.apply_labeler_to_adata_button.clicked.connect(
+            self._guard(self.apply_labeler_records_to_live_anndata)
         )
         self.create_regions_button.clicked.connect(self._guard(self.create_regions_layer))
         self.sync_regions_button.clicked.connect(self._guard(self.sync_regions))
@@ -1883,43 +2704,233 @@ class NapariSBTController:
 
     def _guard(self, callback, *, pass_signal_args: bool = False):
         def wrapped(*args, **kwargs):
+            action = str(getattr(callback, "__name__", "Action"))
+            if action == "<lambda>":
+                action = "Interface action"
+            action = action.replace("_", " ").strip().capitalize()
+            monitor_ready = hasattr(self, "activity_widget")
+            if monitor_ready:
+                self._activity_begin(action)
             try:
                 if pass_signal_args:
-                    return callback(*args, **kwargs)
-                return callback()
+                    result = callback(*args, **kwargs)
+                else:
+                    result = callback()
             except Exception as exc:  # noqa: BLE001 - Qt callback error boundary
+                if monitor_ready:
+                    self._activity_finish(False, f"{type(exc).__name__}: {exc}")
                 self.set_status(f"ERROR — {type(exc).__name__}: {exc}")
                 self.QMessageBox.critical(
                     self.root, "napari_sbt", f"{type(exc).__name__}: {exc}"
                 )
                 return None
+            if monitor_ready and self._active_background_processes():
+                self.activity_waiting_for_process = True
+                self._activity_update("Background Python process is running.")
+            elif monitor_ready:
+                self._activity_finish(True, "Completed.")
+            return result
 
         return wrapped
 
     def set_status(self, message: str) -> None:
         self.status_text.append(str(message))
         self.scope_label.setToolTip(str(message))
+        if getattr(self, "activity_state", "idle") == "running":
+            self._activity_update(str(message))
 
-    def show_tab_help(self, topic: str, title: str) -> None:
-        """Show documentation-backed help for one workflow tab."""
+    def _process_is_running(self, process) -> bool:
+        if process is None:
+            return False
+        try:
+            state = process.state()
+            state_value = getattr(state, "value", state)
+            return int(state_value) != 0
+        except (AttributeError, TypeError, ValueError, RuntimeError):
+            return False
 
-        help_path = Path(__file__).with_name("help") / f"{topic}.md"
-        if not help_path.is_file():
-            raise FileNotFoundError(f"Tab help is missing: {help_path}")
+    def _active_background_processes(self) -> list[tuple[str, object]]:
+        processes = (
+            ("feature build", self.feature_process),
+            ("feature-source validation", self.source_validation_process),
+            ("feature refinement", self.refinement_process),
+            ("population subclustering", self.population_process),
+        )
+        return [
+            (name, process)
+            for name, process in processes
+            if self._process_is_running(process)
+        ]
+
+    def _activity_begin(self, action: str, detail: str = "Action started…") -> None:
+        self.activity_state = "running"
+        self.activity_action = str(action)
+        self.activity_detail = str(detail)
+        self.activity_started_at = time.monotonic()
+        self.activity_finished_at = None
+        self.activity_waiting_for_process = False
+        self._update_activity_monitor()
+        self.QApplication.processEvents()
+
+    def _activity_update(self, detail: str) -> None:
+        self.activity_detail = str(detail)
+        self._update_activity_monitor()
+
+    def _activity_finish(self, success: bool, detail: str) -> None:
+        self.activity_state = "complete" if success else "error"
+        self.activity_detail = str(detail)
+        self.activity_finished_at = time.monotonic()
+        self.activity_waiting_for_process = False
+        self._update_activity_monitor()
+
+    def install_readiness_dock(self):
+        """Install the activity tracker below Napari's layer list when possible."""
+
+        if self.activity_dock is not None:
+            return self.activity_dock
+        add_dock_widget = getattr(
+            getattr(self.viewer, "window", None), "add_dock_widget", None
+        )
+        if not callable(add_dock_widget):
+            return None
+        self.activity_dock = add_dock_widget(
+            self.activity_widget,
+            name="NapariSBT Readiness",
+            area="left",
+            add_vertical_stretch=False,
+            tabify=False,
+        )
+        self._position_readiness_dock()
+        return self.activity_dock
+
+    def _position_readiness_dock(self) -> None:
+        """Prefer a compact slot directly beneath Napari's built-in Layers dock."""
+
+        if self.activity_dock is None:
+            return
+        window = getattr(self.viewer, "window", None)
+        qt_window = getattr(window, "_qt_window", None)
+        if qt_window is None:
+            return
+
+        qt_viewer = getattr(qt_window, "_qt_viewer", None)
+        layer_dock = getattr(qt_viewer, "dockLayerList", None)
+        if layer_dock is None:
+            # Napari's public docking API is stable, but the attribute holding
+            # its built-in layer list has changed across releases.  Fall back
+            # to matching the dock title/object name before giving up on the
+            # preferred placement; the readiness dock itself remains usable.
+            from qtpy.QtWidgets import QDockWidget
+
+            for candidate in qt_window.findChildren(QDockWidget):
+                if candidate is self.activity_dock:
+                    continue
+                candidate_name = " ".join(
+                    (
+                        str(candidate.objectName() or ""),
+                        str(candidate.windowTitle() or ""),
+                    )
+                ).strip().casefold()
+                if "layer list" in candidate_name or candidate_name == "layers":
+                    layer_dock = candidate
+                    break
+        if layer_dock is None:
+            return
+
+        orientation = getattr(getattr(self.Qt, "Orientation", self.Qt), "Vertical")
+        qt_window.splitDockWidget(layer_dock, self.activity_dock, orientation)
+        qt_window.resizeDocks(
+            [layer_dock, self.activity_dock],
+            [10000, 130],
+            orientation,
+        )
+
+    def _update_activity_monitor(self) -> None:
+        if not hasattr(self, "activity_widget"):
+            return
+        active = self._active_background_processes()
+        if (
+            self.activity_state == "running"
+            and self.activity_waiting_for_process
+            and not active
+        ):
+            self._activity_finish(True, "Background computation finished.")
+            return
+        elapsed = (
+            max(0.0, time.monotonic() - self.activity_started_at)
+            if self.activity_started_at is not None
+            else 0.0
+        )
+        if self.activity_state == "running":
+            process_text = ""
+            if active:
+                names = ", ".join(name for name, _process in active)
+                pids = []
+                for _name, process in active:
+                    try:
+                        pid = int(process.processId())
+                    except (AttributeError, TypeError, ValueError, RuntimeError):
+                        pid = 0
+                    if pid:
+                        pids.append(str(pid))
+                pid_text = f"; PID {', '.join(pids)}" if pids else ""
+                process_text = f"\nLive: {names}{pid_text}"
+            self.activity_title_label.setText(
+                f"● Working — {self.activity_action} ({elapsed:.0f}s)"
+            )
+            self.activity_title_label.setStyleSheet("color: #93c5fd;")
+            self.activity_detail_label.setText(
+                f"{self.activity_detail}{process_text}\nHeartbeat: live"
+            )
+        elif self.activity_state == "error":
+            self.activity_title_label.setText(f"● Failed — {self.activity_action}")
+            self.activity_title_label.setStyleSheet("color: #fca5a5;")
+            self.activity_detail_label.setText(self.activity_detail)
+        elif self.activity_state == "complete":
+            self.activity_title_label.setText(f"● Finished — {self.activity_action}")
+            self.activity_title_label.setStyleSheet("color: #86efac;")
+            self.activity_detail_label.setText(self.activity_detail)
+            if (
+                self.activity_finished_at is not None
+                and time.monotonic() - self.activity_finished_at > 8
+            ):
+                self.activity_state = "idle"
+        else:
+            self.activity_title_label.setText("● Ready")
+            self.activity_title_label.setStyleSheet("color: #cbd5e1;")
+            self.activity_detail_label.setText("No active operation.")
+        self.activity_widget.adjustSize()
+
+    def show_help(
+        self,
+        topic: str,
+        title: str,
+        *,
+        section: str | None = None,
+    ) -> None:
+        """Show a complete tab guide or one focused external Markdown section."""
+
+        markdown = load_help_markdown(topic, section)
         dialog = self.QDialog(self.root)
-        dialog.setWindowTitle(f"napari_sbt help — {title}")
-        dialog.resize(820, 680)
+        prefix = "Focused help" if section else "Tab help"
+        dialog.setWindowTitle(f"napari_sbt {prefix} — {title}")
+        dialog.resize(760 if section else 820, 560 if section else 680)
         from qtpy.QtWidgets import QVBoxLayout
 
         layout = QVBoxLayout(dialog)
         browser = self.QTextBrowser(dialog)
         browser.setOpenExternalLinks(True)
-        browser.setMarkdown(help_path.read_text(encoding="utf-8"))
+        browser.setMarkdown(markdown)
         buttons = self.QDialogButtonBox(self.QDialogButtonBox.Close, parent=dialog)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(browser)
         layout.addWidget(buttons)
         dialog.exec()
+
+    def show_tab_help(self, topic: str, title: str) -> None:
+        """Show documentation-backed help for one workflow tab."""
+
+        self.show_help(topic, title)
 
     def _set_classification_enabled(self, enabled: bool) -> None:
         for widget in (
@@ -1927,13 +2938,29 @@ class NapariSBTController:
             *self.click_behavior_radios.values(),
             self.propose_button,
             self.confirm_button,
+            self.clear_proposed_button,
+            self.clear_all_proposals_button,
             self.confirm_proposed_button,
             self.train_button,
             self.score_button,
             self.refresh_queue_button,
             self.bulk_propose_button,
+            self.apply_prediction_review_button,
+            self.reset_prediction_review_button,
+            self.create_final_identities_button,
             self.export_assignments_button,
             self.export_adata_button,
+            self.apply_live_adata_button,
+            self.labeler_class_combo,
+            *self.labeler_click_behavior_radios.values(),
+            self.assign_labeler_cell_button,
+            self.clear_labeler_cell_button,
+            self.clear_all_labeler_button,
+            self.previous_labeler_roi_button,
+            self.next_labeler_roi_button,
+            self.next_unsampled_labeler_roi_button,
+            self.export_labeler_csv_button,
+            self.apply_labeler_to_adata_button,
             self.export_cohort_masks_button,
             self.export_clean_masks_button,
             self.import_current_classifier_components_button,
@@ -2033,6 +3060,9 @@ class NapariSBTController:
     def _populate_anndata_selectors(self, *, source: str) -> None:
         if self.adata is None:
             raise RuntimeError("No AnnData object is available.")
+        # Any live AnnData mutation can change observation or marker overlays.
+        # Drop cached derived arrays before rebuilding their selectors.
+        self._clear_explore_layer_data_cache()
         columns = [str(column) for column in self.adata.obs.columns]
         selector_combos = (
             self.obs_combo,
@@ -3132,6 +4162,7 @@ class NapariSBTController:
         self.run_population_subcluster_button.setEnabled(True)
         self.cancel_population_subcluster_button.setEnabled(False)
         if process_cancelled:
+            self._activity_finish(False, "Population subclustering was cancelled.")
             if self.population_workspace_paths is not None and self.population_draft:
                 append_population_audit(
                     self.population_workspace_paths,
@@ -3144,6 +4175,9 @@ class NapariSBTController:
             Path(output_folder) / "assignments.csv" if output_folder else None
         )
         if exit_code != 0 or assignments_path is None or not assignments_path.is_file():
+            self._activity_finish(
+                False, f"Population subclustering exited with code {exit_code}."
+            )
             self.population_subcluster_status.setText(
                 f"Population subclustering exited with code {exit_code}; no draft "
                 "membership was changed. Review the progress message above."
@@ -3200,6 +4234,11 @@ class NapariSBTController:
         self.population_subcluster_status.setText(
             f"Imported {len(new_components)} editable components covering "
             f"{len(new_membership):,} cells. Rename them before applying the draft."
+        )
+        self._activity_finish(
+            True,
+            f"Imported {len(new_components)} population components covering "
+            f"{len(new_membership):,} cells.",
         )
 
     def apply_current_population_draft(self) -> None:
@@ -3540,6 +4579,20 @@ class NapariSBTController:
         self.set_status("Cohort preview validated. Confirm to freeze these identities.")
         return self.preview
 
+    def _class_colour_item(self, colour_text: str):
+        colour = self.QColor(str(colour_text))
+        if not colour.isValid():
+            colour = self.QColor("#808080")
+        item = self.QTableWidgetItem(colour.name())
+        item.setBackground(colour)
+        foreground = "#111827" if colour.lightness() > 150 else "#ffffff"
+        item.setForeground(self.QColor(foreground))
+        item.setToolTip(
+            f"Class colour {colour.name()}. Double-click to open the colour picker."
+        )
+        item.setFlags(item.flags() & ~self.Qt.ItemIsEditable)
+        return item
+
     def _set_class_rows(self, classes: Iterable[ClassificationClass]) -> None:
         self.class_table.setRowCount(0)
         for definition in classes:
@@ -3553,7 +4606,12 @@ class NapariSBTController:
                 definition.mask_disposition,
             ]
             for column, value in enumerate(values):
-                self.class_table.setItem(row, column, self.QTableWidgetItem(value))
+                item = (
+                    self._class_colour_item(value)
+                    if column == 2
+                    else self.QTableWidgetItem(value)
+                )
+                self.class_table.setItem(row, column, item)
 
     def add_class_row(self) -> None:
         if self.class_table.rowCount() >= 8:
@@ -3569,7 +4627,38 @@ class NapariSBTController:
             "keep",
         ]
         for column, value in enumerate(values):
-            self.class_table.setItem(row, column, self.QTableWidgetItem(value))
+            item = (
+                self._class_colour_item(value)
+                if column == 2
+                else self.QTableWidgetItem(value)
+            )
+            self.class_table.setItem(row, column, item)
+        self.class_table.selectRow(row)
+
+    def pick_class_colour_from_cell(self, row: int, column: int) -> None:
+        if int(column) != 2:
+            return
+        self.class_table.selectRow(int(row))
+        self.pick_selected_class_colour()
+
+    def pick_selected_class_colour(self) -> None:
+        row = self.class_table.currentRow()
+        if row < 0:
+            raise ValueError("Select a class row before choosing its colour.")
+        current_item = self.class_table.item(row, 2)
+        initial = self.QColor(current_item.text() if current_item else "#808080")
+        colour = self.QColorDialog.getColor(
+            initial,
+            self.root,
+            "Choose classification class colour",
+        )
+        if not colour.isValid():
+            return
+        self.class_table.setItem(row, 2, self._class_colour_item(colour.name()))
+        self.set_status(
+            f"Selected {colour.name()} for class row {row + 1}. Apply class edits "
+            "or create the experiment to save it."
+        )
 
     def remove_class_row(self) -> None:
         if self.class_table.rowCount() <= 2:
@@ -3610,11 +4699,140 @@ class NapariSBTController:
             audit_action="update_classes",
         )
         self.manifest = updated
+        self._mark_final_identities_stale()
         self.refresh_class_controls()
         self.refresh_classification_layers()
         self.set_status(
             "Applied class edits. Stable semantics remain locked when confirmed "
             "labels exist; cosmetic edits were audited."
+        )
+
+    def _set_labeler_class_rows(
+        self, definitions: Iterable[LabelerClass]
+    ) -> None:
+        """Populate the editable Labeler definition table."""
+
+        self.labeler_class_table.setRowCount(0)
+        for definition in definitions:
+            row = self.labeler_class_table.rowCount()
+            self.labeler_class_table.insertRow(row)
+            stable_id = self.QTableWidgetItem(definition.label_id)
+            stable_id.setFlags(stable_id.flags() & ~self.Qt.ItemIsEditable)
+            self.labeler_class_table.setItem(row, 0, stable_id)
+            self.labeler_class_table.setItem(
+                row, 1, self.QTableWidgetItem(definition.name)
+            )
+            self.labeler_class_table.setItem(
+                row, 2, self._class_colour_item(definition.color)
+            )
+
+    def add_labeler_class_row(self) -> None:
+        """Add a label definition with an immutable generated ID."""
+
+        if self.labeler_class_table.rowCount() >= 24:
+            self.set_status("Labeler is limited to 24 labels in one session.")
+            return
+        row = self.labeler_class_table.rowCount()
+        palette = (
+            "#e11d48",
+            "#2563eb",
+            "#16a34a",
+            "#9333ea",
+            "#ea580c",
+            "#0891b2",
+            "#ca8a04",
+            "#db2777",
+        )
+        stable_id = self.QTableWidgetItem(f"label_{uuid4().hex[:8]}")
+        stable_id.setFlags(stable_id.flags() & ~self.Qt.ItemIsEditable)
+        self.labeler_class_table.insertRow(row)
+        self.labeler_class_table.setItem(row, 0, stable_id)
+        self.labeler_class_table.setItem(
+            row, 1, self.QTableWidgetItem(f"Label {row + 1}")
+        )
+        self.labeler_class_table.setItem(
+            row, 2, self._class_colour_item(palette[row % len(palette)])
+        )
+        self.labeler_class_table.selectRow(row)
+
+    def remove_labeler_class_row(self) -> None:
+        """Remove an unused Labeler class from the working definition table."""
+
+        row = self.labeler_class_table.currentRow()
+        if row < 0:
+            raise ValueError("Select a Labeler row to remove.")
+        item = self.labeler_class_table.item(row, 0)
+        label_id = item.text() if item is not None else ""
+        if not self.labeler_records.empty and self.labeler_records["label_id"].astype(
+            str
+        ).eq(label_id).any():
+            raise ValueError(
+                "This label is already assigned to cells. Clear or reassign those "
+                "cells before removing its definition."
+            )
+        self.labeler_class_table.removeRow(row)
+        self.apply_labeler_class_edits()
+
+    def pick_labeler_colour_from_cell(self, row: int, column: int) -> None:
+        if int(column) != 2:
+            return
+        self.labeler_class_table.selectRow(int(row))
+        self.pick_selected_labeler_colour()
+
+    def pick_selected_labeler_colour(self) -> None:
+        row = self.labeler_class_table.currentRow()
+        if row < 0:
+            raise ValueError("Select a Labeler row before choosing its colour.")
+        current_item = self.labeler_class_table.item(row, 2)
+        initial = self.QColor(current_item.text() if current_item else "#808080")
+        colour = self.QColorDialog.getColor(
+            initial,
+            self.root,
+            "Choose Labeler class colour",
+        )
+        if not colour.isValid():
+            return
+        self.labeler_class_table.setItem(
+            row, 2, self._class_colour_item(colour.name())
+        )
+
+    def labeler_class_definitions(self) -> list[LabelerClass]:
+        definitions = []
+        for row in range(self.labeler_class_table.rowCount()):
+            values = [
+                self.labeler_class_table.item(row, column).text()
+                if self.labeler_class_table.item(row, column)
+                else ""
+                for column in range(3)
+            ]
+            definitions.append(
+                LabelerClass(
+                    label_id=values[0],
+                    name=values[1],
+                    color=values[2],
+                )
+            )
+        return validate_labeler_classes(definitions)
+
+    def apply_labeler_class_edits(self) -> None:
+        """Apply working names and colours without changing cell identities."""
+
+        definitions = self.labeler_class_definitions()
+        assigned_ids = set(self.labeler_records["label_id"].astype(str))
+        missing = sorted(
+            assigned_ids - {definition.label_id for definition in definitions}
+        )
+        if missing:
+            raise ValueError(
+                "Label definitions cannot remove IDs that are assigned to cells: "
+                f"{missing}"
+            )
+        self.labeler_classes = definitions
+        self._refresh_labeler_controls()
+        self.refresh_labeler_layers()
+        self.set_status(
+            f"Applied {len(definitions)} Labeler definitions. Existing assignments "
+            "retain their stable IDs."
         )
 
     def feature_sources(self) -> list[FeatureSource]:
@@ -3940,8 +5158,27 @@ class NapariSBTController:
 
     def load_existing_experiment(self, path: Path) -> None:
         self.manifest, self.paths = load_experiment(path)
+        if self._labeler_experiment_id != self.manifest.experiment_id:
+            self.labeler_classes = default_labeler_classes()
+            self.labeler_records = empty_labeler_records()
+            self._labeler_experiment_id = self.manifest.experiment_id
+            self._set_labeler_class_rows(self.labeler_classes)
         self.model_bundle = None
+        self.final_assignments = pd.DataFrame()
+        self.final_identity_signature = None
+        self.final_identity_decision = {}
+        self.final_identity_summary_label.setText(
+            "Not created in this session. Set the rules, then create final "
+            "identities before export."
+        )
         self.experiment_edit.setText(str(self.paths.root))
+        self.assignment_path_edit.setText(
+            str(self.paths.exports / "final_identities.csv")
+        )
+        self.annotated_path_edit.setText(
+            self.manifest.annotated_adata_path
+            or str(self.paths.exports / "annotated.h5ad")
+        )
         self.name_edit.setText(self.manifest.name)
         self.anndata_edit.setText(_path_text(self.manifest.anndata_path))
         self.masks_edit.setText(self.manifest.masks_folder)
@@ -4141,6 +5378,9 @@ class NapariSBTController:
         self._update_feature_channel_summary()
         self._update_feature_selection_summary()
         self.refresh_class_controls()
+        self._refresh_labeler_controls()
+        if self.explore_review_state.active_recipe_id is not None:
+            self._apply_explore_recipe(self.explore_recipe, replay=False)
         self.refresh_rois()
         self._set_classification_enabled(True)
         self._update_scope_text()
@@ -4311,6 +5551,265 @@ class NapariSBTController:
             "the model."
         )
 
+    def _refresh_labeler_controls(self) -> None:
+        """Refresh Labeler class selectors, tallies, and visible assignments."""
+
+        if not hasattr(self, "labeler_class_combo"):
+            return
+        current_id = self.labeler_class_combo.currentData()
+        self.labeler_class_combo.blockSignals(True)
+        self.labeler_class_combo.clear()
+        for definition in self.labeler_classes:
+            self.labeler_class_combo.addItem(
+                self._class_icon(definition.color),
+                definition.name,
+                definition.label_id,
+            )
+        if current_id is not None:
+            index = self.labeler_class_combo.findData(current_id)
+            if index >= 0:
+                self.labeler_class_combo.setCurrentIndex(index)
+        self.labeler_class_combo.blockSignals(False)
+        self._refresh_labeler_tally()
+        self._refresh_labeler_results_table()
+
+    def selected_labeler_class_id(self) -> str:
+        value = self.labeler_class_combo.currentData()
+        if value is None:
+            raise ValueError("Define and select a Labeler class first.")
+        return str(value)
+
+    def _working_labeler_rois(self) -> list[str]:
+        if self.manifest is None or self.cohort.empty:
+            return []
+        if (
+            self.manifest.experiment_mode == "feature_discovery_trial"
+            and self.manifest.feature_trial is not None
+        ):
+            return list(self.manifest.feature_trial.selected_rois)
+        return sorted(self.cohort["ROI"].astype(str).unique())
+
+    def _refresh_labeler_tally(self, *_args) -> None:
+        if not hasattr(self, "labeler_tally_table"):
+            return
+        rois = self._working_labeler_rois()
+        summary = labeler_summary(
+            self.labeler_records,
+            self.labeler_classes,
+            eligible_rois=rois,
+        )
+        self.labeler_tally_table.setRowCount(len(summary))
+        current_roi = str(self.current_roi or "")
+        for row, result in summary.iterrows():
+            current_count = int(
+                (
+                    self.labeler_records["label_id"]
+                    .astype(str)
+                    .eq(str(result["label_id"]))
+                    & self.labeler_records["ROI"].astype(str).eq(current_roi)
+                ).sum()
+            )
+            values = (
+                str(result["label"]),
+                f"{int(result['cells']):,}",
+                f"{int(result['rois_sampled']):,}/{int(result['eligible_rois']):,}",
+                f"{current_count:,}",
+            )
+            for column, value in enumerate(values):
+                item = self.QTableWidgetItem(value)
+                if column == 0:
+                    item.setIcon(self._class_icon(str(result["color"])))
+                self.labeler_tally_table.setItem(row, column, item)
+        total = int(len(self.labeler_records))
+        sampled_rois = int(self.labeler_records["ROI"].astype(str).nunique())
+        if not rois:
+            self.labeler_sampling_summary_label.setText(
+                "Create or load an experiment to begin ROI sampling."
+            )
+            return
+        label_id = self.labeler_class_combo.currentData()
+        if label_id is None:
+            selected_text = "No label is selected."
+        else:
+            selected = summary.loc[
+                summary["label_id"].astype(str).eq(str(label_id))
+            ]
+            if selected.empty:
+                selected_text = "No label is selected."
+            else:
+                result = selected.iloc[0]
+                remaining = max(
+                    0,
+                    int(result["eligible_rois"])
+                    - int(result["rois_sampled"]),
+                )
+                selected_text = (
+                    f"{result['label']}: {int(result['cells']):,} cells from "
+                    f"{int(result['rois_sampled']):,} ROIs; {remaining:,} eligible "
+                    "ROIs have not yet contributed this label."
+                )
+        self.labeler_sampling_summary_label.setText(
+            f"{total:,} labelled cells across {sampled_rois:,}/{len(rois):,} "
+            f"eligible ROIs. {selected_text}"
+        )
+
+    def _refresh_labeler_results_table(self) -> None:
+        if not hasattr(self, "labeler_results_table"):
+            return
+        if self.cohort.empty:
+            table = pd.DataFrame()
+        else:
+            table = build_labeler_export_table(
+                self.labeler_records,
+                self.labeler_classes,
+                cohort=self.cohort,
+            )
+        self.labeler_results_table.setRowCount(len(table))
+        for row, result in table.iterrows():
+            values = (
+                result.get("obs_name", ""),
+                result.get("ROI", ""),
+                result.get("ObjectNumber", ""),
+                result.get("label", ""),
+                result.get("label_id", ""),
+                result.get("timestamp", ""),
+            )
+            for column, value in enumerate(values):
+                item = self.QTableWidgetItem(str(value))
+                if column == 3:
+                    definition = next(
+                        (
+                            candidate
+                            for candidate in self.labeler_classes
+                            if candidate.label_id == str(result.get("label_id", ""))
+                        ),
+                        None,
+                    )
+                    if definition is not None:
+                        item.setIcon(self._class_icon(definition.color))
+                self.labeler_results_table.setItem(row, column, item)
+
+    def _refresh_single_labeler_result_row(
+        self, roi: str, object_number: int
+    ) -> None:
+        """Incrementally update the visible list after one viewer click."""
+
+        matching_row = -1
+        for row in range(self.labeler_results_table.rowCount()):
+            roi_item = self.labeler_results_table.item(row, 1)
+            object_item = self.labeler_results_table.item(row, 2)
+            if (
+                roi_item is not None
+                and object_item is not None
+                and roi_item.text() == str(roi)
+                and object_item.text() == str(int(object_number))
+            ):
+                matching_row = row
+                break
+        assignment = self.labeler_records.loc[
+            self.labeler_records["ROI"].astype(str).eq(str(roi))
+            & pd.to_numeric(
+                self.labeler_records["ObjectNumber"], errors="coerce"
+            ).eq(int(object_number))
+        ]
+        if assignment.empty:
+            if matching_row >= 0:
+                self.labeler_results_table.removeRow(matching_row)
+            return
+        result = assignment.iloc[-1]
+        definition = next(
+            item
+            for item in self.labeler_classes
+            if item.label_id == str(result["label_id"])
+        )
+        cohort_row = self.cohort.loc[
+            self.cohort["ROI"].astype(str).eq(str(roi))
+            & pd.to_numeric(self.cohort["ObjectNumber"], errors="coerce").eq(
+                int(object_number)
+            )
+        ]
+        obs_name = (
+            str(cohort_row.iloc[0]["obs_name"])
+            if not cohort_row.empty and "obs_name" in cohort_row
+            else ""
+        )
+        if matching_row < 0:
+            self.labeler_results_table.insertRow(0)
+            matching_row = 0
+        values = (
+            obs_name,
+            str(roi),
+            str(int(object_number)),
+            definition.name,
+            definition.label_id,
+            str(result["timestamp"]),
+        )
+        for column, value in enumerate(values):
+            item = self.QTableWidgetItem(value)
+            if column == 3:
+                item.setIcon(self._class_icon(definition.color))
+            self.labeler_results_table.setItem(matching_row, column, item)
+
+    def _refresh_labeler_roi_choices(self, rois: Iterable[str]) -> None:
+        if not hasattr(self, "labeler_roi_combo"):
+            return
+        values = [str(roi) for roi in rois]
+        current = str(self.current_roi or self.labeler_roi_combo.currentText())
+        self.labeler_roi_combo.blockSignals(True)
+        self.labeler_roi_combo.clear()
+        self.labeler_roi_combo.addItems(values)
+        if current in values:
+            self.labeler_roi_combo.setCurrentText(current)
+        self.labeler_roi_combo.blockSignals(False)
+        self._refresh_labeler_tally()
+
+    def load_labeler_roi(self, roi: str) -> None:
+        """Navigate the shared viewer from Labeler's ROI selector."""
+
+        roi = str(roi).strip()
+        if not roi:
+            return
+        index = self.roi_combo.findText(roi)
+        if index < 0:
+            raise ValueError(f"ROI {roi!r} is outside the active experiment scope.")
+        if self.roi_combo.currentIndex() != index:
+            self.roi_combo.setCurrentIndex(index)
+        elif self.current_roi != roi:
+            self.load_roi(roi)
+
+    def move_to_next_unsampled_labeler_roi(self) -> None:
+        """Move to the next ROI with no assignments for the selected label."""
+
+        label_id = self.selected_labeler_class_id()
+        rois = self._working_labeler_rois()
+        if not rois:
+            raise ValueError("The active experiment has no eligible ROIs.")
+        sampled = set(
+            self.labeler_records.loc[
+                self.labeler_records["label_id"].astype(str).eq(label_id), "ROI"
+            ].astype(str)
+        )
+        start = (
+            rois.index(str(self.current_roi))
+            if str(self.current_roi) in rois
+            else -1
+        )
+        for offset in range(1, len(rois) + 1):
+            candidate = rois[(start + offset) % len(rois)]
+            if candidate not in sampled:
+                self.roi_combo.setCurrentText(candidate)
+                self.set_status(
+                    f"Moved to unsampled ROI {candidate!r} for the selected "
+                    "Labeler class."
+                )
+                return
+        definition = next(
+            item for item in self.labeler_classes if item.label_id == label_id
+        )
+        self.set_status(
+            f"Every eligible ROI has at least one {definition.name!r} assignment."
+        )
+
     def refresh_rois(self) -> None:
         if self.manifest is None:
             return
@@ -4334,6 +5833,7 @@ class NapariSBTController:
         if current in rois:
             self.roi_combo.setCurrentText(current)
         self.roi_combo.blockSignals(False)
+        self._refresh_labeler_roi_choices(rois)
         self._refresh_roi_review_colours()
 
     def move_roi(self, step: int) -> None:
@@ -4378,16 +5878,26 @@ class NapariSBTController:
         self.explore_review_state = ExploreReviewState()
         path = self._explore_state_path()
         if path is None or not path.exists():
+            self._bind_explore_recipe_shortcuts()
+            self._refresh_recipe_preset_controls()
             self._refresh_reload_recipe_list()
             return
         try:
             self.explore_review_state = ExploreReviewState.model_validate(
                 json.loads(path.read_text(encoding="utf-8"))
             )
+            self.explore_review_state.schema_version = EXPLORE_STATE_VERSION
+            active_id = self.explore_review_state.active_recipe_id
+            if active_id is not None:
+                self.explore_recipe = self.explore_review_state.recipe_presets[
+                    active_id
+                ].recipe.model_copy(deep=True)
         except Exception as exc:  # noqa: BLE001 - preserve usable experiment
             self.set_status(
                 f"Could not read Explore review state from {path.name}: {exc}"
             )
+        self._bind_explore_recipe_shortcuts()
+        self._refresh_recipe_preset_controls()
         self._refresh_reload_recipe_list()
 
     def _save_explore_review_state(self) -> None:
@@ -4398,6 +5908,286 @@ class NapariSBTController:
                 self.explore_review_state.model_dump(mode="json"),
             )
 
+    def _refresh_recipe_preset_controls(
+        self, *, selected_id: str | None = None
+    ) -> None:
+        if not hasattr(self, "recipe_preset_combo"):
+            return
+        previous_id = selected_id or self.recipe_preset_combo.currentData()
+        if previous_id not in self.explore_review_state.recipe_presets:
+            previous_id = self.explore_review_state.active_recipe_id
+        self.recipe_preset_combo.blockSignals(True)
+        self.recipe_preset_combo.clear()
+        self.recipe_preset_combo.addItem("Choose a saved recipe…", None)
+        presets = sorted(
+            self.explore_review_state.recipe_presets.values(),
+            key=lambda preset: preset.name.casefold(),
+        )
+        for preset in presets:
+            shortcut = f"{preset.shortcut} · " if preset.shortcut else ""
+            self.recipe_preset_combo.addItem(
+                f"{shortcut}{preset.name}", preset.preset_id
+            )
+        index = self.recipe_preset_combo.findData(previous_id)
+        self.recipe_preset_combo.setCurrentIndex(max(0, index))
+        self.recipe_preset_combo.blockSignals(False)
+        self._recipe_preset_selection_changed()
+        self._refresh_active_recipe_preset_label()
+
+    def _select_recipe_preset_control(self, preset_id: str) -> None:
+        """Select an existing preset without rebuilding the whole selector."""
+
+        if not hasattr(self, "recipe_preset_combo"):
+            return
+        index = self.recipe_preset_combo.findData(str(preset_id))
+        if index < 0:
+            self._refresh_recipe_preset_controls(selected_id=str(preset_id))
+            return
+        self.recipe_preset_combo.blockSignals(True)
+        if self.recipe_preset_combo.currentIndex() != index:
+            self.recipe_preset_combo.setCurrentIndex(index)
+        self.recipe_preset_combo.blockSignals(False)
+        self._recipe_preset_selection_changed()
+
+    def _refresh_active_recipe_preset_label(self) -> None:
+        if not hasattr(self, "active_recipe_preset_label"):
+            return
+        active_id = self.explore_review_state.active_recipe_id
+        preset = self.explore_review_state.recipe_presets.get(active_id)
+        if preset is None:
+            self.active_recipe_preset_label.setText(
+                "Working view is not linked to a named recipe. Save it as a new "
+                "recipe to make it reusable."
+            )
+            return
+        modified = preset.recipe.fingerprint != self.explore_recipe.fingerprint
+        shortcut = f" ({preset.shortcut})" if preset.shortcut else ""
+        if modified:
+            state = (
+                "MODIFIED — use ‘Update selected recipe from current view’ to "
+                "save these changes"
+            )
+        else:
+            state = "saved and current"
+        self.active_recipe_preset_label.setText(
+            f"Active recipe: {preset.name}{shortcut} — {state}."
+        )
+
+    def _recipe_preset_selection_changed(self, *_args) -> None:
+        if not hasattr(self, "recipe_preset_combo"):
+            return
+        preset_id = self.recipe_preset_combo.currentData()
+        preset = self.explore_review_state.recipe_presets.get(preset_id)
+        enabled = preset is not None
+        self.load_recipe_preset_button.setEnabled(enabled)
+        self.update_recipe_preset_button.setEnabled(enabled)
+        self.delete_recipe_preset_button.setEnabled(enabled)
+        if preset is None:
+            self.recipe_preset_name_edit.clear()
+            self.recipe_preset_shortcut_combo.setCurrentIndex(0)
+            return
+        self.recipe_preset_name_edit.setText(preset.name)
+        shortcut_index = self.recipe_preset_shortcut_combo.findData(
+            preset.shortcut
+        )
+        self.recipe_preset_shortcut_combo.setCurrentIndex(
+            max(0, shortcut_index)
+        )
+
+    def _selected_recipe_preset(self) -> ExploreRecipePreset:
+        preset_id = self.recipe_preset_combo.currentData()
+        preset = self.explore_review_state.recipe_presets.get(preset_id)
+        if preset is None:
+            raise ValueError("Select a saved Explore recipe first.")
+        return preset
+
+    def _validate_recipe_preset_identity(
+        self,
+        *,
+        name: str,
+        shortcut: str | None,
+        exclude_id: str | None = None,
+    ) -> tuple[str, str | None]:
+        clean_name = str(name).strip()
+        if not clean_name:
+            raise ValueError("Enter a name for the Explore recipe.")
+        for preset in self.explore_review_state.recipe_presets.values():
+            if preset.preset_id == exclude_id:
+                continue
+            if preset.name.casefold() == clean_name.casefold():
+                raise ValueError(
+                    f"An Explore recipe named {clean_name!r} already exists."
+                )
+            if shortcut is not None and preset.shortcut == shortcut:
+                raise ValueError(
+                    f"{shortcut} is already assigned to Explore recipe "
+                    f"{preset.name!r}."
+                )
+        return clean_name, shortcut
+
+    def save_new_recipe_preset(self) -> None:
+        if self.paths is None:
+            raise ValueError("Create or load an experiment before saving recipes.")
+        self._capture_current_recipe_display_state()
+        if not self.explore_recipe.has_content:
+            raise ValueError(
+                "Build an Explore view with at least one layer before saving it."
+            )
+        name, shortcut = self._validate_recipe_preset_identity(
+            name=self.recipe_preset_name_edit.text(),
+            shortcut=self.recipe_preset_shortcut_combo.currentData(),
+        )
+        preset_id = str(uuid4())
+        preset = ExploreRecipePreset(
+            preset_id=preset_id,
+            name=name,
+            shortcut=shortcut,
+            recipe=self.explore_recipe.model_copy(deep=True),
+        )
+        self.explore_review_state.recipe_presets[preset_id] = preset
+        self.explore_review_state.active_recipe_id = preset_id
+        self._save_explore_review_state()
+        self._bind_explore_recipe_shortcuts()
+        self._refresh_recipe_preset_controls(selected_id=preset_id)
+        append_audit(
+            self.paths,
+            {
+                "action": "create_explore_recipe_preset",
+                "preset_id": preset_id,
+                "name": name,
+                "shortcut": shortcut,
+                "view_fingerprint": preset.recipe.fingerprint,
+            },
+        )
+        self.set_status(
+            f"Saved Explore recipe {name!r}"
+            + (f" and assigned {shortcut}." if shortcut else ".")
+        )
+
+    def update_selected_recipe_preset(self) -> None:
+        self._capture_current_recipe_display_state()
+        if not self.explore_recipe.has_content:
+            raise ValueError(
+                "The current Explore view is empty and cannot replace a saved recipe."
+            )
+        existing = self._selected_recipe_preset()
+        name, shortcut = self._validate_recipe_preset_identity(
+            name=self.recipe_preset_name_edit.text(),
+            shortcut=self.recipe_preset_shortcut_combo.currentData(),
+            exclude_id=existing.preset_id,
+        )
+        updated = ExploreRecipePreset(
+            preset_id=existing.preset_id,
+            name=name,
+            shortcut=shortcut,
+            recipe=self.explore_recipe.model_copy(deep=True),
+        )
+        self.explore_review_state.recipe_presets[existing.preset_id] = updated
+        self.explore_review_state.active_recipe_id = existing.preset_id
+        self._save_explore_review_state()
+        self._bind_explore_recipe_shortcuts()
+        self._refresh_recipe_preset_controls(selected_id=existing.preset_id)
+        append_audit(
+            self.paths,
+            {
+                "action": "update_explore_recipe_preset",
+                "preset_id": existing.preset_id,
+                "previous_name": existing.name,
+                "name": name,
+                "previous_shortcut": existing.shortcut,
+                "shortcut": shortcut,
+                "view_fingerprint": updated.recipe.fingerprint,
+            },
+        )
+        self.set_status(
+            f"Updated Explore recipe {name!r} from the current layer view."
+        )
+
+    def load_selected_recipe_preset(self) -> None:
+        self._activate_recipe_preset(
+            self._selected_recipe_preset().preset_id,
+            source="Explore recipe selector",
+        )
+
+    def _activate_recipe_preset(self, preset_id: str, *, source: str) -> None:
+        preset = self.explore_review_state.recipe_presets.get(str(preset_id))
+        if preset is None:
+            raise ValueError("The requested Explore recipe no longer exists.")
+        active_changed = (
+            self.explore_review_state.active_recipe_id != preset.preset_id
+        )
+        self.explore_review_state.active_recipe_id = preset.preset_id
+        if active_changed:
+            self._save_explore_review_state()
+        self._select_recipe_preset_control(preset.preset_id)
+        self._apply_explore_recipe(preset.recipe)
+        if not self.current_roi:
+            self.set_status(
+                f"Loaded Explore recipe {preset.name!r} via {source}."
+            )
+
+    def delete_selected_recipe_preset(self) -> None:
+        preset = self._selected_recipe_preset()
+        reply = self.QMessageBox.question(
+            self.root,
+            "Delete Explore recipe",
+            f"Delete saved Explore recipe {preset.name!r}?\n\nThe current Napari "
+            "layers will remain visible, but the recipe and its F-key assignment "
+            "will be removed.",
+        )
+        if reply != self.QMessageBox.Yes:
+            self.set_status("Explore recipe deletion cancelled.")
+            return
+        del self.explore_review_state.recipe_presets[preset.preset_id]
+        if self.explore_review_state.active_recipe_id == preset.preset_id:
+            self.explore_review_state.active_recipe_id = None
+        self._save_explore_review_state()
+        self._bind_explore_recipe_shortcuts()
+        self._refresh_recipe_preset_controls()
+        append_audit(
+            self.paths,
+            {
+                "action": "delete_explore_recipe_preset",
+                "preset_id": preset.preset_id,
+                "name": preset.name,
+                "shortcut": preset.shortcut,
+                "view_fingerprint": preset.recipe.fingerprint,
+            },
+        )
+        self.set_status(f"Deleted Explore recipe {preset.name!r}.")
+
+    def _bind_explore_recipe_shortcuts(self) -> None:
+        for shortcut in self._explore_recipe_shortcuts:
+            try:
+                self.viewer.bind_key(shortcut, None, overwrite=True)
+            except Exception as error:  # noqa: BLE001 - optional Napari key backend
+                self.set_status(
+                    f"Could not unbind Explore recipe shortcut {shortcut}: {error}"
+                )
+        self._explore_recipe_shortcuts = []
+        for preset in self.explore_review_state.recipe_presets.values():
+            if preset.shortcut is None:
+                continue
+
+            def activate_recipe(
+                _viewer,
+                selected_id=preset.preset_id,
+                selected_shortcut=preset.shortcut,
+            ):
+                try:
+                    self._activate_recipe_preset(
+                        selected_id,
+                        source=str(selected_shortcut),
+                    )
+                except Exception as error:  # noqa: BLE001 - Napari key boundary
+                    self.set_status(
+                        f"Could not load Explore recipe via "
+                        f"{selected_shortcut}: {error}"
+                    )
+
+            self.viewer.bind_key(preset.shortcut, overwrite=True)(activate_recipe)
+            self._explore_recipe_shortcuts.append(preset.shortcut)
+
     def _current_population_recipe_key(self) -> str | None:
         observation = self.population_obs_combo.currentText().strip()
         population = self.population_value_combo.currentText().strip()
@@ -4406,6 +6196,7 @@ class NapariSBTController:
         return population_recipe_key(observation, population)
 
     def save_population_view(self) -> None:
+        self._capture_current_recipe_display_state()
         if not self.explore_recipe.has_content:
             raise ValueError("Load at least one Explore layer before saving a view.")
         key = self._current_population_recipe_key()
@@ -4444,6 +6235,9 @@ class NapariSBTController:
         if recipe is None:
             self._refresh_roi_review_colours()
             return
+        self.explore_review_state.active_recipe_id = None
+        self._save_explore_review_state()
+        self._refresh_recipe_preset_controls()
         self._apply_explore_recipe(recipe)
         self.set_status(
             f"Loaded the saved Explore view for "
@@ -4454,7 +6248,29 @@ class NapariSBTController:
         selected = {str(value) for value in values}
         for index in range(widget.count()):
             item = widget.item(index)
-            item.setSelected(item.text() in selected)
+            should_select = item.text() in selected
+            if item.isSelected() != should_select:
+                item.setSelected(should_select)
+
+    def _recipe_colour_summary(
+        self, name: str, default: str | None = None
+    ) -> str | None:
+        spec = self.explore_recipe.layer_colormap_specs.get(name)
+        if spec and spec.get("kind") == "direct_labels":
+            colours = [
+                value
+                for key, value in spec.get("colours", {}).items()
+                if key not in {"__default__", "0"}
+            ]
+            if len(colours) == 1:
+                rgba = np.asarray(colours[0], dtype=float)
+                rgb = np.clip(np.rint(rgba[:3] * 255), 0, 255).astype(np.uint8)
+                return "#" + "".join(f"{channel:02x}" for channel in rgb)
+            if colours:
+                return f"{len(colours)} saved layer colours"
+        if spec and spec.get("kind") == "continuous":
+            return str(spec.get("name") or "saved custom colormap")
+        return self.explore_recipe.layer_colormaps.get(name, default)
 
     def _recipe_layer_entries(self) -> list[dict]:
         recipe = self.explore_recipe
@@ -4480,7 +6296,7 @@ class NapariSBTController:
                         index % len(SIX_COLOUR_COLORMAPS)
                     ]
                 )
-                colormap = recipe.layer_colormaps.get(name, default_colormap)
+                colormap = self._recipe_colour_summary(name, default_colormap)
                 entries.append(
                     {
                         "kind": "image",
@@ -4491,7 +6307,7 @@ class NapariSBTController:
                 )
         if recipe.observation_overlay:
             name = f"obs::{recipe.observation_overlay}"
-            colormap = recipe.layer_colormaps.get(name)
+            colormap = self._recipe_colour_summary(name)
             if (
                 not colormap
                 and self.adata is not None
@@ -4535,7 +6351,10 @@ class NapariSBTController:
                 name = (
                     f"population::{recipe.population_observation}::{population}"
                 )
-                colour = population_colours.get(population)
+                colour = self._recipe_colour_summary(
+                    name,
+                    population_colours.get(population),
+                )
                 suffix = f" [{colour}]" if colour else ""
                 entries.append(
                     {
@@ -4552,7 +6371,7 @@ class NapariSBTController:
                 )
         for marker in recipe.marker_overlays:
             name = f"adata.X::{marker}"
-            colormap = recipe.layer_colormaps.get(name, "viridis")
+            colormap = self._recipe_colour_summary(name, "viridis")
             entries.append(
                 {
                     "kind": "marker",
@@ -4572,10 +6391,27 @@ class NapariSBTController:
                 )
         return entries
 
-    def _refresh_reload_recipe_list(self) -> None:
+    def _workflow_tab_changed(self, index: int) -> None:
+        if index != self.explore_tab_index:
+            return
+        if self._recipe_list_refresh_pending:
+            self._refresh_reload_recipe_list(force=True)
+        if self._roi_review_refresh_pending:
+            self._refresh_roi_review_colours(force=True)
+
+    def _refresh_reload_recipe_list(self, *, force: bool = False) -> None:
         if not hasattr(self, "reload_recipe_list"):
             return
+        if (
+            not force
+            and hasattr(self, "explore_tab_index")
+            and self.tabs.currentIndex() != self.explore_tab_index
+        ):
+            self._recipe_list_refresh_pending = True
+            return
+        self._recipe_list_refresh_pending = False
         self.reload_recipe_list.clear()
+        self._refresh_active_recipe_preset_label()
         entries = self._recipe_layer_entries()
         if not entries:
             from qtpy.QtWidgets import QListWidgetItem
@@ -4629,14 +6465,18 @@ class NapariSBTController:
             )
             self.reload_recipe_list.addItem(item)
 
-    def _prune_recipe_layer_settings(self) -> None:
-        valid_names = {
-            entry["name"] for entry in self._recipe_layer_entries()
-        }
+    def _prune_recipe_layer_settings(
+        self, valid_names: set[str] | None = None
+    ) -> None:
+        if valid_names is None:
+            valid_names = {
+                entry["name"] for entry in self._recipe_layer_entries()
+            }
         payload = self.explore_recipe.model_dump(mode="json")
         changed = False
         for key in (
             "layer_colormaps",
+            "layer_colormap_specs",
             "layer_visibility",
             "layer_opacities",
             "layer_contours",
@@ -4656,6 +6496,7 @@ class NapariSBTController:
     def _drop_recipe_layer_settings(self, payload: dict, name: str) -> None:
         for key in (
             "layer_colormaps",
+            "layer_colormap_specs",
             "layer_visibility",
             "layer_opacities",
             "layer_contours",
@@ -4776,6 +6617,115 @@ class NapariSBTController:
         if name and not str(name).startswith("[unnamed"):
             return str(name)
         return None
+
+    def _layer_colormap_spec(self, layer) -> dict | None:
+        """Serialize the colours currently displayed by one Napari layer."""
+
+        colormap = getattr(layer, "colormap", None)
+        if colormap is None:
+            return None
+        color_dict = getattr(colormap, "color_dict", None)
+        if isinstance(color_dict, dict):
+            colours: dict[str, list[float]] = {}
+            for label, colour in color_dict.items():
+                key = "__default__" if label is None else str(int(label))
+                rgba = np.asarray(colour, dtype=float).reshape(-1)
+                if rgba.size in {3, 4} and np.isfinite(rgba).all():
+                    if rgba.size == 3:
+                        rgba = np.append(rgba, 1.0)
+                    colours[key] = rgba.tolist()
+            return (
+                {"kind": "direct_labels", "colours": colours}
+                if colours
+                else None
+            )
+
+        colours = getattr(colormap, "colors", None)
+        if colours is None:
+            return None
+        rgba = np.asarray(colours, dtype=float)
+        if rgba.ndim != 2 or rgba.shape[1] not in {3, 4} or not np.isfinite(rgba).all():
+            return None
+        controls = np.asarray(getattr(colormap, "controls", []), dtype=float)
+        interpolation = getattr(colormap, "interpolation", "linear")
+        interpolation = getattr(interpolation, "value", interpolation)
+        return {
+            "kind": "continuous",
+            "name": self._layer_colormap_name(layer) or "napari_sbt_saved",
+            "colours": rgba.tolist(),
+            "controls": controls.tolist(),
+            "interpolation": str(interpolation),
+        }
+
+    def _recipe_colormap(self, name: str, default=None):
+        """Rebuild the exact saved colormap, falling back to legacy names."""
+
+        spec = self.explore_recipe.layer_colormap_specs.get(name)
+        if spec:
+            try:
+                if spec.get("kind") == "direct_labels":
+                    from napari.utils.colormaps import DirectLabelColormap
+
+                    colour_dict = {}
+                    for key, colour in spec.get("colours", {}).items():
+                        label = None if key == "__default__" else int(key)
+                        colour_dict[label] = colour
+                    return DirectLabelColormap(color_dict=colour_dict)
+                if spec.get("kind") == "continuous":
+                    from napari.utils.colormaps import Colormap
+
+                    return Colormap(
+                        colors=spec["colours"],
+                        controls=spec.get("controls") or None,
+                        interpolation=spec.get("interpolation", "linear"),
+                        name=spec.get("name", "napari_sbt_saved"),
+                    )
+            except (KeyError, TypeError, ValueError):
+                # A legacy or externally edited recipe should remain usable.
+                pass
+        return self.explore_recipe.layer_colormaps.get(name, default)
+
+    def _write_layer_display_state(self, payload: dict, layer) -> None:
+        """Copy live display settings into a mutable recipe payload."""
+
+        name = str(getattr(layer, "name", ""))
+        payload["layer_visibility"][name] = bool(
+            getattr(layer, "visible", True)
+        )
+        payload["layer_opacities"][name] = float(
+            getattr(layer, "opacity", 1.0)
+        )
+        if hasattr(layer, "contour"):
+            payload["layer_contours"][name] = int(layer.contour)
+        if hasattr(layer, "contrast_limits"):
+            limits = layer.contrast_limits
+            payload["layer_contrast_limits"][name] = [
+                float(limits[0]),
+                float(limits[1]),
+            ]
+        descriptor = self._layer_reload_descriptor(layer)
+        if descriptor is None or descriptor.get("kind") == "rgb":
+            return
+        spec = self._layer_colormap_spec(layer)
+        if spec is not None:
+            payload["layer_colormap_specs"][name] = spec
+        colormap_name = self._layer_colormap_name(layer)
+        if colormap_name and spec is not None and spec.get("kind") == "continuous":
+            payload["layer_colormaps"][name] = colormap_name
+
+    def _capture_current_recipe_display_state(self) -> None:
+        """Synchronize the recipe with the actual colours and display state."""
+
+        valid_names = {
+            entry["name"] for entry in self._recipe_layer_entries()
+        }
+        payload = self.explore_recipe.model_dump(mode="json")
+        for name in valid_names:
+            if name in self.viewer.layers:
+                self._write_layer_display_state(payload, self.viewer.layers[name])
+        self.explore_recipe = ExploreViewRecipe.model_validate(payload)
+        self._refresh_reload_recipe_list()
+        self._refresh_roi_review_colours()
 
     def update_recipe_from_current_layers(self) -> None:
         """Rebuild the ROI reload recipe from supported layers in the viewer."""
@@ -4911,6 +6861,7 @@ class NapariSBTController:
             )
         }
         layer_colormaps: dict[str, str] = {}
+        layer_colormap_specs: dict[str, dict] = {}
         layer_visibility: dict[str, bool] = {
             name: value
             for name, value in self.explore_recipe.layer_visibility.items()
@@ -4942,6 +6893,9 @@ class NapariSBTController:
                 "marker",
             }:
                 layer_colormaps[name] = colormap
+            colormap_spec = self._layer_colormap_spec(layer)
+            if colormap_spec is not None and descriptor["kind"] != "rgb":
+                layer_colormap_specs[name] = colormap_spec
             layer_visibility[name] = bool(getattr(layer, "visible", True))
             layer_opacities[name] = float(getattr(layer, "opacity", 1.0))
             if hasattr(layer, "contour"):
@@ -4973,6 +6927,7 @@ class NapariSBTController:
             populations=list(dict.fromkeys(populations)),
             marker_overlays=list(dict.fromkeys(marker_overlays)),
             layer_colormaps=layer_colormaps,
+            layer_colormap_specs=layer_colormap_specs,
             layer_visibility=layer_visibility,
             layer_opacities=layer_opacities,
             layer_contours=layer_contours,
@@ -4982,8 +6937,8 @@ class NapariSBTController:
         included_count = len(included_names) + len(managed_layers)
         message = (
             f"Updated the ROI reload recipe from {included_count} current "
-            "Explore/classifier layer(s), including visibility, opacity, "
-            "label contours, and contrast limits."
+            "Explore/classifier layer(s), including the actual layer colours, "
+            "visibility, opacity, label contours, and contrast limits."
         )
         if ignored:
             message += (
@@ -4993,16 +6948,21 @@ class NapariSBTController:
             )
         self.set_status(message)
 
-    def _apply_explore_recipe(self, recipe: ExploreViewRecipe) -> None:
+    def _apply_explore_recipe(
+        self, recipe: ExploreViewRecipe, *, replay: bool = True
+    ) -> None:
         self._applying_explore_recipe = True
         try:
             self.explore_recipe = recipe.model_copy(deep=True)
-            self._prune_recipe_layer_settings()
+            if not (replay and self.current_roi):
+                self._prune_recipe_layer_settings()
             if (
                 recipe.observation_overlay
                 and self.overlay_obs_combo.findText(recipe.observation_overlay) >= 0
             ):
+                overlay_was_blocked = self.overlay_obs_combo.blockSignals(True)
                 self.overlay_obs_combo.setCurrentText(recipe.observation_overlay)
+                self.overlay_obs_combo.blockSignals(overlay_was_blocked)
             self.overlay_full_dataset_check.setChecked(
                 recipe.observation_overlay_full_dataset
             )
@@ -5013,10 +6973,17 @@ class NapariSBTController:
                 )
                 >= 0
             ):
+                population_changed = (
+                    self.population_obs_combo.currentText()
+                    != recipe.population_observation
+                )
+                population_was_blocked = self.population_obs_combo.blockSignals(True)
                 self.population_obs_combo.setCurrentText(
                     recipe.population_observation
                 )
-                self.refresh_population_values()
+                self.population_obs_combo.blockSignals(population_was_blocked)
+                if population_changed or self.population_layer_list.count() == 0:
+                    self.refresh_population_values()
             self._set_list_selection(
                 self.population_layer_list,
                 recipe.populations,
@@ -5028,23 +6995,34 @@ class NapariSBTController:
             self._set_list_selection(self.channel_list, recipe.image_channels)
         finally:
             self._applying_explore_recipe = False
-        self._refresh_reload_recipe_list()
-        if self.current_roi:
+        if replay and self.current_roi:
             self.replay_explore_view()
+        else:
+            self._refresh_reload_recipe_list()
 
     def _mark_current_explore_viewed(self) -> None:
         if not self.current_roi or not self.explore_recipe.has_content:
             return
         fingerprint = self.explore_recipe.fingerprint
         viewed = set(self.explore_review_state.viewed_rois.get(fingerprint, []))
-        viewed.add(str(self.current_roi))
-        self.explore_review_state.viewed_rois[fingerprint] = sorted(viewed)
-        self._save_explore_review_state()
+        roi = str(self.current_roi)
+        if roi not in viewed:
+            viewed.add(roi)
+            self.explore_review_state.viewed_rois[fingerprint] = sorted(viewed)
+            self._save_explore_review_state()
         self._refresh_roi_review_colours()
 
-    def _refresh_roi_review_colours(self) -> None:
+    def _refresh_roi_review_colours(self, *, force: bool = False) -> None:
         if not hasattr(self, "roi_combo"):
             return
+        if (
+            not force
+            and hasattr(self, "explore_tab_index")
+            and self.tabs.currentIndex() != self.explore_tab_index
+        ):
+            self._roi_review_refresh_pending = True
+            return
+        self._roi_review_refresh_pending = False
         if not self.explore_recipe.has_content:
             for index in range(self.roi_combo.count()):
                 self.roi_combo.setItemData(index, None, self.Qt.BackgroundRole)
@@ -5105,7 +7083,13 @@ class NapariSBTController:
         def display_changed(_event=None, tracked_layer=layer):
             self._record_layer_display_state(tracked_layer)
 
-        for event_name in ("visible", "opacity", "contour", "contrast_limits"):
+        for event_name in (
+            "visible",
+            "opacity",
+            "contour",
+            "contrast_limits",
+            "colormap",
+        ):
             emitter = getattr(events, event_name, None)
             if emitter is not None:
                 emitter.connect(display_changed)
@@ -5119,20 +7103,7 @@ class NapariSBTController:
         if not self._is_recipe_tracked_layer(name):
             return
         payload = self.explore_recipe.model_dump(mode="json")
-        payload["layer_visibility"][name] = bool(
-            getattr(layer, "visible", True)
-        )
-        payload["layer_opacities"][name] = float(
-            getattr(layer, "opacity", 1.0)
-        )
-        if hasattr(layer, "contour"):
-            payload["layer_contours"][name] = int(layer.contour)
-        if hasattr(layer, "contrast_limits"):
-            limits = layer.contrast_limits
-            payload["layer_contrast_limits"][name] = [
-                float(limits[0]),
-                float(limits[1]),
-            ]
+        self._write_layer_display_state(payload, layer)
         self.explore_recipe = ExploreViewRecipe.model_validate(payload)
         if name == "excluded_segmentation_context":
             self.context_check_display.blockSignals(True)
@@ -5141,34 +7112,144 @@ class NapariSBTController:
         self._refresh_reload_recipe_list()
         self._refresh_roi_review_colours()
 
-    def _apply_managed_layer_display_settings(self) -> None:
+    @staticmethod
+    def _colormap_specs_match(current: dict | None, desired: dict | None) -> bool:
+        if not current or not desired or current.get("kind") != desired.get("kind"):
+            return False
+        try:
+            if current["kind"] == "direct_labels":
+                current_colours = current.get("colours", {})
+                desired_colours = desired.get("colours", {})
+                return set(current_colours) == set(desired_colours) and all(
+                    np.allclose(current_colours[key], desired_colours[key])
+                    for key in current_colours
+                )
+            if current["kind"] == "continuous":
+                return (
+                    str(current.get("interpolation", "linear"))
+                    == str(desired.get("interpolation", "linear"))
+                    and np.allclose(current.get("colours", []), desired.get("colours", []))
+                    and np.allclose(current.get("controls", []), desired.get("controls", []))
+                )
+        except (KeyError, TypeError, ValueError):
+            return False
+        return False
+
+    def _layer_display_setting_matches(
+        self,
+        layer,
+        name: str,
+        key: str,
+        desired,
+    ) -> bool:
+        if key == "colormap":
+            desired_spec = self.explore_recipe.layer_colormap_specs.get(name)
+            if desired_spec is not None:
+                return self._colormap_specs_match(
+                    self._layer_colormap_spec(layer),
+                    desired_spec,
+                )
+            if isinstance(desired, str):
+                return self._layer_colormap_name(layer) == desired
+            return False
+        current = getattr(layer, key)
+        if key in {"opacity", "contrast_limits"}:
+            try:
+                return bool(np.allclose(current, desired))
+            except (TypeError, ValueError):
+                return False
+        try:
+            return bool(current == desired)
+        except (TypeError, ValueError):
+            return False
+
+    def _set_layer_display_setting(
+        self,
+        layer,
+        name: str,
+        key: str,
+        desired,
+    ) -> bool:
+        if not hasattr(layer, key) or self._layer_display_setting_matches(
+            layer,
+            name,
+            key,
+            desired,
+        ):
+            return False
+        setattr(layer, key, desired)
+        return True
+
+    def _set_label_contour_from_recipe(
+        self,
+        layer,
+        name: str,
+        default: int = 1,
+    ) -> None:
+        if not hasattr(layer, "contour"):
+            return
+        previous_state = self._updating_recipe_layer_state
+        self._updating_recipe_layer_state = True
+        try:
+            self._set_layer_display_setting(
+                layer,
+                name,
+                "contour",
+                self.explore_recipe.layer_contours.get(name, default),
+            )
+        finally:
+            self._updating_recipe_layer_state = previous_state
+
+    def _apply_managed_layer_display_settings(
+        self, *, refresh_recipe_list: bool = True
+    ) -> None:
         self._updating_recipe_layer_state = True
         try:
             for name in MANAGED_RECIPE_LAYERS:
                 if name not in self.viewer.layers:
                     continue
                 layer = self.viewer.layers[name]
-                layer.visible = self.explore_recipe.layer_visibility.get(
+                self._set_layer_display_setting(
+                    layer,
                     name,
-                    MANAGED_LAYER_DEFAULT_VISIBILITY[name],
+                    "visible",
+                    self.explore_recipe.layer_visibility.get(
+                        name,
+                        MANAGED_LAYER_DEFAULT_VISIBILITY[name],
+                    ),
                 )
-                layer.opacity = self.explore_recipe.layer_opacities.get(
+                self._set_layer_display_setting(
+                    layer,
                     name,
-                    MANAGED_LAYER_DEFAULT_OPACITY[name],
+                    "opacity",
+                    self.explore_recipe.layer_opacities.get(
+                        name,
+                        MANAGED_LAYER_DEFAULT_OPACITY[name],
+                    ),
                 )
                 if name in MANAGED_LAYER_DEFAULT_CONTOUR and hasattr(
                     layer, "contour"
                 ):
-                    layer.contour = self.explore_recipe.layer_contours.get(
+                    self._set_layer_display_setting(
+                        layer,
                         name,
-                        MANAGED_LAYER_DEFAULT_CONTOUR[name],
+                        "contour",
+                        self.explore_recipe.layer_contours.get(
+                            name,
+                            MANAGED_LAYER_DEFAULT_CONTOUR[name],
+                        ),
                     )
                 if hasattr(layer, "contrast_limits"):
                     contrast_limits = (
                         self.explore_recipe.layer_contrast_limits.get(name)
                     )
                     if contrast_limits is not None:
-                        layer.contrast_limits = contrast_limits
+                        self._set_layer_display_setting(
+                            layer,
+                            name,
+                            "contrast_limits",
+                            contrast_limits,
+                        )
                 self._bind_recipe_display_tracking(layer)
             context_visible = self.explore_recipe.layer_visibility.get(
                 "excluded_segmentation_context",
@@ -5181,7 +7262,8 @@ class NapariSBTController:
             self.context_check_display.blockSignals(False)
         finally:
             self._updating_recipe_layer_state = False
-        self._refresh_reload_recipe_list()
+        if refresh_recipe_list:
+            self._refresh_reload_recipe_list()
 
     def _replace_layer(self, name: str, data, layer_type: str, **kwargs):
         if name in self.viewer.layers:
@@ -5214,12 +7296,9 @@ class NapariSBTController:
     ):
         layer = self._replace_layer(name, data, layer_type, **kwargs)
         if reload_descriptor is not None:
-            metadata = dict(getattr(layer, "metadata", {}) or {})
-            metadata["napari_sbt_reload"] = {
-                "name": name,
-                **reload_descriptor,
-            }
-            layer.metadata = metadata
+            self._set_explore_reload_metadata(layer, name, reload_descriptor)
+            self._set_normalized_image_contrast_range(layer, reload_descriptor)
+            self._cache_explore_layer_data(name, reload_descriptor, data)
         self._explore_layer_names.add(name)
         if (
             hasattr(layer, "contrast_limits")
@@ -5230,9 +7309,162 @@ class NapariSBTController:
             self._record_layer_display_state(layer)
         return layer
 
+    def _set_explore_reload_metadata(
+        self, layer, name: str, reload_descriptor: dict
+    ) -> None:
+        metadata = dict(getattr(layer, "metadata", {}) or {})
+        metadata["napari_sbt_reload"] = {
+            "name": name,
+            "roi": str(self.current_roi or ""),
+            **reload_descriptor,
+        }
+        layer.metadata = metadata
+
+    def _reuse_explore_layer(
+        self,
+        name: str,
+        reload_descriptor: dict,
+        **display_settings,
+    ):
+        """Apply recipe display settings without replacing current layer data."""
+
+        if name not in self.viewer.layers:
+            return None
+        layer = self.viewer.layers[name]
+        if not recipe_layer_data_is_current(
+            getattr(layer, "metadata", None),
+            name=name,
+            roi=str(self.current_roi or ""),
+            reload_descriptor=reload_descriptor,
+        ):
+            return None
+        previous_state = self._updating_recipe_layer_state
+        self._updating_recipe_layer_state = True
+        try:
+            for key, value in display_settings.items():
+                if key == "rgb":
+                    continue
+                self._set_layer_display_setting(layer, name, key, value)
+            self._set_normalized_image_contrast_range(layer, reload_descriptor)
+            self._set_explore_reload_metadata(layer, name, reload_descriptor)
+        finally:
+            self._updating_recipe_layer_state = previous_state
+        self._explore_layer_names.add(name)
+        self._bind_recipe_display_tracking(layer)
+        self._explore_reused_layer_count += 1
+        return layer
+
+    @staticmethod
+    def _set_normalized_image_contrast_range(layer, reload_descriptor: dict) -> None:
+        """Keep normalized disk-image slider bounds at 0..1 after recipe replay."""
+
+        if (
+            reload_descriptor.get("kind") != "image"
+            or bool(getattr(layer, "rgb", False))
+            or not hasattr(layer, "contrast_limits_range")
+        ):
+            return
+        limits = [float(value) for value in layer.contrast_limits]
+        if not (
+            np.isfinite(limits).all()
+            and 0.0 <= limits[0] < limits[1] <= 1.0
+        ):
+            # An old or deliberately unusual recipe may contain out-of-range
+            # handles.  Do not clip and silently alter those scientific display
+            # settings merely to normalize the slider extent.
+            return
+        # load_display_image clips scalar image channels to this scientific
+        # display scale.  Set the range *after* restoring saved handles: Napari
+        # otherwise adopts the handles themselves as the slider's full extent.
+        layer.contrast_limits_range = (0.0, 1.0)
+
+    @staticmethod
+    def _image_source_identity(path: Path) -> dict[str, int | str]:
+        """Return a cheap identity that invalidates reuse when an image changes."""
+
+        resolved = Path(path).expanduser().resolve(strict=False)
+        stat = resolved.stat()
+        return {
+            "path": str(resolved),
+            "size": int(stat.st_size),
+            "mtime_ns": int(stat.st_mtime_ns),
+        }
+
+    def _remove_explore_layer(self, name: str) -> None:
+        self._remove_layers([name])
+        self._explore_layer_names.discard(name)
+
     def _clear_explore_layers(self) -> None:
         self._remove_layers(list(self._explore_layer_names))
         self._explore_layer_names.clear()
+
+    def _explore_data_cache_key(self, name: str, reload_descriptor: dict) -> str:
+        descriptor = {
+            key: value
+            for key, value in reload_descriptor.items()
+            if key not in {"mode"}
+        }
+        return json.dumps(
+            {
+                "roi": str(self.current_roi or ""),
+                "name": str(name),
+                "descriptor": descriptor,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        )
+
+    def _clear_explore_layer_data_cache(self) -> None:
+        self._explore_layer_data_cache.clear()
+        self._explore_layer_data_cache_bytes = 0
+
+    def _cache_explore_layer_data(
+        self,
+        name: str,
+        reload_descriptor: dict,
+        data,
+    ) -> None:
+        array = np.asarray(data)
+        size = int(getattr(array, "nbytes", 0))
+        if size <= 0 or size > EXPLORE_DATA_CACHE_MAX_BYTES:
+            return
+        key = self._explore_data_cache_key(name, reload_descriptor)
+        previous = self._explore_layer_data_cache.pop(key, None)
+        if previous is not None:
+            self._explore_layer_data_cache_bytes -= int(previous.nbytes)
+        self._explore_layer_data_cache[key] = array
+        self._explore_layer_data_cache_bytes += size
+        while (
+            len(self._explore_layer_data_cache) > EXPLORE_DATA_CACHE_MAX_ITEMS
+            or self._explore_layer_data_cache_bytes > EXPLORE_DATA_CACHE_MAX_BYTES
+        ):
+            _discarded_key, discarded = self._explore_layer_data_cache.popitem(
+                last=False
+            )
+            self._explore_layer_data_cache_bytes -= int(discarded.nbytes)
+
+    def _restore_cached_explore_layer(
+        self,
+        name: str,
+        reload_descriptor: dict,
+        layer_type: str,
+        **display_settings,
+    ):
+        key = self._explore_data_cache_key(name, reload_descriptor)
+        cached = self._explore_layer_data_cache.pop(key, None)
+        if cached is None:
+            return None
+        self._explore_layer_data_cache_bytes -= int(cached.nbytes)
+        layer = self._replace_explore_layer(
+            name,
+            cached,
+            layer_type,
+            reload_descriptor=reload_descriptor,
+            **display_settings,
+        )
+        self._explore_cached_layer_count += 1
+        return layer
 
     def load_roi(self, roi: str | None = None) -> None:
         if self.manifest is None:
@@ -5243,6 +7475,7 @@ class NapariSBTController:
         mask_paths = discover_mask_files(self.manifest.masks_folder)
         if roi not in mask_paths:
             raise FileNotFoundError(f"No mask found for ROI {roi!r}.")
+        self._clear_explore_layer_data_cache()
         full_mask = load_mask(mask_paths[roi])
         eligible = set(
             self.cohort.loc[
@@ -5254,8 +7487,16 @@ class NapariSBTController:
         self.current_mask = full_mask
         self.current_mask_path = mask_paths[roi]
         self.current_selected_object = None
+        self.current_labeler_object = None
         self.selected_cell_label.setText("No cohort cell selected")
-        self._remove_layers([SELECTED_CELL_LAYER_NAME])
+        self.labeler_selected_cell_label.setText("No cohort cell selected")
+        self._remove_layers(
+            [SELECTED_CELL_LAYER_NAME, LABELER_SELECTED_CELL_LAYER_NAME]
+        )
+        if self.labeler_roi_combo.findText(roi) >= 0:
+            self.labeler_roi_combo.blockSignals(True)
+            self.labeler_roi_combo.setCurrentText(roi)
+            self.labeler_roi_combo.blockSignals(False)
         cohort_visible = self.explore_recipe.layer_visibility.get(
             "classification_cohort",
             MANAGED_LAYER_DEFAULT_VISIBILITY["classification_cohort"],
@@ -5296,11 +7537,14 @@ class NapariSBTController:
         )
         self._clear_explore_layers()
         self.refresh_classification_layers()
+        self.refresh_labeler_layers()
+        self._refresh_noncontext_mask()
         self.refresh_channel_list()
         if self.auto_reload_view_check.isChecked() and self.explore_recipe.has_content:
             self.replay_explore_view()
         else:
             self._refresh_roi_review_colours()
+        self._refresh_labeler_tally()
         self.set_status(
             f"ROI {roi}: {len(eligible)} eligible cells; clicks on other mask "
             "labels are ignored."
@@ -5319,6 +7563,56 @@ class NapariSBTController:
     def toggle_context(self, checked: bool) -> None:
         if "excluded_segmentation_context" in self.viewer.layers:
             self.viewer.layers["excluded_segmentation_context"].visible = checked
+
+    def _refresh_noncontext_mask(self) -> None:
+        """Mask pixels outside the cohort's recipe-defined staining context."""
+
+        if self.manifest is None or self.current_mask is None or not self.current_roi:
+            return
+        eligible = set(
+            self.cohort.loc[
+                self.cohort["ROI"].astype(str).eq(self.current_roi),
+                "ObjectNumber",
+            ].astype(int)
+        )
+        seen = classifier_seen_mask(
+            self.current_mask,
+            eligible,
+            self.manifest.synthetic_features,
+        )
+        outside = (~seen).astype(np.uint8)
+        layer = self._replace_layer(
+            NONCONTEXT_MASK_LAYER_NAME,
+            outside,
+            "labels",
+            colormap=self._direct_label_colormap({1: "#000000"}),
+            visible=self.explore_recipe.layer_visibility.get(
+                NONCONTEXT_MASK_LAYER_NAME,
+                MANAGED_LAYER_DEFAULT_VISIBILITY[NONCONTEXT_MASK_LAYER_NAME],
+            ),
+            opacity=self.explore_recipe.layer_opacities.get(
+                NONCONTEXT_MASK_LAYER_NAME,
+                MANAGED_LAYER_DEFAULT_OPACITY[NONCONTEXT_MASK_LAYER_NAME],
+            ),
+        )
+        if hasattr(layer, "contour"):
+            layer.contour = self.explore_recipe.layer_contours.get(
+                NONCONTEXT_MASK_LAYER_NAME,
+                MANAGED_LAYER_DEFAULT_CONTOUR[NONCONTEXT_MASK_LAYER_NAME],
+            )
+        if hasattr(layer, "editable"):
+            layer.editable = False
+        self._raise_noncontext_mask()
+
+    def _raise_noncontext_mask(self) -> None:
+        """Keep the opaque focus mask above image and classification layers."""
+
+        if NONCONTEXT_MASK_LAYER_NAME not in self.viewer.layers:
+            return
+        layer = self.viewer.layers[NONCONTEXT_MASK_LAYER_NAME]
+        source = self.viewer.layers.index(layer)
+        if source != len(self.viewer.layers) - 1:
+            self.viewer.layers.move(source, len(self.viewer.layers))
 
     def show_classifier_display_options(self) -> None:
         if self.classifier_display_dialog is None:
@@ -5349,7 +7643,9 @@ class NapariSBTController:
         explanation = QLabel(
             "These settings reproduce the useful display controls from the "
             "legacy CellPose QC viewer. A contour width of 0 shows filled "
-            "cells; values above 0 show outlines that leave staining visible."
+            "cells; values above 0 show outlines that leave staining visible. "
+            "The noncontext mask is an opaque black focus aid outside the "
+            "staining regions used by the feature recipe."
         )
         explanation.setWordWrap(True)
         layout.addWidget(explanation)
@@ -5364,6 +7660,7 @@ class NapariSBTController:
         display_names = (
             "classification_cohort",
             "excluded_segmentation_context",
+            NONCONTEXT_MASK_LAYER_NAME,
             CLASS_LAYER_NAMES["confirmed"],
             CLASS_LAYER_NAMES["proposed"],
             CLASS_LAYER_NAMES["predicted"],
@@ -5469,6 +7766,7 @@ class NapariSBTController:
         self.explore_recipe = ExploreViewRecipe.model_validate(payload)
         self._apply_managed_layer_display_settings()
         self._refresh_selected_cell_layer()
+        self._raise_noncontext_mask()
         self._refresh_roi_review_colours()
         self.set_status(
             "Applied classifier visibility, opacity, contour, and cell-picking "
@@ -5481,13 +7779,15 @@ class NapariSBTController:
             callbacks.append(self._on_viewer_click)
 
     def _on_viewer_click(self, _viewer, event) -> None:
+        active_tab = self.tabs.currentIndex()
         if (
-            not self.cell_picking_enabled
-            or self.current_mask is None
-            or self.tabs.currentIndex() != self.classify_tab_index
+            self.current_mask is None
+            or active_tab not in {self.classify_tab_index, self.labeler_tab_index}
             or event.type != "mouse_press"
             or getattr(event, "button", 1) != 1
         ):
+            return
+        if active_tab == self.classify_tab_index and not self.cell_picking_enabled:
             return
         position = event.position
         if len(position) < 2:
@@ -5501,7 +7801,11 @@ class NapariSBTController:
             or column >= self.current_mask.shape[1]
         ):
             return
-        self._handle_clicked_object(int(self.current_mask[row, column]))
+        object_id = int(self.current_mask[row, column])
+        if active_tab == self.labeler_tab_index:
+            self._handle_clicked_labeler_object(object_id)
+        else:
+            self._handle_clicked_object(object_id)
 
     def _on_cohort_click(self, layer, event) -> None:
         """Compatibility callback for integrations that bind the cohort layer."""
@@ -5521,6 +7825,8 @@ class NapariSBTController:
         behavior = self.current_click_behavior()
         if behavior in {"proposed", "confirmed"}:
             self.annotate_selected(behavior)
+        elif behavior == "clear_proposed":
+            self.clear_selected_proposed()
 
     def _select_cohort_object(self, object_id: int) -> bool:
         eligible = set(
@@ -5578,6 +7884,82 @@ class NapariSBTController:
             SELECTED_CELL_LAYER_NAME,
             MANAGED_LAYER_DEFAULT_CONTOUR[SELECTED_CELL_LAYER_NAME],
         )
+        self._bind_recipe_display_tracking(layer)
+
+    def current_labeler_click_behavior(self) -> str:
+        checked = self.labeler_click_behavior_group.checkedButton()
+        if checked is None:
+            return "select"
+        return str(
+            checked.property("napari_sbt_labeler_click_behavior") or "select"
+        )
+
+    def _handle_clicked_labeler_object(self, object_id: int) -> None:
+        if not self._select_labeler_object(object_id):
+            return
+        behavior = self.current_labeler_click_behavior()
+        if behavior == "assign":
+            self.assign_selected_labeler_cell()
+        elif behavior == "clear":
+            self.clear_selected_labeler_cell()
+
+    def _select_labeler_object(self, object_id: int) -> bool:
+        eligible = set(
+            pd.to_numeric(
+                self.cohort.loc[
+                    self.cohort["ROI"].astype(str).eq(str(self.current_roi)),
+                    "ObjectNumber",
+                ],
+                errors="coerce",
+            )
+            .dropna()
+            .astype(int)
+        )
+        if object_id <= 0 or object_id not in eligible:
+            self.current_labeler_object = None
+            self._remove_layers([LABELER_SELECTED_CELL_LAYER_NAME])
+            self.labeler_selected_cell_label.setText(
+                "Cell is outside this experiment"
+            )
+            self.set_status(
+                "Cell is outside this experiment; Labeler action was ignored."
+            )
+            return False
+        self.current_labeler_object = int(object_id)
+        self.labeler_selected_cell_label.setText(
+            f"{self.current_roi} / object {self.current_labeler_object}"
+        )
+        self._refresh_labeler_selected_cell_layer()
+        return True
+
+    def _refresh_labeler_selected_cell_layer(self) -> None:
+        if self.current_mask is None or self.current_labeler_object is None:
+            self._remove_layers([LABELER_SELECTED_CELL_LAYER_NAME])
+            return
+        selected = (
+            self.current_mask == int(self.current_labeler_object)
+        ).astype(np.uint8)
+        layer = self._replace_layer(
+            LABELER_SELECTED_CELL_LAYER_NAME,
+            selected,
+            "labels",
+            colormap=self._direct_label_colormap({1: "#ffffff"}),
+            visible=self.explore_recipe.layer_visibility.get(
+                LABELER_SELECTED_CELL_LAYER_NAME,
+                MANAGED_LAYER_DEFAULT_VISIBILITY[
+                    LABELER_SELECTED_CELL_LAYER_NAME
+                ],
+            ),
+            opacity=self.explore_recipe.layer_opacities.get(
+                LABELER_SELECTED_CELL_LAYER_NAME,
+                MANAGED_LAYER_DEFAULT_OPACITY[LABELER_SELECTED_CELL_LAYER_NAME],
+            ),
+        )
+        if hasattr(layer, "contour"):
+            layer.contour = self.explore_recipe.layer_contours.get(
+                LABELER_SELECTED_CELL_LAYER_NAME,
+                MANAGED_LAYER_DEFAULT_CONTOUR[LABELER_SELECTED_CELL_LAYER_NAME],
+            )
         self._bind_recipe_display_tracking(layer)
 
     def refresh_channel_list(self) -> None:
@@ -5656,6 +8038,7 @@ class NapariSBTController:
         payload["image_channels"] = [str(channel) for channel in channels]
         for key in (
             "layer_colormaps",
+            "layer_colormap_specs",
             "layer_visibility",
             "layer_opacities",
             "layer_contours",
@@ -5681,10 +8064,7 @@ class NapariSBTController:
             "visible": self.explore_recipe.layer_visibility.get(name, True),
             "opacity": self.explore_recipe.layer_opacities.get(name, 1.0),
         }
-        colormap = self.explore_recipe.layer_colormaps.get(
-            name,
-            default_colormap,
-        )
+        colormap = self._recipe_colormap(name, default_colormap)
         if colormap:
             settings["colormap"] = colormap
         contrast_limits = self.explore_recipe.layer_contrast_limits.get(name)
@@ -5713,11 +8093,38 @@ class NapariSBTController:
             )
         if recipe.image_mode == "rgb":
             if len(available) != 3:
+                self._remove_explore_layer("population_qc_rgb")
                 self.set_status(
                     "The RGB composite was not loaded because all three saved "
                     "channels are not available for this ROI."
                 )
                 return 0
+            reload_descriptor = {
+                "kind": "rgb",
+                "channels": list(recipe.image_channels),
+                "sources": [
+                    self._image_source_identity(self.current_image_paths[channel])
+                    for channel in available
+                ],
+            }
+            display_settings = {
+                "rgb": True,
+                "blending": "translucent",
+                **self._recipe_display_settings("population_qc_rgb"),
+            }
+            if self._reuse_explore_layer(
+                "population_qc_rgb",
+                reload_descriptor,
+                **display_settings,
+            ) is not None:
+                return 1
+            if self._restore_cached_explore_layer(
+                "population_qc_rgb",
+                reload_descriptor,
+                "image",
+                **display_settings,
+            ) is not None:
+                return 1
             images = []
             for channel in available:
                 image, is_rgb = load_display_image(
@@ -5735,18 +8142,12 @@ class NapariSBTController:
                 "population_qc_rgb",
                 np.stack(images, axis=-1),
                 "image",
-                reload_descriptor={
-                    "kind": "rgb",
-                    "channels": list(recipe.image_channels),
-                },
-                rgb=True,
-                blending="translucent",
-                **self._recipe_display_settings("population_qc_rgb"),
+                reload_descriptor=reload_descriptor,
+                **display_settings,
             )
             return 1
         loaded = 0
         for channel in available:
-            image, is_rgb = load_display_image(self.current_image_paths[channel])
             name = f"image::{channel}"
             recipe_index = recipe.image_channels.index(channel)
             default_colormap = (
@@ -5756,26 +8157,65 @@ class NapariSBTController:
                     recipe_index % len(SIX_COLOUR_COLORMAPS)
                 ]
             )
+            # The saved image mode controls display colour, not pixel data. A
+            # greyscale/six-colour recipe switch can therefore reuse the same
+            # source array after only checking the file identity.
+            reload_descriptor = {
+                "kind": "image",
+                "channel": channel,
+                "mode": recipe.image_mode,
+                "source": self._image_source_identity(
+                    self.current_image_paths[channel]
+                ),
+            }
+            existing_layer = (
+                self.viewer.layers[name]
+                if name in self.viewer.layers
+                else None
+            )
+            existing_is_rgb = bool(
+                existing_layer is not None
+                and getattr(existing_layer, "rgb", False)
+            )
+            display_settings = self._recipe_display_settings(
+                name,
+                default_colormap=None if existing_is_rgb else default_colormap,
+            )
+            if self._reuse_explore_layer(
+                name,
+                reload_descriptor,
+                **display_settings,
+            ) is not None:
+                loaded += 1
+                continue
+            if self._restore_cached_explore_layer(
+                name,
+                reload_descriptor,
+                "image",
+                **display_settings,
+            ) is not None:
+                loaded += 1
+                continue
+            image, is_rgb = load_display_image(self.current_image_paths[channel])
             kwargs = {
                 "rgb": is_rgb,
                 "blending": "translucent" if is_rgb else "additive",
-                **self._recipe_display_settings(
-                    name,
-                    default_colormap=None if is_rgb else default_colormap,
+                **(
+                    self._recipe_display_settings(name)
+                    if is_rgb
+                    else display_settings
                 ),
             }
             self._replace_explore_layer(
                 name,
                 image,
                 "image",
-                reload_descriptor={
-                    "kind": "image",
-                    "channel": channel,
-                    "mode": recipe.image_mode,
-                },
+                reload_descriptor=reload_descriptor,
                 **kwargs,
             )
             loaded += 1
+        for channel in missing:
+            self._remove_explore_layer(f"image::{channel}")
         return loaded
 
     def refresh_population_values(self) -> None:
@@ -5864,67 +8304,105 @@ class NapariSBTController:
         return DirectLabelColormap(color_dict={None: "#00000000", **colours})
 
     def _render_observation_overlay(self, observation: str) -> int:
-        rows, object_ids, selected, _roi_selector = self._roi_adata_rows()
-        if observation not in rows:
+        name = f"obs::{observation}"
+        if self.adata is None or observation not in self.adata.obs:
+            self._remove_explore_layer(name)
             self.set_status(
                 f"Saved AnnData observation {observation!r} is no longer available."
             )
             return 0
+        numeric = pd.api.types.is_numeric_dtype(self.adata.obs[observation])
+        reload_descriptor = {
+            "kind": "observation",
+            "observation": observation,
+            "full_dataset": self.explore_recipe.observation_overlay_full_dataset,
+            "value_kind": "numeric" if numeric else "categorical",
+        }
+        if numeric:
+            display_settings = {
+                "blending": "additive",
+                **self._recipe_display_settings(
+                    name,
+                    default_colormap="viridis",
+                ),
+            }
+            if self._reuse_explore_layer(
+                name,
+                reload_descriptor,
+                **display_settings,
+            ) is not None:
+                return 1
+            if self._restore_cached_explore_layer(
+                name,
+                reload_descriptor,
+                "image",
+                **display_settings,
+            ) is not None:
+                return 1
+        else:
+            population_colours = categorical_colour_map(self.adata, observation)
+            # Use dataset-wide category order so saved direct-label colours keep
+            # the same biological meaning even when an ROI lacks categories.
+            categories = list(population_colours)
+            codes = {value: index + 1 for index, value in enumerate(categories)}
+            default_colormap = self._direct_label_colormap(
+                {
+                    code: population_colours[value]
+                    for value, code in codes.items()
+                }
+            )
+            display_settings = {
+                "colormap": self._recipe_colormap(name, default_colormap),
+                "visible": self.explore_recipe.layer_visibility.get(name, True),
+                "opacity": self.explore_recipe.layer_opacities.get(name, 1.0),
+            }
+            layer = self._reuse_explore_layer(
+                name,
+                reload_descriptor,
+                **display_settings,
+            )
+            if layer is None:
+                layer = self._restore_cached_explore_layer(
+                    name,
+                    reload_descriptor,
+                    "labels",
+                    **display_settings,
+                )
+            if layer is not None:
+                self._set_label_contour_from_recipe(layer, name)
+                return 1
+
+        rows, object_ids, selected, _roi_selector = self._roi_adata_rows()
         if self.explore_recipe.observation_overlay_full_dataset:
             selected = object_ids.notna()
         values = rows[observation]
-        if pd.api.types.is_numeric_dtype(values):
+        if numeric:
             mapping = pd.Series(
                 pd.to_numeric(values[selected], errors="coerce").to_numpy(),
                 index=object_ids[selected].astype(int),
             )
             overlay = _identity_value_map(self.current_mask, mapping)
-            name = f"obs::{observation}"
             self._replace_explore_layer(
                 name,
                 overlay,
                 "image",
-                reload_descriptor={
-                    "kind": "observation",
-                    "observation": observation,
-                    "full_dataset": self.explore_recipe.observation_overlay_full_dataset,
-                },
-                blending="additive",
-                **self._recipe_display_settings(
-                    name,
-                    default_colormap="viridis",
-                ),
+                reload_descriptor=reload_descriptor,
+                **display_settings,
             )
         else:
-            categories = sorted(values[selected].dropna().astype(str).unique())
-            codes = {value: index + 1 for index, value in enumerate(categories)}
             mapping = pd.Series(
                 values[selected].astype(str).map(codes).to_numpy(),
                 index=object_ids[selected].astype(int),
             )
             overlay = _identity_value_map(self.current_mask, mapping, dtype=np.int32)
-            population_colours = categorical_colour_map(self.adata, observation)
-            name = f"obs::{observation}"
             layer = self._replace_explore_layer(
                 name,
                 overlay,
                 "labels",
-                reload_descriptor={
-                    "kind": "observation",
-                    "observation": observation,
-                    "full_dataset": self.explore_recipe.observation_overlay_full_dataset,
-                },
-                colormap=self._direct_label_colormap(
-                    {
-                        code: population_colours[value]
-                        for value, code in codes.items()
-                    }
-                ),
-                visible=self.explore_recipe.layer_visibility.get(name, True),
-                opacity=self.explore_recipe.layer_opacities.get(name, 1.0),
+                reload_descriptor=reload_descriptor,
+                **display_settings,
             )
-            if hasattr(layer, "contour"):
-                layer.contour = self.explore_recipe.layer_contours.get(name, 1)
+            self._set_label_contour_from_recipe(layer, name)
         return 1
 
     def load_selected_population_layers(self) -> None:
@@ -5951,16 +8429,56 @@ class NapariSBTController:
         observation: str,
         populations: Iterable[str],
     ) -> int:
-        rows, object_ids, selected, _roi_selector = self._roi_adata_rows()
-        if observation not in rows:
+        populations = list(populations)
+        if self.adata is None or observation not in self.adata.obs:
+            for population in populations:
+                self._remove_explore_layer(
+                    f"population::{observation}::{population}"
+                )
             self.set_status(
                 f"Saved population observation {observation!r} is unavailable."
             )
             return 0
-        values = rows[observation].astype(str)
         colour_map = categorical_colour_map(self.adata, observation)
+        roi_data = None
         loaded = 0
         for population in populations:
+            colour = colour_map.get(str(population), "#ffffff")
+            name = f"population::{observation}::{population}"
+            reload_descriptor = {
+                "kind": "population",
+                "observation": observation,
+                "population": population,
+            }
+            display_settings = {
+                "colormap": self._recipe_colormap(
+                    name,
+                    self._direct_label_colormap({1: colour}),
+                ),
+                "visible": self.explore_recipe.layer_visibility.get(name, True),
+                "opacity": self.explore_recipe.layer_opacities.get(name, 1.0),
+            }
+            layer = self._reuse_explore_layer(
+                name,
+                reload_descriptor,
+                **display_settings,
+            )
+            if layer is None:
+                layer = self._restore_cached_explore_layer(
+                    name,
+                    reload_descriptor,
+                    "labels",
+                    **display_settings,
+                )
+            if layer is not None:
+                self._set_label_contour_from_recipe(layer, name)
+                loaded += 1
+                continue
+            if roi_data is None:
+                rows, object_ids, selected, _roi_selector = self._roi_adata_rows()
+                values = rows[observation].astype(str)
+                roi_data = (object_ids, selected, values)
+            object_ids, selected, values = roi_data
             population_selected = selected & values.eq(str(population))
             mapping = pd.Series(
                 np.ones(int(population_selected.sum()), dtype=np.int32),
@@ -5971,23 +8489,14 @@ class NapariSBTController:
                 mapping,
                 dtype=np.int32,
             )
-            colour = colour_map.get(str(population), "#ffffff")
-            name = f"population::{observation}::{population}"
             layer = self._replace_explore_layer(
                 name,
                 overlay,
                 "labels",
-                reload_descriptor={
-                    "kind": "population",
-                    "observation": observation,
-                    "population": population,
-                },
-                colormap=self._direct_label_colormap({1: colour}),
-                visible=self.explore_recipe.layer_visibility.get(name, True),
-                opacity=self.explore_recipe.layer_opacities.get(name, 1.0),
+                reload_descriptor=reload_descriptor,
+                **display_settings,
             )
-            if hasattr(layer, "contour"):
-                layer.contour = self.explore_recipe.layer_contours.get(name, 1)
+            self._set_label_contour_from_recipe(layer, name)
             loaded += 1
         return loaded
 
@@ -6002,9 +8511,47 @@ class NapariSBTController:
         self.replay_explore_view()
 
     def _render_marker_overlays(self, markers: Iterable[str]) -> int:
-        _rows, object_ids, selected, roi_selector = self._roi_adata_rows()
         loaded = 0
+        available_markers = set(self.adata.var_names.astype(str))
+        roi_data = None
         for marker in markers:
+            name = f"adata.X::{marker}"
+            if str(marker) not in available_markers:
+                self._remove_explore_layer(name)
+                self.set_status(
+                    f"Saved AnnData marker {marker!r} is no longer available."
+                )
+                continue
+            reload_descriptor = {
+                "kind": "marker",
+                "marker": marker,
+            }
+            display_settings = {
+                "blending": "additive",
+                **self._recipe_display_settings(
+                    name,
+                    default_colormap="viridis",
+                ),
+            }
+            if self._reuse_explore_layer(
+                name,
+                reload_descriptor,
+                **display_settings,
+            ) is not None:
+                loaded += 1
+                continue
+            if self._restore_cached_explore_layer(
+                name,
+                reload_descriptor,
+                "image",
+                **display_settings,
+            ) is not None:
+                loaded += 1
+                continue
+            if roi_data is None:
+                _rows, object_ids, selected, roi_selector = self._roi_adata_rows()
+                roi_data = (object_ids, selected, roi_selector)
+            object_ids, selected, roi_selector = roi_data
             try:
                 values = marker_values(self.adata, marker)[roi_selector]
             except KeyError:
@@ -6017,20 +8564,12 @@ class NapariSBTController:
                 index=object_ids[selected].astype(int),
             )
             overlay = _identity_value_map(self.current_mask, mapping)
-            name = f"adata.X::{marker}"
             self._replace_explore_layer(
                 name,
                 overlay,
                 "image",
-                reload_descriptor={
-                    "kind": "marker",
-                    "marker": marker,
-                },
-                blending="additive",
-                **self._recipe_display_settings(
-                    name,
-                    default_colormap="viridis",
-                ),
+                reload_descriptor=reload_descriptor,
+                **display_settings,
             )
             loaded += 1
         return loaded
@@ -6040,8 +8579,19 @@ class NapariSBTController:
 
         if not self.current_roi or self.current_mask is None:
             return
-        self._prune_recipe_layer_settings()
-        self._clear_explore_layers()
+        recipe_entries = self._recipe_layer_entries()
+        self._prune_recipe_layer_settings(
+            {entry["name"] for entry in recipe_entries}
+        )
+        desired_names = {
+            entry["name"]
+            for entry in recipe_entries
+            if entry["kind"] != "managed"
+        }
+        for name in self._explore_layer_names - desired_names:
+            self._remove_explore_layer(name)
+        self._explore_reused_layer_count = 0
+        self._explore_cached_layer_count = 0
         loaded = self._render_recipe_images()
         if self.explore_recipe.observation_overlay:
             loaded += self._render_observation_overlay(
@@ -6059,16 +8609,36 @@ class NapariSBTController:
             loaded += self._render_marker_overlays(
                 self.explore_recipe.marker_overlays
             )
-        self._apply_managed_layer_display_settings()
+        self._apply_managed_layer_display_settings(refresh_recipe_list=False)
+        self._raise_noncontext_mask()
         managed_present = sum(
             name in self.viewer.layers for name in MANAGED_RECIPE_LAYERS
         )
         self._refresh_reload_recipe_list()
         if loaded or managed_present:
             self._mark_current_explore_viewed()
+            active_preset = self.explore_review_state.recipe_presets.get(
+                self.explore_review_state.active_recipe_id
+            )
+            recipe_label = "working Explore recipe"
+            if (
+                active_preset is not None
+                and active_preset.recipe.fingerprint
+                == self.explore_recipe.fingerprint
+            ):
+                recipe_label = f"Explore recipe {active_preset.name!r}"
+            rendered = max(
+                0,
+                loaded
+                - self._explore_reused_layer_count
+                - self._explore_cached_layer_count,
+            )
             self.set_status(
-                f"Replayed {loaded} Explore and {managed_present} managed "
-                f"classification layer setting(s) for ROI {self.current_roi}."
+                f"Applied {recipe_label} for ROI {self.current_roi}: reused "
+                f"{self._explore_reused_layer_count} existing Explore layer(s), "
+                f"restored {self._explore_cached_layer_count} from the current-ROI "
+                f"memory cache, loaded or recalculated {rendered}, and updated "
+                f"{managed_present} managed classification layer setting(s)."
             )
         else:
             self._refresh_roi_review_colours()
@@ -6120,6 +8690,266 @@ class NapariSBTController:
             "and click Create confirmed experiment to freeze it."
         )
 
+    def _labeler_code_map(self) -> dict[str, int]:
+        return {
+            definition.label_id: index + 1
+            for index, definition in enumerate(self.labeler_classes)
+        }
+
+    def _labeler_colormap(self):
+        return self._direct_label_colormap(
+            {
+                index + 1: definition.color
+                for index, definition in enumerate(self.labeler_classes)
+            }
+        )
+
+    def refresh_labeler_layers(self) -> None:
+        """Render current-ROI Labeler assignments as coloured cell outlines."""
+
+        if self.current_mask is None or self.manifest is None:
+            return
+        codes = self._labeler_code_map()
+        rows = self.labeler_records.loc[
+            self.labeler_records["ROI"].astype(str).eq(str(self.current_roi))
+        ]
+        mapping = pd.Series(
+            rows["label_id"].map(codes).to_numpy(),
+            index=pd.to_numeric(rows["ObjectNumber"], errors="coerce")
+            .dropna()
+            .astype(int),
+            dtype="float64",
+        )
+        data = _identity_value_map(self.current_mask, mapping, dtype=np.int32)
+        layer = self._replace_layer(
+            LABELER_LAYER_NAME,
+            data,
+            "labels",
+            colormap=self._labeler_colormap(),
+            visible=self.explore_recipe.layer_visibility.get(
+                LABELER_LAYER_NAME,
+                MANAGED_LAYER_DEFAULT_VISIBILITY[LABELER_LAYER_NAME],
+            ),
+            opacity=self.explore_recipe.layer_opacities.get(
+                LABELER_LAYER_NAME,
+                MANAGED_LAYER_DEFAULT_OPACITY[LABELER_LAYER_NAME],
+            ),
+        )
+        if hasattr(layer, "contour"):
+            layer.contour = self.explore_recipe.layer_contours.get(
+                LABELER_LAYER_NAME,
+                MANAGED_LAYER_DEFAULT_CONTOUR[LABELER_LAYER_NAME],
+            )
+        self._bind_recipe_display_tracking(layer)
+        self._refresh_labeler_selected_cell_layer()
+        self._raise_noncontext_mask()
+
+    def _refresh_single_labeler_object(
+        self, object_id: int, *, label_id: str | None
+    ) -> None:
+        """Update one Labeler object without rebuilding its whole ROI raster."""
+
+        if self.current_mask is None or LABELER_LAYER_NAME not in self.viewer.layers:
+            self.refresh_labeler_layers()
+            return
+        pixels = self.current_mask == int(object_id)
+        if not np.any(pixels):
+            self.refresh_labeler_layers()
+            return
+        code = 0 if label_id is None else self._labeler_code_map()[str(label_id)]
+        layer = self.viewer.layers[LABELER_LAYER_NAME]
+        data = np.asarray(layer.data)
+        data[pixels] = code
+        layer.refresh()
+
+    def assign_selected_labeler_cell(self) -> None:
+        if self.manifest is None:
+            raise ValueError("Create or load an experiment first.")
+        if self.current_labeler_object is None:
+            raise ValueError("Select an eligible cohort cell first.")
+        label_id = self.selected_labeler_class_id()
+        self.labeler_records = set_labeler_record(
+            self.labeler_records,
+            roi=str(self.current_roi),
+            object_number=self.current_labeler_object,
+            label_id=label_id,
+            user=os.environ.get("USERNAME") or os.environ.get("USER", ""),
+        )
+        self._refresh_single_labeler_object(
+            self.current_labeler_object,
+            label_id=label_id,
+        )
+        self._refresh_labeler_tally()
+        self._refresh_single_labeler_result_row(
+            str(self.current_roi), self.current_labeler_object
+        )
+        definition = next(
+            item for item in self.labeler_classes if item.label_id == label_id
+        )
+        self.set_status(
+            f"Labeler assigned {self.current_roi}/{self.current_labeler_object} "
+            f"to {definition.name!r}."
+        )
+
+    def clear_selected_labeler_cell(self) -> None:
+        if self.current_labeler_object is None:
+            raise ValueError("Select an eligible cohort cell first.")
+        before = len(self.labeler_records)
+        self.labeler_records = remove_labeler_record(
+            self.labeler_records,
+            roi=str(self.current_roi),
+            object_number=self.current_labeler_object,
+        )
+        if len(self.labeler_records) == before:
+            self.set_status(
+                f"{self.current_roi}/{self.current_labeler_object} has no Labeler "
+                "assignment to clear."
+            )
+            return
+        self._refresh_single_labeler_object(
+            self.current_labeler_object,
+            label_id=None,
+        )
+        self._refresh_labeler_tally()
+        self._refresh_single_labeler_result_row(
+            str(self.current_roi), self.current_labeler_object
+        )
+        self.set_status(
+            f"Cleared the Labeler assignment for "
+            f"{self.current_roi}/{self.current_labeler_object}."
+        )
+
+    def clear_all_labeler_records(self) -> None:
+        count = len(self.labeler_records)
+        if count == 0:
+            self.set_status("There are no Labeler assignments to clear.")
+            return
+        reply = self.QMessageBox.question(
+            self.root,
+            "Clear all Labeler assignments",
+            f"Remove all {count:,} in-memory Labeler assignments across every ROI?",
+        )
+        if reply != self.QMessageBox.Yes:
+            self.set_status("Clear all Labeler assignments cancelled.")
+            return
+        self.labeler_records = empty_labeler_records()
+        self.refresh_labeler_layers()
+        self._refresh_labeler_tally()
+        self._refresh_labeler_results_table()
+        self.set_status(f"Cleared all {count:,} Labeler assignments.")
+
+    def choose_labeler_csv_destination(self) -> None:
+        selected, _filter = self.QFileDialog.getSaveFileName(
+            self.root,
+            "Export Labeler cell list",
+            self.labeler_csv_path_edit.text().strip()
+            or str(self.project_root / "napari_sbt_cell_labels.csv"),
+            "CSV tables (*.csv)",
+        )
+        if selected:
+            self.labeler_csv_path_edit.setText(selected)
+
+    def _labeler_export_table(self) -> pd.DataFrame:
+        if self.manifest is None or self.cohort.empty:
+            raise ValueError("Create or load an experiment before exporting labels.")
+        return build_labeler_export_table(
+            self.labeler_records,
+            self.labeler_classes,
+            cohort=self.cohort,
+        )
+
+    def export_labeler_csv(self) -> None:
+        table = self._labeler_export_table()
+        destination = Path(self.labeler_csv_path_edit.text().strip()).expanduser()
+        if destination.suffix.casefold() != ".csv":
+            destination = destination.with_suffix(".csv")
+            self.labeler_csv_path_edit.setText(str(destination))
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_name(
+            f".{destination.stem}.{uuid4().hex}.tmp.csv"
+        )
+        try:
+            table.to_csv(temporary, index=False)
+            os.replace(temporary, destination)
+        finally:
+            if temporary.exists():
+                temporary.unlink()
+        if self.paths is not None:
+            append_audit(
+                self.paths,
+                {
+                    "action": "export_labeler_csv",
+                    "path": str(destination),
+                    "assignment_count": int(len(table)),
+                    "labels": [
+                        definition.model_dump(mode="json")
+                        for definition in self.labeler_classes
+                    ],
+                },
+            )
+        self.set_status(
+            f"Exported {len(table):,} Labeler assignments to {destination}."
+        )
+
+    def apply_labeler_records_to_live_anndata(self) -> None:
+        if self.adata is None:
+            raise ValueError(
+                "Applying Labeler assignments requires a loaded AnnData object."
+            )
+        obs_name = self.labeler_obs_name_edit.text().strip()
+        overwrite = bool(self.labeler_overwrite_obs_check.isChecked())
+        if obs_name in self.adata.obs and overwrite:
+            warning = (
+                f"This will replace the live in-memory adata.obs[{obs_name!r}]."
+            )
+        else:
+            warning = f"This will create live in-memory adata.obs[{obs_name!r}]."
+        reply = self.QMessageBox.question(
+            self.root,
+            "Apply Labeler assignments to AnnData",
+            f"{warning}\n\n{len(self.labeler_records):,} labelled cells will "
+            "receive values; all other cells will be missing. No file is written.",
+        )
+        if reply != self.QMessageBox.Yes:
+            self.set_status("Applying Labeler assignments to AnnData was cancelled.")
+            return
+        apply_labeler_to_anndata(
+            self.adata,
+            self.labeler_records,
+            self.labeler_classes,
+            cohort=self.cohort,
+            obs_name=obs_name,
+            overwrite=overwrite,
+        )
+        napari_metadata = self.adata.uns.setdefault("napari_sbt", {})
+        labeler_metadata = napari_metadata.setdefault("labeler", {})
+        labeler_metadata[obs_name] = {
+            "created_at": pd.Timestamp.now(tz="UTC").isoformat(),
+            "experiment_id": self.manifest.experiment_id,
+            "experiment_revision": int(self.manifest.revision),
+            "cohort_fingerprint": self.manifest.cell_scope.snapshot_sha256,
+            "assignment_count": int(len(self.labeler_records)),
+            "classes": [
+                definition.model_dump(mode="json")
+                for definition in self.labeler_classes
+            ],
+        }
+        if self.paths is not None:
+            append_audit(
+                self.paths,
+                {
+                    "action": "apply_labeler_to_live_anndata",
+                    "obs_name": obs_name,
+                    "overwrite": overwrite,
+                    "assignment_count": int(len(self.labeler_records)),
+                },
+            )
+        self._populate_anndata_selectors(source="Labeler live AnnData update")
+        self.set_status(
+            f"Applied {len(self.labeler_records):,} Labeler assignments to "
+            f"live adata.obs[{obs_name!r}]. No AnnData file was written."
+        )
+
     def selected_class_id(self) -> str:
         value = self.class_combo.currentData()
         if value is None:
@@ -6168,6 +8998,8 @@ class NapariSBTController:
                 class_id=class_id,
                 state=state,
             )
+            if state == "confirmed":
+                self._mark_final_identities_stale()
             self._refresh_class_tally()
             class_definition = self._class_definition(class_id)
             class_name = (
@@ -6186,16 +9018,106 @@ class NapariSBTController:
                 self.root, "napari_sbt", f"{type(error).__name__}: {error}"
             )
 
+    def clear_selected_proposed(self) -> None:
+        """Clear the selected cell's proposal without touching confirmations."""
+
+        if self.current_selected_object is None:
+            raise ValueError("Select an eligible cohort cell first.")
+        selected = self.labels.loc[
+            self.labels["ROI"].astype(str).eq(str(self.current_roi))
+            & pd.to_numeric(self.labels["ObjectNumber"], errors="coerce").eq(
+                int(self.current_selected_object)
+            )
+        ]
+        if selected.empty:
+            self.set_status(
+                f"{self.current_roi}/{self.current_selected_object} has no proposed "
+                "label to clear."
+            )
+            return
+        label = selected.iloc[-1]
+        if str(label["state"]) != "proposed":
+            self.set_status(
+                f"{self.current_roi}/{self.current_selected_object} is confirmed; "
+                "Clear proposed left it unchanged."
+            )
+            return
+        class_id = str(label["class_id"])
+        self.labels = remove_proposed_label(
+            self.labels,
+            roi=self.current_roi,
+            object_number=self.current_selected_object,
+        )
+        write_dataframe(self.paths.labels, self.labels)
+        append_audit(
+            self.paths,
+            {
+                "action": "clear_proposed_label",
+                "ROI": self.current_roi,
+                "ObjectNumber": self.current_selected_object,
+                "previous_class_id": class_id,
+            },
+        )
+        self._refresh_single_classification_object(
+            self.current_selected_object,
+            class_id=None,
+            state="cleared",
+        )
+        self._refresh_class_tally()
+        class_definition = self._class_definition(class_id)
+        class_name = class_definition.name if class_definition is not None else class_id
+        self.set_status(
+            f"Cleared proposed {class_name} label from "
+            f"{self.current_roi}/{self.current_selected_object}."
+        )
+
+    def clear_all_proposals(self) -> None:
+        """Clear reversible proposals throughout the experiment after confirmation."""
+
+        proposed_count = int(self.labels["state"].astype(str).eq("proposed").sum())
+        if proposed_count == 0:
+            self.set_status("There are no proposed labels to clear.")
+            return
+        reply = self.QMessageBox.question(
+            self.root,
+            "Clear all proposals",
+            f"Remove all {proposed_count:,} proposed labels across every ROI in "
+            "this experiment?\n\nConfirmed labels will not be changed.",
+        )
+        if reply != self.QMessageBox.Yes:
+            self.set_status("Clear all proposals cancelled.")
+            return
+        self.labels = remove_all_proposed_labels(self.labels)
+        write_dataframe(self.paths.labels, self.labels)
+        append_audit(
+            self.paths,
+            {
+                "action": "clear_all_proposals",
+                "removed_count": proposed_count,
+                "confirmed_labels_preserved": True,
+            },
+        )
+        self.refresh_classification_layers()
+        self._refresh_class_tally()
+        self.set_status(
+            f"Cleared {proposed_count:,} proposals across all ROIs; confirmed "
+            "labels were preserved."
+        )
+
     def _refresh_single_classification_object(
         self,
         object_id: int,
         *,
-        class_id: str,
+        class_id: str | None,
         state: str,
     ) -> None:
         """Update one annotated object without rebuilding whole-ROI rasters."""
 
-        if self.current_mask is None or state not in {"proposed", "confirmed"}:
+        if self.current_mask is None or state not in {
+            "proposed",
+            "confirmed",
+            "cleared",
+        }:
             self.refresh_classification_layers()
             return
         layer_names = {
@@ -6209,18 +9131,25 @@ class NapariSBTController:
         if not np.any(pixels):
             self.refresh_classification_layers()
             return
-        class_code = self._class_code_map()[str(class_id)]
+        class_code = (
+            self._class_code_map()[str(class_id)] if state != "cleared" else 0
+        )
         for label_state, layer_name in layer_names.items():
             layer = self.viewer.layers[layer_name]
             data = np.asarray(layer.data)
-            data[pixels] = class_code if label_state == state else 0
+            data[pixels] = (
+                class_code if state != "cleared" and label_state == state else 0
+            )
             layer.refresh()
 
     def confirm_all_proposed(self) -> None:
+        proposed_count = int(self.labels["state"].astype(str).eq("proposed").sum())
         self.labels = confirm_proposed(self.labels)
         write_dataframe(self.paths.labels, self.labels)
         self.manifest.locked = bool((self.labels["state"] == "confirmed").any())
         save_experiment(self.manifest, self.paths.root, audit_action="confirm_proposals")
+        if proposed_count:
+            self._mark_final_identities_stale()
         self.refresh_classification_layers()
         self.refresh_status()
 
@@ -6426,9 +9355,14 @@ class NapariSBTController:
             rows = self.scores.loc[
                 self.scores["ROI"].astype(str).eq(self.current_roi)
             ]
+            minimum, maximum = self._prediction_review_range()
+            confidence = pd.to_numeric(
+                rows["maximum_probability"], errors="coerce"
+            )
+            predicted_rows = rows.loc[confidence.between(minimum, maximum)]
             mapping = pd.Series(
-                rows["predicted_class"].map(codes).to_numpy(),
-                index=rows["ObjectNumber"].astype(int),
+                predicted_rows["predicted_class"].map(codes).to_numpy(),
+                index=predicted_rows["ObjectNumber"].astype(int),
             )
             data = _identity_value_map(self.current_mask, mapping, dtype=np.int32)
             self._replace_layer(
@@ -6458,7 +9392,71 @@ class NapariSBTController:
                 colormap="magma",
                 contrast_limits=(0, 1),
             )
+            self._update_prediction_review_summary()
+        else:
+            if CLASS_LAYER_NAMES["predicted"] in self.viewer.layers:
+                predicted_layer = self.viewer.layers[CLASS_LAYER_NAMES["predicted"]]
+                predicted_layer.data = np.zeros_like(self.current_mask, dtype=np.int32)
+                predicted_layer.refresh()
+            if CLASS_LAYER_NAMES["uncertainty"] in self.viewer.layers:
+                uncertainty_layer = self.viewer.layers[
+                    CLASS_LAYER_NAMES["uncertainty"]
+                ]
+                uncertainty_layer.data = np.full(
+                    self.current_mask.shape, np.nan, dtype=np.float32
+                )
+                uncertainty_layer.refresh()
+            self._update_prediction_review_summary()
         self._apply_managed_layer_display_settings()
+        self._raise_noncontext_mask()
+
+    def _prediction_review_range(self) -> tuple[float, float]:
+        minimum = float(self.prediction_review_min_confidence_spin.value())
+        maximum = float(self.prediction_review_max_confidence_spin.value())
+        return minimum, maximum
+
+    def _update_prediction_review_summary(self) -> None:
+        if self.scores.empty:
+            self.prediction_review_summary_label.setText(
+                "Score the cohort to review predicted-class coverage."
+            )
+            return
+        minimum, maximum = self._prediction_review_range()
+        if minimum > maximum:
+            self.prediction_review_summary_label.setText(
+                "Invalid display range: the minimum exceeds the maximum. Raw scores "
+                "are unchanged."
+            )
+            return
+        confidence = pd.to_numeric(
+            self.scores["maximum_probability"], errors="coerce"
+        )
+        scorable = self.scores.get(
+            "scorable", pd.Series(True, index=self.scores.index)
+        ).fillna(False).astype(bool)
+        visible = scorable & confidence.between(minimum, maximum)
+        self.prediction_review_summary_label.setText(
+            f"{int(visible.sum()):,}/{int(scorable.sum()):,} scorable predictions "
+            f"are visible at confidence {minimum:.2f}–{maximum:.2f}. Raw scores "
+            "are unchanged."
+        )
+
+    def apply_prediction_review_filter(self) -> None:
+        minimum, maximum = self._prediction_review_range()
+        if minimum > maximum:
+            raise ValueError(
+                "The visible prediction minimum cannot exceed its maximum."
+            )
+        self.refresh_classification_layers()
+        self.set_status(
+            "Applied the confidence range to the predicted_classes display layer."
+        )
+
+    def reset_prediction_review_filter(self) -> None:
+        self.prediction_review_min_confidence_spin.setValue(0)
+        self.prediction_review_max_confidence_spin.setValue(1)
+        self.refresh_classification_layers()
+        self.set_status("The predicted_classes layer now shows all scored predictions.")
 
     def _load_feature_table(self) -> pd.DataFrame:
         if not self.paths.feature_table.exists():
@@ -6535,6 +9533,9 @@ class NapariSBTController:
         save_model_bundle(
             self.model_bundle, self.paths.models / "classifier_latest.joblib"
         )
+        self.scores = pd.DataFrame()
+        self._mark_final_identities_stale()
+        self.refresh_classification_layers()
         self._refresh_model_storage_label()
         for warning in result.warnings:
             self.set_status(f"MODEL WARNING — {warning}")
@@ -6574,6 +9575,7 @@ class NapariSBTController:
                 "or confirmed labels. Retrain before scoring."
             )
         self.scores = score_cohort(self.model_bundle, self._load_feature_table())
+        self._mark_final_identities_stale()
         write_dataframe(self.paths.scores, self.scores)
         append_audit(
             self.paths,
@@ -6850,6 +9852,12 @@ class NapariSBTController:
             )
         else:
             self.set_status(f"Feature-source validation exited with code {exit_code}.")
+        self._activity_finish(
+            exit_code == 0,
+            "Feature-source validation completed."
+            if exit_code == 0
+            else f"Feature-source validation exited with code {exit_code}.",
+        )
 
     def refresh_refinement_readiness(self) -> None:
         """Summarize whether confirmed trial labels support grouped evaluation."""
@@ -7092,6 +10100,16 @@ class NapariSBTController:
             self.refinement_progress_bar.setFormat("Failed")
             self.set_status(f"Feature refinement exited with code {exit_code}.")
         self.refresh_refinement_readiness()
+        self._activity_finish(
+            exit_code == 0 and not self.refinement_cancel_requested,
+            "Feature refinement completed."
+            if exit_code == 0 and not self.refinement_cancel_requested
+            else (
+                "Feature refinement was cancelled."
+                if self.refinement_cancel_requested
+                else f"Feature refinement exited with code {exit_code}."
+            ),
+        )
 
     def cancel_feature_refinement(self) -> None:
         if self.refinement_process is None:
@@ -7302,6 +10320,7 @@ class NapariSBTController:
             self.paths.root,
             audit_action="update_feature_recipe",
         )
+        self._refresh_noncontext_mask()
         from qtpy.QtCore import QProcess
 
         process = QProcess(self.root)
@@ -7582,6 +10601,12 @@ class NapariSBTController:
             )
             self.set_status(f"Feature build exited {exit_code}.")
         self._refresh_feature_progress_widgets()
+        self._activity_finish(
+            exit_code == 0,
+            "Feature build completed."
+            if exit_code == 0
+            else f"Feature build exited with code {exit_code}.",
+        )
 
     def cancel_feature_build(self) -> None:
         if self.feature_process is not None:
@@ -7595,39 +10620,278 @@ class NapariSBTController:
             )
 
     def _assignments(self) -> pd.DataFrame:
-        return build_assignment_table(
+        minimum_confidence, maximum_uncertainty, minimum_margin = (
+            self._final_identity_thresholds()
+        )
+        assignments = build_assignment_table(
             self.cohort,
             self.labels,
             self.scores,
             class_ids=[item.class_id for item in self.manifest.classes],
+            minimum_model_confidence=minimum_confidence,
+            maximum_model_uncertainty=maximum_uncertainty,
+            minimum_probability_margin=minimum_margin,
+        )
+        names = {item.class_id: item.name for item in self.manifest.classes}
+        colours = {item.class_id: item.color for item in self.manifest.classes}
+        assignments.insert(
+            assignments.columns.get_loc("class_id") + 1,
+            "class_name",
+            assignments["class_id"].map(names),
+        )
+        assignments.insert(
+            assignments.columns.get_loc("class_name") + 1,
+            "class_colour",
+            assignments["class_id"].map(colours),
+        )
+        return assignments
+
+    def _final_identity_thresholds(self) -> tuple[float, float, float]:
+        return (
+            float(self.final_min_confidence_spin.value()),
+            float(self.final_max_uncertainty_spin.value()),
+            float(self.final_min_margin_spin.value()),
         )
 
-    def export_assignments(self) -> None:
-        destination = self.paths.exports / "assignments.parquet"
-        export_assignment_table(self._assignments(), destination)
-        self.set_status(f"Exported cohort-only assignments: {destination}")
+    def _final_identity_signature_value(self) -> str:
+        if self.manifest is None:
+            return ""
+        confirmed = self.labels.loc[
+            self.labels["state"].astype(str).eq("confirmed")
+        ]
+        label_columns = [
+            "ROI",
+            "ObjectNumber",
+            "class_id",
+            "state",
+            "source",
+            "user",
+            "timestamp",
+        ]
+        score_columns = [
+            column
+            for column in (
+                "ROI",
+                "ObjectNumber",
+                "predicted_class",
+                "maximum_probability",
+                "probability_margin",
+                "normalized_entropy",
+                "model_id",
+                "scorable",
+            )
+            if column in self.scores.columns
+        ]
+        payload = {
+            "experiment_id": self.manifest.experiment_id,
+            "revision": self.manifest.revision,
+            "cohort_fingerprint": self.manifest.cell_scope.snapshot_sha256,
+            "confirmed_labels": dataframe_sha256(confirmed, label_columns),
+            "scores": (
+                dataframe_sha256(self.scores, score_columns)
+                if not self.scores.empty and score_columns
+                else "none"
+            ),
+            "classes": [
+                item.model_dump(mode="json") for item in self.manifest.classes
+            ],
+            "thresholds": self._final_identity_thresholds(),
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
-    def export_adata(self) -> None:
-        if not self.manifest.anndata_path:
-            raise ValueError("Annotated AnnData export requires an AnnData source.")
-        destination = Path(self.annotated_path_edit.text())
-        feature_provenance = (
+    def _mark_final_identities_stale(self, *_args) -> None:
+        if self.final_identity_signature is None:
+            return
+        self.final_identity_signature = None
+        self.final_identity_summary_label.setText(
+            "Decision rules or inputs changed. Click Create / refresh final cell "
+            "identities before exporting."
+        )
+
+    def create_final_identities(self) -> pd.DataFrame:
+        assignments = self._assignments()
+        minimum_confidence, maximum_uncertainty, minimum_margin = (
+            self._final_identity_thresholds()
+        )
+        source_counts = assignments["assignment_source"].value_counts().to_dict()
+        class_counts = (
+            assignments.loc[assignments["class_id"].notna(), "class_id"]
+            .astype(str)
+            .value_counts()
+            .to_dict()
+        )
+        named_class_counts = {}
+        for class_id, count in class_counts.items():
+            definition = self._class_definition(class_id)
+            class_name = definition.name if definition is not None else class_id
+            named_class_counts[class_name] = int(count)
+        rejected = int(
+            (
+                assignments["predicted_class"].notna()
+                & assignments["assignment_source"].eq("unassigned")
+            ).sum()
+        )
+        decision = {
+            "created_at": pd.Timestamp.now(tz="UTC").isoformat(),
+            "experiment_id": self.manifest.experiment_id,
+            "experiment_revision": self.manifest.revision,
+            "model_id": (
+                str(self.scores["model_id"].dropna().iloc[0])
+                if not self.scores.empty
+                and "model_id" in self.scores
+                and not self.scores["model_id"].dropna().empty
+                else None
+            ),
+            "minimum_model_confidence": minimum_confidence,
+            "maximum_model_uncertainty": maximum_uncertainty,
+            "minimum_probability_margin": minimum_margin,
+            "precedence": "confirmed > accepted model > unassigned",
+            "proposals_are_final": False,
+            "counts_by_source": {
+                str(key): int(value) for key, value in source_counts.items()
+            },
+            "counts_by_class": named_class_counts,
+            "rejected_model_predictions": rejected,
+        }
+        self.final_assignments = assignments
+        self.final_identity_decision = decision
+        self.final_identity_signature = self._final_identity_signature_value()
+        canonical = self.paths.exports / "final_identities.parquet"
+        export_assignment_table(assignments, canonical)
+        write_json(self.paths.exports / "final_identity_decision.json", decision)
+        append_audit(
+            self.paths,
+            {
+                "action": "create_final_identities",
+                **decision,
+                "canonical_table": str(canonical),
+            },
+        )
+        confirmed_count = int(source_counts.get("confirmed", 0))
+        model_count = int(source_counts.get("model", 0))
+        unassigned_count = int(source_counts.get("unassigned", 0))
+        self.final_identity_summary_label.setText(
+            f"Current: {confirmed_count:,} confirmed + {model_count:,} accepted "
+            f"model assignments; {unassigned_count:,} unassigned. Rules: confidence "
+            f"≥ {minimum_confidence:.2f}, entropy ≤ {maximum_uncertainty:.2f}, "
+            f"margin ≥ {minimum_margin:.2f}. Canonical provenance assets were saved "
+            f"in {self.paths.exports}."
+        )
+        self.set_status(
+            f"Created final identities: {confirmed_count:,} confirmed, "
+            f"{model_count:,} model, {unassigned_count:,} unassigned."
+        )
+        return assignments
+
+    def _require_current_final_identities(self) -> pd.DataFrame:
+        if self.final_identity_signature is None or self.final_assignments.empty:
+            raise ValueError(
+                "Final identities have not been created, or their inputs changed. "
+                "Open Classify → Finalize & export and click Create / refresh final "
+                "cell identities."
+            )
+        if self.final_identity_signature != self._final_identity_signature_value():
+            self._mark_final_identities_stale()
+            raise ValueError(
+                "Labels, scores, classes, or decision rules changed after final "
+                "identities were created. Refresh them before export."
+            )
+        return self.final_assignments.copy()
+
+    def _feature_provenance(self) -> dict:
+        return (
             json.loads(self.paths.feature_manifest.read_text(encoding="utf-8"))
             if self.paths.feature_manifest.exists()
             else {}
         )
-        model_provenance = (
-            self.model_bundle.metadata if self.model_bundle is not None else {}
+
+    def _model_provenance(self) -> dict:
+        if self.model_bundle is not None:
+            return dict(self.model_bundle.metadata)
+        metadata_path = self.paths.models / "classifier_latest.json"
+        if metadata_path.exists():
+            return json.loads(metadata_path.read_text(encoding="utf-8"))
+        return {}
+
+    def export_assignments(self) -> None:
+        assignments = self._require_current_final_identities()
+        destination = Path(self.assignment_path_edit.text()).expanduser()
+        if not destination.suffix:
+            destination = destination.with_suffix(".csv")
+            self.assignment_path_edit.setText(str(destination))
+        export_assignment_table(assignments, destination)
+        append_audit(
+            self.paths,
+            {
+                "action": "export_final_identity_table",
+                "destination": str(destination),
+                "decision": self.final_identity_decision,
+            },
         )
+        self.set_status(f"Exported final cohort identities: {destination}")
+
+    def export_adata(self) -> None:
+        if not self.manifest.anndata_path:
+            raise ValueError("Annotated AnnData export requires an AnnData source.")
+        assignments = self._require_current_final_identities()
+        destination = Path(self.annotated_path_edit.text())
         export_annotated_anndata(
             self.manifest.anndata_path,
             destination,
-            self._assignments(),
+            assignments,
             self.manifest,
-            feature_provenance=feature_provenance,
-            model_provenance=model_provenance,
+            feature_provenance=self._feature_provenance(),
+            model_provenance=self._model_provenance(),
+            metrics={"final_identity_decision": self.final_identity_decision},
+        )
+        append_audit(
+            self.paths,
+            {
+                "action": "export_final_identities_to_anndata_copy",
+                "destination": str(destination),
+                "decision": self.final_identity_decision,
+            },
         )
         self.set_status(f"Exported atomic annotated AnnData copy: {destination}")
+
+    def apply_final_identities_to_live_anndata(self) -> None:
+        if self.adata is None:
+            raise ValueError("No live AnnData object is loaded in this session.")
+        assignments = self._require_current_final_identities()
+        reply = self.QMessageBox.question(
+            self.root,
+            "Apply final identities to live AnnData",
+            "Add the final subclass, source, confidence, uncertainty, probability, "
+            "combined-population, and provenance fields to the AnnData object held "
+            "in memory?\n\nThis does not write to or overwrite its source file.",
+        )
+        if reply != self.QMessageBox.Yes:
+            self.set_status("Applying final identities to live AnnData was cancelled.")
+            return
+        apply_assignments_to_anndata(
+            self.adata,
+            assignments,
+            self.manifest,
+            feature_provenance=self._feature_provenance(),
+            model_provenance=self._model_provenance(),
+            metrics={"final_identity_decision": self.final_identity_decision},
+        )
+        self._populate_anndata_selectors(
+            source="the live AnnData after final identity application"
+        )
+        append_audit(
+            self.paths,
+            {
+                "action": "apply_final_identities_to_live_anndata",
+                "written_to_disk": False,
+                "decision": self.final_identity_decision,
+            },
+        )
+        self.set_status(
+            f"Applied final identities to the live AnnData as "
+            f"{self.manifest.output_obs_slug}_subclass and related fields; no "
+            "source file was written."
+        )
 
     def export_cohort_masks(self) -> None:
         masks = discover_mask_files(self.manifest.masks_folder)
@@ -7637,20 +10901,26 @@ class NapariSBTController:
         self.set_status(f"Wrote {len(written)} cohort masks; originals were untouched.")
 
     def export_cleaned_masks(self) -> None:
+        assignments = self._require_current_final_identities()
+        minimum_confidence, maximum_uncertainty, minimum_margin = (
+            self._final_identity_thresholds()
+        )
         reply = self.QMessageBox.question(
             self.root,
             "Cleaned masks",
-            "Write derived masks using confirmed exclusions and model exclusions "
-            f"at confidence ≥ {self.confidence_spin.value():.2f}?",
+            "Write derived masks using confirmed exclusions and accepted model "
+            "exclusions?\n\nCurrent model rules: confidence ≥ "
+            f"{minimum_confidence:.2f}, entropy ≤ {maximum_uncertainty:.2f}, "
+            f"margin ≥ {minimum_margin:.2f}.",
         )
         if reply != self.QMessageBox.Yes:
             return
         written = export_cleaned_masks(
             discover_mask_files(self.manifest.masks_folder),
-            self._assignments(),
+            assignments,
             self.manifest.classes,
             self.paths.exports / "cleaned_masks",
-            prediction_confidence_threshold=self.confidence_spin.value(),
+            prediction_confidence_threshold=minimum_confidence,
         )
         self.set_status(f"Wrote {len(written)} cleaned derived masks.")
 
@@ -7847,6 +11117,13 @@ def launch(
         name="napari_sbt",
         area="right",
     )
+    controller.install_readiness_dock()
+    # Reapply the preferred split once Qt has completed this event-loop turn;
+    # this keeps the compact readiness dock below Layers after Napari finishes
+    # sizing all newly added docks.
+    from qtpy.QtCore import QTimer
+
+    QTimer.singleShot(0, controller._position_readiness_dock)
     return viewer, controller, dock
 
 

@@ -23,8 +23,22 @@ def build_assignment_table(
     scores: pd.DataFrame | None,
     *,
     class_ids: Iterable[str],
+    minimum_model_confidence: float = 0.0,
+    maximum_model_uncertainty: float = 1.0,
+    minimum_probability_margin: float = 0.0,
 ) -> pd.DataFrame:
-    """Build final cohort assignments with confirmed labels overriding models."""
+    """Build thresholded final assignments with confirmations overriding models."""
+
+    minimum_model_confidence = float(minimum_model_confidence)
+    maximum_model_uncertainty = float(maximum_model_uncertainty)
+    minimum_probability_margin = float(minimum_probability_margin)
+    for name, value in (
+        ("minimum_model_confidence", minimum_model_confidence),
+        ("maximum_model_uncertainty", maximum_model_uncertainty),
+        ("minimum_probability_margin", minimum_probability_margin),
+    ):
+        if not 0 <= value <= 1:
+            raise ValueError(f"{name} must be between 0 and 1; received {value}.")
 
     table = cohort.copy()
     table["ROI"] = table["ROI"].astype(str)
@@ -54,6 +68,21 @@ def build_assignment_table(
             how="left",
             validate="one_to_one",
         )
+        missing_defaults = {
+            "predicted_class": pd.NA,
+            "maximum_probability": np.nan,
+            "probability_margin": np.nan,
+            "normalized_entropy": np.nan,
+            "model_id": pd.NA,
+            "scorable": False,
+        }
+        for column, default in missing_defaults.items():
+            if column not in table:
+                table[column] = default
+        for class_id in class_ids:
+            probability_column = f"probability::{class_id}"
+            if probability_column not in table:
+                table[probability_column] = np.nan
     else:
         table["predicted_class"] = pd.NA
         table["maximum_probability"] = np.nan
@@ -78,11 +107,55 @@ def build_assignment_table(
     table = table.merge(confirmed, on=IDENTITY, how="left", validate="one_to_one")
     is_confirmed = table["confirmed_class"].notna()
     has_prediction = table["predicted_class"].notna()
+    scorable = table["scorable"].fillna(False).astype(bool)
+    confidence = pd.to_numeric(table["maximum_probability"], errors="coerce")
+    uncertainty = pd.to_numeric(table["normalized_entropy"], errors="coerce")
+    margin = pd.to_numeric(table["probability_margin"], errors="coerce")
+    model_accepted = (
+        ~is_confirmed
+        & scorable
+        & has_prediction
+        & confidence.notna()
+        & confidence.ge(minimum_model_confidence)
+        & uncertainty.notna()
+        & uncertainty.le(maximum_model_uncertainty)
+        & margin.notna()
+        & margin.ge(minimum_probability_margin)
+    )
+    table["model_prediction_accepted"] = model_accepted
+    table["prediction_rejection_reason"] = np.select(
+        [
+            is_confirmed,
+            ~scorable,
+            ~has_prediction,
+            confidence.isna(),
+            confidence.lt(minimum_model_confidence),
+            uncertainty.isna(),
+            uncertainty.gt(maximum_model_uncertainty),
+            margin.isna(),
+            margin.lt(minimum_probability_margin),
+        ],
+        [
+            "confirmed_override",
+            "unscorable",
+            "no_prediction",
+            "missing_confidence",
+            "below_minimum_confidence",
+            "missing_uncertainty",
+            "above_maximum_uncertainty",
+            "missing_probability_margin",
+            "below_minimum_probability_margin",
+        ],
+        default="accepted",
+    )
+    table["decision_minimum_confidence"] = minimum_model_confidence
+    table["decision_maximum_uncertainty"] = maximum_model_uncertainty
+    table["decision_minimum_probability_margin"] = minimum_probability_margin
     table["class_id"] = table["confirmed_class"].where(
-        is_confirmed, table["predicted_class"]
+        is_confirmed, table["predicted_class"].where(model_accepted)
     )
     table["assignment_source"] = np.select(
-        [is_confirmed, has_prediction],
+        [is_confirmed, model_accepted],
         ["confirmed", "model"],
         default="unassigned",
     )
@@ -139,6 +212,32 @@ def export_annotated_anndata(
     if source == output:
         raise ValueError("Annotated AnnData export must not overwrite the source file.")
     adata = ad.read_h5ad(source)
+    apply_assignments_to_anndata(
+        adata,
+        assignments,
+        manifest,
+        feature_provenance=feature_provenance,
+        model_provenance=model_provenance,
+        metrics=metrics,
+    )
+    return _atomic_h5ad_write(adata, output)
+
+
+def apply_assignments_to_anndata(
+    adata,
+    assignments: pd.DataFrame,
+    manifest: ExperimentManifest,
+    *,
+    feature_provenance: Mapping | None = None,
+    model_provenance: Mapping | None = None,
+    metrics: Mapping | None = None,
+):
+    """Apply final cohort assignments to an AnnData object in memory.
+
+    This mutates only the supplied object.  It never writes or overwrites its source
+    file, which makes the operation suitable for a live notebook session.
+    """
+
     if "obs_name" not in assignments:
         raise ValueError("Assignment table must retain frozen AnnData observation names.")
     if assignments["obs_name"].duplicated().any():
@@ -217,7 +316,7 @@ def export_annotated_anndata(
         "metrics": dict(metrics or {}),
     }
     adata.uns["napari_sbt"] = napari_uns
-    return _atomic_h5ad_write(adata, output)
+    return adata
 
 
 def export_assignment_table(
@@ -293,6 +392,7 @@ def export_cleaned_masks(
 
 
 __all__ = [
+    "apply_assignments_to_anndata",
     "build_assignment_table",
     "export_annotated_anndata",
     "export_assignment_table",

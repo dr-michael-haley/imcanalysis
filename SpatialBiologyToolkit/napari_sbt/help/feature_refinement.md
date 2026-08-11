@@ -24,6 +24,24 @@ a feature is shuffled. Stability is the proportion of evaluated fold/model pairs
 where its importance is positive. High-missingness and constant features are
 screened out; highly correlated alternatives are marked redundant.
 
+Set the maximum candidate count to control the cost within each training fold,
+the requested recommendation to control the final compact set, and permutation
+repeats to trade speed for stability. Missingness and correlation thresholds are
+screening controls; stricter values reduce the candidate set. Defaults are a
+sensible starting point unless the trial is very small or exceptionally wide.
+
+## Analysis progress
+
+Click **Run leave-one-ROI-out feature refinement** only after the readiness table
+passes. The progress bar and log report each held-out ROI/model evaluation and the
+final aggregation. Cancellation stops the monitored subprocess without changing
+the feature table or current model selection. **Reload saved results** restores a
+completed report after restarting the GUI.
+
+If progress stops, inspect the most recent log entry and confirm that the worker
+process is still live. Failures leave the source features and confirmed labels
+untouched, so settings can be adjusted and the analysis rerun.
+
 ## Choosing and promoting features
 
 The result table is deliberately checkable. Restore the automated recommendation,
@@ -38,3 +56,8 @@ families and disables imported sources that contributed no checked features. It
 clears the active feature-build identity, requiring a new full-cohort build before
 training or scoring. Reported performance remains exploratory until confirmed on
 independent ROIs or data not used during feature refinement.
+
+Review importance, stability, missingness, source, and family together rather than
+selecting solely by rank. **Restore recommended checks** returns to the automated
+selection. **Use checked features for trial classifier** is reversible; promotion
+is the explicit step that creates a full-cohort revision from the checked set.

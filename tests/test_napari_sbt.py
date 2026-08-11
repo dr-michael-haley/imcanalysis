@@ -22,6 +22,7 @@ from SpatialBiologyToolkit.napari_sbt.cohort import (
     resolve_table_cohort,
 )
 from SpatialBiologyToolkit.napari_sbt.exports import (
+    apply_assignments_to_anndata,
     build_assignment_table,
     export_annotated_anndata,
 )
@@ -30,8 +31,14 @@ from SpatialBiologyToolkit.napari_sbt.features import (
     _measurement_labels,
     add_distribution_features,
     build_roi_features,
+    classifier_seen_mask,
 )
-from SpatialBiologyToolkit.napari_sbt.labels import empty_labels, set_label
+from SpatialBiologyToolkit.napari_sbt.labels import (
+    empty_labels,
+    remove_all_proposed_labels,
+    remove_proposed_label,
+    set_label,
+)
 from SpatialBiologyToolkit.napari_sbt.models import (
     CellScope,
     ExperimentManifest,
@@ -147,6 +154,56 @@ def test_positive_offset_uses_full_segmentation_and_output_is_cohort_only():
     assert result.table.loc[0, "channel::CD3::pixel_count"] < mask.size
     expanded, _ = _measurement_labels(mask, {1}, 3)
     assert np.array_equal(expanded[mask == 2], mask[mask == 2])
+
+
+def test_classifier_seen_mask_matches_offset_overlap_and_background_recipe():
+    mask = _mask()
+    blocked = classifier_seen_mask(
+        mask,
+        {1},
+        SyntheticFeatureRecipe(
+            mask_offset_px=3,
+            allow_positive_offset_overlap=False,
+            region_features=True,
+            background_ring_px=1,
+        ),
+    )
+    overlapping = classifier_seen_mask(
+        mask,
+        {1},
+        SyntheticFeatureRecipe(
+            mask_offset_px=3,
+            allow_positive_offset_overlap=True,
+            region_features=True,
+            background_ring_px=1,
+        ),
+    )
+
+    assert blocked.dtype == bool
+    assert blocked[mask == 1].all()
+    assert not blocked[mask == 2].any()
+    assert overlapping[mask == 2].any()
+    ring_seen = classifier_seen_mask(
+        mask,
+        {1},
+        SyntheticFeatureRecipe(
+            mask_offset_px=0,
+            region_features=True,
+            background_ring_px=1,
+        ),
+    )
+    assert ring_seen[2, 1]  # background-ring context is kept visible
+
+
+def test_classifier_seen_mask_keeps_original_cell_when_intensity_region_erodes():
+    mask = _mask()
+    seen = classifier_seen_mask(
+        mask,
+        {1},
+        SyntheticFeatureRecipe(mask_offset_px=-4, region_features=False),
+    )
+    assert seen[mask == 1].all()
+    assert not seen[mask == 2].any()
 
 
 def test_positive_offset_can_explicitly_overlap_other_cells():
@@ -308,6 +365,56 @@ def _training_inputs():
     return cohort, features, labels
 
 
+def test_remove_proposed_label_preserves_confirmed_labels():
+    labels = set_label(
+        empty_labels(),
+        roi="r1",
+        object_number=1,
+        class_id="a",
+        state="proposed",
+    )
+    labels = set_label(
+        labels,
+        roi="r1",
+        object_number=2,
+        class_id="b",
+        state="confirmed",
+    )
+
+    labels = remove_proposed_label(labels, roi="r1", object_number=1)
+    assert labels[["ROI", "ObjectNumber", "class_id", "state"]].to_dict(
+        "records"
+    ) == [
+        {
+            "ROI": "r1",
+            "ObjectNumber": 2,
+            "class_id": "b",
+            "state": "confirmed",
+        }
+    ]
+
+    unchanged = remove_proposed_label(labels, roi="r1", object_number=2)
+    pd.testing.assert_frame_equal(unchanged, labels)
+
+
+def test_remove_all_proposed_labels_preserves_every_confirmation():
+    labels = empty_labels()
+    for object_number, state in ((1, "proposed"), (2, "confirmed"), (3, "proposed")):
+        labels = set_label(
+            labels,
+            roi="r1",
+            object_number=object_number,
+            class_id="a",
+            state=state,
+        )
+
+    cleared = remove_all_proposed_labels(labels)
+
+    assert cleared[["ROI", "ObjectNumber", "state"]].to_dict("records") == [
+        {"ROI": "r1", "ObjectNumber": 2, "state": "confirmed"}
+    ]
+
+
 def test_multiclass_scores_probabilities_and_unscorable_cells():
     cohort, features, labels = _training_inputs()
     training = train_multiclass_classifier(
@@ -376,6 +483,42 @@ def test_confirmed_labels_override_model_assignments():
     assert assignments.iloc[6]["assignment_source"] == "model"
 
 
+def test_final_assignment_thresholds_reject_model_without_hiding_raw_prediction():
+    cohort, _features, labels = _training_inputs()
+    scores = pd.DataFrame(
+        {
+            "ROI": cohort["ROI"],
+            "ObjectNumber": cohort["ObjectNumber"],
+            "predicted_class": ["b"] * len(cohort),
+            "maximum_probability": [0.75] * len(cohort),
+            "probability_margin": [0.25] * len(cohort),
+            "normalized_entropy": [0.4] * len(cohort),
+            "scorable": [True] * len(cohort),
+            "model_id": ["model"] * len(cohort),
+        }
+    )
+
+    assignments = build_assignment_table(
+        cohort,
+        labels,
+        scores,
+        class_ids=["a", "b", "c"],
+        minimum_model_confidence=0.8,
+        maximum_model_uncertainty=0.5,
+        minimum_probability_margin=0.2,
+    )
+
+    assert assignments.iloc[0]["assignment_source"] == "confirmed"
+    assert assignments.iloc[0]["class_id"] == "a"
+    assert assignments.iloc[6]["predicted_class"] == "b"
+    assert assignments.iloc[6]["assignment_source"] == "unassigned"
+    assert pd.isna(assignments.iloc[6]["class_id"])
+    assert (
+        assignments.iloc[6]["prediction_rejection_reason"]
+        == "below_minimum_confidence"
+    )
+
+
 def test_annotated_copy_keeps_noncohort_population_and_nan_probabilities(tmp_path: Path):
     data = _adata()
     source = tmp_path / "source.h5ad"
@@ -413,6 +556,47 @@ def test_annotated_copy_keeps_noncohort_population_and_nan_probabilities(tmp_pat
     assert exported.obs.loc["a", f"{slug}_combined"] == "0"
     assert exported.obs.loc["b", f"{slug}_combined"] == "good"
     assert np.isnan(exported.obsm[f"{slug}_probabilities"][0]).all()
+
+
+def test_apply_assignments_to_live_anndata_does_not_require_a_disk_write(tmp_path: Path):
+    data = _adata()
+    preview = resolve_cohort(
+        data,
+        roi_obs="ROI",
+        object_id_obs="ObjectNumber",
+        mode="obs_values",
+        obs_column="leiden",
+        obs_values=["1"],
+    )
+    manifest = ExperimentManifest(
+        name="Live subclasses",
+        masks_folder=str(tmp_path / "masks"),
+        cell_scope=preview.scope(
+            mode="obs_values", obs_column="leiden", obs_values=["1"]
+        ),
+        classes=segmentation_qc_classes(),
+    )
+    assignments = preview.eligible_cells.copy()
+    assignments["class_id"] = ["good", "artifact", pd.NA]
+    assignments["assignment_source"] = ["confirmed", "model", "unassigned"]
+    assignments["confidence"] = [1.0, 0.95, np.nan]
+    assignments["uncertainty"] = [0.0, 0.1, np.nan]
+    assignments["probability::good"] = [1.0, 0.05, np.nan]
+    assignments["probability::artifact"] = [0.0, 0.95, np.nan]
+
+    returned = apply_assignments_to_anndata(
+        data,
+        assignments,
+        manifest,
+        metrics={"final_identity_decision": {"minimum_model_confidence": 0.9}},
+    )
+
+    slug = manifest.output_obs_slug
+    assert returned is data
+    assert data.obs.loc["b", f"{slug}_subclass"] == "good"
+    assert data.uns["napari_sbt"][slug]["metrics"][
+        "final_identity_decision"
+    ]["minimum_model_confidence"] == 0.9
 
 
 def test_manifest_rejects_duplicate_shortcuts():

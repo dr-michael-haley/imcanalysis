@@ -1,8 +1,9 @@
 # `napari_sbt` interface help
 
-These are the same Markdown help pages displayed by the **Help for this tab**
-buttons inside Napari. The packaged files are the canonical source, so the
-interface and documentation do not maintain separate explanations.
+These are the same Markdown help pages displayed by the **Help for this tab** and
+per-box **❓ Help** buttons inside Napari. Per-box pop-ups extract the relevant
+heading from these packaged canonical sources, so the interface and documentation
+do not maintain separate explanations.
 
 ```{include} ../../../SpatialBiologyToolkit/napari_sbt/help/setup.md
 :heading-offset: 1
@@ -20,7 +21,15 @@ interface and documentation do not maintain separate explanations.
 :heading-offset: 1
 ```
 
+```{include} ../../../SpatialBiologyToolkit/napari_sbt/help/populations.md
+:heading-offset: 1
+```
+
 ```{include} ../../../SpatialBiologyToolkit/napari_sbt/help/classify.md
+:heading-offset: 1
+```
+
+```{include} ../../../SpatialBiologyToolkit/napari_sbt/help/labeler.md
 :heading-offset: 1
 ```
 
