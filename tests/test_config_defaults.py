@@ -57,6 +57,10 @@ class ConfigDefaultsTests(unittest.TestCase):
         self.assertEqual(resolved["maxfuse"]["refine_iterations"], 1)
         self.assertEqual(resolved["maxfuse"]["report_score_threshold"], 0.30)
         self.assertEqual(resolved["spatialdata"]["action"], "plan")
+        self.assertEqual(resolved["denoising"]["truncated_max_rate"], 0.9999)
+        self.assertFalse(resolved["denoising"]["intelligent_patch_size"])
+        self.assertEqual(resolved["denoising"]["patch_step_size"], 70)
+        self.assertEqual(resolved["denoising"]["ratio_thresh"], 0.9)
         self.assertEqual(resolved["neighbour_signal"]["max_halo_px"], 8)
         self.assertEqual(resolved["neighbour_signal"]["n_jobs"], "auto")
         self.assertEqual(

@@ -14,8 +14,8 @@
 | `window_size` | `int` | `3` | `advanced` | Odd-width local DIMR window, in pixels, used to construct neighbour differences and to median-replace detected outliers. | - |
 | `remove_outliers` | `bool` | `True` | `advanced` | Before IMC-Denoise, apply each channel's optional panel.csv remove_outliers rule and overwrite above-threshold pixels with zero in the raw TIFFs; this is a pipeline-specific preprocessing step, not DIMR. | - |
 | `remove_outliers_min_threshold` | `int` | `500` | `advanced` | Minimum permitted intensity cutoff for percentile-based panel outlier rules; a channel is skipped when its calculated cutoff is below this guard value. | - |
-| `patch_step_size` | `int` | `100` | `advanced` | Initial horizontal and vertical stride, in pixels, between 64 x 64 DeepSNiF training patches; the stage also removes raw ROI folders whose recorded width or height is smaller than this value. | - |
-| `intelligent_patch_size` | `bool` | `True` | `advanced` | Adapt the training-patch stride in 20-pixel increments until the augmented patch count reaches the configured minimum and optional maximum. | - |
+| `patch_step_size` | `int` | `70` | `advanced` | Initial horizontal and vertical stride, in pixels, between 64 x 64 DeepSNiF training patches; the stage also removes raw ROI folders whose recorded width or height is smaller than this value. | - |
+| `intelligent_patch_size` | `bool` | `False` | `advanced` | Adapt the training-patch stride in 20-pixel increments until the augmented patch count reaches the configured minimum and optional maximum. | - |
 | `intelligent_patch_size_threshold` | `float` | `0.3` | `advanced` | Deprecated compatibility setting retained in configuration; the current denoising implementation does not read this value. | - |
 | `intelligent_patch_size_minimum` | `int` | `40` | `advanced` | Smallest training-patch stride, in pixels, tried by adaptive patch sampling when too few patches are available. | - |
 | `intelligent_patch_size_min_patches` | `int` | `5000` | `advanced` | Target minimum number of DeepSNiF training patches after rotation and flip augmentation; training proceeds with a warning if this cannot be reached. | - |
@@ -23,7 +23,7 @@
 | `train_epochs` | `int` | `75` | `advanced` | Number of complete DeepSNiF training epochs run independently for each channel. | - |
 | `train_initial_lr` | `float` | `0.001` | `advanced` | Initial Adam learning rate for DeepSNiF training; the library reduces it when validation loss plateaus. | - |
 | `train_batch_size` | `int` | `200` | `advanced` | Number of 64 x 64 patches in each DeepSNiF training batch; lower values reduce GPU memory demand at the cost of more batch updates. | - |
-| `ratio_thresh` | `float` | `0.8` | `advanced` | Maximum fraction of pixels below intensity 1 permitted in a DIMR-corrected training patch; lower values retain only more signal-rich patches. | - |
+| `ratio_thresh` | `float` | `0.9` | `advanced` | Maximum fraction of pixels below intensity 1 permitted in a DIMR-corrected training patch; lower values retain only more signal-rich patches. | - |
 | `pixel_mask_percent` | `float` | `0.2` | `advanced` | Percentage of pixels per training patch replaced by nearby values for self-supervision; 0.2 means 0.2%, not a fraction of 0.2. | - |
 | `val_set_percent` | `float` | `0.15` | `advanced` | Fraction of generated patches held out with a fixed split for validation; 0.15 reserves 15%. | - |
 | `loss_function` | `str` | `I_divergence` | `advanced` | Masked-pixel data-fidelity loss: 'I_divergence' gives the Poisson-aware DeepSNiF objective; 'mse' and 'mse_relu' select the library's Noise2Void-style variants. | - |
@@ -32,7 +32,7 @@
 | `is_load_weights` | `bool` | `False` | `advanced` | Load weights_<channel>.keras and its matching normalization-range file from the weights directory instead of generating patches and training a new channel model. | - |
 | `lambda_HF` | `float` | `3e-06` | `advanced` | Weight of Hessian-norm regularization in the DeepSNiF loss, balancing masked-pixel data fidelity against spatial continuity of the predicted biological signal. | - |
 | `network_size` | `str` | `small` | `advanced` | DeepSNiF U-Net capacity: 'small' uses the compact, faster network, while 'normal' uses the original larger residual U-Net. | - |
-| `truncated_max_rate` | `float` | `0.99999` | `advanced` | Training-pixel quantile used to define the normalization range as 1.1 times that quantile; 0.99999 corresponds to the 99.999th percentile. | - |
+| `truncated_max_rate` | `float` | `0.9999` | `advanced` | Training-pixel quantile used to define the normalization range as 1.1 times that quantile; 0.9999 corresponds to the 99.99th percentile. | - |
 | `run_parameter_scan` | `bool` | `False` | `advanced` | Repeat denoising for each configured scan value and write each result to a parameter-suffixed denoised-image and QC location. | - |
 | `scan_parameter` | `Optional[str]` | `truncated_max_rate` | `advanced` | Name of the single DenoisingConfig field varied during a parameter scan, such as truncated_max_rate, train_epochs, or lambda_HF. | - |
 | `scan_values` | `Optional[List[Any]]` | `[0.99, 0.999, 0.99999]` | `advanced` | Ordered values assigned to scan_parameter in separate denoising runs. | - |

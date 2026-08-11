@@ -3904,7 +3904,7 @@
         },
         "patch_step_size": {
           "advice": "",
-          "default": 100,
+          "default": 70,
           "description": "Initial horizontal and vertical stride, in pixels, between 64 x 64 DeepSNiF training patches; the stage also removes raw ROI folders whose recorded width or height is smaller than this value.",
           "level": "advanced",
           "stage": "denoising",
@@ -3914,7 +3914,7 @@
         },
         "intelligent_patch_size": {
           "advice": "",
-          "default": true,
+          "default": false,
           "description": "Adapt the training-patch stride in 20-pixel increments until the augmented patch count reaches the configured minimum and optional maximum.",
           "level": "advanced",
           "stage": "denoising",
@@ -4001,7 +4001,7 @@
         },
         "ratio_thresh": {
           "advice": "",
-          "default": 0.8,
+          "default": 0.9,
           "description": "Maximum fraction of pixels below intensity 1 permitted in a DIMR-corrected training patch; lower values retain only more signal-rich patches.",
           "level": "advanced",
           "stage": "denoising",
@@ -4105,8 +4105,8 @@
         },
         "truncated_max_rate": {
           "advice": "",
-          "default": 0.99999,
-          "description": "Training-pixel quantile used to define the normalization range as 1.1 times that quantile; 0.99999 corresponds to the 99.999th percentile.",
+          "default": 0.9999,
+          "description": "Training-pixel quantile used to define the normalization range as 1.1 times that quantile; 0.9999 corresponds to the 99.99th percentile.",
           "level": "advanced",
           "stage": "denoising",
           "title": "Truncated Max Rate",

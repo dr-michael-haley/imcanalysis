@@ -372,7 +372,7 @@ class DenoisingConfig(ConfigModel):
     )
     # Parameters specific to 'deep_snf' method
     patch_step_size: int = Field(
-        default=100,
+        default=70,
         description=(
             "Initial horizontal and vertical stride, in pixels, between 64 x 64 DeepSNiF "
             "training patches; the stage also removes raw ROI folders whose recorded width "
@@ -380,7 +380,7 @@ class DenoisingConfig(ConfigModel):
         ),
     )
     intelligent_patch_size: bool = Field(
-        default=True,
+        default=False,
         description=(
             "Adapt the training-patch stride in 20-pixel increments until the augmented "
             "patch count reaches the configured minimum and optional maximum."
@@ -434,7 +434,7 @@ class DenoisingConfig(ConfigModel):
         ),
     )
     ratio_thresh: float = Field(
-        default=0.8,
+        default=0.9,
         description=(
             "Maximum fraction of pixels below intensity 1 permitted in a DIMR-corrected "
             "training patch; lower values retain only more signal-rich patches."
@@ -497,10 +497,10 @@ class DenoisingConfig(ConfigModel):
         ),
     )
     truncated_max_rate: float = Field(
-        default=0.99999,
+        default=0.9999,
         description=(
             "Training-pixel quantile used to define the normalization range as 1.1 times that "
-            "quantile; 0.99999 corresponds to the 99.999th percentile."
+            "quantile; 0.9999 corresponds to the 99.99th percentile."
         ),
     )
     # Parameter scanning
