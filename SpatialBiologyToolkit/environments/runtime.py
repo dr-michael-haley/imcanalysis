@@ -73,11 +73,13 @@ def run_checked(
     *,
     runner: Runner = subprocess.run,
     cwd: Path | None = None,
+    env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     try:
         completed = runner(
             list(command),
             cwd=cwd,
+            env=env,
             capture_output=True,
             text=True,
             check=False,

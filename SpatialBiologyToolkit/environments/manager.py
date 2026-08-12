@@ -820,6 +820,7 @@ class EnvironmentManager:
         destination: Path,
         platform: str,
         *,
+        channel_priority: str | None = None,
         verbose: bool = False,
     ) -> list[str]:
         if not self.conda_lock_command:
@@ -838,7 +839,16 @@ class EnvironmentManager:
         ]
         if verbose:
             print(f"Running: {command_text(command)}")
-        run_checked(command, runner=self.runner, cwd=self.repository_root)
+        lock_environment = None
+        if channel_priority:
+            lock_environment = os.environ.copy()
+            lock_environment["CONDA_CHANNEL_PRIORITY"] = channel_priority
+        run_checked(
+            command,
+            runner=self.runner,
+            cwd=self.repository_root,
+            env=lock_environment,
+        )
         if not destination.is_file() or destination.stat().st_size == 0:
             raise RuntimeError("conda-lock completed without creating a non-empty lockfile.")
         return command
@@ -890,7 +900,11 @@ class EnvironmentManager:
         ) as temporary:
             candidate = Path(temporary) / paths.lockfile.name
             command = self._generate_lock(
-                paths.environment_yml, candidate, definition.platform, verbose=verbose
+                paths.environment_yml,
+                candidate,
+                definition.platform,
+                channel_priority=definition.conda_channel_priority,
+                verbose=verbose,
             )
             current = paths.lockfile.read_bytes() if paths.lockfile.is_file() else None
             generated = candidate.read_bytes()
@@ -1309,7 +1323,11 @@ class EnvironmentManager:
         lock_generation_error: str | None = None
         try:
             self._generate_lock(
-                candidate_yml, candidate_lock, definition.platform, verbose=verbose
+                candidate_yml,
+                candidate_lock,
+                definition.platform,
+                channel_priority=definition.conda_channel_priority,
+                verbose=verbose,
             )
         except RuntimeError as exc:
             if definition.managed and not retain_lock_failure:

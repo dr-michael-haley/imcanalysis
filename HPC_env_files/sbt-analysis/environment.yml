@@ -2,20 +2,35 @@
 #   - imc_segmentation
 #   - imc_biobatchnet
 #   - imc_cellcharter
-#   - imc_starling
+#   - rapids_singlecell
 #
-# MaxFuse, scPortrait, Cellpose-SAM, RAPIDS, HyPERSTAC, and IMC-Denoise are
-# deliberately outside this environment.
+# STARLING, MaxFuse, scPortrait, Cellpose-SAM, HyPERSTAC, and IMC-Denoise are
+# deliberately outside this environment. Nimbus is included provisionally and
+# must pass its Python 3.12 smoke and inference tests before stage remapping.
 name: sbt-analysis
 channels:
+  - rapidsai
+  - nvidia
   - conda-forge
   - bioconda
-  - defaults
 
 dependencies:
-  # Shared interpreter and scientific-data baseline.
-  - python=3.11
+  # Python 3.12 is the common supported interpreter for RAPIDS-singlecell
+  # 0.16.1 and CellCharter 0.3.7. Nimbus metadata permits it, but upstream only
+  # documents Python 3.9-3.11, so Nimbus remains an explicit validation risk.
+  - python=3.12
   - pip
+
+  # GPU runtime follows the upstream RAPIDS-singlecell CUDA 12 environment.
+  # CUDA 12.8 matches the successfully exported CSF3 environment and is within
+  # the CUDA 12.2-12.9 range supported by the precompiled cu12 wheel.
+  - rapids=26.04
+  - cuda-version=12.8
+  - cudnn
+  - cutensor
+  - cusparselt
+
+  # Shared scientific-data baseline.
   - numpy=1.26.4
   - pandas>=2.2,<2.4
   - scipy>=1.13,<1.17
@@ -36,6 +51,7 @@ dependencies:
   - python-igraph>=0.10,<2
   - bbknn>=1.6,<2
   - harmonypy>=0.0.10,<1
+  - scikit-misc
   - pyarrow>=15,<23
   - shapely>=2,<3
   - tifffile

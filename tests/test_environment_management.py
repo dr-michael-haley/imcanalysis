@@ -43,10 +43,12 @@ class FakeRunner:
         self.exists = exists
         self.drift = drift
         self.calls: list[list[str]] = []
+        self.invocations: list[tuple[list[str], dict]] = []
 
     def __call__(self, command, **kwargs):
         command = [str(item) for item in command]
         self.calls.append(command)
+        self.invocations.append((command, kwargs))
         conda_lock_command = (
             command[5:]
             if command[:5] == ["conda", "run", "-n", "base", "conda-lock"]
@@ -187,6 +189,7 @@ class EnvironmentFixture(unittest.TestCase):
                     "conda_name": "test_env",
                     "specification_directory": "HPC_env_files/test_env",
                     "platform": "linux-64",
+                    "conda_channel_priority": "flexible",
                     "toolkit_overlay": "editable-no-deps",
                     "smoke_tests": [["python", "-c", "import SpatialBiologyToolkit"]],
                 }
@@ -271,7 +274,8 @@ class RegistryTests(EnvironmentFixture):
         self.assertIn("segmentation", " ".join(definition.notes).casefold())
         self.assertIn("biobatchnet", " ".join(definition.notes).casefold())
         self.assertIn("cellcharter", " ".join(definition.notes).casefold())
-        self.assertIn("starling", " ".join(definition.notes).casefold())
+        self.assertIn("rapids", " ".join(definition.notes).casefold())
+        self.assertEqual(definition.conda_channel_priority, "flexible")
 
         conda_requirements = declared_conda_requirements(
             root / "HPC_env_files" / "sbt-analysis" / "environment.yml"
@@ -279,11 +283,25 @@ class RegistryTests(EnvironmentFixture):
         pip_requirements = declared_pip_requirements(
             root / "HPC_env_files" / "sbt-analysis" / "pip-extras.txt"
         )
-        self.assertEqual(conda_requirements["python"], "=3.11")
+        self.assertEqual(conda_requirements["python"], "=3.12")
+        self.assertEqual(conda_requirements["rapids"], "=26.04")
+        self.assertEqual(conda_requirements["cuda-version"], "=12.8")
         self.assertEqual(conda_requirements["numpy"], "=1.26.4")
         self.assertEqual(pip_requirements["torch"].version, "2.9.1")
+        self.assertEqual(
+            pip_requirements["rapids-singlecell-cu12"].version, "0.16.1"
+        )
         self.assertEqual(pip_requirements["cellcharter"].version, "0.3.7")
-        self.assertEqual(pip_requirements["biostarling"].version, "0.1.4")
+        self.assertNotIn("biostarling", pip_requirements)
+        self.assertEqual(pip_requirements["spatialdata"].version, "0.4.0")
+        self.assertEqual(
+            pip_requirements["multiscale-spatial-image"].version, "2.0.2"
+        )
+        self.assertEqual(pip_requirements["spatial-image"].version, "1.2.1")
+        self.assertEqual(pip_requirements["xarray-dataclasses"].version, "1.9.1")
+        self.assertEqual(pip_requirements["xarray"].version, "2024.11.0")
+        self.assertEqual(pip_requirements["zarr"].version, "2.18.3")
+        self.assertEqual(pip_requirements["squidpy"].version, "1.6.5")
         self.assertEqual(pip_requirements["biobatchnet"].source_type, "vcs")
 
     def test_legacy_python_environments_support_runtime_type_evaluation(self):
@@ -594,12 +612,24 @@ class CaptureAndProvenanceTests(EnvironmentFixture):
         self.assertIn("generation failed", plan.differences["conda-linux-64.lock"])
 
     def test_lock_check_does_not_replace_committed_lock(self):
-        manager, _ = self.manager()
+        manager, runner = self.manager()
         lock = self.root / "HPC_env_files" / "test_env" / "conda-linux-64.lock"
         before = lock.read_bytes()
         current, _ = manager.lock("test", check=True)
         self.assertFalse(current)
         self.assertEqual(lock.read_bytes(), before)
+        lock_invocation = next(
+            kwargs
+            for command, kwargs in runner.invocations
+            if (
+                command[:6]
+                == ["conda", "run", "-n", "base", "conda-lock", "lock"]
+                and "--lockfile" in command
+            )
+        )
+        self.assertEqual(
+            lock_invocation["env"]["CONDA_CHANNEL_PRIORITY"], "flexible"
+        )
 
     def test_specification_snapshot_is_a_copy_with_hashes(self):
         output = self.root / "output"

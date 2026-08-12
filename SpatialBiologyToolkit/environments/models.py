@@ -17,6 +17,7 @@ class EnvironmentDefinition(EnvironmentModel):
     conda_name: str
     specification_directory: Path | None = None
     platform: str = "linux-64"
+    conda_channel_priority: Literal["strict", "flexible", "disabled"] | None = None
     toolkit_overlay: Literal["editable-no-deps", "none"] = "editable-no-deps"
     managed: bool = True
     smoke_tests: list[list[str]] = Field(default_factory=list)
