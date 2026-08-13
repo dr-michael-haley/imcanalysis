@@ -42,12 +42,22 @@ def snapshot_stage_environment_specifications(
     stage: str,
     output_directory: Path,
     repository_root: Path | None = None,
+    environment_keys: list[str] | None = None,
+    default_environment_keys: list[str] | None = None,
 ) -> EnvironmentReportReference | None:
     root = toolkit_root(repository_root)
     registry = load_environment_registry(root)
-    keys = registry.stage_environments.get(stage, [])
+    if environment_keys is None:
+        exported_keys = os.environ.get("SBT_ENVIRONMENT_KEYS", "")
+        environment_keys = [
+            item.strip() for item in exported_keys.split(",") if item.strip()
+        ] or None
+    keys = list(environment_keys or registry.stage_environments.get(stage, []))
     if not keys:
         return None
+    defaults = list(
+        default_environment_keys or registry.stage_environments.get(stage, [])
+    )
     reference: EnvironmentReportReference | None = None
     for index, key in enumerate(keys):
         definition = registry.environments[key]
@@ -87,6 +97,8 @@ def snapshot_stage_environment_specifications(
                 manifest=manifest_path.relative_to(output_directory),
                 specification_snapshot=destination.relative_to(output_directory),
                 additional_keys=keys[1:],
+                overridden=keys != defaults,
+                default_keys=defaults,
             )
     return reference
 
@@ -96,14 +108,25 @@ def capture_stage_environment_runtime(
     stage: str,
     output_directory: Path,
     repository_root: Path | None = None,
+    environment_keys: list[str] | None = None,
+    default_environment_keys: list[str] | None = None,
 ) -> EnvironmentReportReference | None:
     root = toolkit_root(repository_root)
     registry = load_environment_registry(root)
-    keys = registry.stage_environments.get(stage, [])
+    if environment_keys is None:
+        exported_keys = os.environ.get("SBT_ENVIRONMENT_KEYS", "")
+        environment_keys = [
+            item.strip() for item in exported_keys.split(",") if item.strip()
+        ] or None
+    keys = list(environment_keys or registry.stage_environments.get(stage, []))
     if not keys:
         return None
     reference = snapshot_stage_environment_specifications(
-        stage=stage, output_directory=output_directory, repository_root=root
+        stage=stage,
+        output_directory=output_directory,
+        repository_root=root,
+        environment_keys=keys,
+        default_environment_keys=default_environment_keys,
     )
     conda = find_conda_executable()
     if not conda:

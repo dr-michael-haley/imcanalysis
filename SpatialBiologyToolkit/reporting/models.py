@@ -48,6 +48,8 @@ class EnvironmentReportReference(ReportingModel):
     manifest: Path
     specification_snapshot: Path
     additional_keys: list[str] = Field(default_factory=list)
+    overridden: bool = False
+    default_keys: list[str] = Field(default_factory=list)
 
 
 class StageManifest(ReportingModel):

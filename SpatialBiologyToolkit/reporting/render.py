@@ -9,6 +9,9 @@ from typing import TYPE_CHECKING, Iterable
 import yaml  # type: ignore[import-untyped]
 
 from SpatialBiologyToolkit.pipeline.assets import resolve_assets
+from SpatialBiologyToolkit.pipeline.environment_selection import (
+    effective_environment_keys,
+)
 from SpatialBiologyToolkit.pipeline.executions import (
     execution_output_path,
     load_execution_index,
@@ -80,6 +83,11 @@ def _environment_rows(manifest: StageManifest, source_dir: Path) -> list[str]:
         f"- Editable toolkit installation: `{'yes' if runtime.get('toolkit_editable') else 'no'}`",
         f"- Environment drift at execution: `{runtime.get('drift') or 'unknown'}`",
     ]
+    if reference.overridden:
+        defaults = "`, `".join(reference.default_keys) or "none"
+        rows.append(
+            f"- Per-run override: `yes` (registered stage default: `{defaults}`)"
+        )
     if reference.additional_keys:
         rows.append(
             "- Additional stage environments: `"
@@ -323,6 +331,8 @@ def prepare_execution_output(
         stage=execution.stage,
         output_directory=output,
         repository_root=toolkit_root(),
+        environment_keys=effective_environment_keys(run.plan, execution.stage),
+        default_environment_keys=get_stage(execution.stage).environment_keys,
     )
     manifest = StageManifest(
         project_id=context.project_metadata.project_id,

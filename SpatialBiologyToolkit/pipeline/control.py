@@ -18,7 +18,7 @@ from pydantic import Field
 from .assets import inventory_assets
 from .executions import load_execution_index
 from .manifests import utc_now, write_json
-from .models import PipelineModel, RunPlan
+from .models import ExternalDependency, PipelineModel, RunPlan
 from .project import ProjectContext
 
 PREVIEW_TOKEN_VERSION = "v1"
@@ -68,6 +68,7 @@ def run_preview_snapshot(
     plan: RunPlan,
     *,
     reason: str | None = None,
+    external_dependency: ExternalDependency | None = None,
 ) -> dict[str, Any]:
     """Return stable state which must remain unchanged between preview and submit."""
 
@@ -84,6 +85,16 @@ def run_preview_snapshot(
         "requested": list(plan.requested),
         "resolved_stages": [item.name for item in plan.resolved_stages],
         "dependency_policy": plan.dependency_policy,
+        "environment_overrides": dict(plan.environment_overrides),
+        "external_dependency": (
+            {
+                "kind": external_dependency.kind,
+                "technical_run_id": external_dependency.technical_run_id,
+                "job_id": external_dependency.job_id,
+            }
+            if external_dependency is not None
+            else None
+        ),
         "ready": plan.ready,
         "errors": list(plan.errors),
         "warnings": list(plan.warnings),

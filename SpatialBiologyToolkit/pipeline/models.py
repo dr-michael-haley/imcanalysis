@@ -160,6 +160,7 @@ class RunPlan(PipelineModel):
     config_source: Path
     execution_backend: str = "slurm_scripts"
     dependency_policy: DependencyPolicy = "assets"
+    environment_overrides: dict[str, str] = Field(default_factory=dict)
     ready: bool
     errors: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -306,6 +307,20 @@ class ExecutionSummary(PipelineModel):
     removed_at: datetime | None = None
 
 
+class ExternalDependency(PipelineModel):
+    kind: Literal["afterok"] = "afterok"
+    project_id: str
+    execution_id: int = Field(ge=1)
+    execution_label: str
+    technical_run_id: str
+    workflow_run_id: str
+    stage: str
+    job_id: str
+    observed_status: ExecutionStatus
+    checked_at: datetime
+    source: str
+
+
 class RunManifest(PipelineModel):
     schema_version: Literal[1, 2] = 2
     run_id: str
@@ -330,6 +345,8 @@ class RunManifest(PipelineModel):
     plan_token_digest: str | None = None
     provenance_digest: str | None = None
     provenance_file: Path | None = None
+    environment_overrides: dict[str, str] = Field(default_factory=dict)
+    external_dependency: ExternalDependency | None = None
 
 
 class SubmissionRecord(PipelineModel):

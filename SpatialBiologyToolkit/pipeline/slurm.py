@@ -11,9 +11,11 @@ from typing import Callable
 
 from SpatialBiologyToolkit.environments.registry import load_environment_registry
 
+from .environment_selection import effective_environment_keys
 from .manifests import utc_now, write_yaml
 from .executions import execution_output_path, update_execution
 from .models import (
+    ExternalDependency,
     RunPlan,
     RunStatus,
     StageStatus,
@@ -66,7 +68,7 @@ def sbt_environment(
         "SBT_REPORTING_PYTHON": sys.executable,
     }
     environment_registry = load_environment_registry()
-    environment_keys = stage.environment_keys
+    environment_keys = effective_environment_keys(run.plan, stage_name)
     if environment_keys:
         environment["SBT_ENVIRONMENT_KEY"] = environment_keys[0]
         environment["SBT_ENVIRONMENT_KEYS"] = ",".join(environment_keys)
@@ -80,6 +82,11 @@ def sbt_environment(
             environment[variable] = environment_registry.environments[
                 environment_key
             ].conda_name
+    if stage_name in run.plan.environment_overrides:
+        environment["SBT_ENVIRONMENT_OVERRIDE"] = "1"
+        environment["SBT_DEFAULT_ENVIRONMENT_KEYS"] = ",".join(
+            stage.environment_keys
+        )
     if run.manifest.reason:
         environment["SBT_RUN_REASON"] = run.manifest.reason
     if run.manifest.notes:
@@ -165,6 +172,8 @@ def preview_submission_commands(
     context: ProjectContext,
     plan: RunPlan,
     run: RunRecord,
+    *,
+    external_dependency: ExternalDependency | None = None,
 ) -> list[tuple[list[str], dict[str, str]]]:
     previews: list[tuple[list[str], dict[str, str]]] = []
     preview_job_ids: dict[str, str] = {}
@@ -175,6 +184,12 @@ def preview_submission_commands(
             for name in stage.depends_on
             if name in preview_job_ids
         ]
+        if (
+            not dependency_ids
+            and external_dependency is not None
+            and external_dependency.observed_status != "completed"
+        ):
+            dependency_ids.append(external_dependency.job_id)
         previews.append(
             (
                 build_sbatch_command(
@@ -196,6 +211,7 @@ def submit_run(
     plan: RunPlan,
     run: RunRecord,
     *,
+    external_dependency: ExternalDependency | None = None,
     runner: Runner = subprocess.run,
 ) -> SubmittedJobs:
     if not plan.ready:
@@ -214,6 +230,12 @@ def submit_run(
             for name in stage.depends_on
             if name in submitted_job_ids
         ]
+        if (
+            not dependency_ids
+            and external_dependency is not None
+            and external_dependency.observed_status != "completed"
+        ):
+            dependency_ids.append(external_dependency.job_id)
         dependency_job_id = ":".join(dependency_ids) or None
         command = build_sbatch_command(
             context=context,

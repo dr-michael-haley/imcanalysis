@@ -10,6 +10,14 @@ from typer.testing import CliRunner
 from SpatialBiologyToolkit.cli.main import app
 from SpatialBiologyToolkit.environments.models import EnvironmentSummary
 from SpatialBiologyToolkit.pipeline.assets import resolve_assets
+from SpatialBiologyToolkit.pipeline.dependencies import (
+    active_project_dependencies,
+    recorded_external_dependency,
+    refresh_external_dependency,
+)
+from SpatialBiologyToolkit.pipeline.environment_selection import (
+    apply_environment_override,
+)
 from SpatialBiologyToolkit.pipeline.executions import execution_summaries
 from SpatialBiologyToolkit.pipeline.logs import resolve_run_logs, tail_text
 from SpatialBiologyToolkit.pipeline.manifests import read_yaml
@@ -26,7 +34,11 @@ from SpatialBiologyToolkit.pipeline.runs import (
     create_run_record,
     resolve_run_directory,
 )
-from SpatialBiologyToolkit.pipeline.slurm import SubmissionError, submit_run
+from SpatialBiologyToolkit.pipeline.slurm import (
+    SubmissionError,
+    sbt_environment,
+    submit_run,
+)
 from SpatialBiologyToolkit.pipeline.status import inspect_run_status
 from SpatialBiologyToolkit.scripts.config_and_utils import parse_arguments
 
@@ -137,6 +149,197 @@ class RunControlTests(unittest.TestCase):
             self.assertEqual(exported["SBT_ENVIRONMENT_KEY"], "segmentation")
             self.assertEqual(exported["SBT_CONDA_ENV"], "imc_segmentation")
             self.assertEqual(exported["SBT_CONDA_ENV_SEGMENTATION"], "imc_segmentation")
+
+    def test_single_stage_environment_override_is_exported_and_persisted(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context, plan = self._project_and_plan(temp_dir, ["prep"])
+            plan = apply_environment_override(plan, "analysis")
+            run = create_run_record(context, plan, command="sbt run prep")
+            submit_run(
+                context,
+                plan,
+                run,
+                runner=FakeSbatchRunner(["751"]),
+            )
+
+            exported = sbt_environment(context, run, "prep")
+            manifest = read_yaml(run.run_dir / RUN_MANIFEST)
+            stage_manifest = read_yaml(
+                context.root / run.executions[0].output_folder / "stage_manifest.yaml"
+            )
+
+            self.assertEqual(plan.environment_overrides, {"prep": "analysis"})
+            self.assertEqual(exported["SBT_ENVIRONMENT_KEY"], "analysis")
+            self.assertEqual(exported["SBT_CONDA_ENV"], "sbt-analysis")
+            self.assertEqual(exported["SBT_CONDA_ENV_ANALYSIS"], "sbt-analysis")
+            self.assertEqual(exported["SBT_ENVIRONMENT_OVERRIDE"], "1")
+            self.assertEqual(
+                exported["SBT_DEFAULT_ENVIRONMENT_KEYS"], "segmentation"
+            )
+            self.assertEqual(
+                manifest["environment_overrides"], {"prep": "analysis"}
+            )
+            self.assertEqual(stage_manifest["environment"]["key"], "analysis")
+            self.assertTrue(stage_manifest["environment"]["overridden"])
+            self.assertEqual(
+                stage_manifest["environment"]["default_keys"], ["segmentation"]
+            )
+            readme = (
+                context.root / run.executions[0].output_folder / "README.md"
+            ).read_text(encoding="utf-8")
+            self.assertIn("Per-run override: `yes`", readme)
+
+    def test_environment_override_rejects_multi_environment_stage(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = initialize_project(Path(temp_dir) / "project")
+            plan = build_run_plan(
+                context,
+                ["cellpose"],
+                dependency_policy="none",
+            )
+
+            with self.assertRaisesRegex(ValueError, "multiple Conda environments"):
+                apply_environment_override(plan, "analysis")
+
+    def test_external_dependency_is_added_to_a_separate_run_and_manifest(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context, first_plan = self._project_and_plan(temp_dir, ["debug"])
+            first_run = create_run_record(
+                context, first_plan, command="sbt run debug"
+            )
+            submit_run(
+                context,
+                first_plan,
+                first_run,
+                runner=FakeSbatchRunner(["801"]),
+            )
+            dependency = recorded_external_dependency(context, "001")
+            second_plan = build_run_plan(context, ["debug"])
+            second_run = create_run_record(
+                context,
+                second_plan,
+                command="sbt run debug --after 001",
+                external_dependency=dependency,
+            )
+
+            runner = FakeSbatchRunner(["802"])
+            submitted = submit_run(
+                context,
+                second_plan,
+                second_run,
+                external_dependency=dependency,
+                runner=runner,
+            )
+
+            self.assertEqual(submitted.jobs[0].dependency_job_id, "801")
+            self.assertIn("--dependency=afterok:801", runner.calls[0][0])
+            manifest = read_yaml(second_run.run_dir / RUN_MANIFEST)
+            self.assertEqual(manifest["external_dependency"]["execution_label"], "001")
+            self.assertEqual(manifest["external_dependency"]["job_id"], "801")
+
+    def test_completed_external_dependency_does_not_add_scheduler_wait(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context, first_plan = self._project_and_plan(temp_dir, ["debug"])
+            first_run = create_run_record(
+                context, first_plan, command="sbt run debug"
+            )
+            submit_run(
+                context,
+                first_plan,
+                first_run,
+                runner=FakeSbatchRunner(["811"]),
+            )
+            dependency = recorded_external_dependency(context, "001").model_copy(
+                update={"observed_status": "completed"}
+            )
+            second_plan = build_run_plan(context, ["debug"])
+            second_run = create_run_record(
+                context,
+                second_plan,
+                command="sbt run debug --after 001",
+                external_dependency=dependency,
+            )
+
+            runner = FakeSbatchRunner(["812"])
+            submitted = submit_run(
+                context,
+                second_plan,
+                second_run,
+                external_dependency=dependency,
+                runner=runner,
+            )
+
+            self.assertIsNone(submitted.jobs[0].dependency_job_id)
+            self.assertNotIn("--dependency=", " ".join(runner.calls[0][0]))
+
+    def test_active_dependency_discovery_is_scoped_to_project_job_ids(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context, plan = self._project_and_plan(temp_dir, ["debug"])
+            run = create_run_record(context, plan, command="sbt run debug")
+            submit_run(
+                context,
+                plan,
+                run,
+                runner=FakeSbatchRunner(["821"]),
+            )
+
+            def queue_runner(arguments, **_kwargs):
+                output = (
+                    "821|RUNNING|sbt_001_debug|gpu|00:01|01:00|1|2|None\n"
+                    "999|RUNNING|unrelated|gpu|00:01|01:00|1|2|None\n"
+                )
+                return subprocess.CompletedProcess(arguments, 0, output, "")
+
+            with patch(
+                "SpatialBiologyToolkit.pipeline.scheduler._managed_jobs",
+                return_value={},
+            ):
+                candidates = active_project_dependencies(
+                    context, runner=queue_runner
+                )
+
+            self.assertEqual([item.job_id for item in candidates], ["821"])
+            self.assertEqual(candidates[0].execution_label, "001")
+            self.assertEqual(candidates[0].observed_status, "running")
+
+    def test_dependency_refresh_uses_sacct_after_job_leaves_squeue(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context, plan = self._project_and_plan(temp_dir, ["debug"])
+            run = create_run_record(context, plan, command="sbt run debug")
+            submit_run(
+                context,
+                plan,
+                run,
+                runner=FakeSbatchRunner(["841"]),
+            )
+            dependency = recorded_external_dependency(context, "001")
+            calls = []
+
+            def status_runner(arguments, **_kwargs):
+                calls.append(arguments)
+                if arguments[0] == "sacct":
+                    return subprocess.CompletedProcess(
+                        arguments,
+                        0,
+                        "841|COMPLETED|sbt_001_debug|0:0\n",
+                        "",
+                    )
+                return subprocess.CompletedProcess(arguments, 0, "", "")
+
+            with patch(
+                "SpatialBiologyToolkit.pipeline.scheduler._managed_jobs",
+                return_value={},
+            ):
+                refreshed = refresh_external_dependency(
+                    context,
+                    dependency,
+                    runner=status_runner,
+                )
+
+            self.assertEqual(refreshed.observed_status, "completed")
+            self.assertEqual(refreshed.source, "sacct")
+            self.assertEqual([call[0] for call in calls].count("squeue"), 2)
+            self.assertEqual([call[0] for call in calls].count("sacct"), 1)
 
     def test_submission_uses_all_actual_dependencies_without_chaining_independent_stages(
         self,
@@ -436,6 +639,127 @@ class RunControlTests(unittest.TestCase):
             self.assertEqual(result.exit_code, 0, result.stdout)
             self.assertIn("no run directory was created", result.stdout)
             self.assertEqual(list(runs_dir.iterdir()), [])
+
+    def test_environment_override_is_visible_in_dry_run_without_scheduler_access(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "project"
+            initialize_project(root)
+            (root / "IMC_files" / "case.mcd").write_bytes(b"x")
+
+            with patch(
+                "SpatialBiologyToolkit.cli.main.active_project_dependencies",
+                side_effect=AssertionError("dry runs must not query SLURM"),
+            ):
+                result = CliRunner().invoke(
+                    app,
+                    [
+                        "run",
+                        "prep",
+                        "--project",
+                        str(root),
+                        "--environment",
+                        "analysis",
+                        "--dry-run",
+                    ],
+                )
+
+            self.assertEqual(result.exit_code, 0, result.stdout)
+            self.assertIn("Environment override: prep=analysis", result.stdout)
+            self.assertIn("SBT_CONDA_ENV=sbt-analysis", result.stdout)
+
+    def test_unknown_environment_override_stops_before_run_creation(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "project"
+            initialize_project(root)
+            (root / "IMC_files" / "case.mcd").write_bytes(b"x")
+
+            result = CliRunner().invoke(
+                app,
+                [
+                    "run",
+                    "prep",
+                    "--project",
+                    str(root),
+                    "--environment",
+                    "not-registered",
+                    "--dry-run",
+                ],
+            )
+
+            self.assertNotEqual(result.exit_code, 0)
+            self.assertIn("Unknown environment 'not-registered'", result.output)
+            self.assertEqual(list((root / ".sbt" / "runs").iterdir()), [])
+
+    def test_interactive_run_can_chain_to_active_project_execution(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context, first_plan = self._project_and_plan(temp_dir, ["debug"])
+            first_run = create_run_record(
+                context, first_plan, command="sbt run debug"
+            )
+            submit_run(
+                context,
+                first_plan,
+                first_run,
+                runner=FakeSbatchRunner(["831"]),
+            )
+            dependency = recorded_external_dependency(context, "001")
+            submitted = SimpleNamespace(jobs=[])
+
+            with (
+                patch(
+                    "SpatialBiologyToolkit.cli.main.active_project_dependencies",
+                    return_value=[dependency],
+                ),
+                patch(
+                    "SpatialBiologyToolkit.cli.main.refresh_external_dependency",
+                    return_value=dependency,
+                ),
+                patch(
+                    "SpatialBiologyToolkit.cli.main.submit_run",
+                    return_value=submitted,
+                ) as submit_mock,
+            ):
+                result = CliRunner().invoke(
+                    app,
+                    ["run", "debug", "--project", str(context.root)],
+                    input="y\n",
+                )
+
+            self.assertEqual(result.exit_code, 0, result.stdout)
+            self.assertIn("Active SBT executions for this project", result.stdout)
+            self.assertIn("afterok dependency", result.stdout)
+            self.assertEqual(
+                submit_mock.call_args.kwargs["external_dependency"].job_id,
+                "831",
+            )
+
+    def test_no_after_suppresses_active_job_discovery(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context, _plan = self._project_and_plan(temp_dir, ["debug"])
+            submitted = SimpleNamespace(jobs=[])
+
+            with (
+                patch(
+                    "SpatialBiologyToolkit.cli.main.active_project_dependencies",
+                    side_effect=AssertionError("--no-after must suppress discovery"),
+                ),
+                patch(
+                    "SpatialBiologyToolkit.cli.main.submit_run",
+                    return_value=submitted,
+                ),
+            ):
+                result = CliRunner().invoke(
+                    app,
+                    [
+                        "run",
+                        "debug",
+                        "--project",
+                        str(context.root),
+                        "--no-after",
+                    ],
+                )
+
+            self.assertEqual(result.exit_code, 0, result.stdout)
 
     def test_run_prompts_to_install_only_missing_managed_environments(self):
         with tempfile.TemporaryDirectory() as temp_dir:

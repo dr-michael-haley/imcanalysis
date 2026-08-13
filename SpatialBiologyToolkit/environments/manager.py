@@ -251,7 +251,12 @@ class EnvironmentManager:
             )
         return rows
 
-    def required_for_stages(self, stages: Iterable[str]) -> list[EnvironmentSummary]:
+    def required_for_stages(
+        self,
+        stages: Iterable[str],
+        *,
+        environment_overrides: dict[str, str] | None = None,
+    ) -> list[EnvironmentSummary]:
         """Return the live availability of environments used by selected stages.
 
         Environment keys are de-duplicated in first-use order so a multi-stage
@@ -261,8 +266,14 @@ class EnvironmentManager:
         """
 
         uses: dict[str, list[str]] = {}
+        overrides = environment_overrides or {}
         for stage in stages:
-            for key in self.registry.stage_environments.get(stage, []):
+            keys = (
+                [overrides[stage]]
+                if stage in overrides
+                else self.registry.stage_environments.get(stage, [])
+            )
+            for key in keys:
                 stage_uses = uses.setdefault(key, [])
                 if stage not in stage_uses:
                     stage_uses.append(stage)

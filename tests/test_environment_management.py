@@ -356,6 +356,18 @@ class RegistryTests(EnvironmentFixture):
 
         self.assertEqual(manager.required_for_stages(["debug"]), [])
 
+    def test_required_stage_environments_honor_per_run_override(self):
+        manager, _runner = self.manager(exists=True)
+
+        rows = manager.required_for_stages(
+            ["debug"], environment_overrides={"debug": "test"}
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].key, "test")
+        self.assertEqual(rows[0].conda_name, "test_env")
+        self.assertEqual(rows[0].stages, ["debug"])
+
 
 class SpecificationTests(EnvironmentFixture):
     def test_valid_specification(self):
@@ -648,6 +660,23 @@ class CaptureAndProvenanceTests(EnvironmentFixture):
         )
         self.assertEqual(len(manifest["specification"]["environment_yml"]["sha256"]), 64)
         self.assertEqual(discover_generated_files(output), [])
+
+    def test_specification_snapshot_records_per_run_override_identity(self):
+        output = self.root / "override-output"
+
+        reference = snapshot_stage_environment_specifications(
+            stage="prep",
+            output_directory=output,
+            repository_root=self.root,
+            environment_keys=["test"],
+            default_environment_keys=["legacy"],
+        )
+
+        self.assertIsNotNone(reference)
+        self.assertTrue(reference.overridden)
+        self.assertEqual(reference.key, "test")
+        self.assertEqual(reference.conda_name, "test_env")
+        self.assertEqual(reference.default_keys, ["legacy"])
 
 
 class EnvironmentCliTests(unittest.TestCase):

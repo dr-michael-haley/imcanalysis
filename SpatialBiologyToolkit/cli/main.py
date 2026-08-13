@@ -42,6 +42,14 @@ from SpatialBiologyToolkit.pipeline.control import (
     run_preview_snapshot,
     validate_preview_token,
 )
+from SpatialBiologyToolkit.pipeline.dependencies import (
+    active_project_dependencies,
+    recorded_external_dependency,
+    refresh_external_dependency,
+)
+from SpatialBiologyToolkit.pipeline.environment_selection import (
+    apply_environment_override,
+)
 from SpatialBiologyToolkit.pipeline.logs import resolve_run_logs, tail_text
 from SpatialBiologyToolkit.pipeline.manifests import (
     format_machine_output,
@@ -57,13 +65,14 @@ from SpatialBiologyToolkit.pipeline.executions import (
     resolve_execution,
     resolve_technical_execution,
 )
-from SpatialBiologyToolkit.pipeline.models import model_data
+from SpatialBiologyToolkit.pipeline.models import ExternalDependency, model_data
 from SpatialBiologyToolkit.pipeline.migration import (
     apply_execution_layout_migration,
     plan_execution_layout_migration,
 )
 from SpatialBiologyToolkit.pipeline.planner import build_run_plan
 from SpatialBiologyToolkit.pipeline.project import (
+    ProjectContext,
     adopt_project,
     initialize_project,
     validate_project,
@@ -430,6 +439,12 @@ def _print_plan(plan) -> None:
     typer.echo(f"Config:  {plan.config_source}")
     typer.echo(f"Backend: {plan.execution_backend}")
     typer.echo(f"Upstream policy: {plan.dependency_policy}")
+    if plan.environment_overrides:
+        overrides = ", ".join(
+            f"{stage}={environment}"
+            for stage, environment in plan.environment_overrides.items()
+        )
+        typer.echo(f"Environment override: {overrides}")
     typer.echo("")
     typer.echo("Submission order")
     for index, stage in enumerate(plan.resolved_stages, start=1):
@@ -1103,11 +1118,21 @@ def _required_environment_commands(rows: list[EnvironmentSummary]) -> str:
     return "\n".join(f"  sbt env sync {row.key}" for row in rows)
 
 
-def _ensure_run_environments(stage_names: list[str]) -> None:
+def _ensure_run_environments(
+    stage_names: list[str],
+    environment_overrides: dict[str, str] | None = None,
+) -> None:
     """Stop before run creation unless every selected stage environment exists."""
 
     manager = _env_manager(None)
-    required = manager.required_for_stages(stage_names)
+    overrides = environment_overrides or {}
+    required = (
+        manager.required_for_stages(
+            stage_names, environment_overrides=overrides
+        )
+        if overrides
+        else manager.required_for_stages(stage_names)
+    )
     missing = [row for row in required if not row.exists]
     if not missing:
         return
@@ -1174,9 +1199,14 @@ def _ensure_run_environments(stage_names: list[str]) -> None:
         manager.sync(row.key, verbose=True)
         typer.echo(f"Installed and smoke-tested {row.conda_name}.")
 
-    remaining = [
-        row for row in manager.required_for_stages(stage_names) if not row.exists
-    ]
+    refreshed = (
+        manager.required_for_stages(
+            stage_names, environment_overrides=overrides
+        )
+        if overrides
+        else manager.required_for_stages(stage_names)
+    )
+    remaining = [row for row in refreshed if not row.exists]
     if remaining:
         raise RuntimeError(
             "Environment installation finished, but these environments are still "
@@ -1993,6 +2023,70 @@ def plan_command(
         raise typer.Exit(1)
 
 
+def _live_external_dependency(
+    context: ProjectContext,
+    reference: str,
+) -> ExternalDependency:
+    if reference.casefold() == "latest-active":
+        candidates = active_project_dependencies(context)
+        if not candidates:
+            raise FileNotFoundError(
+                "No queued or running SBT execution is recorded for this project."
+            )
+        dependency = candidates[-1]
+    else:
+        dependency = recorded_external_dependency(context, reference)
+    return refresh_external_dependency(context, dependency)
+
+
+def _prompt_external_dependency(
+    context: ProjectContext,
+) -> ExternalDependency | None:
+    try:
+        candidates = active_project_dependencies(context)
+    except RuntimeError as exc:
+        typer.echo(
+            f"Warning: active project jobs could not be checked ({exc}). "
+            "Submitting independently; use --after to require a verified predecessor.",
+            err=True,
+        )
+        return None
+    if not candidates:
+        return None
+
+    typer.echo("")
+    typer.echo("Active SBT executions for this project")
+    for item in candidates:
+        typer.echo(
+            f"  {item.execution_label} — {item.stage:<18} "
+            f"job {item.job_id} — {item.observed_status.upper()}"
+        )
+    if not typer.confirm(
+        "Add an afterok dependency on an active execution?",
+        default=False,
+    ):
+        return None
+    if len(candidates) == 1:
+        selected = candidates[0]
+    else:
+        reference = typer.prompt("Execution label")
+        normalized_reference = (
+            f"{int(reference):03d}" if reference.isdigit() else reference
+        )
+        selected = next(
+            (
+                item
+                for item in candidates
+                if item.execution_label == normalized_reference
+            ),
+            None,
+        )
+        if selected is None:
+            choices = ", ".join(item.execution_label for item in candidates)
+            raise ValueError(f"Choose one of the active executions: {choices}.")
+    return refresh_external_dependency(context, selected)
+
+
 @app.command(
     "run",
     help="Allocate execution IDs and submit validated stages to SLURM.",
@@ -2001,6 +2095,27 @@ def run_command(
     targets: list[str] = typer.Argument(..., help="Stage aliases or workflow modes."),
     project: Path | None = typer.Option(None, "--project"),
     config: Path | None = typer.Option(None, "--config"),
+    environment: str | None = typer.Option(
+        None,
+        "--environment",
+        help=(
+            "Registered environment key or Conda name for one single-environment "
+            "stage in this run only."
+        ),
+    ),
+    after: str | None = typer.Option(
+        None,
+        "--after",
+        help=(
+            "Wait for a project execution using SLURM afterok; accepts an execution "
+            "number, latest, or latest-active."
+        ),
+    ),
+    no_after: bool = typer.Option(
+        False,
+        "--no-after",
+        help="Submit independently without checking for an active predecessor.",
+    ),
     dry_run: bool = typer.Option(False, "--dry-run"),
     dependency_policy: DependencyPolicyOption = typer.Option(
         DependencyPolicyOption.assets,
@@ -2039,6 +2154,8 @@ def run_command(
 ) -> None:
     if no_deps and dependency_policy != DependencyPolicyOption.assets:
         _fail("--no-deps cannot be combined with --dependency-policy.")
+    if after and no_after:
+        _fail("--after cannot be combined with --no-after.")
     selected_policy = DependencyPolicyOption.none if no_deps else dependency_policy
     try:
         context = _project(project, config)
@@ -2047,15 +2164,28 @@ def run_command(
             targets,
             dependency_policy=selected_policy.value,
         )
+        plan = apply_environment_override(plan, environment)
     except Exception as exc:
         _fail(exc)
     if not plan.ready:
         _print_plan(plan)
         raise typer.Exit(1)
 
+    preview_dependency: ExternalDependency | None = None
+    if after and (dry_run or plan_token):
+        try:
+            preview_dependency = recorded_external_dependency(context, after)
+        except Exception as exc:
+            _fail(exc)
+
     command = command_text(sys.argv)
     if dry_run:
-        snapshot = run_preview_snapshot(context, plan, reason=reason)
+        snapshot = run_preview_snapshot(
+            context,
+            plan,
+            reason=reason,
+            external_dependency=preview_dependency,
+        )
         preview_token = make_preview_token(snapshot)
         workflow_run_id, technical_run_ids = preview_run_identities(
             preview_token,
@@ -2070,8 +2200,14 @@ def run_command(
             notes=note,
             plan_token_digest=canonical_digest(preview_token),
             technical_run_ids=technical_run_ids,
+            external_dependency=preview_dependency,
         )
-        previews = preview_submission_commands(context, plan, run)
+        previews = preview_submission_commands(
+            context,
+            plan,
+            run,
+            external_dependency=preview_dependency,
+        )
         receipt = action_receipt_payload(
             operation="preview_run",
             target=context.project_metadata.project_id,
@@ -2083,6 +2219,7 @@ def run_command(
                     evidence=[
                         f"resolved_stages={','.join(item.name for item in plan.resolved_stages)}",
                         f"dependency_policy={plan.dependency_policy}",
+                        f"environment_overrides={plan.environment_overrides}",
                     ],
                 ),
                 ActionRecord(
@@ -2104,6 +2241,11 @@ def run_command(
                     "preview_token": preview_token,
                     "preview_expires_in_seconds": 900,
                     "plan": plan.model_dump(mode="json"),
+                    "external_dependency": (
+                        preview_dependency.model_dump(mode="json")
+                        if preview_dependency is not None
+                        else None
+                    ),
                     "prospective_workflow_run_id": run.workflow_run_id,
                     "prospective_executions": [
                         item.model_dump(mode="json") for item in run.executions
@@ -2128,6 +2270,18 @@ def run_command(
                 f"({execution.output_folder})"
             )
         typer.echo(f"Resolved config path: {run.resolved_config_path}")
+        if preview_dependency is not None:
+            if preview_dependency.observed_status == "completed":
+                detail = "already completed; no scheduler wait is required"
+            else:
+                detail = (
+                    f"afterok:{preview_dependency.job_id}; live state will be "
+                    "rechecked before submission"
+                )
+            typer.echo(
+                f"External predecessor: {preview_dependency.execution_label} "
+                f"({detail})"
+            )
         typer.echo("")
         typer.echo("Exact submission preview")
         for arguments, exported in previews:
@@ -2157,7 +2311,12 @@ def run_command(
         try:
             validate_preview_token(
                 plan_token,
-                run_preview_snapshot(context, plan, reason=reason),
+                run_preview_snapshot(
+                    context,
+                    plan,
+                    reason=reason,
+                    external_dependency=preview_dependency,
+                ),
             )
         except Exception as exc:
             _fail(exc)
@@ -2201,8 +2360,24 @@ def run_command(
                 )
             return
 
+    external_dependency = preview_dependency
     try:
-        _ensure_run_environments([stage.name for stage in plan.resolved_stages])
+        _ensure_run_environments(
+            [stage.name for stage in plan.resolved_stages],
+            plan.environment_overrides,
+        )
+        if after:
+            external_dependency = (
+                refresh_external_dependency(context, external_dependency)
+                if external_dependency is not None
+                else _live_external_dependency(context, after)
+            )
+        elif (
+            not no_after
+            and output_format == OutputFormat.text
+            and plan_token is None
+        ):
+            external_dependency = _prompt_external_dependency(context)
         run = create_run_record(
             context,
             plan,
@@ -2213,8 +2388,14 @@ def run_command(
             plan_token_digest=token_digest,
             provenance_payload=provenance_payload,
             technical_run_ids=planned_technical_ids,
+            external_dependency=external_dependency,
         )
-        submitted = submit_run(context, plan, run)
+        submitted = submit_run(
+            context,
+            plan,
+            run,
+            external_dependency=external_dependency,
+        )
     except SubmissionError as exc:
         typer.echo(f"Run record: {run.run_dir}", err=True)
         _fail(exc, code=1)
@@ -2229,7 +2410,15 @@ def run_command(
                 action="Revalidated the pipeline plan and preview token",
                 justification=reason or "The requested stages were ready for submission.",
                 outcome="succeeded",
-                evidence=[f"dependency_policy={plan.dependency_policy}"],
+                evidence=[
+                    f"dependency_policy={plan.dependency_policy}",
+                    f"environment_overrides={plan.environment_overrides}",
+                    (
+                        f"external_predecessor={external_dependency.execution_label}"
+                        if external_dependency is not None
+                        else "external_predecessor=none"
+                    ),
+                ],
             ),
             ActionRecord(
                 action=f"Submitted {len(submitted.jobs)} stage job(s) to SLURM",
@@ -2249,6 +2438,11 @@ def run_command(
                 "workflow_run_id": run.workflow_run_id,
                 "technical_record": str(run.run_dir),
                 "executions": [item.model_dump(mode="json") for item in run.executions],
+                "external_dependency": (
+                    external_dependency.model_dump(mode="json")
+                    if external_dependency is not None
+                    else None
+                ),
                 "submitted": submitted.model_dump(mode="json"),
                 "action_receipt": receipt,
             },
@@ -2258,6 +2452,14 @@ def run_command(
 
     typer.echo(f"Submitted workflow: {run.workflow_run_id}")
     typer.echo(f"Technical record: {run.run_dir}")
+    if (
+        external_dependency is not None
+        and external_dependency.observed_status == "completed"
+    ):
+        typer.echo(
+            f"Predecessor {external_dependency.execution_label} already completed; "
+            "no scheduler wait was needed."
+        )
     for job in submitted.jobs:
         execution = run.execution_for_stage(job.stage)
         dependency = (

@@ -24,7 +24,14 @@ from .executions import (
     execution_reference,
     preview_executions,
 )
-from .models import ExecutionRecord, RunManifest, RunPlan, RunStatus, SubmittedJobs
+from .models import (
+    ExecutionRecord,
+    ExternalDependency,
+    RunManifest,
+    RunPlan,
+    RunStatus,
+    SubmittedJobs,
+)
 from .project import ProjectContext, copy_user_config
 from .registry import toolkit_root
 
@@ -109,6 +116,7 @@ def create_run_record(
     provenance_file: Path | None = None,
     provenance_payload: dict[str, Any] | None = None,
     technical_run_ids: list[str] | None = None,
+    external_dependency: ExternalDependency | None = None,
 ) -> RunRecord:
     if not plan.ready:
         raise ValueError("Cannot create a submitted run record for an invalid plan.")
@@ -169,6 +177,8 @@ def create_run_record(
         plan_token_digest=plan_token_digest,
         provenance_digest=provenance_digest,
         provenance_file=provenance_file,
+        environment_overrides=dict(plan.environment_overrides),
+        external_dependency=external_dependency,
     )
     write_yaml(run_dir / RUN_MANIFEST, manifest)
     write_yaml(run_dir / RUN_PLAN, plan)
@@ -217,6 +227,7 @@ def prospective_run_record(
     notes: Iterable[str] = (),
     plan_token_digest: str | None = None,
     technical_run_ids: list[str] | None = None,
+    external_dependency: ExternalDependency | None = None,
 ) -> RunRecord:
     """Build run paths for a dry run without creating files or directories."""
     workflow_run_id = run_id or new_run_id()
@@ -248,6 +259,8 @@ def prospective_run_record(
         username=getpass.getuser(),
         executions=[execution_reference(record) for record in executions],
         plan_token_digest=plan_token_digest,
+        environment_overrides=dict(plan.environment_overrides),
+        external_dependency=external_dependency,
     )
     return RunRecord(
         workflow_run_id=workflow_run_id,

@@ -27,6 +27,7 @@ lightweight smoke tests.
 
 | Key | Fixed Conda name | Management |
 |---|---|---|
+| `analysis` | `sbt-analysis` | Repository-managed consolidation candidate; reviewed Linux lock pending |
 | `napari` | `sbt-napari` | Explicit interactive bootstrap; Linux lock pending |
 | `segmentation` | `imc_segmentation` | Repository lock |
 | `denoise` | `imc_denoise` | Repository lock |
@@ -67,6 +68,28 @@ The stage mapping is also centralized:
 
 `cellpose`, `dnqc`, and `cellvision-full` intentionally use two environments;
 their primary environment is listed first in the registry mapping.
+
+## Per-run compatibility testing
+
+A registered environment can temporarily replace the default for one resolved,
+single-environment stage:
+
+```bash
+sbt run prep --environment analysis --dry-run
+sbt run prep --environment analysis
+```
+
+The override is execution state, not project configuration: it does not alter
+`stage_environments` or affect later runs. SBT checks the selected environment,
+exports its logical key and fixed name to the wrapper, snapshots its committed
+specification, inspects its runtime, and identifies the override in the stage
+report. This supports scientific-parity testing of `sbt-analysis` while the
+existing environment mappings remain the rollback path.
+
+The current interface deliberately rejects a plan containing several stages,
+stages without an environment, and wrappers that switch between multiple
+environments. Run candidate stages separately with `--dependency-policy none`
+when their blocking assets already exist.
 
 ## Specification roles
 

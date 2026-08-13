@@ -287,7 +287,9 @@ sbt run segmentation --dry-run
 ```
 
 Dry runs create no persistent run record and submit no jobs. Displayed run paths
-are prospective only.
+are prospective only. They do not query SLURM. When `--after` is supplied, the
+preview uses the recorded project execution state and the real submission
+rechecks the exact job with `squeue` and `sacct`.
 
 Machine-readable dry runs also return a short-lived state-bound preview token
 and action receipt:
@@ -312,6 +314,8 @@ sbt run segmentation
 sbt run prep denoise cellpose nimbus
 sbt run cellpose --reason "Repeat with a larger diameter after fragmentation."
 sbt run cellpose --note "Review ROI_17 carefully." --note "Compare with run 2026..."
+sbt run prep --environment analysis
+sbt run cchar --dependency-policy none --environment analysis --after latest-active
 ```
 
 Immediately before a real submission, `sbt run` resolves the Conda environments
@@ -327,6 +331,52 @@ flag that bypasses this prompt. Non-interactive workflows must prepare the
 required environment beforehand with `sbt env sync <key>`. `--dry-run` remains
 side-effect free: it validates and previews the workflow without checking or
 installing Conda environments.
+
+### Per-run environment override
+
+`--environment` accepts a registered environment key or fixed Conda name and
+changes only the current run. The canonical stage mapping and project config are
+not modified. This is intended for controlled compatibility and consolidation
+testing before a stage is permanently remapped:
+
+```bash
+sbt run prep --environment analysis --dry-run
+sbt run prep --environment sbt-analysis
+```
+
+The plan must resolve to exactly one stage, and that stage must have exactly one
+registered environment. Use `--dependency-policy none` when an asset-complete
+downstream stage would otherwise expand to upstream jobs. Multi-environment and
+shell-only wrappers reject this option. Real submissions validate and, for
+managed environments, can offer to install the selected override. Run records,
+wrapper exports, environment snapshots, and stage reports all retain the
+effective environment and mark it as a per-run override.
+
+### Chaining a new run to an active project job
+
+Separate `sbt run` calls retain separate workflow and execution identities, but
+one can wait for an earlier execution through SLURM `afterok`:
+
+```bash
+sbt run cchar --after 017
+sbt run cchar --after latest
+sbt run cchar --after latest-active
+sbt run cchar --no-after
+```
+
+Execution references are resolved only within the selected project. Immediately
+before creating the new run, SBT checks the recorded job with `squeue` and uses
+`sacct` when it has left the active queue. Pending or running predecessors are
+attached to every root job in the new plan. A predecessor that has already
+completed needs no scheduler wait; failed, cancelled, blocked, or unverifiable
+predecessors are rejected because `afterok` cannot be satisfied.
+
+For an interactive text submission without either flag, SBT lists active jobs
+recorded for the project and asks whether to add a dependency, defaulting to no.
+When several jobs are active, it asks for the execution label. `--no-after`
+suppresses discovery and prompting. Machine-readable and preview-token
+submissions never introduce an unpreviewed interactive dependency; automation
+should use `--after` or `--no-after` explicitly.
 
 `--no-deps` remains as a compatibility alias for `--dependency-policy none`:
 
