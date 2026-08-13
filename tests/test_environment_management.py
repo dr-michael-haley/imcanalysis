@@ -287,6 +287,7 @@ class RegistryTests(EnvironmentFixture):
         self.assertEqual(conda_requirements["rapids"], "=26.04")
         self.assertEqual(conda_requirements["cuda-version"], "=12.8")
         self.assertEqual(conda_requirements["numpy"], "=1.26.4")
+        self.assertEqual(conda_requirements["numcodecs"], "=0.15.1")
         self.assertEqual(pip_requirements["torch"].version, "2.9.1")
         self.assertEqual(
             pip_requirements["rapids-singlecell-cu12"].version, "0.16.1"
@@ -300,7 +301,7 @@ class RegistryTests(EnvironmentFixture):
         self.assertEqual(pip_requirements["spatial-image"].version, "1.2.1")
         self.assertEqual(pip_requirements["xarray-dataclasses"].version, "1.9.1")
         self.assertEqual(pip_requirements["xarray"].version, "2024.11.0")
-        self.assertEqual(pip_requirements["zarr"].version, "2.18.3")
+        self.assertEqual(pip_requirements["zarr"].version, "2.18.7")
         self.assertEqual(pip_requirements["squidpy"].version, "1.6.5")
         self.assertEqual(pip_requirements["biobatchnet"].source_type, "vcs")
 

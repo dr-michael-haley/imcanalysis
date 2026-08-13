@@ -30,7 +30,8 @@ multiscale-spatial-image==2.0.2
 spatial-image==1.2.1
 xarray-dataclasses==1.9.1
 xarray==2024.11.0
-zarr==2.18.3
+# Final Zarr 2 release; its metadata also enforces Numcodecs <0.16.
+zarr==2.18.7
 dask==2024.11.2
 dask-expr==1.1.19
 

@@ -42,6 +42,8 @@ dependencies:
   - anndata>=0.10,<0.13
   - scanpy>=1.10,<1.12
   - numba>=0.60,<0.64
+  # Zarr 2 imports public Blosc helpers removed in Numcodecs 0.16.
+  - numcodecs=0.15.1
   - statsmodels>=0.14,<0.15
   - umap-learn>=0.5,<0.6
   - tqdm>=4.65,<5

@@ -14,7 +14,7 @@ environments:
       - [python, -c, "import cupy, cudf, cuml, rmm, rapids_singlecell"]
       - [python, -c, "import cellpose, nimbus_inference, readimc, skimage, pyarrow, spatialdata"]
       - [python, -c, "import biobatchnet, cellcharter, scarches, squidpy"]
-      - [python, -c, "from importlib.metadata import version; assert version('rapids-singlecell-cu12') == '0.16.1'; assert version('cellcharter') == '0.3.7'; assert version('torch').split('+', 1)[0] == '2.9.1'; assert version('numpy') == '1.26.4'; assert version('spatialdata') == '0.4.0'; assert version('multiscale-spatial-image') == '2.0.2'; assert version('zarr') == '2.18.3'; assert version('squidpy') == '1.6.5'"]
+      - [python, -c, "from importlib.metadata import version; assert version('rapids-singlecell-cu12') == '0.16.1'; assert version('cellcharter') == '0.3.7'; assert version('torch').split('+', 1)[0] == '2.9.1'; assert version('numpy') == '1.26.4'; assert version('spatialdata') == '0.4.0'; assert version('multiscale-spatial-image') == '2.0.2'; assert version('zarr') == '2.18.7'; assert version('numcodecs') == '0.15.1'; assert version('squidpy') == '1.6.5'"]
       - [python, -c, "import SpatialBiologyToolkit.scripts.basic_process_rapids, SpatialBiologyToolkit.scripts.basic_process_biobatchnet, SpatialBiologyToolkit.scripts.cellcharter_neighborhoods, SpatialBiologyToolkit.scripts.segmentation_nimbus, SpatialBiologyToolkit.scripts.spatialdata_builder"]
     notes:
       - Candidate consolidated runtime for the existing segmentation, biobatchnet, cellcharter, and RAPIDS environment families, with SpatialData included.
