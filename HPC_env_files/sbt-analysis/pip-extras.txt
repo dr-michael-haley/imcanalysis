@@ -40,7 +40,8 @@ dask-expr==1.1.19
 BioBatchNet @ git+https://github.com/UoM-HealthAI/BioBatchNet.git@b1d708c62f5bac70f323a36aa28c6057f63e8222
 
 # imc_cellcharter requirements. CellCharter 0.3.7 requires Python >=3.11.
+# Its optional TRVAE/proteomics extra is deliberately excluded: the candidate
+# supports the default existing-embedding CellCharter route without scArches.
 cellcharter==0.3.7
-scarches==0.6.1
 readimc==0.9.2
 squidpy==1.6.5

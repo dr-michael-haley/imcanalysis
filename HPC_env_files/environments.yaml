@@ -13,12 +13,13 @@ environments:
       - [python, -c, "import numpy, pandas, scipy, anndata, scanpy, torch, torchvision, pytorch_lightning"]
       - [python, -c, "import cupy, cudf, cuml, rmm, rapids_singlecell"]
       - [python, -c, "import cellpose, nimbus_inference, readimc, skimage, pyarrow, spatialdata"]
-      - [python, -c, "import biobatchnet, cellcharter, scarches, squidpy"]
+      - [python, -c, "import biobatchnet, cellcharter, squidpy"]
       - [python, -c, "from importlib.metadata import version; assert version('rapids-singlecell-cu12') == '0.16.1'; assert version('cellcharter') == '0.3.7'; assert version('torch').split('+', 1)[0] == '2.9.1'; assert version('numpy') == '1.26.4'; assert version('spatialdata') == '0.4.0'; assert version('multiscale-spatial-image') == '2.0.2'; assert version('zarr') == '2.18.7'; assert version('numcodecs') == '0.15.1'; assert version('squidpy') == '1.6.5'"]
       - [python, -c, "import SpatialBiologyToolkit.scripts.basic_process_rapids, SpatialBiologyToolkit.scripts.basic_process_biobatchnet, SpatialBiologyToolkit.scripts.cellcharter_neighborhoods, SpatialBiologyToolkit.scripts.segmentation_nimbus, SpatialBiologyToolkit.scripts.spatialdata_builder"]
     notes:
       - Candidate consolidated runtime for the existing segmentation, biobatchnet, cellcharter, and RAPIDS environment families, with SpatialData included.
       - No stage uses this key until the joint install, smoke tests, and scientific parity checks pass.
+      - CellCharter is supported through its default existing-embedding route; optional TRVAE/scArches mode is deliberately excluded from this candidate.
       - Nimbus is provisionally included on Python 3.12 even though upstream documents Python 3.9 through 3.11; split it only if validation fails.
       - STARLING, MaxFuse, scPortrait, Cellpose-SAM, HyPERSTAC, and legacy denoising remain separate.
 

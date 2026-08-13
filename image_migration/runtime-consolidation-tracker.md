@@ -17,6 +17,10 @@ physical Conda environments after validation:
 | `cellcharter` | `imc_cellcharter` | `bint`, `cchar`, `pairsp`, `nxsp`, `popqc` | `analysis` / `sbt-analysis` |
 | `rapids` | `rapids_singlecell` | `rapids`, `cellvision-cluster`, `cellvision-full` (middle runtime) | `analysis` / `sbt-analysis` |
 
+The CellCharter migration target covers the normal existing-embedding route
+used by default. Optional TRVAE/scArches mode remains available only through
+the legacy environment during this migration and is not a parity target.
+
 The following runtimes are deliberately not part of this merger:
 
 | Runtime | Reason |
@@ -36,8 +40,8 @@ The following runtimes are deliberately not part of this merger:
 | Audit exported environments and identify compatibility families | complete | Compared registry, stage mappings, intent specifications, and latest exported snapshots. | Exported the live HPC environments. | Version matrix reviewed 2026-08-03. | Not committed | MaxFuse export absent and excluded by decision. |
 | Define the original `sbt-analysis` candidate | complete | Added the registry candidate, initial Conda/pip specifications, smoke tests, and this tracker. | Approved a full joint-install experiment. | 30 environment-management tests passed; repository validation passed with no warnings; candidate remained inactive. | Not committed | The first CSF3 pip solve exposed the NumPy/Zarr generation conflict. |
 | Revise `sbt-analysis` around RAPIDS and SpatialData | complete | Replaced STARLING with RAPIDS, encoded flexible channel priority, moved to Python 3.12, retained CellCharter 0.3.7 and the pinned SpatialData 0.4/Zarr 2 spine, and expanded smoke tests. | Approved the maximal merger and the policy of splitting Nimbus only if testing proves necessary. | 31 environment-management tests passed; repository validation passed with no warnings; `git diff --check` passed. Static specification validation reports only the intentionally missing new Linux lock and the expected BioBatchNet VCS-review warning. | Not committed | No production stage mappings changed. |
-| Generate a new reviewed Linux lock and perform a clean joint install | in progress | Reviewed the RAPIDS lock and first clean installation; diagnosed the shared Zarr/Numcodecs smoke-test failure and pinned the compatible boundary. | Generated the RAPIDS lock and completed a clean `sbt-analysis` installation on CSF3. Regenerate the corrected lock and resynchronize the candidate. | Conda, pip extras and the editable overlay installed. Python 3.12 and all exact-version assertions passed. Imports failed uniformly because Zarr 2.18.3 loaded Numcodecs 0.16, where its expected public Blosc helpers were removed. | Pending | Zarr 2.18.7 explicitly requires Numcodecs <0.16; the corrected specification pins Numcodecs 0.15.1. No independent RAPIDS, Nimbus, BioBatchNet or CellCharter failure has yet been observed. |
-| Run registered imports and GPU smoke tests | not started | Interpret smoke-test and CUDA results; adjust only the candidate if necessary. | Run the supplied test commands in an appropriate CSF3 job. | Pending. | Pending | Login-node imports do not establish GPU functionality. |
+| Generate a new reviewed Linux lock and perform a clean joint install | complete | Reviewed the RAPIDS lock and clean installations; diagnosed and corrected the Zarr/Numcodecs boundary. | Generated the corrected lock and completed a clean `sbt-analysis` installation on CSF3. | Corrected lock SHA-256 `dc54f3f5dc9e9119420c40e1a22048df4b8cc6017fadfca0a35d6592945e6cb6`; Conda, pip extras and editable overlay installed; Python 3.12 and all exact-version assertions passed. | `d823c79` plus CSF3 lock | The remaining registered failure was isolated to unwanted optional scArches support, not the four target runtime families. |
+| Run registered imports and GPU smoke tests | waiting for user | Removed optional scArches from the candidate after its AnnData-incompatible import was isolated; retained CellCharter's default existing-embedding route. | Pull this specification update, rerun the registered import suite, then run the supplied GPU checks in an appropriate CSF3 job. | Individual imports pass for RAPIDS, SpatialData/Nimbus, BioBatchNet, CellCharter, Squidpy and all registered SBT stage modules. Final registry rerun and CUDA execution remain pending. | Pending | Login-node imports do not establish GPU functionality. The currently installed candidate may retain extraneous scArches until its next clean recreation. |
 | Run scientific parity across all migrated stage families | not started | Added per-run `sbt run --environment analysis` selection with recorded provenance and optional cross-run `--after`; define comparisons and assess outputs/warnings with Michael. | Run old and candidate environments on representative small data and approve parity. | Pending. | Pending | Required before any permanent stage remapping. Run candidate stages separately; multi-environment wrappers are not override targets. |
 | Remap validated stages to `analysis` | not started | Update the registry/wrappers as one coherent approved phase and run control-plane tests. | Confirm deployment and run selected managed workflows. | Pending. | Pending | Existing environment definitions remain as rollback. |
 | Retire superseded Conda environments | not started | Mark legacy definitions deprecated only after approval. | Approve and perform any HPC environment removal. | Pending. | Pending | No removal is authorized yet. |
@@ -59,15 +63,18 @@ The following runtimes are deliberately not part of this merger:
 | 2026-08-12 | Attempt Nimbus on Python 3.12, but split it into a dedicated runtime if its smoke or inference tests fail. | Nimbus metadata permits Python 3.12, but its upstream installation guidance only documents Python 3.9-3.11. |
 | 2026-08-12 | Make flexible Conda channel priority part of the typed environment definition. | RAPIDS explicitly does not support strict channel priority; lock generation must not depend on a user's global Conda setting. |
 | 2026-08-13 | Pin Zarr 2.18.7 with Numcodecs 0.15.1. | The first clean smoke run showed Zarr 2.18.3 importing Blosc symbols removed by Numcodecs 0.16. Zarr 2.18.7 is the final Zarr-2 release and explicitly declares `numcodecs<0.16`. |
+| 2026-08-13 | Exclude optional scArches/TRVAE support from `sbt-analysis`. | scArches 0.6.1 fails against the candidate's current AnnData API, while CellCharter 0.3.7 declares scArches only for its optional proteomics extra. The normal existing-embedding CellCharter route imports successfully and is the required migration target. |
 
 ## Current compatibility boundary
 
 The approved first attempt maximises consolidation: segmentation, BioBatchNet,
 CellCharter, RAPIDS and SpatialData are specified together. The environment
 uses the NumPy 1.26/SpatialData 0.4/Zarr 2 generation so that CellCharter,
-Squidpy and Nimbus can participate. Nimbus on Python 3.12 is the only known
-unsupported-version experiment. A failure there causes a narrow Nimbus split,
-not removal of CellCharter or RAPIDS.
+Squidpy and Nimbus can participate. CellCharter's optional TRVAE/scArches route
+is outside the candidate; its default existing-embedding route remains in
+scope. Nimbus on Python 3.12 is the only known unsupported-version experiment.
+A failure there causes a narrow Nimbus split, not removal of CellCharter or
+RAPIDS.
 
 ## Open validation points
 
@@ -92,6 +99,7 @@ not removal of CellCharter or RAPIDS.
 | RAPIDS-singlecell | `rapids-singlecell-cu12==0.16.1` without the `[rapids]` extra | Uses the precompiled CUDA-12 wheel on top of the Conda-provided RAPIDS stack. |
 | SpatialData | 0.4.0 with multiscale-spatial-image 2.0.2, spatial-image 1.2.1, Xarray 2024.11.0, Zarr 2.18.7, and Numcodecs 0.15.1 | Provides SpatialData while retaining the NumPy-1/Zarr-2 generation needed by the maximal merger; the Numcodecs ceiling is required by Zarr 2. |
 | CellCharter | 0.3.7 | Explicit migration decision. |
+| scArches / TRVAE | Excluded | Optional CellCharter extra not required by the default SBT route; scArches 0.6.1 is incompatible with the candidate AnnData API. |
 | BioBatchNet | pinned VCS commit | Preserves the exported known revision. |
 | Nimbus | 0.0.4, provisional on Python 3.12 | Include in the first attempt; split only if import or inference validation fails. |
 

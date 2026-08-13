@@ -293,6 +293,7 @@ class RegistryTests(EnvironmentFixture):
             pip_requirements["rapids-singlecell-cu12"].version, "0.16.1"
         )
         self.assertEqual(pip_requirements["cellcharter"].version, "0.3.7")
+        self.assertNotIn("scarches", pip_requirements)
         self.assertNotIn("biostarling", pip_requirements)
         self.assertEqual(pip_requirements["spatialdata"].version, "0.4.0")
         self.assertEqual(
@@ -304,6 +305,12 @@ class RegistryTests(EnvironmentFixture):
         self.assertEqual(pip_requirements["zarr"].version, "2.18.7")
         self.assertEqual(pip_requirements["squidpy"].version, "1.6.5")
         self.assertEqual(pip_requirements["biobatchnet"].source_type, "vcs")
+        analysis_smoke_scripts = " ".join(
+            command[-1]
+            for command in definition.smoke_tests
+            if len(command) >= 3 and command[:2] == ["python", "-c"]
+        ).casefold()
+        self.assertNotIn("scarches", analysis_smoke_scripts)
 
     def test_legacy_python_environments_support_runtime_type_evaluation(self):
         root = Path(__file__).resolve().parents[1]
