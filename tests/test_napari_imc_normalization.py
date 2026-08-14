@@ -25,6 +25,18 @@ class NapariIMCNormalizationTests(unittest.TestCase):
 
         self.assertEqual(values, {"CD3": 10.5, "CD20": 20.0})
 
+    def test_preferred_nimbus_csv_is_loaded(self):
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "normalization_dict.csv"
+            source.write_text(
+                "marker,vmax,lower_threshold\nCD3,10.5,0.8\nCD20,20,0\n",
+                encoding="utf-8",
+            )
+
+            values = load_normalization_mapping(source)
+
+        self.assertEqual(values, {"CD3": 10.5, "CD20": 20.0})
+
     def test_normalization_csv_requires_marker_and_value_columns(self):
         with TemporaryDirectory() as directory:
             source = Path(directory) / "normalization.csv"

@@ -17,7 +17,10 @@ The explorer is started by calling `napari_imc_explorer(...)`. The main inputs a
 - `masks_folder`: a folder containing one segmentation mask per ROI. Each file is expected to be named after the ROI, for example `ROI_001.tiff`.
 - `image_folders`: one or more folders containing ROI subfolders. Inside each ROI subfolder, the channel images for that ROI are stored as TIFF files.
 - `extra_images`: optional folders that contain one image per ROI directly in the folder, such as H&E snapshots, thumbnails, or other reference images.
-- `normalization_dict`: an optional Nimbus-format channel-to-maximum mapping, such as the contents of `normalization_dict.json`.
+- `normalization_dict`: an optional Nimbus-format channel-to-maximum mapping. The
+  preferred Nimbus CSV can be loaded with `load_normalization_mapping`; legacy
+  JSON remains readable. The explorer uses the Vmax column only; set its existing
+  minimum-pixel threshold separately if background suppression is required.
 - `annotations_folder`: where manual annotation sets are stored and where new annotation files are written.
 - `roi_obs`: the column in `adata.obs` that tells the explorer which ROI each cell belongs to.
 - `cell_id_in_mask_obs`: the column in `adata.obs` that stores the object IDs used inside the mask image.
@@ -25,12 +28,10 @@ The explorer is started by calling `napari_imc_explorer(...)`. The main inputs a
 A minimal example looks like this:
 
 ```python
-import json
-
+from SpatialBiologyToolkit._napari_imc_normalization import load_normalization_mapping
 from SpatialBiologyToolkit.napari_imc_explorer import napari_imc_explorer
 
-with open("Nimbus/normalization_dict.json", encoding="utf-8") as handle:
-    normalization_dict = json.load(handle)
+normalization_dict = load_normalization_mapping("Nimbus/normalization_dict.csv")
 
 viewer, handles = napari_imc_explorer(
     adata=adata,

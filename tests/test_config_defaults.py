@@ -50,7 +50,7 @@ class ConfigDefaultsTests(unittest.TestCase):
         resolved = PipelineConfig().model_dump(mode="python")
 
         self.assertEqual(resolved, expected)
-        self.assertEqual(len(resolved), 27)
+        self.assertEqual(len(resolved), 28)
         self.assertEqual(resolved["napari_sbt"]["worker_count"], 8)
         self.assertEqual(resolved["population_embedding_qc"]["mode"], "auto")
         self.assertEqual(resolved["maxfuse"]["batching_scheme"], "cyclic")

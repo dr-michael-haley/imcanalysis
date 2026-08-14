@@ -49,6 +49,7 @@ for ordering and usage guidance.
 | [`maxfuse`](maxfuse.md) | Match one scRNA-seq reference to IMC cells with MaxFuse and generate transfer/QC assets | `imc_maxfuse` | general, maxfuse, logging |
 | [`spatialdata`](spatialdata.md) | Discover or explicitly select spatial assets and optionally build a validated SpatialData Zarr | `imc_segmentation` | general, spatialdata, logging |
 | [`neighsig`](neighsig.md) | Learn empirical marker halos, calculate neighbour-attributable fractions, and retain spatial source-cell provenance | `imc_segmentation` | general, neighbour_signal, logging |
+| [`nimbus-scan`](nimbus-scan.md) | Scan marker-wise Nimbus normalization values before AnnData or clustering | `imc_segmentation` | general, segmentation, nimbus, nimbus_normalization_scan, logging |
 
 ```{toctree}
 :maxdepth: 1
@@ -94,4 +95,5 @@ cellfeat
 maxfuse
 spatialdata
 neighsig
+nimbus-scan
 ```

@@ -4,7 +4,6 @@ Uses Nimbus-Inference on existing masks/images to build cell tables and an AnnDa
 """
 from __future__ import annotations
 
-import json
 import logging
 import os
 import random
@@ -22,12 +21,20 @@ from skimage.measure import regionprops, regionprops_table
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 
+from SpatialBiologyToolkit.nimbus_normalization import (
+    LEGACY_NORMALIZATION_FILENAME,
+    PREFERRED_NORMALIZATION_FILENAME,
+    load_normalization_file,
+    normalize_nimbus_image,
+    resolve_normalization_parameters,
+    write_normalization_csv,
+)
+
 try:
     from nimbus_inference.nimbus import Nimbus
     from nimbus_inference.utils import (
         MultiplexDataset,
         prepare_input_data,
-        prepare_normalization_dict,
         segment_mean,
         test_time_aug,
     )
@@ -256,6 +263,9 @@ class ToolkitNimbusDataset(MultiplexDataset):
         self.max_cell_area = max_cell_area
         self._suffix_match = suffix_match or suffix
         self._segmentation_cache: Dict[str, np.ndarray] = {}
+        self.normalization_lower_thresholds: Dict[str, float] = {
+            channel: 0.0 for channel in self._channels
+        }
 
         def _seg_lookup(fov_path: str) -> Path:
             return str(self._mask_lookup[Path(fov_path).name])
@@ -304,6 +314,30 @@ class ToolkitNimbusDataset(MultiplexDataset):
         # If channel dimension leaked through (e.g., multichannel format), take first plane
         return np.squeeze(img)[0] if np.squeeze(img).ndim == 3 else np.squeeze(img)
 
+    def get_channel_normalized(self, fov: str, channel: str):  # type: ignore[override]
+        """Load and normalize one channel using its absolute lower and upper bounds."""
+
+        if not hasattr(self, "normalization_dict"):
+            logging.info("No Nimbus normalization table found; preparing one now.")
+            self.prepare_normalization_dict()
+        image = self.get_channel(fov, channel).astype(np.float32)
+        vmax = self.normalization_dict.get(channel)
+        if vmax is None:
+            vmax = float(np.quantile(image, 0.999))
+            logging.warning(
+                "No saved Nimbus Vmax for channel %r; using this image's 0.999 "
+                "quantile %.4g with lower_threshold=0.",
+                channel,
+                vmax,
+            )
+        lower_threshold = self.normalization_lower_thresholds.get(channel, 0.0)
+        return normalize_nimbus_image(
+            image,
+            vmax=float(vmax),
+            lower_threshold=float(lower_threshold),
+            upper_clip=1.0,
+        )
+
     def get_segmentation(self, fov: str):  # type: ignore[override]
         roi = Path(fov).name
         if roi not in self._segmentation_cache:
@@ -337,78 +371,81 @@ class ToolkitNimbusDataset(MultiplexDataset):
         Compute per-channel normalization using ALL FOVs and only in-mask pixels.
         Also writes a QC gallery and QC histograms.
         
-        If reuse_saved=True and a normalization_dict.json exists, it will be loaded and reused
-        (allowing manual tweaking). QC plots will still be generated with the loaded values.
+        If reuse_saved=True, normalization_dict.csv is preferred and a legacy
+        normalization_dict.json remains readable. Legacy JSON values receive a zero
+        lower threshold and are migrated to CSV without deleting the source JSON.
+        QC plots are regenerated with the loaded values.
         """
         self.clip_values = tuple(clip_values)
-        self.normalization_dict_path = os.path.join(self.output_dir, "normalization_dict.json")
+        preferred_path = Path(self.output_dir) / PREFERRED_NORMALIZATION_FILENAME
+        legacy_path = Path(self.output_dir) / LEGACY_NORMALIZATION_FILENAME
+        self.normalization_dict_path = str(preferred_path)
 
-        def _sanitize_saved_normalization(channel: str, value: float) -> float:
-            if np.isfinite(value) and value > 0:
-                return value
-            logging.warning(
-                "Saved normalization value for channel '%s' is non-finite or non-positive (%s); "
-                "using minimum value %.3g instead.",
-                channel,
-                value,
-                self.normalization_min_value,
-            )
-            return self.normalization_min_value
+        saved_path: Optional[Path] = None
+        if reuse_saved:
+            if preferred_path.is_file():
+                saved_path = preferred_path
+            elif legacy_path.is_file():
+                saved_path = legacy_path
 
-        if os.path.exists(self.normalization_dict_path) and reuse_saved:
-            logging.info(f"Found existing normalization dictionary at {self.normalization_dict_path}")
+        if saved_path is not None:
+            logging.info("Found existing normalization table at %s", saved_path)
             logging.info("Reusing saved normalization values (reuse_saved_normalization=True)")
-            with open(self.normalization_dict_path, "r", encoding="utf-8") as handle:
-                data = json.load(handle)
-            # Load values as-is without applying minimum constraint (preserves manual edits)
+            loaded = load_normalization_file(saved_path)
+            resolved = resolve_normalization_parameters(
+                loaded,
+                self._channels,
+                require_all=False,
+            )
             self.normalization_dict = {
-                k: _sanitize_saved_normalization(k, float(v))
-                for k, v in data.items()
+                channel: entry.vmax for channel, entry in resolved.items()
             }
-            logging.info(f"Loaded {len(self.normalization_dict)} channel normalization values (manual edits preserved)")
+            self.normalization_lower_thresholds = {
+                channel: entry.lower_threshold for channel, entry in resolved.items()
+            }
+            missing = [
+                channel for channel in self._channels if channel not in self.normalization_dict
+            ]
+            if missing:
+                logging.warning(
+                    "Saved Nimbus normalization table is missing channels; computing "
+                    "mask-aware cohort Vmax values with lower_threshold=0 for: %s",
+                    missing,
+                )
+                fallback_values = self.compute_normalization_values(
+                    quantile=quantile,
+                    channels=missing,
+                )
+                self.normalization_dict.update(fallback_values)
+                self.normalization_lower_thresholds.update(
+                    {channel: 0.0 for channel in fallback_values}
+                )
+            logging.info(
+                "Loaded %d channel normalization rows (manual values preserved).",
+                len(self.normalization_dict),
+            )
+            if saved_path.suffix.casefold() == ".json" or missing:
+                write_normalization_csv(
+                    preferred_path,
+                    self.normalization_dict,
+                    self.normalization_lower_thresholds,
+                )
+                logging.info(
+                    "Migrated legacy JSON normalization values to preferred CSV: %s",
+                    preferred_path,
+                )
         else:
-            norm_vals: Dict[str, List[float]] = {ch: [] for ch in self._channels}
-            for fov in self.fovs:
-                mask = self.get_segmentation(fov)
-                mask_bool = mask > 0
-                if not np.any(mask_bool):
-                    continue
-                for ch in self._channels:
-                    img = self.get_channel(fov, ch).astype(float)
-                    foreground = img[mask_bool]
-                    foreground_quantile = _safe_quantile(foreground, quantile)
-                    if foreground_quantile is None:
-                        logging.warning(
-                            "Skipping normalization quantile for ROI '%s', channel '%s' because the masked pixels "
-                            "contain no finite values.",
-                            fov,
-                            ch,
-                        )
-                        continue
-                    norm_vals[ch].append(foreground_quantile)
-
-            self.normalization_dict = {}
-            for ch, vals in norm_vals.items():
-                if vals:
-                    computed_val = float(np.mean(vals))
-                    if np.isfinite(computed_val) and computed_val > 0:
-                        self.normalization_dict[ch] = max(computed_val, self.normalization_min_value)
-                    else:
-                        logging.warning(
-                            "Computed normalization value for channel '%s' is non-finite or non-positive (%s); "
-                            "using minimum value %.3g instead.",
-                            ch,
-                            computed_val,
-                            self.normalization_min_value,
-                        )
-                        self.normalization_dict[ch] = self.normalization_min_value
-                else:
-                    self.normalization_dict[ch] = self.normalization_min_value
-
-            norm_str = {k: str(v) for k, v in self.normalization_dict.items()}
-            os.makedirs(self.output_dir, exist_ok=True)
-            with open(self.normalization_dict_path, "w", encoding="utf-8") as handle:
-                json.dump(norm_str, handle)
+            self.normalization_dict = self.compute_normalization_values(
+                quantile=quantile
+            )
+            self.normalization_lower_thresholds = {
+                channel: 0.0 for channel in self.normalization_dict
+            }
+            write_normalization_csv(
+                preferred_path,
+                self.normalization_dict,
+                self.normalization_lower_thresholds,
+            )
 
         # QC: histograms of raw norms and cell-level positivity, plus gallery of normalized images
         os.makedirs(os.path.join(self.qc_folder, "nimbus_normalization_qc"), exist_ok=True)
@@ -463,6 +500,7 @@ class ToolkitNimbusDataset(MultiplexDataset):
             labels = mask.astype(np.int32)
             for ch in self._channels:
                 norm = self.normalization_dict.get(ch, 1.0) or 1.0
+                lower_threshold = self.normalization_lower_thresholds.get(ch, 0.0)
                 img_raw = self.get_channel(fov, ch).astype(float)
                 foreground_quantile = _safe_quantile(img_raw[mask_bool], quantile)
                 if foreground_quantile is None:
@@ -475,7 +513,12 @@ class ToolkitNimbusDataset(MultiplexDataset):
                 else:
                     norm_vals[ch].append(foreground_quantile)
 
-                img = np.clip(img_raw / norm, 0, upper_clip)
+                img = normalize_nimbus_image(
+                    img_raw,
+                    vmax=norm,
+                    lower_threshold=lower_threshold,
+                    upper_clip=upper_clip,
+                )
                 props = regionprops_table(label_image=labels, intensity_image=img, properties=["intensity_mean"])
                 means = _finite_values(props.get("intensity_mean", []))
                 if means.size > 0:
@@ -517,6 +560,7 @@ class ToolkitNimbusDataset(MultiplexDataset):
             
             for ch in self._channels:
                 norm = self.normalization_dict.get(ch, 1.0) or 1.0
+                lower_threshold = self.normalization_lower_thresholds.get(ch, 0.0)
                 
                 # Create figure with 4 columns (raw, normalized unmasked, normalized masked, clip diagnostic) and one row per FOV
                 fig, axs = plt.subplots(len(qc_fovs), 4, figsize=(20, 5 * len(qc_fovs)), dpi=100)
@@ -530,7 +574,12 @@ class ToolkitNimbusDataset(MultiplexDataset):
                     mask_bool = mask > 0
                     
                     img_raw = self.get_channel(fov, ch).astype(float)
-                    img = np.clip(img_raw / norm, 0, upper_clip)
+                    img = normalize_nimbus_image(
+                        img_raw,
+                        vmax=norm,
+                        lower_threshold=lower_threshold,
+                        upper_clip=upper_clip,
+                    )
                     img_masked = img * mask_bool
                     
                     # Column 0: Raw image (before normalization)
@@ -583,7 +632,11 @@ class ToolkitNimbusDataset(MultiplexDataset):
                     n_zero = np.sum(zero_mask)
                     pct_clipped = 100.0 * n_clipped / img.size
                     pct_zero = 100.0 * n_zero / img.size
-                    overlay_text = f'norm={norm:.2f}\nclip={upper_clip:.2f}\nred(clip): {pct_clipped:.1f}%\nblue(zero): {pct_zero:.1f}%'
+                    overlay_text = (
+                        f'vmax={norm:.2f}\nlower={lower_threshold:.2f}\n'
+                        f'clip={upper_clip:.2f}\nred(clip): {pct_clipped:.1f}%\n'
+                        f'blue(zero): {pct_zero:.1f}%'
+                    )
                     axs[row_idx, 3].text(
                         0.02, 0.98, overlay_text,
                         transform=axs[row_idx, 3].transAxes,
@@ -593,12 +646,81 @@ class ToolkitNimbusDataset(MultiplexDataset):
                     if row_idx == 0:
                         axs[row_idx, 3].set_title('Clip Diagnostic\n(red=clipped, blue=zero)', fontsize=10)
                 
-                fig.suptitle(f'{ch} (norm={norm:.3g})', fontsize=12, fontweight='bold')
+                fig.suptitle(
+                    f'{ch} (vmax={norm:.3g}, lower={lower_threshold:.3g})',
+                    fontsize=12,
+                    fontweight='bold',
+                )
                 plt.tight_layout()
                 fig.savefig(os.path.join(qc_gallery_dir, f'{ch}.png'), bbox_inches='tight')
                 plt.close(fig)
                 
             logging.info(f"Normalization QC galleries saved to: {qc_gallery_dir}")
+
+    def compute_normalization_values(
+        self,
+        *,
+        quantile: float = 0.999,
+        channels: Optional[Sequence[str]] = None,
+        fovs: Optional[Sequence[str]] = None,
+    ) -> Dict[str, float]:
+        """Compute mask-aware Nimbus Vmax values without writing files or QC outputs."""
+
+        selected_channels = list(channels) if channels is not None else list(self._channels)
+        selected_fovs = list(fovs) if fovs is not None else list(self.fovs)
+        unknown_channels = sorted(set(selected_channels) - set(self._channels))
+        unknown_fovs = sorted(set(selected_fovs) - set(self.fovs))
+        if unknown_channels:
+            raise ValueError(f"Unknown Nimbus normalization channel(s): {unknown_channels}")
+        if unknown_fovs:
+            raise ValueError(f"Unknown Nimbus normalization ROI(s): {unknown_fovs}")
+        if not 0 < float(quantile) <= 1:
+            raise ValueError("Nimbus normalization quantile must lie in (0, 1].")
+
+        norm_vals: Dict[str, List[float]] = {ch: [] for ch in selected_channels}
+        for fov in selected_fovs:
+            mask = self.get_segmentation(fov)
+            mask_bool = mask > 0
+            if not np.any(mask_bool):
+                continue
+            for channel in selected_channels:
+                image = self.get_channel(fov, channel).astype(float)
+                foreground_quantile = _safe_quantile(image[mask_bool], quantile)
+                if foreground_quantile is None:
+                    logging.warning(
+                        "Skipping normalization quantile for ROI '%s', channel '%s' "
+                        "because the masked pixels contain no finite values.",
+                        fov,
+                        channel,
+                    )
+                    continue
+                norm_vals[channel].append(foreground_quantile)
+
+        normalization_values: Dict[str, float] = {}
+        for channel, values in norm_vals.items():
+            if values:
+                computed_value = float(np.mean(values))
+                if np.isfinite(computed_value) and computed_value > 0:
+                    normalization_values[channel] = max(
+                        computed_value, self.normalization_min_value
+                    )
+                    continue
+                logging.warning(
+                    "Computed normalization value for channel '%s' is non-finite or "
+                    "non-positive (%s); using minimum value %.3g instead.",
+                    channel,
+                    computed_value,
+                    self.normalization_min_value,
+                )
+            else:
+                logging.warning(
+                    "No usable normalization pixels were found for channel '%s'; "
+                    "using minimum value %.3g.",
+                    channel,
+                    self.normalization_min_value,
+                )
+            normalization_values[channel] = self.normalization_min_value
+        return normalization_values
 
 
 def _load_panel(metadata_folder: Path, nimbus_cfg: NimbusConfig) -> pd.DataFrame:
@@ -1225,13 +1347,26 @@ def _predict_fovs_with_padding(
     batch_size: int = 4,
     test_time_augmentation: bool = True,
     allow_resize_on_mismatch: bool = False,
+    channels: Optional[Sequence[str]] = None,
+    fovs: Optional[Sequence[str]] = None,
 ):
     """
     Run Nimbus predictions while padding/cropping arrays so the UNet's 16-pixel stride does not
     truncate ROI boundaries. Optionally fall back to resizing if a mismatch still occurs.
     """
+    selected_channels = list(channels) if channels is not None else list(dataset.channels)
+    selected_fovs = list(fovs) if fovs is not None else list(dataset.fovs)
+    unknown_channels = sorted(set(selected_channels) - set(dataset.channels))
+    unknown_fovs = sorted(set(selected_fovs) - set(dataset.fovs))
+    if unknown_channels:
+        raise ValueError(f"Unknown Nimbus prediction channel(s): {unknown_channels}")
+    if unknown_fovs:
+        raise ValueError(f"Unknown Nimbus prediction ROI(s): {unknown_fovs}")
+    selected_fov_set = set(selected_fovs)
     fov_dict_list = []
     for fov_path, fov in zip(dataset.fov_paths, dataset.fovs):
+        if fov not in selected_fov_set:
+            continue
         logging.info("Predicting %s...", fov_path)
         out_fov_path = os.path.join(os.path.normpath(output_dir), os.path.basename(fov_path).replace(suffix, ""))
         df_fov = pd.DataFrame()
@@ -1240,7 +1375,7 @@ def _predict_fovs_with_padding(
         # Nimbus UNet downsamples four times (stride 16); pre-pad so nothing gets dropped.
         pad_y, pad_x = _calc_padding_to_multiple(mask_shape, multiple=16)
         padded_mask = _pad_2d(instance_mask, pad_y, pad_x, mode="constant")  # zero-pad preserves ids
-        for channel_name in tqdm(dataset.channels, desc=f"{fov}", leave=False):
+        for channel_name in tqdm(selected_channels, desc=f"{fov}", leave=False):
             mplex_img = dataset.get_channel_normalized(fov, channel_name)
             if pad_y or pad_x:
                 # Reflect-pad intensity image so Nimbus sees mirrored context at the border
@@ -1303,6 +1438,8 @@ def _predict_fovs_with_padding(
                     check_contrast=False,
                 )
         fov_dict_list.append(df_fov)
+    if not fov_dict_list:
+        raise ValueError("No Nimbus ROI predictions were generated.")
     return pd.concat(fov_dict_list, ignore_index=True)
 
 

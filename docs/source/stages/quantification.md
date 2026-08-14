@@ -173,7 +173,7 @@ The stage proceeds as follows:
    and cell-area filters.
 3. It finds each channel image, preferring the source specified by the panel and
    optionally falling back to the other raw or denoised folder.
-4. It calculates or loads one normalization divisor per marker and produces
+4. It calculates or loads one normalization Vmax per marker and produces
    normalization QC.
 5. It runs the pretrained model independently for every common ROI-marker pair.
 6. It averages each confidence map within cell instances and merges the scores
@@ -184,10 +184,12 @@ The stage proceeds as follows:
 The toolkit's normalization is deliberately more mask-aware than the generic
 upstream helper. For each marker, it calculates the configured quantile using only
 pixels inside retained cell masks for each usable ROI, then averages those per-ROI
-values. The default quantile is 0.999, or the 99.9th percentile, and the divisor is
-not allowed to fall below `normalization_min_value` (default 3.0). The input image
-is divided by this marker-specific value and the pinned Nimbus loader clips it to
-the range 0–1.
+values. The default quantile is 0.999, or the 99.9th percentile, and the computed
+Vmax is not allowed to fall below `normalization_min_value` (default 3.0).
+Computed dictionaries use a zero lower threshold; reviewed CSVs can set a
+marker-specific non-negative cutoff, commonly around 0.2–2 when low-level
+background needs removing. The shared two-bound transform clips the input to the
+range 0–1.
 
 This differs from the article's reported inference preprocessing, which used the
 channel-wide 99.99th percentile. The published validation therefore supports the
@@ -250,17 +252,36 @@ checkpoint. Rescaling cannot restore spatial detail that was absent from the inp
 
 ## Normalization and its QC outputs
 
-The stage writes `normalization_dict.json` in `nimbus.output_dir`. Each entry is
-the divisor used for that marker. With `reuse_saved_normalization: true`, valid
-positive values in this file are reused, allowing a reviewed dictionary to be
-applied consistently across reruns. Reuse should be intentional: a dictionary
+The stage writes the preferred `normalization_dict.csv` in `nimbus.output_dir`.
+It contains one row per marker with these columns:
+
+```text
+marker,vmax,lower_threshold
+CD3,20,0
+FOXP3,5,0.8
+```
+
+`vmax` and `lower_threshold` are both in absolute source-image intensity units.
+Nimbus receives
+`clip((image - lower_threshold) / (vmax - lower_threshold), 0, 1)`, so pixels at
+or below the lower threshold become zero and pixels at or above Vmax become one.
+Every lower threshold must be non-negative and strictly below that marker's
+Vmax. A lower threshold of zero exactly preserves the previous `image / vmax`
+normalization.
+
+With `reuse_saved_normalization: true`, the CSV is loaded and its reviewed bounds
+are applied consistently across reruns. A legacy scalar
+`normalization_dict.json` remains readable for backwards compatibility; its
+lower thresholds default to zero, and Nimbus writes an equivalent preferred CSV
+without deleting the JSON.
+When both files exist, CSV takes precedence. Reuse should be intentional: bounds
 from a different cohort, staining protocol, or intensity scale can distort scores.
 
 Normalization QC is written under
 `<general.qc_folder>/nimbus_normalization_qc` and contains:
 
 - `norm_hists/<marker>.png`: the distribution of per-ROI in-mask quantiles, with
-  the final averaged divisor marked;
+  the final averaged Vmax marked;
 - `cellpos_hists/<marker>.png`: the per-ROI proportion of cells whose **mean
   normalized input intensity** exceeds 1; this is an intensity diagnostic, not a
   Nimbus-positive-cell estimate. With the default QC upper clip of 1.0, the
@@ -278,6 +299,13 @@ currently change execution.
 Use `norm_dict_qc_only: true` to stop after this step. This is useful for reviewing
 or editing normalization values before expensive inference, but it deliberately
 does not create Nimbus scores, intensity tables, or AnnData.
+
+For a model-based sensitivity assessment, run `sbt run nimbus-scan` before Nimbus.
+That optional GPU stage repeats Nimbus inference marker by marker across candidate
+Vmax values, reports score distributions and positive-call proportions, detects
+sharp adjacent-value changes, and proposes review-only stable ranges without
+creating AnnData or overwriting `normalization_dict.csv`. See
+[Nimbus normalization scan](nimbus_normalization_scan.md).
 
 ## Reusable assets produced
 
@@ -443,7 +471,7 @@ appropriate statistical design.
 - **Graded functional markers:** Nimbus was trained for positive-versus-negative
   classification. It is not expected to reliably distinguish medium from high
   expression, for example different levels of PD-1 within positive T cells.
-- **Normalization sensitivity:** inappropriate divisors can suppress genuine dim
+- **Normalization sensitivity:** inappropriate Vmax or lower-threshold values can suppress genuine dim
   signal or amplify background. Review the galleries and histograms before trusting
   large cohorts.
 - **Missing channels:** default inference retains only markers present in every ROI.

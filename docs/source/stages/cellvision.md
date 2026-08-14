@@ -57,9 +57,10 @@ runs.
   the end of a TIFF stem, immediately before `.tif`, `.tiff`, or their OME
   variants. Thus both `165Ho_CD11c` and `CD11c` can select a prefixed
   `..._165Ho_CD11c.tiff`, while `CD3` cannot select `..._CD31.tiff`.
-- Optional `cellvision.normalization_dict_path` pointing to the same
-  marker-to-value `normalization_dict.json` format produced and reviewed by
-  Nimbus. Nimbus short keys such as `CD11c` are resolved to configured full
+- Optional `cellvision.normalization_dict_path` pointing to the preferred Nimbus
+  `normalization_dict.csv` or a legacy JSON dictionary. CellVision reads the
+  Vmax column; its own image extraction continues to use Vmax-only scaling.
+  Nimbus short keys such as `CD11c` are resolved to configured full
   names such as `165Ho_CD11c` by the same suffix rule. Exact keys take priority;
   missing or ambiguous matches fail before extraction. Relative paths resolve
   from the project root.
@@ -81,8 +82,8 @@ The source AnnData is read-only. Reusable outputs live below the configured
 - `extraction/data/single_cells.h5sc`: exact masked cell images used for model
   training, already normalized to `[0, 1]`. H5SC mask channels are retained in
   the file but excluded from the VICReg inputs.
-- `normalization_dict.json`: the supplied or computed Nimbus-format channel
-  scales used before scPortrait extraction.
+- `normalization_dict.json`: CellVision's compatibility copy of the supplied or
+  computed Vmax-only channel scales used before scPortrait extraction.
 - `cell_identity.csv`: every requested source observation, its source row,
   ROI/object ID, numeric scPortrait ID, and extraction status.
 - `extraction_metadata.json`: selection/channel contract and identity

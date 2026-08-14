@@ -35,7 +35,7 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `normalization_dict_path` | `Optional[str]` | `null` | `advanced` | Optional Nimbus-format normalization_dict.json containing one positive scale per selected marker or unambiguous marker suffix. | Exact keys take priority; short Nimbus keys such as CD11c match a selected 165Ho_CD11c channel, while ambiguous suffixes fail. Relative paths resolve from the project root. |
+| `normalization_dict_path` | `Optional[str]` | `null` | `advanced` | Optional preferred Nimbus normalization_dict.csv or legacy JSON containing one positive Vmax per selected marker or unambiguous marker suffix. | Exact keys take priority; short Nimbus keys such as CD11c match a selected 165Ho_CD11c channel, while ambiguous suffixes fail. Relative paths resolve from the project root. |
 | `normalization_quantile` | `float` | `0.999` | `advanced` | Per-ROI in-mask quantile averaged to compute each channel normalization value. | Matches the current Nimbus default and is used only when normalization_dict_path is unset. |
 | `normalization_min_value` | `float` | `3.0` | `advanced` | Minimum computed normalization value used to avoid scaling background noise. | Matches the current Nimbus default; supplied dictionary values are preserved after positive-value validation. |
 | `normalization_clip` | `List[float]` | `[0.0, 1.0]` | `advanced` | Lower and upper bounds applied after division by the channel normalization value. | CellVision H5SC training images must remain within [0, 1]. |

@@ -4,8 +4,8 @@ import importlib
 import sys
 import tempfile
 import unittest
-from types import SimpleNamespace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import anndata as ad
@@ -26,11 +26,12 @@ from SpatialBiologyToolkit.cellvision import (
     complete_normalization_dict,
     compute_normalization_dict,
     configuration_fingerprint,
-    continuous_cluster_explained_variance,
     confusion_tables,
+    continuous_cluster_explained_variance,
     fuse_connectivity_graphs,
     identity_fingerprint,
     leiden_key,
+    load_normalization_dict,
     relabel_selected_mask,
     resolve_roi_channels,
     select_source_cells,
@@ -53,8 +54,8 @@ from SpatialBiologyToolkit.pipeline.runs import create_run_record
 from SpatialBiologyToolkit.pipeline.slurm import sbt_environment
 from SpatialBiologyToolkit.scripts.cellvision_cluster import (
     _atomic_write_h5ad,
-    _cellvision_umap_params,
     _canonicalize_leiden_columns,
+    _cellvision_umap_params,
     _register_fused_neighbors,
 )
 from SpatialBiologyToolkit.scripts.config_and_utils import read_h5ad_compat
@@ -296,6 +297,19 @@ class CellVisionChannelAndConfigTests(unittest.TestCase):
             allow_missing=True,
         )
         self.assertEqual(partial, {"CD3": 1.0})
+
+    def test_preferred_nimbus_normalization_csv_is_accepted(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "normalization_dict.csv"
+            path.write_text(
+                "marker,vmax,lower_threshold\nCD3,12.5,0.8\nCD20,8,0\n",
+                encoding="utf-8",
+            )
+            values = load_normalization_dict(
+                path,
+                channel_names=["CD3", "CD20"],
+            )
+        self.assertEqual(values, {"CD3": 12.5, "CD20": 8.0})
 
     def test_nimbus_normalization_dict_resolves_unique_channel_suffixes(self):
         values = validate_normalization_dict(

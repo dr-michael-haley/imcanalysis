@@ -14,7 +14,7 @@ class ConfigSchemaTests(unittest.TestCase):
     def test_schema_contains_all_sections_and_field_metadata(self):
         schema = generate_json_schema()
 
-        self.assertEqual(len(schema["properties"]), 27)
+        self.assertEqual(len(schema["properties"]), 28)
         self.assertIn("maxfuse", schema["properties"])
         self.assertIn("spatialdata", schema["properties"])
         self.assertIn("neighbour_signal", schema["properties"])

@@ -202,6 +202,12 @@ STAGE_PRESENTATION: dict[str, tuple[str, int, str, str]] = {
         "Neighbour_Attributable_Signal",
         "neighbour_signal.md",
     ),
+    "nimbus-scan": (
+        "Nimbus Normalization Scan",
+        41,
+        "Nimbus_Normalization_Scan",
+        "nimbus_normalization_scan.md",
+    ),
 }
 
 STAGE_MODULES: dict[str, tuple[str, ...]] = {
@@ -253,12 +259,19 @@ STAGE_MODULES: dict[str, tuple[str, ...]] = {
     "maxfuse": ("SpatialBiologyToolkit.scripts.maxfuse_matching",),
     "spatialdata": ("SpatialBiologyToolkit.scripts.spatialdata_builder",),
     "neighsig": ("SpatialBiologyToolkit.scripts.neighbour_signal",),
+    "nimbus-scan": ("SpatialBiologyToolkit.scripts.nimbus_normalization_scan",),
 }
 
 STAGE_CONFIG_SECTIONS: dict[str, tuple[str, ...]] = {
     "prep": ("general", "preprocess"),
     "vis": ("general", "visualization", "process"),
     "nimbus": ("general", "segmentation", "nimbus"),
+    "nimbus-scan": (
+        "general",
+        "segmentation",
+        "nimbus",
+        "nimbus_normalization_scan",
+    ),
     "bint": ("general", "batch_integration"),
     "rapids": ("general", "rapids", "visualization"),
     "cellvision-extract": ("general", "cellvision"),
@@ -887,6 +900,26 @@ STAGES: tuple[StageSpec, ...] = (
         notes=(
             "No fixed upstream stage is imposed because automatic exemplars may use input X, while manual annotations and expression may be curated after any quantification route.",
             "The score is spatial explainability/contamination risk, not proof of artefact or isotopic spillover compensation.",
+        ),
+    ),
+    _stage(
+        "nimbus-scan",
+        "job_nimbus_normalization_scan.sh",
+        "Scan marker-wise Nimbus normalization values before cell-table, AnnData, or clustering generation.",
+        depends_on=("cellpose",),
+        groups=("qc",),
+        requires=("masks", "metadata", "denoised_images"),
+        produces=("human_outputs",),
+        required_files={"metadata": ["panel.csv", "metadata.csv"]},
+        outputs=(
+            "Per-marker Nimbus score distributions and positive-call sensitivity figures",
+            "Candidate, threshold, ROI, and provisional recommendation tables",
+            "Review-only suggested normalization dictionary",
+        ),
+        notes=(
+            "This read-only diagnostic never overwrites normalization_dict.csv, legacy JSON, cell tables, or AnnData.",
+            "Recommendations identify locally stable Vmax ranges and do not establish biological ground truth.",
+            "The default ROI subset bounds repeated GPU inference; set max_rois to zero only when full-cohort scanning is intentional.",
         ),
     ),
 )

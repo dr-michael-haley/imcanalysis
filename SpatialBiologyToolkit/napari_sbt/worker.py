@@ -18,7 +18,6 @@ import skimage as sk
 
 from SpatialBiologyToolkit._napari_imc_normalization import (
     find_normalization_value,
-    prepare_normalization_dict,
 )
 from SpatialBiologyToolkit.pipeline.manifests import utc_now, write_json
 from SpatialBiologyToolkit.qc_classifier.io import (
@@ -30,9 +29,9 @@ from SpatialBiologyToolkit.qc_classifier.io import (
 )
 
 from .cohort import eligible_ids_by_roi, validate_frozen_cohort
+from .feature_refinement import refine_trial_features
 from .feature_sources import combine_feature_sources, load_feature_source
 from .features import build_feature_dictionary, build_roi_features
-from .feature_refinement import refine_trial_features
 from .models import FeatureSource, SyntheticFeatureRecipe
 from .resources import resolve_worker_count
 from .storage import (
@@ -101,10 +100,11 @@ def _read_json(path: str | Path) -> dict:
 def _load_normalization(recipe: SyntheticFeatureRecipe) -> dict[str, float]:
     if not recipe.normalization_dict_path:
         return {}
-    payload = _read_json(Path(recipe.normalization_dict_path))
-    if isinstance(payload, dict) and isinstance(payload.get("normalization_dict"), dict):
-        payload = payload["normalization_dict"]
-    return prepare_normalization_dict(payload)
+    from SpatialBiologyToolkit._napari_imc_normalization import (
+        load_normalization_mapping,
+    )
+
+    return load_normalization_mapping(Path(recipe.normalization_dict_path))
 
 
 def _resolve_input_path(value: str | Path, base: Path) -> Path:

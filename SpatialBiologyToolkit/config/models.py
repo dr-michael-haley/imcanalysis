@@ -35,8 +35,9 @@ def config_field(
     **field_kwargs: Any,
 ) -> Any:
     """Create a documented Pydantic field using the supported metadata keys."""
-    return Field(
-        default=default,
+    field_options = dict(field_kwargs)
+    default_factory = field_options.pop("default_factory", None)
+    common = dict(
         description=description,
         json_schema_extra={
             "level": level,
@@ -44,8 +45,11 @@ def config_field(
             "ui_group": ui_group,
             "advice": advice,
         },
-        **field_kwargs,
+        **field_options,
     )
+    if default_factory is not None:
+        return Field(default_factory=default_factory, **common)
+    return Field(default=default, **common)
 
 
 def config_section(section: str):
@@ -897,7 +901,7 @@ class NimbusConfig(ConfigModel):
     output_dir: str = Field(
         default='nimbus_output',
         description=(
-            "Directory for normalization_dict.json, master cell tables, and optional per-ROI "
+            "Directory for preferred normalization_dict.csv, master cell tables, and optional per-ROI "
             "Nimbus confidence maps. Relative paths resolve from the project working directory."
         ),
     )
@@ -1038,7 +1042,7 @@ class NimbusConfig(ConfigModel):
         default=0.999,
         description=(
             "Per-ROI, in-mask image quantile calculated for each channel; values are averaged across "
-            "all usable ROIs to obtain the channel divisor before Nimbus inference."
+            "all usable ROIs to obtain the channel Vmax before Nimbus inference."
         ),
     )
     normalization_subset: int = Field(
@@ -1065,21 +1069,23 @@ class NimbusConfig(ConfigModel):
     normalization_min_value: float = Field(
         default=3.0,
         description=(
-            "Positive lower bound applied to computed channel normalization divisors, preventing "
+            "Positive lower bound applied to computed channel Vmax values, preventing "
             "near-zero background estimates from amplifying noise."
         ),
     )
     reuse_saved_normalization: bool = Field(
         default=False,
         description=(
-            "Load output_dir/normalization_dict.json instead of recomputing channel divisors. "
-            "Finite positive manual values are retained and normalization QC is still regenerated."
+            "Load output_dir/normalization_dict.csv instead of recomputing channel bounds; "
+            "legacy normalization_dict.json remains readable. Valid manual values are retained "
+            "and normalization QC is still regenerated."
         ),
     )
     norm_dict_qc_only: bool = Field(
         default=False,
         description=(
-            "Stop after writing or loading normalization_dict.json and generating normalization QC; "
+            "Stop after writing or loading the Nimbus normalization CSV (or legacy JSON) and "
+            "generating normalization QC; "
             "do not run Nimbus, extract intensities, or create cell tables and AnnData."
         ),
     )
@@ -1133,6 +1139,273 @@ class NimbusConfig(ConfigModel):
             "available CPUs, and values above 1 request that many workers subject to ROI and CPU counts."
         ),
     )
+
+
+@config_section("nimbus_normalization_scan")
+class NimbusNormalizationScanConfig(ConfigModel):
+    """Pre-AnnData Nimbus normalization sensitivity scan."""
+
+    markers: Optional[List[str]] = config_field(
+        None,
+        description="Optional marker subset to scan; null uses all rows from a baseline CSV when supplied, otherwise every channel available in all usable ROIs.",
+        level="basic",
+        stage="nimbus-scan",
+        ui_group="Scan scope",
+        advice="Use a small scan-parameter CSV or an explicit marker list to keep repeated GPU inference focused.",
+    )
+    rois: Optional[List[str]] = config_field(
+        None,
+        description="Optional explicit ROI subset used for repeated Nimbus inference.",
+        level="advanced",
+        stage="nimbus-scan",
+        ui_group="Scan scope",
+        advice="When set, these ROI names take precedence over max_rois and must be present after Nimbus input discovery.",
+    )
+    roi_selection_strategy: Literal["marker_expression_range", "random"] = config_field(
+        "marker_expression_range",
+        description="Automatic ROI-selection strategy used independently for each marker when rois is null.",
+        level="basic",
+        stage="nimbus-scan",
+        ui_group="Scan scope",
+        advice="marker_expression_range spreads selections from low to high mean intracellular input signal above the marker lower threshold; random preserves the earlier seeded cohort-wide sampling behavior.",
+    )
+    max_rois: int = config_field(
+        10,
+        description="Maximum ROIs selected per marker for repeated inference; zero uses every usable ROI.",
+        level="basic",
+        stage="nimbus-scan",
+        ui_group="Scan scope",
+        advice="Normalization baselines still use all usable ROIs. With marker_expression_range, different markers can use different ROI subsets.",
+        ge=0,
+    )
+    random_seed: int = config_field(
+        0,
+        description="Seed for reproducible ROI sampling when roi_selection_strategy is random.",
+        stage="nimbus-scan",
+        ui_group="Scan scope",
+    )
+    baseline_normalization_dict_path: Optional[str] = config_field(
+        None,
+        description="Optional CSV supplying marker, baseline Vmax, and lower-threshold rows; when markers is null, its rows also define the scan marker subset. Legacy Nimbus JSON remains readable for baseline values.",
+        level="basic",
+        stage="nimbus-scan",
+        ui_group="Vmax candidates",
+        advice="Preferred columns are marker, baseline_vmax, and lower_threshold. Vmax factors remain in config. Relative paths resolve from the project root and the source file is never overwritten.",
+    )
+    vmax_factors: List[float] = config_field(
+        default_factory=lambda: [
+            0.25,
+            0.3535533905932738,
+            0.5,
+            0.7071067811865476,
+            1.0,
+            1.4142135623730951,
+            2.0,
+            2.8284271247461903,
+            4.0,
+        ],
+        description="Positive factors multiplied by each marker's baseline Vmax to form its default log-spaced scan.",
+        level="basic",
+        stage="nimbus-scan",
+        ui_group="Vmax candidates",
+        advice="The default covers one quarter to four times baseline in half-octave steps.",
+    )
+    marker_baseline_vmax: Dict[str, float] = config_field(
+        default_factory=dict,
+        description="Optional marker-to-baseline-Vmax mapping; vmax_factors are multiplied by each supplied value.",
+        level="basic",
+        stage="nimbus-scan",
+        ui_group="Vmax candidates",
+        advice="Use this for a current normalization dictionary written directly in config; markers omitted here use the baseline dictionary path or computed quantile.",
+    )
+    marker_lower_thresholds: Dict[str, float] = config_field(
+        default_factory=dict,
+        description="Optional marker-to-lower-threshold mapping in absolute input-intensity units; omitted markers use zero.",
+        level="basic",
+        stage="nimbus-scan",
+        ui_group="Vmax candidates",
+        advice="Values at or below the threshold map to normalized zero. Every threshold must remain below all Vmax candidates scanned for that marker.",
+    )
+    marker_vmax_values: Dict[str, List[float]] = config_field(
+        default_factory=dict,
+        description="Optional marker-to-explicit-Vmax mapping overriding vmax_factors for selected markers.",
+        level="advanced",
+        stage="nimbus-scan",
+        ui_group="Vmax candidates",
+        advice="Each marker override needs at least three distinct positive values to estimate local sensitivity.",
+    )
+    positive_score_thresholds: List[float] = config_field(
+        default_factory=lambda: [0.25, 0.5, 0.75],
+        description="Nimbus cell-score thresholds whose positive-cell proportions are plotted across Vmax candidates.",
+        level="basic",
+        stage="nimbus-scan",
+        ui_group="Interpretation",
+        advice="These are sensitivity views, not universal biological positivity cutoffs.",
+    )
+    primary_positive_score_threshold: float = config_field(
+        0.5,
+        description="Nimbus score threshold used for call-flip, cliff, stability, and recommendation diagnostics.",
+        level="basic",
+        stage="nimbus-scan",
+        ui_group="Interpretation",
+        advice="Validate this threshold against marker images or controls; Nimbus scores are not universally calibrated.",
+        ge=0,
+        le=1,
+    )
+    stability_tolerance: float = config_field(
+        0.05,
+        description="Maximum adjacent change in primary positive-cell fraction per two-fold Vmax change for a stable candidate.",
+        stage="nimbus-scan",
+        ui_group="Recommendation diagnostics",
+        ge=0,
+        le=1,
+    )
+    call_flip_tolerance: float = config_field(
+        0.05,
+        description="Maximum fraction of individual cells whose primary call may flip across either adjacent Vmax step for a stable candidate.",
+        stage="nimbus-scan",
+        ui_group="Recommendation diagnostics",
+        advice="This prevents balanced positive-to-negative and negative-to-positive swaps from looking stable merely because the total positive proportion is unchanged.",
+        ge=0,
+        le=1,
+    )
+    saturation_tolerance: float = config_field(
+        0.05,
+        description="Maximum fraction of in-mask input pixels clipped at normalized value 1 for a stable candidate.",
+        stage="nimbus-scan",
+        ui_group="Recommendation diagnostics",
+        ge=0,
+        le=1,
+    )
+    cliff_tolerance: float = config_field(
+        0.15,
+        description="Adjacent primary positive-fraction shift at which a marker is flagged as having a Vmax cliff.",
+        stage="nimbus-scan",
+        ui_group="Recommendation diagnostics",
+        ge=0,
+        le=1,
+    )
+    save_cell_scores: bool = config_field(
+        True,
+        description="Write one compressed per-cell score table per marker for detailed review and reproducibility.",
+        stage="nimbus-scan",
+        ui_group="Outputs",
+        advice="Disable to reduce report size; aggregate, ROI, recommendation, and figure outputs are always retained.",
+    )
+
+    @model_validator(mode="after")
+    def validate_scan_settings(self) -> "NimbusNormalizationScanConfig":
+        for field_name in ("markers", "rois"):
+            values = getattr(self, field_name)
+            if values is None:
+                continue
+            cleaned = list(
+                dict.fromkeys(str(value).strip() for value in values if str(value).strip())
+            )
+            if not cleaned:
+                raise ValueError(
+                    f"nimbus_normalization_scan.{field_name} must be null or contain at least one non-empty value"
+                )
+            setattr(self, field_name, cleaned)
+
+        if self.baseline_normalization_dict_path is not None:
+            path = str(self.baseline_normalization_dict_path).strip()
+            self.baseline_normalization_dict_path = path or None
+
+        def validate_positive_grid(label: str, values: List[float]) -> List[float]:
+            parsed = sorted(set(float(value) for value in values))
+            if len(parsed) < 3 or any(
+                not math.isfinite(value) or value <= 0 for value in parsed
+            ):
+                raise ValueError(
+                    f"{label} must contain at least three distinct finite positive values"
+                )
+            return parsed
+
+        self.vmax_factors = validate_positive_grid(
+            "nimbus_normalization_scan.vmax_factors", self.vmax_factors
+        )
+
+        def validate_marker_keys(
+            label: str, values: Dict[str, Any]
+        ) -> tuple[Dict[str, Any], Dict[str, str]]:
+            cleaned: Dict[str, Any] = {}
+            folded_keys: Dict[str, str] = {}
+            for marker, value in values.items():
+                cleaned_marker = str(marker).strip()
+                if not cleaned_marker:
+                    raise ValueError(f"{label} keys must be non-empty marker names")
+                folded_marker = cleaned_marker.casefold()
+                if folded_marker in folded_keys:
+                    raise ValueError(
+                        f"{label} keys must be unique ignoring case: "
+                        f"{folded_keys[folded_marker]!r} and {cleaned_marker!r}"
+                    )
+                folded_keys[folded_marker] = cleaned_marker
+                cleaned[cleaned_marker] = value
+            return cleaned, folded_keys
+
+        raw_marker_baselines, baseline_keys = validate_marker_keys(
+            "nimbus_normalization_scan.marker_baseline_vmax",
+            self.marker_baseline_vmax,
+        )
+        cleaned_marker_baselines: Dict[str, float] = {}
+        for marker, value in raw_marker_baselines.items():
+            parsed_value = float(value)
+            if not math.isfinite(parsed_value) or parsed_value <= 0:
+                raise ValueError(
+                    "nimbus_normalization_scan.marker_baseline_vmax values must "
+                    f"be finite and positive; got {value!r} for {marker!r}"
+                )
+            cleaned_marker_baselines[marker] = parsed_value
+        self.marker_baseline_vmax = cleaned_marker_baselines
+
+        raw_lower_thresholds, _ = validate_marker_keys(
+            "nimbus_normalization_scan.marker_lower_thresholds",
+            self.marker_lower_thresholds,
+        )
+        cleaned_lower_thresholds: Dict[str, float] = {}
+        for marker, value in raw_lower_thresholds.items():
+            parsed_value = float(value)
+            if not math.isfinite(parsed_value) or parsed_value < 0:
+                raise ValueError(
+                    "nimbus_normalization_scan.marker_lower_thresholds values "
+                    f"must be finite and non-negative; got {value!r} for {marker!r}"
+                )
+            cleaned_lower_thresholds[marker] = parsed_value
+        self.marker_lower_thresholds = cleaned_lower_thresholds
+
+        cleaned_marker_values: Dict[str, List[float]] = {}
+        raw_marker_values, explicit_keys = validate_marker_keys(
+            "nimbus_normalization_scan.marker_vmax_values", self.marker_vmax_values
+        )
+        for marker, values in raw_marker_values.items():
+            cleaned_marker_values[marker] = validate_positive_grid(
+                f"nimbus_normalization_scan.marker_vmax_values[{marker!r}]", values
+            )
+        self.marker_vmax_values = cleaned_marker_values
+        overlapping_markers = sorted(set(baseline_keys) & set(explicit_keys))
+        if overlapping_markers:
+            display_names = [baseline_keys[key] for key in overlapping_markers]
+            raise ValueError(
+                "Markers cannot appear in both "
+                "nimbus_normalization_scan.marker_baseline_vmax and "
+                "marker_vmax_values; choose a factor-based baseline or an explicit "
+                f"candidate grid: {display_names}"
+            )
+        thresholds = sorted(set(float(value) for value in self.positive_score_thresholds))
+        if not thresholds or any(
+            not math.isfinite(value) or value < 0 or value > 1
+            for value in thresholds
+        ):
+            raise ValueError(
+                "nimbus_normalization_scan.positive_score_thresholds must contain finite values in [0, 1]"
+            )
+        if self.primary_positive_score_threshold not in thresholds:
+            thresholds.append(float(self.primary_positive_score_threshold))
+            thresholds.sort()
+        self.positive_score_thresholds = thresholds
+        return self
 
 
 @config_section("neighbour_signal")
@@ -2714,7 +2987,7 @@ class CellVisionConfig(ConfigModel):
     )
     normalization_dict_path: Optional[str] = config_field(
         None,
-        description="Optional Nimbus-format normalization_dict.json containing one positive scale per selected marker or unambiguous marker suffix.",
+        description="Optional preferred Nimbus normalization_dict.csv or legacy JSON containing one positive Vmax per selected marker or unambiguous marker suffix.",
         stage="cellvision",
         ui_group="Input normalization",
         advice="Exact keys take priority; short Nimbus keys such as CD11c match a selected 165Ho_CD11c channel, while ambiguous suffixes fail. Relative paths resolve from the project root.",
@@ -5986,6 +6259,9 @@ class PipelineConfig(ConfigModel):
     createmasks: CreateMasksConfig = Field(default_factory=CreateMasksConfig)
     segmentation: SegmentationConfig = Field(default_factory=SegmentationConfig)
     nimbus: NimbusConfig = Field(default_factory=NimbusConfig)
+    nimbus_normalization_scan: NimbusNormalizationScanConfig = Field(
+        default_factory=NimbusNormalizationScanConfig
+    )
     neighbour_signal: NeighbourSignalConfig = Field(default_factory=NeighbourSignalConfig)
     batch_integration: BatchIntegrationConfig = Field(default_factory=BatchIntegrationConfig)
     rapids: RapidsProcessConfig = Field(default_factory=RapidsProcessConfig)
@@ -6016,6 +6292,7 @@ DEFAULT_CONFIG_CLASSES = {
     "createmasks": CreateMasksConfig,
     "segmentation": SegmentationConfig,
     "nimbus": NimbusConfig,
+    "nimbus_normalization_scan": NimbusNormalizationScanConfig,
     "neighbour_signal": NeighbourSignalConfig,
     "batch_integration": BatchIntegrationConfig,
     "rapids": RapidsProcessConfig,

@@ -83,7 +83,6 @@
           "advice": "",
           "anyOf": [
             {
-              "additionalProperties": true,
               "type": "object"
             },
             {
@@ -101,7 +100,6 @@
           "anyOf": [
             {
               "items": {
-                "additionalProperties": true,
                 "type": "object"
               },
               "type": "array"
@@ -236,7 +234,6 @@
           "advice": "",
           "anyOf": [
             {
-              "additionalProperties": true,
               "type": "object"
             },
             {
@@ -458,7 +455,6 @@
           "ui_group": "Batch Integration"
         },
         "harmony_params": {
-          "additionalProperties": true,
           "advice": "",
           "description": "Keyword arguments passed directly to harmonypy.run_harmony after null-like values are removed. Defaults allow 30 Harmony rounds, log progress, and seed stochastic steps with 0; advanced options include theta, sigma, lamb, and convergence settings.",
           "level": "advanced",
@@ -468,7 +464,6 @@
           "ui_group": "Batch Integration"
         },
         "bbknn_params": {
-          "additionalProperties": true,
           "advice": "",
           "description": "Keyword arguments passed to scanpy.external.pp.bbknn after null-like values are removed. The stage supplies use_rep and n_pcs when absent; common advanced options include neighbors_within_batch, trim, metric, and approximate-neighbour settings.",
           "level": "advanced",
@@ -577,7 +572,6 @@
           "advice": "",
           "anyOf": [
             {
-              "additionalProperties": true,
               "type": "object"
             },
             {
@@ -595,7 +589,6 @@
           "anyOf": [
             {
               "items": {
-                "additionalProperties": true,
                 "type": "object"
               },
               "type": "array"
@@ -730,7 +723,6 @@
           "advice": "",
           "anyOf": [
             {
-              "additionalProperties": true,
               "type": "object"
             },
             {
@@ -2375,7 +2367,7 @@
             }
           ],
           "default": null,
-          "description": "Optional Nimbus-format normalization_dict.json containing one positive scale per selected marker or unambiguous marker suffix.",
+          "description": "Optional preferred Nimbus normalization_dict.csv or legacy JSON containing one positive Vmax per selected marker or unambiguous marker suffix.",
           "level": "advanced",
           "stage": "cellvision",
           "title": "Normalization Dict Path",
@@ -2397,7 +2389,7 @@
           "advice": "Matches the current Nimbus default; supplied dictionary values are preserved after positive-value validation.",
           "default": 3.0,
           "description": "Minimum computed normalization value used to avoid scaling background noise.",
-          "exclusiveMinimum": 0,
+          "exclusiveMinimum": 0.0,
           "level": "advanced",
           "stage": "cellvision",
           "title": "Normalization Min Value",
@@ -2485,7 +2477,7 @@
           "advice": "The schedule uses linear warmup followed by cosine decay.",
           "default": 0.0003,
           "description": "Initial AdamW learning rate for VICReg training.",
-          "exclusiveMinimum": 0,
+          "exclusiveMinimum": 0.0,
           "level": "advanced",
           "stage": "cellvision",
           "title": "Learning Rate",
@@ -2497,7 +2489,7 @@
           "default": 1e-06,
           "description": "AdamW weight decay used during VICReg training.",
           "level": "advanced",
-          "minimum": 0,
+          "minimum": 0.0,
           "stage": "cellvision",
           "title": "Weight Decay",
           "type": "number",
@@ -2550,7 +2542,7 @@
           "advice": "The default follows the standard VICReg balance.",
           "default": 25.0,
           "description": "Weight of the VICReg invariance loss between augmented views.",
-          "exclusiveMinimum": 0,
+          "exclusiveMinimum": 0.0,
           "level": "advanced",
           "stage": "cellvision",
           "title": "Vicreg Invariance Weight",
@@ -2561,7 +2553,7 @@
           "advice": "The default follows the standard VICReg balance.",
           "default": 25.0,
           "description": "Weight of the VICReg per-dimension variance regularizer.",
-          "exclusiveMinimum": 0,
+          "exclusiveMinimum": 0.0,
           "level": "advanced",
           "stage": "cellvision",
           "title": "Vicreg Variance Weight",
@@ -2572,7 +2564,7 @@
           "advice": "The default follows the standard VICReg balance.",
           "default": 1.0,
           "description": "Weight of the VICReg off-diagonal covariance regularizer.",
-          "exclusiveMinimum": 0,
+          "exclusiveMinimum": 0.0,
           "level": "advanced",
           "stage": "cellvision",
           "title": "Vicreg Covariance Weight",
@@ -2595,8 +2587,8 @@
           "default": 0.5,
           "description": "Probability of a horizontal flip for each VICReg view.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "cellvision",
           "title": "Augmentation Horizontal Flip Probability",
           "type": "number",
@@ -2607,8 +2599,8 @@
           "default": 0.5,
           "description": "Probability of a vertical flip for each VICReg view.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "cellvision",
           "title": "Augmentation Vertical Flip Probability",
           "type": "number",
@@ -2619,8 +2611,8 @@
           "default": 1.0,
           "description": "Probability of applying a random 0/90/180/270-degree rotation.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "cellvision",
           "title": "Augmentation Rotation Probability",
           "type": "number",
@@ -2631,8 +2623,8 @@
           "default": 0.0,
           "description": "Probability of applying a zero-filled integer translation.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "cellvision",
           "title": "Augmentation Translation Probability",
           "type": "number",
@@ -2642,9 +2634,9 @@
           "advice": "No hue, saturation, channel mixing, or artificial background is applied to multiplex IMC images.",
           "default": 0.2,
           "description": "Maximum independent multiplicative intensity perturbation per marker channel.",
-          "exclusiveMaximum": 1,
+          "exclusiveMaximum": 1.0,
           "level": "advanced",
-          "minimum": 0,
+          "minimum": 0.0,
           "stage": "cellvision",
           "title": "Augmentation Intensity Jitter",
           "type": "number",
@@ -2655,8 +2647,8 @@
           "default": 0.0,
           "description": "Probability of applying independent multiplicative marker jitter.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "cellvision",
           "title": "Augmentation Intensity Jitter Probability",
           "type": "number",
@@ -2667,7 +2659,7 @@
           "default": 0.02,
           "description": "Standard deviation of Gaussian noise applied only on the configured spatial support.",
           "level": "advanced",
-          "minimum": 0,
+          "minimum": 0.0,
           "stage": "cellvision",
           "title": "Augmentation Noise Std",
           "type": "number",
@@ -2678,8 +2670,8 @@
           "default": 1.0,
           "description": "Probability of adding Gaussian noise to one augmented view.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "cellvision",
           "title": "Augmentation Noise Probability",
           "type": "number",
@@ -2764,8 +2756,8 @@
           "default": 0.5,
           "description": "Weight assigned to the degree-normalized intensity graph; one minus this value weights the CellVision morphology graph.",
           "level": "basic",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "cellvision",
           "title": "Fusion Intensity Weight",
           "type": "number",
@@ -2788,8 +2780,8 @@
           "default": 0.1,
           "description": "Minimum distance used for the CellVision RAPIDS UMAP.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "cellvision",
           "title": "Umap Min Dist",
           "type": "number",
@@ -3030,8 +3022,8 @@
           "default": 0.0,
           "description": "Minimum fraction of cases with a non-zero feature value.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "cox",
           "title": "Min Feature Prevalence",
           "type": "number",
@@ -3121,7 +3113,7 @@
           "default": 0.1,
           "description": "L2 penalizer for conventional lifelines Cox PH.",
           "level": "advanced",
-          "minimum": 0,
+          "minimum": 0.0,
           "stage": "cox",
           "title": "Coxph Penalizer",
           "type": "number",
@@ -3145,7 +3137,7 @@
           "default": 1.0,
           "description": "Ridge alpha used for feature-set comparisons when alpha scanning is not requested.",
           "level": "advanced",
-          "minimum": 0,
+          "minimum": 0.0,
           "stage": "cox",
           "title": "Ridge Fixed Alpha",
           "type": "number",
@@ -3155,9 +3147,9 @@
           "advice": "",
           "default": 1.0,
           "description": "Elastic-net mixing parameter; one gives the interpretable lasso path used in the notebook.",
-          "exclusiveMinimum": 0,
+          "exclusiveMinimum": 0.0,
           "level": "advanced",
-          "maximum": 1,
+          "maximum": 1.0,
           "stage": "cox",
           "title": "Coxnet L1 Ratio",
           "type": "number",
@@ -3178,8 +3170,8 @@
           "advice": "",
           "default": 0.001,
           "description": "Minimum-to-maximum CoxNet alpha ratio.",
-          "exclusiveMaximum": 1,
-          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 1.0,
+          "exclusiveMinimum": 0.0,
           "level": "advanced",
           "stage": "cox",
           "title": "Coxnet Alpha Min Ratio",
@@ -3201,7 +3193,7 @@
           "advice": "",
           "default": 1e-07,
           "description": "CoxNet convergence tolerance.",
-          "exclusiveMinimum": 0,
+          "exclusiveMinimum": 0.0,
           "level": "advanced",
           "stage": "cox",
           "title": "Coxnet Tolerance",
@@ -3428,7 +3420,7 @@
           "advice": "Increase when nuclei are fragmented; decrease when neighbouring nuclei are merged.",
           "default": 10.0,
           "description": "Estimated median nuclear diameter in pixels on the original IMC image. Cellpose3 uses it to determine restoration scale; Cellpose-SAM also uses it when upscaling is disabled.",
-          "exclusiveMinimum": 0,
+          "exclusiveMinimum": 0.0,
           "level": "basic",
           "stage": "createmasks",
           "title": "Cellpose Cell Diameter",
@@ -4683,7 +4675,7 @@
           "default": 0.5,
           "description": "Fixed background value subtracted when background_method is fixed.",
           "level": "advanced",
-          "minimum": 0,
+          "minimum": 0.0,
           "stage": "hyperstac",
           "title": "Background Fixed Value",
           "type": "number",
@@ -4694,8 +4686,8 @@
           "default": 20.0,
           "description": "Per-image percentile used when background_method is percentile.",
           "level": "advanced",
-          "maximum": 100,
-          "minimum": 0,
+          "maximum": 100.0,
+          "minimum": 0.0,
           "stage": "hyperstac",
           "title": "Background Percentile",
           "type": "number",
@@ -4716,8 +4708,8 @@
           "default": 95.0,
           "description": "Percentile used to derive a channel-presence score.",
           "level": "advanced",
-          "maximum": 100,
-          "minimum": 0,
+          "maximum": 100.0,
+          "minimum": 0.0,
           "stage": "hyperstac",
           "title": "Presence Percentile",
           "type": "number",
@@ -4728,7 +4720,7 @@
           "default": 1.0,
           "description": "Minimum presence score when presence masking is enabled.",
           "level": "advanced",
-          "minimum": 0,
+          "minimum": 0.0,
           "stage": "hyperstac",
           "title": "Presence Threshold",
           "type": "number",
@@ -4738,9 +4730,9 @@
           "advice": "",
           "default": 99.5,
           "description": "Robust per-channel percentile mapped to one after background correction.",
-          "exclusiveMinimum": 0,
+          "exclusiveMinimum": 0.0,
           "level": "advanced",
-          "maximum": 100,
+          "maximum": 100.0,
           "stage": "hyperstac",
           "title": "Scale Percentile",
           "type": "number",
@@ -4827,7 +4819,7 @@
           "advice": "",
           "default": 1.0,
           "description": "Micrometres represented by one source-image pixel.",
-          "exclusiveMinimum": 0,
+          "exclusiveMinimum": 0.0,
           "level": "basic",
           "stage": "hyperstac",
           "title": "Pixel Size Um",
@@ -4856,7 +4848,7 @@
           "default": 0.05,
           "description": "Mask-channel value above which a pixel is treated as tissue.",
           "level": "advanced",
-          "minimum": 0,
+          "minimum": 0.0,
           "stage": "hyperstac",
           "title": "Mask Threshold",
           "type": "number",
@@ -4867,8 +4859,8 @@
           "default": 0.05,
           "description": "Minimum mask-positive pixel fraction required for a patch.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "hyperstac",
           "title": "Min Mask Fraction",
           "type": "number",
@@ -4879,7 +4871,7 @@
           "default": 0.0,
           "description": "Minimum whole-patch mean signal; zero disables this filter.",
           "level": "advanced",
-          "minimum": 0,
+          "minimum": 0.0,
           "stage": "hyperstac",
           "title": "Min Patch Signal",
           "type": "number",
@@ -4901,7 +4893,7 @@
           "default": 0.01,
           "description": "Mean all-channel signal required for a local subpatch to count as tissue.",
           "level": "advanced",
-          "minimum": 0,
+          "minimum": 0.0,
           "stage": "hyperstac",
           "title": "Subpatch Signal Threshold",
           "type": "number",
@@ -4912,8 +4904,8 @@
           "default": 0.5,
           "description": "Minimum fraction of tissue-positive local subpatches required to retain a patch.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "hyperstac",
           "title": "Min Tissue Subpatch Fraction",
           "type": "number",
@@ -5014,7 +5006,7 @@
           "advice": "",
           "default": 0.0001,
           "description": "Adam learning rate for VICReg training.",
-          "exclusiveMinimum": 0,
+          "exclusiveMinimum": 0.0,
           "level": "advanced",
           "stage": "hyperstac",
           "title": "Learning Rate",
@@ -5182,7 +5174,7 @@
           "default": 0.1,
           "description": "Scanpy UMAP minimum distance for every clustering grid graph.",
           "level": "advanced",
-          "minimum": 0,
+          "minimum": 0.0,
           "stage": "hyperstac",
           "title": "Umap Min Dist",
           "type": "number",
@@ -5328,7 +5320,7 @@
           "advice": "",
           "default": 1.0,
           "description": "Fixed gallery intensity maximum when automatic contrast is disabled.",
-          "exclusiveMinimum": 0,
+          "exclusiveMinimum": 0.0,
           "level": "advanced",
           "stage": "hyperstac",
           "title": "Gallery Vmax",
@@ -5339,9 +5331,9 @@
           "advice": "",
           "default": 99.5,
           "description": "Percentile used when automatic gallery contrast is enabled.",
-          "exclusiveMinimum": 0,
+          "exclusiveMinimum": 0.0,
           "level": "advanced",
-          "maximum": 100,
+          "maximum": 100.0,
           "stage": "hyperstac",
           "title": "Gallery Contrast Percentile",
           "type": "number",
@@ -5429,7 +5421,7 @@
           "default": 0.45,
           "description": "Signature distance threshold for grouping clusters into recurrent environments.",
           "level": "advanced",
-          "minimum": 0,
+          "minimum": 0.0,
           "stage": "hyperstac",
           "title": "Stability Environment Distance Threshold",
           "type": "number",
@@ -5450,7 +5442,7 @@
           "default": 1e-08,
           "description": "Absolute Cox coefficient threshold treated as a non-zero effect.",
           "level": "advanced",
-          "minimum": 0,
+          "minimum": 0.0,
           "stage": "hyperstac",
           "title": "Stability Effect Threshold",
           "type": "number",
@@ -5527,7 +5519,7 @@
           "default": 35.0,
           "description": "Minimum cluster-level bubble area.",
           "level": "advanced",
-          "minimum": 0,
+          "minimum": 0.0,
           "stage": "hyperstac",
           "title": "Stability Cluster Bubble Size Min",
           "type": "number",
@@ -5538,7 +5530,7 @@
           "default": 650.0,
           "description": "Scale factor applied to the cluster-level bubble metric.",
           "level": "advanced",
-          "minimum": 0,
+          "minimum": 0.0,
           "stage": "hyperstac",
           "title": "Stability Cluster Bubble Size Scale",
           "type": "number",
@@ -5575,7 +5567,7 @@
           "default": 35.0,
           "description": "Minimum recurrent-environment bubble area.",
           "level": "advanced",
-          "minimum": 0,
+          "minimum": 0.0,
           "stage": "hyperstac",
           "title": "Stability Environment Bubble Size Min",
           "type": "number",
@@ -5586,7 +5578,7 @@
           "default": 10.0,
           "description": "Scale factor applied to the recurrent-environment bubble metric.",
           "level": "advanced",
-          "minimum": 0,
+          "minimum": 0.0,
           "stage": "hyperstac",
           "title": "Stability Environment Bubble Size Scale",
           "type": "number",
@@ -5627,9 +5619,9 @@
           "advice": "",
           "default": 0.95,
           "description": "Robust quantile used to scale environment colour limits.",
-          "exclusiveMinimum": 0,
+          "exclusiveMinimum": 0.0,
           "level": "advanced",
-          "maximum": 1,
+          "maximum": 1.0,
           "stage": "hyperstac",
           "title": "Stability Environment Color Quantile",
           "type": "number",
@@ -6003,7 +5995,7 @@
           "default": 0.2,
           "description": "Minimum reference standard deviation for a linked feature.",
           "level": "advanced",
-          "minimum": 0,
+          "minimum": 0.0,
           "stage": "maxfuse",
           "title": "Reference Shared Sd Min",
           "type": "number",
@@ -6014,7 +6006,7 @@
           "default": 0.025,
           "description": "Minimum target standard deviation for a linked feature.",
           "level": "advanced",
-          "minimum": 0,
+          "minimum": 0.0,
           "stage": "maxfuse",
           "title": "Target Shared Sd Min",
           "type": "number",
@@ -6153,7 +6145,7 @@
           "advice": "",
           "default": 2.0,
           "description": "Reference graph clustering resolution.",
-          "exclusiveMinimum": 0,
+          "exclusiveMinimum": 0.0,
           "level": "advanced",
           "stage": "maxfuse",
           "title": "Graph Resolution Reference",
@@ -6164,7 +6156,7 @@
           "advice": "",
           "default": 2.0,
           "description": "Target graph clustering resolution.",
-          "exclusiveMinimum": 0,
+          "exclusiveMinimum": 0.0,
           "level": "advanced",
           "stage": "maxfuse",
           "title": "Graph Resolution Target",
@@ -6176,7 +6168,7 @@
           "default": 0.1,
           "description": "Resolution difference below which MaxFuse merges graph communities.",
           "level": "advanced",
-          "minimum": 0,
+          "minimum": 0.0,
           "stage": "maxfuse",
           "title": "Graph Resolution Tolerance",
           "type": "number",
@@ -6187,8 +6179,8 @@
           "default": 0.3,
           "description": "Raw-reference weight during initial fuzzy smoothing.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "maxfuse",
           "title": "Initial Weight Reference",
           "type": "number",
@@ -6199,8 +6191,8 @@
           "default": 0.3,
           "description": "Raw-target weight during initial fuzzy smoothing.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "maxfuse",
           "title": "Initial Weight Target",
           "type": "number",
@@ -6233,8 +6225,8 @@
           "default": 0.3,
           "description": "Raw-reference weight during pivot refinement.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "maxfuse",
           "title": "Refine Weight Reference",
           "type": "number",
@@ -6245,8 +6237,8 @@
           "default": 0.3,
           "description": "Raw-target weight during pivot refinement.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "maxfuse",
           "title": "Refine Weight Target",
           "type": "number",
@@ -6308,8 +6300,8 @@
           "default": 0.5,
           "description": "Fraction of weak refined pivots discarded.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "maxfuse",
           "title": "Pivot Filter Fraction",
           "type": "number",
@@ -6320,8 +6312,8 @@
           "default": 0.7,
           "description": "Raw-reference weight during propagation.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "maxfuse",
           "title": "Propagation Weight Reference",
           "type": "number",
@@ -6332,8 +6324,8 @@
           "default": 0.7,
           "description": "Raw-target weight during propagation.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "maxfuse",
           "title": "Propagation Weight Target",
           "type": "number",
@@ -6344,8 +6336,8 @@
           "default": 0.3,
           "description": "Fraction of weak propagated matches discarded.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "maxfuse",
           "title": "Propagated Filter Fraction",
           "type": "number",
@@ -6377,8 +6369,8 @@
           "default": 0.3,
           "description": "Minimum score used for default plots and DEG analysis; reusable matches remain unfiltered.",
           "level": "basic",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "maxfuse",
           "title": "Report Score Threshold",
           "type": "number",
@@ -6525,8 +6517,8 @@
           "default": 0.85,
           "description": "Score threshold for the optional matched-transcriptome asset.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "maxfuse",
           "title": "Matched Transcriptome Min Score",
           "type": "number",
@@ -6711,8 +6703,8 @@
           "default": 10.0,
           "description": "Minimum mask-to-mask pixel distance from another X-positive cell for the same marker.",
           "level": "basic",
-          "maximum": 256,
-          "minimum": 0,
+          "maximum": 256.0,
+          "minimum": 0.0,
           "stage": "neighsig",
           "title": "Automatic Same Marker Clearance Px",
           "type": "number",
@@ -6789,9 +6781,9 @@
           "advice": "High quantiles remain robust to conservative nuclear masks for membrane or cytoplasmic markers.",
           "default": 0.95,
           "description": "Raw-image quantile within the source anchor used as source strength.",
-          "exclusiveMinimum": 0,
+          "exclusiveMinimum": 0.0,
           "level": "basic",
-          "maximum": 1,
+          "maximum": 1.0,
           "stage": "neighsig",
           "title": "Source Anchor Quantile",
           "type": "number",
@@ -6813,8 +6805,8 @@
           "default": 0.1,
           "description": "Quantile of valid exemplar source strengths used as the marker-specific source threshold.",
           "level": "basic",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "neighsig",
           "title": "Source Threshold Quantile",
           "type": "number",
@@ -6905,7 +6897,7 @@
           "advice": "This is passed to Scanpy as size (the scatter-plot s value); null uses Scanpy's dataset-size-aware default.",
           "anyOf": [
             {
-              "exclusiveMinimum": 0,
+              "exclusiveMinimum": 0.0,
               "type": "number"
             },
             {
@@ -6985,8 +6977,8 @@
           "default": 0.5,
           "description": "Descriptive score threshold used only for per-cell counts and QC summaries.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "neighsig",
           "title": "High Risk Threshold",
           "type": "number",
@@ -7558,7 +7550,7 @@
         "output_dir": {
           "advice": "",
           "default": "nimbus_output",
-          "description": "Directory for normalization_dict.json, master cell tables, and optional per-ROI Nimbus confidence maps. Relative paths resolve from the project working directory.",
+          "description": "Directory for preferred normalization_dict.csv, master cell tables, and optional per-ROI Nimbus confidence maps. Relative paths resolve from the project working directory.",
           "level": "advanced",
           "stage": "nimbus",
           "title": "Output Dir",
@@ -7774,7 +7766,7 @@
         "normalization_quantile": {
           "advice": "",
           "default": 0.999,
-          "description": "Per-ROI, in-mask image quantile calculated for each channel; values are averaged across all usable ROIs to obtain the channel divisor before Nimbus inference.",
+          "description": "Per-ROI, in-mask image quantile calculated for each channel; values are averaged across all usable ROIs to obtain the channel Vmax before Nimbus inference.",
           "level": "advanced",
           "stage": "nimbus",
           "title": "Normalization Quantile",
@@ -7816,7 +7808,7 @@
         "normalization_min_value": {
           "advice": "",
           "default": 3.0,
-          "description": "Positive lower bound applied to computed channel normalization divisors, preventing near-zero background estimates from amplifying noise.",
+          "description": "Positive lower bound applied to computed channel Vmax values, preventing near-zero background estimates from amplifying noise.",
           "level": "advanced",
           "stage": "nimbus",
           "title": "Normalization Min Value",
@@ -7826,7 +7818,7 @@
         "reuse_saved_normalization": {
           "advice": "",
           "default": false,
-          "description": "Load output_dir/normalization_dict.json instead of recomputing channel divisors. Finite positive manual values are retained and normalization QC is still regenerated.",
+          "description": "Load output_dir/normalization_dict.csv instead of recomputing channel bounds; legacy normalization_dict.json remains readable. Valid manual values are retained and normalization QC is still regenerated.",
           "level": "advanced",
           "stage": "nimbus",
           "title": "Reuse Saved Normalization",
@@ -7836,7 +7828,7 @@
         "norm_dict_qc_only": {
           "advice": "",
           "default": false,
-          "description": "Stop after writing or loading normalization_dict.json and generating normalization QC; do not run Nimbus, extract intensities, or create cell tables and AnnData.",
+          "description": "Stop after writing or loading the Nimbus normalization CSV (or legacy JSON) and generating normalization QC; do not run Nimbus, extract intensities, or create cell tables and AnnData.",
           "level": "advanced",
           "stage": "nimbus",
           "title": "Norm Dict Qc Only",
@@ -7915,6 +7907,238 @@
         }
       },
       "title": "NimbusConfig",
+      "type": "object"
+    },
+    "NimbusNormalizationScanConfig": {
+      "description": "Pre-AnnData Nimbus normalization sensitivity scan.",
+      "properties": {
+        "markers": {
+          "advice": "Use a small scan-parameter CSV or an explicit marker list to keep repeated GPU inference focused.",
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional marker subset to scan; null uses all rows from a baseline CSV when supplied, otherwise every channel available in all usable ROIs.",
+          "level": "basic",
+          "stage": "nimbus-scan",
+          "title": "Markers",
+          "ui_group": "Scan scope"
+        },
+        "rois": {
+          "advice": "When set, these ROI names take precedence over max_rois and must be present after Nimbus input discovery.",
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional explicit ROI subset used for repeated Nimbus inference.",
+          "level": "advanced",
+          "stage": "nimbus-scan",
+          "title": "Rois",
+          "ui_group": "Scan scope"
+        },
+        "roi_selection_strategy": {
+          "advice": "marker_expression_range spreads selections from low to high mean intracellular input signal above the marker lower threshold; random preserves the earlier seeded cohort-wide sampling behavior.",
+          "default": "marker_expression_range",
+          "description": "Automatic ROI-selection strategy used independently for each marker when rois is null.",
+          "enum": [
+            "marker_expression_range",
+            "random"
+          ],
+          "level": "basic",
+          "stage": "nimbus-scan",
+          "title": "Roi Selection Strategy",
+          "type": "string",
+          "ui_group": "Scan scope"
+        },
+        "max_rois": {
+          "advice": "Normalization baselines still use all usable ROIs. With marker_expression_range, different markers can use different ROI subsets.",
+          "default": 10,
+          "description": "Maximum ROIs selected per marker for repeated inference; zero uses every usable ROI.",
+          "level": "basic",
+          "minimum": 0,
+          "stage": "nimbus-scan",
+          "title": "Max Rois",
+          "type": "integer",
+          "ui_group": "Scan scope"
+        },
+        "random_seed": {
+          "advice": "",
+          "default": 0,
+          "description": "Seed for reproducible ROI sampling when roi_selection_strategy is random.",
+          "level": "advanced",
+          "stage": "nimbus-scan",
+          "title": "Random Seed",
+          "type": "integer",
+          "ui_group": "Scan scope"
+        },
+        "baseline_normalization_dict_path": {
+          "advice": "Preferred columns are marker, baseline_vmax, and lower_threshold. Vmax factors remain in config. Relative paths resolve from the project root and the source file is never overwritten.",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional CSV supplying marker, baseline Vmax, and lower-threshold rows; when markers is null, its rows also define the scan marker subset. Legacy Nimbus JSON remains readable for baseline values.",
+          "level": "basic",
+          "stage": "nimbus-scan",
+          "title": "Baseline Normalization Dict Path",
+          "ui_group": "Vmax candidates"
+        },
+        "vmax_factors": {
+          "advice": "The default covers one quarter to four times baseline in half-octave steps.",
+          "description": "Positive factors multiplied by each marker's baseline Vmax to form its default log-spaced scan.",
+          "items": {
+            "type": "number"
+          },
+          "level": "basic",
+          "stage": "nimbus-scan",
+          "title": "Vmax Factors",
+          "type": "array",
+          "ui_group": "Vmax candidates"
+        },
+        "marker_baseline_vmax": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "advice": "Use this for a current normalization dictionary written directly in config; markers omitted here use the baseline dictionary path or computed quantile.",
+          "description": "Optional marker-to-baseline-Vmax mapping; vmax_factors are multiplied by each supplied value.",
+          "level": "basic",
+          "stage": "nimbus-scan",
+          "title": "Marker Baseline Vmax",
+          "type": "object",
+          "ui_group": "Vmax candidates"
+        },
+        "marker_lower_thresholds": {
+          "additionalProperties": {
+            "type": "number"
+          },
+          "advice": "Values at or below the threshold map to normalized zero. Every threshold must remain below all Vmax candidates scanned for that marker.",
+          "description": "Optional marker-to-lower-threshold mapping in absolute input-intensity units; omitted markers use zero.",
+          "level": "basic",
+          "stage": "nimbus-scan",
+          "title": "Marker Lower Thresholds",
+          "type": "object",
+          "ui_group": "Vmax candidates"
+        },
+        "marker_vmax_values": {
+          "additionalProperties": {
+            "items": {
+              "type": "number"
+            },
+            "type": "array"
+          },
+          "advice": "Each marker override needs at least three distinct positive values to estimate local sensitivity.",
+          "description": "Optional marker-to-explicit-Vmax mapping overriding vmax_factors for selected markers.",
+          "level": "advanced",
+          "stage": "nimbus-scan",
+          "title": "Marker Vmax Values",
+          "type": "object",
+          "ui_group": "Vmax candidates"
+        },
+        "positive_score_thresholds": {
+          "advice": "These are sensitivity views, not universal biological positivity cutoffs.",
+          "description": "Nimbus cell-score thresholds whose positive-cell proportions are plotted across Vmax candidates.",
+          "items": {
+            "type": "number"
+          },
+          "level": "basic",
+          "stage": "nimbus-scan",
+          "title": "Positive Score Thresholds",
+          "type": "array",
+          "ui_group": "Interpretation"
+        },
+        "primary_positive_score_threshold": {
+          "advice": "Validate this threshold against marker images or controls; Nimbus scores are not universally calibrated.",
+          "default": 0.5,
+          "description": "Nimbus score threshold used for call-flip, cliff, stability, and recommendation diagnostics.",
+          "level": "basic",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "stage": "nimbus-scan",
+          "title": "Primary Positive Score Threshold",
+          "type": "number",
+          "ui_group": "Interpretation"
+        },
+        "stability_tolerance": {
+          "advice": "",
+          "default": 0.05,
+          "description": "Maximum adjacent change in primary positive-cell fraction per two-fold Vmax change for a stable candidate.",
+          "level": "advanced",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "stage": "nimbus-scan",
+          "title": "Stability Tolerance",
+          "type": "number",
+          "ui_group": "Recommendation diagnostics"
+        },
+        "call_flip_tolerance": {
+          "advice": "This prevents balanced positive-to-negative and negative-to-positive swaps from looking stable merely because the total positive proportion is unchanged.",
+          "default": 0.05,
+          "description": "Maximum fraction of individual cells whose primary call may flip across either adjacent Vmax step for a stable candidate.",
+          "level": "advanced",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "stage": "nimbus-scan",
+          "title": "Call Flip Tolerance",
+          "type": "number",
+          "ui_group": "Recommendation diagnostics"
+        },
+        "saturation_tolerance": {
+          "advice": "",
+          "default": 0.05,
+          "description": "Maximum fraction of in-mask input pixels clipped at normalized value 1 for a stable candidate.",
+          "level": "advanced",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "stage": "nimbus-scan",
+          "title": "Saturation Tolerance",
+          "type": "number",
+          "ui_group": "Recommendation diagnostics"
+        },
+        "cliff_tolerance": {
+          "advice": "",
+          "default": 0.15,
+          "description": "Adjacent primary positive-fraction shift at which a marker is flagged as having a Vmax cliff.",
+          "level": "advanced",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "stage": "nimbus-scan",
+          "title": "Cliff Tolerance",
+          "type": "number",
+          "ui_group": "Recommendation diagnostics"
+        },
+        "save_cell_scores": {
+          "advice": "Disable to reduce report size; aggregate, ROI, recommendation, and figure outputs are always retained.",
+          "default": true,
+          "description": "Write one compressed per-cell score table per marker for detailed review and reproducibility.",
+          "level": "advanced",
+          "stage": "nimbus-scan",
+          "title": "Save Cell Scores",
+          "type": "boolean",
+          "ui_group": "Outputs"
+        }
+      },
+      "title": "NimbusNormalizationScanConfig",
       "type": "object"
     },
     "PairwiseSpatialConfig": {
@@ -8355,7 +8579,6 @@
           "ui_group": "Pairwise Spatial"
         },
         "population_pairs": {
-          "additionalProperties": true,
           "advice": "",
           "description": "Source-to-target population selections used only for focused barplots; supports direct or observation-nested mappings plus ALL, ALL_OTHERS, MATCH_x, and NOT_x target tokens.",
           "level": "advanced",
@@ -8519,7 +8742,6 @@
           "ui_group": "Pairwise Spatial"
         },
         "barplot_y_scale": {
-          "additionalProperties": true,
           "advice": "",
           "description": "Nested per-analysis and per-metric axis-scale rules for barplots: linear, log, log1p, or intelligent automatic selection.",
           "level": "advanced",
@@ -8529,7 +8751,6 @@
           "ui_group": "Pairwise Spatial"
         },
         "barplot_y_scale_intelligent_params": {
-          "additionalProperties": true,
           "advice": "",
           "description": "Thresholds controlling when intelligent barplot scaling chooses linear, log, or log1p display; these settings never transform the saved statistics.",
           "level": "advanced",
@@ -8827,7 +9048,7 @@
           "advice": "",
           "anyOf": [
             {
-              "minimum": 0,
+              "minimum": 0.0,
               "type": "number"
             },
             {
@@ -8939,8 +9160,8 @@
           "default": 0.7,
           "description": "Graph or UMAP purity below which a cell is classified as a boundary cell.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "population_embedding_qc",
           "title": "Graph Boundary Threshold",
           "type": "number",
@@ -8951,8 +9172,8 @@
           "default": 0.9,
           "description": "Purity at or above which a cell is classified as a core cell.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "population_embedding_qc",
           "title": "Core Purity Threshold",
           "type": "number",
@@ -8963,8 +9184,8 @@
           "default": 0.6,
           "description": "Normalized local label entropy above which a cell is counted as high entropy.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "population_embedding_qc",
           "title": "High Entropy Threshold",
           "type": "number",
@@ -8997,8 +9218,8 @@
           "default": 0.75,
           "description": "Minimum best-match Jaccard used to count resolution-sweep support.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "population_embedding_qc",
           "title": "Persistence Jaccard Threshold",
           "type": "number",
@@ -9009,8 +9230,8 @@
           "default": 0.01,
           "description": "Minimum source-cell fraction shown as an edge in sweep transition plots.",
           "level": "advanced",
-          "maximum": 1,
-          "minimum": 0,
+          "maximum": 1.0,
+          "minimum": 0.0,
           "stage": "population_embedding_qc",
           "title": "Transition Min Fraction",
           "type": "number",
@@ -9340,7 +9561,6 @@
           "ui_group": "Rapids"
         },
         "parameter_scan_dict": {
-          "additionalProperties": true,
           "advice": "",
           "description": "Lists of values expanded as a Cartesian-product scan. Supported keys are n_neighbors, n_for_pca, umap_min_dist, run_harmony, and harmony_flavor; an empty dictionary runs one normal analysis.",
           "level": "advanced",
@@ -9461,7 +9681,6 @@
           "ui_group": "Rapids"
         },
         "pca_params": {
-          "additionalProperties": true,
           "advice": "",
           "description": "Additional arguments for rapids_singlecell.pp.pca after null-like values are removed. Use layer to select an AnnData layer; n_comps, key_added, and copy are controlled by first-class fields and ignored here.",
           "level": "advanced",
@@ -9471,7 +9690,6 @@
           "ui_group": "Rapids"
         },
         "harmony_params": {
-          "additionalProperties": true,
           "advice": "",
           "description": "Additional GPU Harmony arguments after null-like values are removed. Defaults use up to 30 rounds, seed 0, progress logging, and memory-efficient float32; float64 is more numerically stable but consumes more GPU memory.",
           "level": "advanced",
@@ -9481,7 +9699,6 @@
           "ui_group": "Rapids"
         },
         "neighbors_params": {
-          "additionalProperties": true,
           "advice": "",
           "description": "Additional arguments for rapids_singlecell.pp.neighbors, such as algorithm, metric, method, random_state, and algorithm_kwds. Dedicated fields override n_neighbors, n_pcs, use_rep, key_added, and copy.",
           "level": "advanced",
@@ -9491,7 +9708,6 @@
           "ui_group": "Rapids"
         },
         "umap_params": {
-          "additionalProperties": true,
           "advice": "",
           "description": "Additional arguments for rapids_singlecell.tl.umap, such as spread, n_components, maxiter, init_pos, and random_state. Dedicated fields override min_dist, key_added, neighbors_key, and copy.",
           "level": "advanced",
@@ -9501,7 +9717,6 @@
           "ui_group": "Rapids"
         },
         "leiden_params": {
-          "additionalProperties": true,
           "advice": "",
           "description": "Additional arguments for rapids_singlecell.tl.leiden, such as random_state, theta, n_iterations, use_weights, and dtype. Dedicated fields override resolution, key_added, neighbors_key, and copy.",
           "level": "advanced",
@@ -10444,7 +10659,6 @@
           "ui_group": "Additional assets"
         },
         "attrs": {
-          "additionalProperties": true,
           "advice": "",
           "description": "Small project-level attributes to place on the SpatialData object.",
           "level": "advanced",
@@ -11823,7 +12037,6 @@
           "advice": "",
           "anyOf": [
             {
-              "additionalProperties": true,
               "type": "object"
             },
             {
@@ -12195,7 +12408,6 @@
           "ui_group": "Visualization"
         },
         "abundance_barplot_y_scale": {
-          "additionalProperties": true,
           "advice": "",
           "description": "Y-axis mode ('linear', 'log', or 'intelligent') specified globally or by abundance metric.",
           "level": "advanced",
@@ -12205,7 +12417,6 @@
           "ui_group": "Visualization"
         },
         "abundance_barplot_y_scale_intelligent_params": {
-          "additionalProperties": true,
           "advice": "",
           "description": "Thresholds controlling when intelligent abundance scaling switches a positive, wide, skewed distribution to a logarithmic axis.",
           "level": "advanced",
@@ -12293,6 +12504,14 @@
       "$ref": "#/$defs/NimbusConfig",
       "advice": "",
       "description": "Configuration value for nimbus.",
+      "level": "advanced",
+      "stage": "pipeline",
+      "ui_group": "Pipeline"
+    },
+    "nimbus_normalization_scan": {
+      "$ref": "#/$defs/NimbusNormalizationScanConfig",
+      "advice": "",
+      "description": "Configuration value for nimbus normalization scan.",
       "level": "advanced",
       "stage": "pipeline",
       "ui_group": "Pipeline"

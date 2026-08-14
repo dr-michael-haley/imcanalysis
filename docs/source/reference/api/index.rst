@@ -27,6 +27,8 @@ This reference is split by module so the site navigation stays compact.
    napari_imc_explorer
    neighbour_signal
    neighbour_signal_reports
+   nimbus_normalization
+   nimbus_normalization_scan
    pcf
    plotting
    population_identification

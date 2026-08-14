@@ -630,8 +630,10 @@ def test_worker_builds_and_resumes_cohort_only_roi_fragments(tmp_path: Path):
         images / "r1" / "CD3.tiff",
         np.arange(_mask().size, dtype=np.float32).reshape(_mask().shape),
     )
-    normalization = tmp_path / "normalization.json"
-    normalization.write_text('{"CD3": 10.0}', encoding="utf-8")
+    normalization = tmp_path / "normalization_dict.csv"
+    normalization.write_text(
+        "marker,vmax,lower_threshold\nCD3,10.0,0.5\n", encoding="utf-8"
+    )
     preview = resolve_cohort(
         _adata(),
         roi_obs="ROI",

@@ -23,7 +23,6 @@ import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 
-
 H5SC_FILENAME = "single_cells.h5sc"
 IDENTITY_FILENAME = "cell_identity.csv"
 EXTRACTION_METADATA_FILENAME = "extraction_metadata.json"
@@ -524,11 +523,14 @@ def load_normalization_dict(
     channel_names: Sequence[str],
     allow_missing: bool = False,
 ) -> dict[str, float]:
-    """Load and validate the marker-to-value JSON format produced by Nimbus."""
+    """Load Vmax values from preferred Nimbus CSV or legacy JSON."""
     if not path.is_file():
         raise FileNotFoundError(f"CellVision normalization dictionary does not exist: {path}")
+    from SpatialBiologyToolkit.nimbus_normalization import load_normalization_file
+
+    parameters = load_normalization_file(path)
     return validate_normalization_dict(
-        read_json(path),
+        {marker: entry.vmax for marker, entry in parameters.items()},
         channel_names=channel_names,
         allow_missing=allow_missing,
     )

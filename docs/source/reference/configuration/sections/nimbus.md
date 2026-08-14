@@ -6,7 +6,7 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `output_dir` | `str` | `nimbus_output` | `advanced` | Directory for normalization_dict.json, master cell tables, and optional per-ROI Nimbus confidence maps. Relative paths resolve from the project working directory. | - |
+| `output_dir` | `str` | `nimbus_output` | `advanced` | Directory for preferred normalization_dict.csv, master cell tables, and optional per-ROI Nimbus confidence maps. Relative paths resolve from the project working directory. | - |
 | `roi_table_subfolder` | `str` | `nimbus_cell_tables` | `advanced` | Subdirectory below general.celltable_folder for ROI-level Nimbus cell tables; use an empty string to write them directly into general.celltable_folder. | - |
 | `master_celltable` | `str` | `nimbus_celltable.csv` | `advanced` | Filename or path for the combined cell table containing mask geometry and per-marker Nimbus scores. Relative paths are placed below output_dir; an empty value falls back to segmentation.celltable_output. | - |
 | `master_classic_celltable` | `str` | `nimbus_classic_celltable.csv` | `advanced` | Filename or path for conventional mean image intensities measured inside each adjusted cell mask. Relative paths are placed below output_dir. | - |
@@ -26,13 +26,13 @@
 | `dataset_magnification` | `int` | `10` | `advanced` | Magnification represented by the supplied channel images and masks. Set this to the true input scale so image and mask data are rescaled consistently for the model. | - |
 | `checkpoint` | `str` | `latest` | `advanced` | Nimbus model checkpoint. 'latest' checks Hugging Face for the newest V*.pt file and falls back to a cached checkpoint; any other value must name a local packaged checkpoint. | - |
 | `device` | `str` | `auto` | `advanced` | Torch inference device: 'auto' prefers Apple MPS, then CUDA, then CPU; explicit supported values are 'mps', 'cuda', and 'cpu'. | - |
-| `normalization_quantile` | `float` | `0.999` | `advanced` | Per-ROI, in-mask image quantile calculated for each channel; values are averaged across all usable ROIs to obtain the channel divisor before Nimbus inference. | - |
+| `normalization_quantile` | `float` | `0.999` | `advanced` | Per-ROI, in-mask image quantile calculated for each channel; values are averaged across all usable ROIs to obtain the channel Vmax before Nimbus inference. | - |
 | `normalization_subset` | `int` | `10` | `advanced` | Maximum number of randomly sampled ROIs displayed in each normalization QC gallery. Normalization itself uses all usable ROIs; set to 0 to skip the galleries. | - |
 | `normalization_jobs` | `int` | `1` | `advanced` | Compatibility setting for normalization concurrency. The current toolkit wrapper calculates normalization serially, so this value does not presently change execution. | - |
 | `normalization_clip` | `List[float]` | `[0.0, 1.0]` | `advanced` | Compatibility bounds used by normalization QC, whose second value sets the displayed upper clip. The pinned Nimbus loader clips inference images to [0, 1]. | - |
-| `normalization_min_value` | `float` | `3.0` | `advanced` | Positive lower bound applied to computed channel normalization divisors, preventing near-zero background estimates from amplifying noise. | - |
-| `reuse_saved_normalization` | `bool` | `False` | `advanced` | Load output_dir/normalization_dict.json instead of recomputing channel divisors. Finite positive manual values are retained and normalization QC is still regenerated. | - |
-| `norm_dict_qc_only` | `bool` | `False` | `advanced` | Stop after writing or loading normalization_dict.json and generating normalization QC; do not run Nimbus, extract intensities, or create cell tables and AnnData. | - |
+| `normalization_min_value` | `float` | `3.0` | `advanced` | Positive lower bound applied to computed channel Vmax values, preventing near-zero background estimates from amplifying noise. | - |
+| `reuse_saved_normalization` | `bool` | `False` | `advanced` | Load output_dir/normalization_dict.csv instead of recomputing channel bounds; legacy normalization_dict.json remains readable. Valid manual values are retained and normalization QC is still regenerated. | - |
+| `norm_dict_qc_only` | `bool` | `False` | `advanced` | Stop after writing or loading the Nimbus normalization CSV (or legacy JSON) and generating normalization QC; do not run Nimbus, extract intensities, or create cell tables and AnnData. | - |
 | `save_prediction_maps` | `bool` | `False` | `advanced` | Save each per-pixel Nimbus confidence map as an 8-bit TIFF under an ROI subdirectory of output_dir. Per-cell floating-point scores are produced regardless. | - |
 | `allow_prediction_resize` | `bool` | `False` | `advanced` | On an unexpected confidence-map versus mask shape mismatch, resize the prediction to the mask instead of failing. Enable only as a diagnosed fallback because resizing can alter cell-level scores. | - |
 | `use_existing_master_celltables` | `bool` | `False` | `advanced` | Reuse valid existing Nimbus, classic, and expansion master CSVs where available. This is automatically disabled when mask offsets or area filters could make tables stale. | - |

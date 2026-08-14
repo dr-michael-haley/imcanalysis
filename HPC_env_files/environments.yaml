@@ -149,6 +149,7 @@ stage_environments:
   prep: [segmentation]
   vis: [segmentation]
   nimbus: [segmentation]
+  nimbus-scan: [segmentation]
   bint: [cellcharter]
   rapids: [rapids]
   cellvision-extract: [scportrait]
