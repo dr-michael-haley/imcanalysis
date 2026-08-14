@@ -11,10 +11,41 @@ from SpatialBiologyToolkit.napari_sbt.explore import (
     ExploreReviewState,
     ExploreViewRecipe,
     categorical_colour_map,
+    identity_value_map,
     marker_values,
     population_recipe_key,
     recipe_layer_data_is_current,
 )
+
+
+def test_identity_value_map_vectorizes_non_contiguous_ids_and_background():
+    mask = np.asarray([[0, 2, 2], [100, 100, 7]], dtype=np.int32)
+    values = pd.Series([0.25, 0.75], index=[2, 100])
+
+    mapped = identity_value_map(mask, values, background_value=-1)
+
+    np.testing.assert_allclose(
+        mapped,
+        [[-1, 0.25, 0.25], [0.75, 0.75, -1]],
+    )
+
+
+def test_identity_value_map_supports_constant_population_masks():
+    mask = np.asarray([[0, 2, 5], [9, 5, 2]], dtype=np.int32)
+    values = pd.Series([1, 1], index=[2, 9])
+
+    mapped = identity_value_map(mask, values, dtype=np.uint8)
+
+    np.testing.assert_array_equal(mapped, [[0, 1, 0], [1, 0, 1]])
+
+
+def test_identity_value_map_avoids_large_lookup_for_sparse_high_ids():
+    mask = np.asarray([[0, 3], [1_000_000_000, 3]], dtype=np.int64)
+    values = pd.Series([2.5, 8.5], index=[3, 1_000_000_000])
+
+    mapped = identity_value_map(mask, values)
+
+    np.testing.assert_allclose(mapped, [[0, 2.5], [8.5, 2.5]])
 
 
 def _adata_like(*, colours=None):

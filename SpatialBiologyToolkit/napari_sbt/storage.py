@@ -15,7 +15,6 @@ from SpatialBiologyToolkit.pipeline.manifests import (
     read_model,
     utc_now,
     write_json,
-    write_text,
     write_yaml,
 )
 
@@ -290,14 +289,25 @@ def load_experiment(root_or_manifest: str | Path) -> tuple[ExperimentManifest, E
 
 
 def append_audit(paths: ExperimentPaths, payload: dict[str, Any]) -> Path:
-    """Append an event through an atomic whole-file rewrite."""
+    """Append one JSONL event without rereading and rewriting the full audit."""
 
     event = {"timestamp": utc_now().isoformat(), **payload}
-    existing = ""
-    if paths.label_audit.exists():
-        existing = paths.label_audit.read_text(encoding="utf-8")
-    line = json.dumps(event, ensure_ascii=False, sort_keys=True)
-    return write_text(paths.label_audit, existing + line + "\n")
+    encoded = (json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n").encode(
+        "utf-8"
+    )
+    paths.label_audit.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(
+        paths.label_audit,
+        os.O_APPEND | os.O_CREAT | os.O_WRONLY | getattr(os, "O_BINARY", 0),
+        0o666,
+    )
+    try:
+        remaining = memoryview(encoded)
+        while remaining:
+            remaining = remaining[os.write(descriptor, remaining) :]
+    finally:
+        os.close(descriptor)
+    return paths.label_audit
 
 
 def feature_recipe_hash(payload: dict[str, Any]) -> str:

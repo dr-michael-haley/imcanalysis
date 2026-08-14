@@ -21,6 +21,10 @@ do not maintain separate explanations.
 :heading-offset: 1
 ```
 
+```{include} ../../../SpatialBiologyToolkit/napari_sbt/help/population_qc.md
+:heading-offset: 1
+```
+
 ```{include} ../../../SpatialBiologyToolkit/napari_sbt/help/populations.md
 :heading-offset: 1
 ```

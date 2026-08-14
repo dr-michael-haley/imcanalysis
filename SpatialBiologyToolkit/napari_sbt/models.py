@@ -1,4 +1,4 @@
-"""Versioned experiment models for cohort-first Napari classification."""
+"""Versioned workspace models for Napari exploration and classification."""
 
 from __future__ import annotations
 
@@ -21,6 +21,14 @@ from .feature_catalog import (
 SCHEMA_VERSION = 1
 CLASS_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 SHORTCUT_PATTERN = re.compile(r"^[1-8]$")
+WorkflowMode = Literal[
+    "data_exploration",
+    "population_qc",
+    "classification",
+    "cell_labeling",
+    "population_curation",
+    "full_workspace",
+]
 
 
 def utc_timestamp() -> datetime:
@@ -81,13 +89,19 @@ class CellScope(BaseModel):
     def validate_scope(self) -> CellScope:
         if self.mode == "obs_values":
             if not self.obs_column or not self.obs_column.strip():
-                raise ValueError("obs_values scope requires an AnnData observation column.")
+                raise ValueError(
+                    "obs_values scope requires an AnnData observation column."
+                )
             self.obs_column = self.obs_column.strip()
             self.obs_values = [str(value) for value in self.obs_values]
             if not self.obs_values:
-                raise ValueError("obs_values scope requires at least one selected value.")
+                raise ValueError(
+                    "obs_values scope requires at least one selected value."
+                )
         elif self.obs_column is not None or self.obs_values:
-            raise ValueError("all_cells scope must not define obs_column or obs_values.")
+            raise ValueError(
+                "all_cells scope must not define obs_column or obs_values."
+            )
         if self.eligible_cell_count > self.total_cell_count:
             raise ValueError("Eligible cell count cannot exceed total cell count.")
         return self
@@ -193,9 +207,7 @@ class SyntheticFeatureRecipe(BaseModel):
             )
             unknown = sorted(set(selected) - set(catalog))
             if unknown:
-                raise ValueError(
-                    f"Unknown {label} feature selection(s): {unknown}"
-                )
+                raise ValueError(f"Unknown {label} feature selection(s): {unknown}")
             setattr(self, selection_field, selected)
             if getattr(self, enabled_field) and not selected:
                 raise ValueError(
@@ -231,9 +243,7 @@ class FeatureDiscoveryTrial(BaseModel):
     def validate_trial(self) -> FeatureDiscoveryTrial:
         self.selected_rois = list(
             dict.fromkeys(
-                str(roi).strip()
-                for roi in self.selected_rois
-                if str(roi).strip()
+                str(roi).strip() for roi in self.selected_rois if str(roi).strip()
             )
         )
         if self.selected_rois and len(self.selected_rois) != self.roi_count:
@@ -247,14 +257,38 @@ class FeatureDiscoveryTrial(BaseModel):
         return self
 
 
+class DisplaySettings(BaseModel):
+    """Experiment-backed defaults for normalized image display."""
+
+    normalization_dict_path: str | None = None
+    fallback_quantile: float = Field(default=0.999, gt=0, le=1)
+    minimum_pixel_counts: float = Field(default=0.1, ge=0)
+    default_contrast_limits: tuple[float, float] = (0.0, 1.0)
+
+    @model_validator(mode="after")
+    def validate_display_settings(self) -> DisplaySettings:
+        lower, upper = (float(value) for value in self.default_contrast_limits)
+        if not 0 <= lower < upper <= 1:
+            raise ValueError(
+                "Default normalized image contrast limits must satisfy "
+                f"0 <= lower < upper <= 1; got {(lower, upper)!r}."
+            )
+        self.default_contrast_limits = (lower, upper)
+        if self.normalization_dict_path is not None:
+            path = str(self.normalization_dict_path).strip()
+            self.normalization_dict_path = path or None
+        return self
+
+
 class ExperimentManifest(BaseModel):
-    """Canonical, versioned definition of one classification experiment."""
+    """Canonical, versioned definition of one NapariSBT workflow workspace."""
 
     schema_version: Literal[SCHEMA_VERSION] = SCHEMA_VERSION
     experiment_id: str = Field(default_factory=lambda: str(uuid4()))
     revision: int = Field(default=1, ge=1)
     name: str
     slug: str | None = None
+    workflow_mode: WorkflowMode = "classification"
     task_type: Literal["single_label_multiclass"] = "single_label_multiclass"
     created_at: datetime = Field(default_factory=utc_timestamp)
     updated_at: datetime = Field(default_factory=utc_timestamp)
@@ -273,6 +307,7 @@ class ExperimentManifest(BaseModel):
     synthetic_features: SyntheticFeatureRecipe = Field(
         default_factory=SyntheticFeatureRecipe
     )
+    display_settings: DisplaySettings = Field(default_factory=DisplaySettings)
     active_feature_set_id: str | None = None
     active_model_features: list[str] = Field(default_factory=list)
     output_obs_slug: str | None = None
@@ -355,10 +390,12 @@ __all__ = [
     "SCHEMA_VERSION",
     "CellScope",
     "ClassificationClass",
+    "DisplaySettings",
     "ExperimentManifest",
     "FeatureDiscoveryTrial",
     "FeatureSource",
     "SyntheticFeatureRecipe",
+    "WorkflowMode",
     "segmentation_qc_classes",
     "slugify",
 ]

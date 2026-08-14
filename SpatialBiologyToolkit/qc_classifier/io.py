@@ -14,14 +14,16 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Mapping
 
 import numpy as np
 import pandas as pd
 import skimage as sk
+
+from SpatialBiologyToolkit._napari_imc_normalization import normalize_imc_image
 
 MASK_EXTENSIONS = (".tif", ".tiff")
 IMAGE_EXTENSIONS = (".tif", ".tiff", ".png", ".jpg", ".jpeg", ".bmp", ".webp")
@@ -142,17 +144,25 @@ def file_fingerprint(path: str | Path | None, max_bytes: int | None = None) -> d
         "path": str(path),
         "exists": True,
         "size_bytes": stat.st_size,
-        "modified_time": datetime.fromtimestamp(stat.st_mtime, timezone.utc).replace(microsecond=0).isoformat(),
+        "modified_time": datetime.fromtimestamp(stat.st_mtime, timezone.utc)
+        .replace(microsecond=0)
+        .isoformat(),
         "sha256": sha256.hexdigest(),
         "hash_bytes": bytes_read,
     }
 
 
-def infer_mask_extension(masks_folder: str | Path, mask_extension: str | None = None) -> str | None:
+def infer_mask_extension(
+    masks_folder: str | Path, mask_extension: str | None = None
+) -> str | None:
     """Infer the extension used by masks in ``masks_folder``."""
 
     if mask_extension:
-        return mask_extension if str(mask_extension).startswith(".") else f".{mask_extension}"
+        return (
+            mask_extension
+            if str(mask_extension).startswith(".")
+            else f".{mask_extension}"
+        )
 
     folder = Path(masks_folder)
     if not folder.exists():
@@ -164,7 +174,9 @@ def infer_mask_extension(masks_folder: str | Path, mask_extension: str | None = 
     return None
 
 
-def discover_mask_files(masks_folder: str | Path, mask_extension: str | None = None) -> dict[str, Path]:
+def discover_mask_files(
+    masks_folder: str | Path, mask_extension: str | None = None
+) -> dict[str, Path]:
     """Return ``{roi: mask_path}`` for TIFF masks in a folder."""
 
     folder = Path(masks_folder)
@@ -182,6 +194,18 @@ def discover_mask_files(masks_folder: str | Path, mask_extension: str | None = N
             continue
         mask_paths.setdefault(path.stem, path)
     return mask_paths
+
+
+def resolve_mask_file(masks_folder: str | Path, roi: str) -> Path | None:
+    """Resolve one conventionally named ROI mask without scanning its folder."""
+
+    folder = Path(masks_folder)
+    roi = str(roi)
+    for extension in MASK_EXTENSIONS:
+        candidate = folder / f"{roi}{extension}"
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _normalise_image_alias(value) -> str | None:
@@ -302,6 +326,7 @@ def discover_roi_images(
     roi: str,
     *,
     channel_aliases: Mapping[str, str] | None = None,
+    scan_flat_folder: bool = True,
 ) -> dict[str, Path]:
     """
     Return display-name to image-path mappings for one ROI.
@@ -331,6 +356,17 @@ def discover_roi_images(
 
         if not folder.exists():
             continue
+        if not scan_flat_folder:
+            for extension in IMAGE_EXTENSIONS:
+                path = folder / f"{roi}{extension}"
+                if path.is_file():
+                    _add_discovered_image(
+                        image_paths,
+                        folder.name or path.stem,
+                        path,
+                        folder.name or str(folder),
+                    )
+            continue
         for path in sorted(folder.iterdir()):
             if not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
                 continue
@@ -350,6 +386,65 @@ def discover_roi_images(
                 )
 
     return image_paths
+
+
+def discover_roi_image_index(
+    image_folders: str | Path | Iterable[str | Path],
+    rois: Iterable[str],
+    *,
+    channel_aliases: Mapping[str, str] | None = None,
+) -> dict[str, dict[str, Path]]:
+    """Scan configured image folders once and index paths for known ROIs."""
+
+    if isinstance(image_folders, (str, Path)):
+        image_folders = [image_folders]
+    roi_names = list(dict.fromkeys(str(roi) for roi in rois))
+    roi_set = set(roi_names)
+    image_index: dict[str, dict[str, Path]] = {roi: {} for roi in roi_names}
+
+    for raw_folder in image_folders:
+        folder = Path(raw_folder)
+        if not folder.is_dir():
+            continue
+        source_name = folder.name or str(folder)
+        for entry in sorted(folder.iterdir()):
+            if entry.is_dir() and entry.name in roi_set:
+                roi = entry.name
+                for path in sorted(entry.iterdir()):
+                    if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS:
+                        _add_discovered_image(
+                            image_index[roi],
+                            _image_channel_name(path, roi, channel_aliases),
+                            path,
+                            source_name,
+                        )
+                continue
+            if not entry.is_file() or entry.suffix.lower() not in IMAGE_EXTENSIONS:
+                continue
+            stem = entry.stem
+            roi = stem if stem in roi_set else None
+            if roi is None:
+                candidates = [
+                    stem[:index]
+                    for index, character in enumerate(stem)
+                    if character == "_" and stem[:index] in roi_set
+                ]
+                if candidates:
+                    roi = max(candidates, key=len)
+            if roi is None:
+                continue
+            name = (
+                source_name
+                if stem == roi
+                else _image_channel_name(entry, roi, channel_aliases)
+            )
+            _add_discovered_image(
+                image_index[roi],
+                name,
+                entry,
+                source_name,
+            )
+    return image_index
 
 
 def discover_image_rois(image_folders: str | Path | Iterable[str | Path]) -> set[str]:
@@ -401,7 +496,9 @@ def load_mask(mask_path: str | Path) -> np.ndarray:
     mask = sk.io.imread(mask_path)
     mask = np.squeeze(mask)
     if mask.ndim != 2:
-        raise ValueError(f"Mask must be 2D after squeezing, got shape {mask.shape}: {mask_path}")
+        raise ValueError(
+            f"Mask must be 2D after squeezing, got shape {mask.shape}: {mask_path}"
+        )
     return mask.astype(np.int32, copy=False)
 
 
@@ -410,6 +507,7 @@ def load_display_image(
     *,
     quantile: float = 0.999,
     minimum_pixel_counts: float = 0.1,
+    normalization_value: float | None = None,
 ) -> tuple[np.ndarray, bool]:
     """
     Load an image for Napari display using explorer-style normalization.
@@ -424,15 +522,13 @@ def load_display_image(
         return image, True
 
     image = np.squeeze(image).astype(np.float32, copy=False)
-    image = np.where(image > minimum_pixel_counts, image, 0)
-    finite_values = image[np.isfinite(image)]
-    if finite_values.size:
-        max_quant = float(np.quantile(finite_values, quantile))
-        if max_quant < 5:
-            max_quant = 3.0
-        if max_quant > 0:
-            image = image / max_quant
-    image = np.clip(image, 0, 1)
+    image = np.where(np.isfinite(image), image, 0)
+    image = normalize_imc_image(
+        image,
+        quantile=quantile,
+        minimum_pixel_counts=minimum_pixel_counts,
+        normalization_value=normalization_value,
+    )
     return image, False
 
 

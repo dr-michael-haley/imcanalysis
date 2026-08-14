@@ -1,9 +1,10 @@
 # `napari_sbt`: cohort-first IMC exploration and classification
 
 `napari_sbt` combines the reusable parts of the IMC explorer and CellPose
-active-learning viewer in one experiment-driven Napari dock. It supports both
-whole-segmentation QC and the more common task of subclassifying cells from one
-or more values in a categorical `AnnData.obs` column.
+active-learning viewer in one experiment-driven Napari dock. Setup first asks
+whether the session is for data exploration, Population QC, classification,
+manual labeling, population curation, or the full workspace, then hides tabs that
+are irrelevant to that task.
 
 The original images, masks, and AnnData are read-only. An experiment freezes
 the eligible `(ROI, ObjectNumber)` identities before feature calculation,
@@ -105,7 +106,20 @@ interface.
 
 ## Setup and the frozen cohort
 
-Cell scope is required. Choose either:
+Workflow selection is required before a workspace is created. Exploration-only
+workspaces still create the same experiment-backed folder structure, allowing
+named views and reviewed-ROI state to persist without exposing feature building
+or classifier controls. The selected workflow is stored in the manifest and can
+be changed later without deleting data from hidden tabs.
+
+Setup provides an explicit **Validate integrity and build fast asset index**
+action. It is the only normal UI operation that scans complete mask/image folders
+and validates every eligible mask identity. The resulting
+`inputs/integrity_index.json` is reused across ROI changes and later sessions;
+ordinary navigation uses cached or direct ROI-specific lookups. A current
+validation result is required before creating a new workspace.
+
+For classification, cell scope is required. Choose either:
 
 - **All cells**, which is the replacement for the whole-mask CellPose QC use
   case.
@@ -148,6 +162,45 @@ exist.
 The Setup class table renders each colour as a readable swatch. Double-click
 the swatch, or select its row and use **Pick selected colour…**, to open the
 colour picker; the saved hexadecimal value remains visible on the swatch.
+
+Setup also owns scientific-display normalization. A Nimbus normalization JSON,
+or a CSV containing `Marker` and `Value` columns, can be loaded into an editable
+pane, validated, and copied in canonical JSON form to
+`display/normalization.json` inside the workspace. Fixed per-channel maxima are
+used where available; unmatched channels use the configurable fallback quantile
+and minimum-pixel threshold. Default contrast handles apply only when a recipe
+does not contain an explicit channel range. Images and Napari's slider range stay
+on 0–1, while saved recipe contrast limits take precedence over Setup defaults.
+
+## Population QC
+
+The dedicated **Population QC** tab is a focused version of the general Explore
+recipe workflow. Select an AnnData observation and population, then choose up to
+three red, green, and blue image channels with individual 0–1 contrast ranges.
+NapariSBT can suggest the three available image channels with the highest mean
+matched `adata.X` expression in that population. Each population-specific RGB
+view is stored in the shared Explore state, including its colours and contrast.
+
+When no saved population recipe exists, those three marker suggestions are
+calculated immediately and cached for the selected population. ROI abundance
+rankings are cached too. ROI switching uses vectorized object-ID overlays, retains
+the bounded image/overlay cache across ROIs, updates matching Napari layers in
+place, and omits classification cohort/context arrays in exploration-only modes.
+Live tracking of manual layer changes defaults off for a Population QC session
+and on for Data exploration; explicit recipes and viewed-ROI history remain
+available in either mode.
+
+ROIs can be recalculated by highest abundance, lowest abundance, or a reproducible
+random ordering, with a configurable result count and random seed. Buttons show
+the matching-cell count and change from green to grey once the ROI has been viewed
+with the exact current recipe fingerprint. Legacy IMC Explorer population-setting
+CSVs can be imported, and the current observation's settings can be exported.
+
+Named Explore recipes and review histories persist in
+`explore/review_state.json`. Recipes can also be imported and exported as JSON.
+If a saved recipe references a classifier, marker, observation, or image layer
+that is absent from the current workflow or ROI, the entry remains stored and is
+highlighted in orange; it is retried later instead of being silently pruned.
 
 ## Feature sources and calculation
 
@@ -425,11 +478,12 @@ visibility, opacity, applicable contour width, and image contrast limits.
 Switching recipes within one ROI first compares each requested layer with its
 existing reload metadata. Matching image arrays and overlays are reused in place
 and receive only display settings that actually changed. Layers removed by a
-different recipe can be restored from a least-recently-used current-ROI memory
-cache instead of being read or calculated again. The cache is bounded to 48 arrays
-or 512 MiB and is cleared when the ROI or live AnnData inputs are refreshed. Image
-identity includes path, size, and modification time. Changing ROI, source data, or
-the requested semantic overlay still triggers the necessary load or recalculation.
+different recipe can be restored from a least-recently-used cross-ROI memory cache
+instead of being read or calculated again. The cache is bounded to 48 arrays or
+512 MiB and is cleared when source, normalization, or live AnnData inputs change,
+not on every ROI switch. Image identity includes path, size, and modification time.
+Changing source data or the requested semantic overlay still triggers the necessary
+load or recalculation; revisiting a cached ROI can avoid it.
 The working view can be saved as any number of named recipes. Each recipe may
 have one unique F1–F12 shortcut; pressing that key while the Napari viewer has
 keyboard focus immediately activates and renders the recipe for the current ROI

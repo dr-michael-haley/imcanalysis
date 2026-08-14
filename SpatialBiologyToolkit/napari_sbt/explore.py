@@ -37,6 +37,69 @@ FALLBACK_CATEGORY_COLOURS = (
 )
 
 
+def identity_value_map(
+    mask: np.ndarray,
+    values: pd.Series,
+    *,
+    dtype=np.float32,
+    background_value: float = 0,
+) -> np.ndarray:
+    """Map object identities to pixels with one vectorized mask traversal."""
+
+    mask = np.asarray(mask)
+    if mask.ndim != 2:
+        raise ValueError(f"Identity maps require a 2-D mask, got {mask.shape}.")
+    if values.empty:
+        return np.full(mask.shape, background_value, dtype=dtype)
+
+    # A small Python pass over identities is intentional: it preserves the
+    # previous last-value-wins behaviour for duplicate IDs without ever scanning
+    # the image once per cell.
+    mapped_values: dict[int, Any] = {}
+    for object_id, value in values.items():
+        if pd.notna(value):
+            mapped_values[int(object_id)] = value
+    if not mapped_values:
+        return np.full(mask.shape, background_value, dtype=dtype)
+
+    object_ids = np.fromiter(mapped_values, dtype=np.int64)
+    pixel_values = np.asarray(list(mapped_values.values()), dtype=dtype)
+    maximum_label = int(mask.max(initial=0))
+    usable = (object_ids >= 0) & (object_ids <= maximum_label)
+    object_ids = object_ids[usable]
+    pixel_values = pixel_values[usable]
+    if object_ids.size == 0:
+        return np.full(mask.shape, background_value, dtype=dtype)
+
+    if bool(np.all(pixel_values == pixel_values[0])):
+        output = np.full(mask.shape, background_value, dtype=dtype)
+        output[np.isin(mask, object_ids)] = pixel_values[0]
+        return output
+
+    output_dtype = np.dtype(dtype)
+    lookup_bytes = (maximum_label + 1) * output_dtype.itemsize
+    lookup_limit = max(64 * 1024 * 1024, int(mask.nbytes) * 4)
+    if int(mask.min(initial=0)) >= 0 and lookup_bytes <= lookup_limit:
+        lookup = np.full(maximum_label + 1, background_value, dtype=output_dtype)
+        lookup[object_ids] = pixel_values
+        return lookup[mask]
+
+    # Extremely sparse masks can have a very large maximum label. A sorted
+    # search remains vectorized without allocating a maximum-label-sized table.
+    order = np.argsort(object_ids)
+    sorted_ids = object_ids[order]
+    sorted_values = pixel_values[order]
+    flat_mask = mask.ravel()
+    positions = np.searchsorted(sorted_ids, flat_mask)
+    candidates = positions < sorted_ids.size
+    matched = np.zeros(flat_mask.size, dtype=bool)
+    matched[candidates] = sorted_ids[positions[candidates]] == flat_mask[candidates]
+    output = np.full(mask.shape, background_value, dtype=dtype)
+    output_flat = output.ravel()
+    output_flat[matched] = sorted_values[positions[matched]]
+    return output
+
+
 def _colour_text(value: Any) -> str | None:
     """Normalize common Scanpy/Matplotlib colour representations."""
 
@@ -283,13 +346,14 @@ def population_recipe_key(observation: str, population: str) -> str:
 
 
 __all__ = [
-    "EXPLORE_STATE_VERSION",
     "EXPLORE_RECIPE_FUNCTION_KEYS",
+    "EXPLORE_STATE_VERSION",
     "ExploreRecipePreset",
     "ExploreReviewState",
     "ExploreViewRecipe",
     "SIX_COLOUR_COLORMAPS",
     "categorical_colour_map",
+    "identity_value_map",
     "marker_values",
     "observation_categories",
     "population_recipe_key",

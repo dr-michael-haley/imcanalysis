@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 
 from SpatialBiologyToolkit._napari_imc_normalization import (
     find_normalization_value,
+    load_normalization_mapping,
     normalize_imc_image,
     normalized_contrast_limits,
     prepare_normalization_dict,
@@ -13,6 +16,31 @@ from SpatialBiologyToolkit._napari_imc_normalization import (
 
 
 class NapariIMCNormalizationTests(unittest.TestCase):
+    def test_marker_value_csv_is_loaded(self):
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "normalization.csv"
+            source.write_text("Marker,Value\nCD3,10.5\nCD20,20\n", encoding="utf-8")
+
+            values = load_normalization_mapping(source)
+
+        self.assertEqual(values, {"CD3": 10.5, "CD20": 20.0})
+
+    def test_normalization_csv_requires_marker_and_value_columns(self):
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "normalization.csv"
+            source.write_text("Channel,Maximum\nCD3,10.5\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "Marker and Value"):
+                load_normalization_mapping(source)
+
+    def test_normalization_csv_rejects_duplicate_markers_ignoring_case(self):
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "normalization.csv"
+            source.write_text("Marker,Value\nCD3,10.5\ncd3,20\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(ValueError, "unique ignoring case"):
+                load_normalization_mapping(source)
+
     def test_nimbus_string_values_are_accepted(self):
         values = prepare_normalization_dict({"CD3": "10.5", "CD20": 20})
 

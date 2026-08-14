@@ -6,7 +6,9 @@ import pandas as pd
 
 from SpatialBiologyToolkit.qc_classifier.io import (
     build_image_channel_aliases,
+    discover_roi_image_index,
     discover_roi_images,
+    resolve_mask_file,
 )
 
 
@@ -61,3 +63,21 @@ def test_ambiguous_panel_alias_is_not_assigned_to_the_wrong_variable():
     assert "shared" not in aliases
     assert aliases["marker_a"] == "marker_a"
     assert aliases["marker_b"] == "marker_b"
+
+
+def test_integrity_index_scans_nested_and_flat_images_once(tmp_path: Path):
+    images = tmp_path / "images"
+    nested = _touch(images / "ROI_A" / "CD3.tiff")
+    flat = _touch(images / "ROI_B_CD20.tiff")
+
+    index = discover_roi_image_index(images, ["ROI_A", "ROI_B"])
+
+    assert index["ROI_A"] == {"CD3": nested}
+    assert index["ROI_B"] == {"CD20": flat}
+
+
+def test_fast_mask_resolution_does_not_require_directory_discovery(tmp_path: Path):
+    expected = _touch(tmp_path / "ROI_A.tiff")
+
+    assert resolve_mask_file(tmp_path, "ROI_A") == expected
+    assert resolve_mask_file(tmp_path, "missing") is None

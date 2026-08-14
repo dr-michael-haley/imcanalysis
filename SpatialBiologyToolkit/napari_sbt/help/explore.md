@@ -8,9 +8,13 @@ being labelled and evaluated.
 ## ROI navigation and layer controls
 
 Choose an ROI or use **Previous ROI** and **Next ROI**. **Load ROI** refreshes the
-mask, available channels, and cohort layers. Enable empty ROIs only when checking
-data completeness. The dimmed full-mask context is optional and does not change
-the eligible classification cohort.
+mask and available channels. Enable empty ROIs only after building the Setup
+integrity index. The dimmed full-mask context is optional and does not change the
+eligible classification cohort.
+
+Data exploration and Population QC do not construct classification-cohort or
+excluded-context label arrays. Classification and Labeler workflows still create
+them because cell eligibility is part of those interactions.
 
 **Hide all layers** and **Show all layers** change visibility without discarding
 the view. **Delete all layers** removes the displayed layers; saved reload-recipe
@@ -51,6 +55,13 @@ moving to another ROI, together with colours, visibility, opacity, contours, and
 contrast limits. Several recipes can be stored under descriptive names—for
 example, `T-cell verification`, `Macrophage review`, or `Segmentation QC`.
 
+Named recipes and their viewed-ROI fingerprints are written immediately to
+`explore/review_state.json` inside the workspace, so they return when the
+experiment is reopened. **Export selected recipe JSON** creates a portable copy;
+**Import recipe JSON** adds one from another workspace. Conflicting names receive
+an imported suffix, conflicting IDs are replaced, and a conflicting F-key is left
+unassigned rather than overwriting another shortcut.
+
 Build the desired view, enter a name, optionally choose an unused F1–F12 shortcut,
 then click **Save current view as new recipe**. Choose an existing recipe and use
 **Update selected recipe from current view** to replace its saved layer definition,
@@ -64,14 +75,22 @@ recipe active and applies its layers for the current ROI without changing the
 currently selected workflow tab. Layers whose ROI and semantic data source already
 match are reused in place: only changed colour, visibility, opacity, contour, and
 contrast settings are applied. Layers removed by another recipe can be restored
-from a bounded current-ROI memory cache instead of reading or calculating them
+from a bounded cross-ROI memory cache instead of reading or calculating them
 again. The least-recently-used cache holds at most 48 arrays or 512 MiB and is
-cleared when an ROI or live AnnData inputs are refreshed. Image identity includes
+cleared when source, normalization, or live AnnData inputs changeâ€”not on every ROI
+switch. Image identity includes
 the source path, size, and modification time, so a changed image is still reloaded.
 Missing, changed, or genuinely different data are loaded or recalculated normally. The
 active-status line distinguishes a saved recipe from a modified working view; a
 modified view is not written back until **Update selected recipe from current
 view** is clicked.
+
+Unavailable layers are never pruned merely because the current workflow, AnnData,
+or ROI cannot reconstruct them. They remain in the recipe list with an orange
+warning and are retried when their source becomes available. This permits a
+classification recipe to be inspected in Data exploration mode without losing
+confirmed, proposed, prediction, or focus-mask display settings. Use **Delete
+selected recipe items** when an absent entry should genuinely be removed.
 
 Scalar channel images are normalized onto a 0â€“1 display scale. When a recipe
 restores their saved contrast handles, the Napari slider itself remains fixed at
@@ -85,6 +104,11 @@ visible in the layers rather than reverting to their original loading palette.
 Delete selected recipe entries to stop recreating them. Reviewed-ROI
 colouring applies to the complete current recipe fingerprint, so each named view
 retains its own effective reviewed-ROI context.
+
+The Setup **Live recipe tracking** toggle controls automatic capture of manual
+layer changes. It defaults on for Data exploration and off for Population QC.
+Explicit recipe actions and Population QC RGB controls continue to work while
+tracking is disabled.
 
 Treat the list as an exact preview of what automatic ROI navigation will recreate.
 Classifier layers are regenerated from current labels and scores, while their

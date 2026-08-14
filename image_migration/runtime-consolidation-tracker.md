@@ -41,7 +41,7 @@ The following runtimes are deliberately not part of this merger:
 | Define the original `sbt-analysis` candidate | complete | Added the registry candidate, initial Conda/pip specifications, smoke tests, and this tracker. | Approved a full joint-install experiment. | 30 environment-management tests passed; repository validation passed with no warnings; candidate remained inactive. | Not committed | The first CSF3 pip solve exposed the NumPy/Zarr generation conflict. |
 | Revise `sbt-analysis` around RAPIDS and SpatialData | complete | Replaced STARLING with RAPIDS, encoded flexible channel priority, moved to Python 3.12, retained CellCharter 0.3.7 and the pinned SpatialData 0.4/Zarr 2 spine, and expanded smoke tests. | Approved the maximal merger and the policy of splitting Nimbus only if testing proves necessary. | 31 environment-management tests passed; repository validation passed with no warnings; `git diff --check` passed. Static specification validation reports only the intentionally missing new Linux lock and the expected BioBatchNet VCS-review warning. | Not committed | No production stage mappings changed. |
 | Generate a new reviewed Linux lock and perform a clean joint install | complete | Reviewed the RAPIDS lock and clean installations; diagnosed and corrected the Zarr/Numcodecs boundary. | Generated the corrected lock and completed a clean `sbt-analysis` installation on CSF3. | Corrected lock SHA-256 `dc54f3f5dc9e9119420c40e1a22048df4b8cc6017fadfca0a35d6592945e6cb6`; Conda, pip extras and editable overlay installed; Python 3.12 and all exact-version assertions passed. | `d823c79` plus CSF3 lock | The remaining registered failure was isolated to unwanted optional scArches support, not the four target runtime families. |
-| Run registered imports and GPU smoke tests | waiting for user | Removed optional scArches from the candidate after its AnnData-incompatible import was isolated; retained CellCharter's default existing-embedding route. | Pull this specification update, rerun the registered import suite, then run the supplied GPU checks in an appropriate CSF3 job. | Individual imports pass for RAPIDS, SpatialData/Nimbus, BioBatchNet, CellCharter, Squidpy and all registered SBT stage modules. Final registry rerun and CUDA execution remain pending. | Pending | Login-node imports do not establish GPU functionality. The currently installed candidate may retain extraneous scArches until its next clean recreation. |
+| Run registered imports and GPU smoke tests | complete | Removed optional scArches from the candidate after its AnnData-incompatible import was isolated; retained CellCharter's default existing-embedding route and defined focused CUDA checks. | Pulled the corrected specification, ran the registered import suite, and submitted the GPU smoke job on CSF3. | `sbt env test analysis --format yaml` passed all 8 registered checks. CSF3 job `18578252` completed `0:0` on an NVIDIA A100-SXM4-80GB; Torch 2.9.1+cu128, CuPy 13.6.0, cuDF/cuML/RMM 26.04.00 and RAPIDS-singlecell 0.16.1 all passed, ending with `GPU_SMOKE_PASS`. | `9c88618`; `image_migration/logs/sbt-analysis-gpu-smoke-18578252-20260813.log` on CSF3 | Import deprecation warnings are non-fatal. The installed candidate may retain extraneous scArches until its next clean recreation, but scArches is absent from the specification and registered tests. |
 | Run scientific parity across all migrated stage families | not started | Added per-run `sbt run --environment analysis` selection with recorded provenance and optional cross-run `--after`; define comparisons and assess outputs/warnings with Michael. | Run old and candidate environments on representative small data and approve parity. | Pending. | Pending | Required before any permanent stage remapping. Run candidate stages separately; multi-environment wrappers are not override targets. |
 | Remap validated stages to `analysis` | not started | Update the registry/wrappers as one coherent approved phase and run control-plane tests. | Confirm deployment and run selected managed workflows. | Pending. | Pending | Existing environment definitions remain as rollback. |
 | Retire superseded Conda environments | not started | Mark legacy definitions deprecated only after approval. | Approve and perform any HPC environment removal. | Pending. | Pending | No removal is authorized yet. |
@@ -78,15 +78,14 @@ RAPIDS.
 
 ## Open validation points
 
-- Generate a fresh Linux lock with flexible channel priority and verify that
-  RAPIDS 26.04, CUDA 12.8 and the NumPy 1.26 baseline solve together on CSF3.
 - Confirm that SpatialData 0.4 preserves the SBT builder behavior required by
   the migrated segmentation stages. Resolver compatibility alone is not
   scientific or API parity.
 - Confirm that Nimbus imports and completes representative inference under
   Python 3.12; otherwise create a dedicated Nimbus runtime.
-- Confirm CUDA visibility and representative scientific outputs on CSF3; local
-  import tests cannot establish either.
+- Compare representative outputs from each migrated stage family against its
+  current environment before changing permanent stage mappings. The completed
+  GPU smoke establishes CUDA/runtime functionality, not scientific parity.
 
 ## Candidate baseline
 

@@ -9,7 +9,9 @@ from SpatialBiologyToolkit.napari_sbt.help import (
 
 
 BOX_HELP_SECTIONS = (
+    ("setup", "Workflow selection"),
     ("setup", "Dataset inputs"),
+    ("setup", "Image normalization and default display"),
     ("setup", "Cell scope"),
     ("setup", "Full experiment or Feature Discovery Trial"),
     ("setup", "Classes"),
@@ -24,6 +26,9 @@ BOX_HELP_SECTIONS = (
     ("explore", "ROI reload recipe"),
     ("explore", "AnnData and population overlays"),
     ("explore", "Image channels"),
+    ("population_qc", "Population selection"),
+    ("population_qc", "RGB verification recipe"),
+    ("population_qc", "ROI sampling"),
     ("populations", "1. Source workspace and drafts"),
     ("populations", "Subclusters"),
     ("populations", "Applying a draft"),

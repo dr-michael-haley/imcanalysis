@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import csv
+import json
 import re
 from collections.abc import Mapping
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -46,6 +49,63 @@ def prepare_normalization_dict(
             )
         prepared[key] = value
     return prepared
+
+
+def load_normalization_mapping(path: str | Path) -> dict[str, float]:
+    """Load and validate a Nimbus normalization mapping from JSON or CSV."""
+    source = Path(path).expanduser()
+    if not source.is_file():
+        raise FileNotFoundError(f"Normalization file not found: {source}")
+
+    suffix = source.suffix.casefold()
+    if suffix == ".json":
+        payload = json.loads(source.read_text(encoding="utf-8"))
+        if isinstance(payload, dict) and isinstance(
+            payload.get("normalization_dict"), dict
+        ):
+            payload = payload["normalization_dict"]
+        return prepare_normalization_dict(payload)
+
+    if suffix == ".csv":
+        with source.open("r", encoding="utf-8-sig", newline="") as handle:
+            reader = csv.DictReader(handle)
+            if reader.fieldnames is None:
+                raise ValueError(
+                    "Normalization CSV is empty; expected Marker and Value columns."
+                )
+            stripped_names = [str(name).strip() for name in reader.fieldnames]
+            missing = [
+                name for name in ("Marker", "Value") if name not in stripped_names
+            ]
+            if missing:
+                raise ValueError(
+                    "Normalization CSV must contain columns named Marker and Value; "
+                    f"missing {', '.join(missing)}."
+                )
+            original_names = dict(zip(stripped_names, reader.fieldnames, strict=True))
+            mapping: dict[str, Any] = {}
+            seen_markers: set[str] = set()
+            for row_number, row in enumerate(reader, start=2):
+                marker = str(row.get(original_names["Marker"], "")).strip()
+                value = row.get(original_names["Value"])
+                if not marker:
+                    raise ValueError(
+                        f"Normalization CSV row {row_number} has an empty Marker."
+                    )
+                folded_marker = marker.casefold()
+                if folded_marker in seen_markers:
+                    raise ValueError(
+                        "Normalization CSV Marker values must be unique ignoring case; "
+                        f"row {row_number} repeats {marker!r}."
+                    )
+                seen_markers.add(folded_marker)
+                mapping[marker] = value
+        return prepare_normalization_dict(mapping)
+
+    raise ValueError(
+        "Normalization file must use the .json or .csv extension; "
+        f"got {source.suffix or '<none>'!r}."
+    )
 
 
 def find_normalization_value(
