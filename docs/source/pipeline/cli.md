@@ -386,11 +386,24 @@ sbt run cellvision-cluster --no-deps
 ```
 
 Neither `none` nor `--no-deps` relaxes direct input validation. The command fails
-before submission when a blocking asset is absent. When a mode or several stages
-are explicitly selected, actual data dependencies between selected stages are
-retained. Independent selected stages are not chained merely because one appears
-earlier in the display; SLURM `afterok` edges are emitted only for actual plan
-dependencies.
+before submission when a blocking asset is absent, unless the explicit
+`--ignore-missing-assets` escape hatch is used:
+
+```bash
+sbt run rapids --environment sbt-analysis --no-deps --after 006 --ignore-missing-assets
+```
+
+This downgrades absent blocking asset roles to prominent plan warnings while
+retaining them in the recorded plan. It does not verify that the predecessor
+will create those assets, so the stage can still fail when it starts. Missing
+required files, managed executions, wrappers, invalid project configuration,
+and non-runnable stages continue to block submission. The same option is
+available on `sbt plan`.
+
+When a mode or several stages are explicitly selected, actual data dependencies
+between selected stages are retained. Independent selected stages are not
+chained merely because one appears earlier in the display; SLURM `afterok` edges
+are emitted only for actual plan dependencies.
 
 Each submitted run creates:
 

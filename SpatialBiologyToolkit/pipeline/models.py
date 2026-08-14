@@ -160,6 +160,7 @@ class RunPlan(PipelineModel):
     config_source: Path
     execution_backend: str = "slurm_scripts"
     dependency_policy: DependencyPolicy = "assets"
+    ignore_missing_assets: bool = False
     environment_overrides: dict[str, str] = Field(default_factory=dict)
     ready: bool
     errors: list[str] = Field(default_factory=list)

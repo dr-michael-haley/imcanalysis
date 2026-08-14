@@ -248,6 +248,7 @@ def build_run_plan(
     toolkit_directory: str | Path | None = None,
     dependency_policy: DependencyPolicy = "assets",
     include_dependencies: bool | None = None,
+    ignore_missing_assets: bool = False,
 ) -> RunPlan:
     """Build a plan whose readiness is governed by direct blocking inputs.
 
@@ -344,10 +345,18 @@ def build_run_plan(
         if not script.is_file():
             errors.append(f"SLURM script for stage '{stage.name}' is missing: {script}")
         if missing_assets:
-            errors.append(
+            missing_asset_message = (
                 f"Stage '{stage.name}' is missing blocking project assets: "
                 f"{', '.join(missing_assets)}"
             )
+            if ignore_missing_assets:
+                warnings.append(
+                    f"{missing_asset_message}. Ignored by --ignore-missing-assets; "
+                    "submission is allowed, but the stage may fail unless the "
+                    "asset is created before it starts."
+                )
+            else:
+                errors.append(missing_asset_message)
         if missing_files:
             errors.append(
                 f"Stage '{stage.name}' is missing required files: "
@@ -398,6 +407,7 @@ def build_run_plan(
         resolved_stages=planned,
         config_source=context.config_path,
         dependency_policy=dependency_policy,
+        ignore_missing_assets=ignore_missing_assets,
         ready=not errors,
         errors=errors,
         warnings=warnings,

@@ -439,6 +439,8 @@ def _print_plan(plan) -> None:
     typer.echo(f"Config:  {plan.config_source}")
     typer.echo(f"Backend: {plan.execution_backend}")
     typer.echo(f"Upstream policy: {plan.dependency_policy}")
+    if plan.ignore_missing_assets:
+        typer.echo("Missing assets ignored: yes")
     if plan.environment_overrides:
         overrides = ", ".join(
             f"{stage}={environment}"
@@ -2004,6 +2006,14 @@ def plan_command(
             "assets; none uses explicit stages; all includes conventional lineage."
         ),
     ),
+    ignore_missing_assets: bool = typer.Option(
+        False,
+        "--ignore-missing-assets",
+        help=(
+            "Allow a plan with missing blocking asset roles. Other readiness "
+            "errors still block execution."
+        ),
+    ),
     output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
 ) -> None:
     try:
@@ -2012,6 +2022,7 @@ def plan_command(
             context,
             targets,
             dependency_policy=dependency_policy.value,
+            ignore_missing_assets=ignore_missing_assets,
         )
     except Exception as exc:
         _fail(exc)
@@ -2130,6 +2141,14 @@ def run_command(
         "--no-deps",
         help=("Compatibility alias for --dependency-policy none."),
     ),
+    ignore_missing_assets: bool = typer.Option(
+        False,
+        "--ignore-missing-assets",
+        help=(
+            "Allow submission with missing blocking asset roles. Other readiness "
+            "errors still block execution."
+        ),
+    ),
     reason: str | None = typer.Option(
         None,
         "--reason",
@@ -2163,6 +2182,7 @@ def run_command(
             context,
             targets,
             dependency_policy=selected_policy.value,
+            ignore_missing_assets=ignore_missing_assets,
         )
         plan = apply_environment_override(plan, environment)
     except Exception as exc:
@@ -2219,6 +2239,7 @@ def run_command(
                     evidence=[
                         f"resolved_stages={','.join(item.name for item in plan.resolved_stages)}",
                         f"dependency_policy={plan.dependency_policy}",
+                        f"ignore_missing_assets={plan.ignore_missing_assets}",
                         f"environment_overrides={plan.environment_overrides}",
                     ],
                 ),
@@ -2412,6 +2433,7 @@ def run_command(
                 outcome="succeeded",
                 evidence=[
                     f"dependency_policy={plan.dependency_policy}",
+                    f"ignore_missing_assets={plan.ignore_missing_assets}",
                     f"environment_overrides={plan.environment_overrides}",
                     (
                         f"external_predecessor={external_dependency.execution_label}"

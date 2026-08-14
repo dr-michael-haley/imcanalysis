@@ -72,6 +72,7 @@ class RunControlTests(unittest.TestCase):
         result = CliRunner().invoke(app, ["run", "--help"])
 
         self.assertEqual(result.exit_code, 0, result.stdout)
+        self.assertIn("--ignore-missing-assets", result.stdout)
         self.assertNotIn("--install-missing-envs", result.stdout)
         self.assertNotIn("--install-missing-environments", result.stdout)
 
@@ -987,6 +988,84 @@ class RunControlTests(unittest.TestCase):
             self.assertIn("missing blocking project assets", result.stdout)
             submit_mock.assert_not_called()
             self.assertEqual(list((root / ".sbt" / "runs").iterdir()), [])
+
+    def test_ignore_missing_assets_allows_chained_rapids_dry_run(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "project"
+            context = initialize_project(root)
+            runs_dir = root / ".sbt" / "runs"
+            predecessor_plan = build_run_plan(context, ["debug"])
+            predecessor_run = create_run_record(
+                context,
+                predecessor_plan,
+                command="sbt run debug",
+            )
+            submit_run(
+                context,
+                predecessor_plan,
+                predecessor_run,
+                runner=FakeSbatchRunner(["851"]),
+            )
+            existing_run_dirs = list(runs_dir.iterdir())
+
+            plan = build_run_plan(
+                context,
+                ["rapids"],
+                dependency_policy="none",
+                ignore_missing_assets=True,
+            )
+
+            self.assertTrue(plan.ready, plan.errors)
+            self.assertTrue(plan.ignore_missing_assets)
+            self.assertEqual(plan.resolved_stages[0].missing_assets, ["anndata"])
+            self.assertTrue(
+                any("--ignore-missing-assets" in warning for warning in plan.warnings)
+            )
+
+            result = CliRunner().invoke(
+                app,
+                [
+                    "run",
+                    "rapids",
+                    "--project",
+                    str(root),
+                    "--environment",
+                    "analysis",
+                    "--no-deps",
+                    "--after",
+                    "001",
+                    "--ignore-missing-assets",
+                    "--dry-run",
+                ],
+            )
+
+            self.assertEqual(result.exit_code, 0, result.stdout)
+            self.assertIn("Missing assets ignored: yes", result.stdout)
+            self.assertIn("missing blocking project assets: anndata", result.stdout)
+            self.assertIn("Plan is ready.", result.stdout)
+            self.assertIn("--dependency=afterok:851", result.stdout)
+            self.assertEqual(list(runs_dir.iterdir()), existing_run_dirs)
+
+    def test_ignore_missing_assets_does_not_ignore_required_files(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = initialize_project(Path(temp_dir) / "project")
+
+            plan = build_run_plan(
+                context,
+                ["nimbus"],
+                dependency_policy="none",
+                ignore_missing_assets=True,
+            )
+
+            self.assertFalse(plan.ready)
+            self.assertTrue(plan.resolved_stages[0].missing_assets)
+            self.assertTrue(plan.resolved_stages[0].missing_files)
+            self.assertFalse(
+                any("missing blocking project assets" in error for error in plan.errors)
+            )
+            self.assertTrue(
+                any("missing required files" in error for error in plan.errors)
+            )
 
 
 if __name__ == "__main__":

@@ -85,6 +85,7 @@ def run_preview_snapshot(
         "requested": list(plan.requested),
         "resolved_stages": [item.name for item in plan.resolved_stages],
         "dependency_policy": plan.dependency_policy,
+        "ignore_missing_assets": plan.ignore_missing_assets,
         "environment_overrides": dict(plan.environment_overrides),
         "external_dependency": (
             {
