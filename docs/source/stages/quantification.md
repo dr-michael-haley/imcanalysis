@@ -261,7 +261,9 @@ CD3,20,0
 FOXP3,5,0.8
 ```
 
-`vmax` and `lower_threshold` are both in absolute source-image intensity units.
+The canonical headings are `marker`, `vmax`, and `lower_threshold`. Here `vmax`
+is the selected upper normalization (baseline) value, while `lower_threshold` is
+the absolute background-removal value. Both are in source-image intensity units.
 Nimbus receives
 `clip((image - lower_threshold) / (vmax - lower_threshold), 0, 1)`, so pixels at
 or below the lower threshold become zero and pixels at or above Vmax become one.
@@ -269,8 +271,24 @@ Every lower threshold must be non-negative and strictly below that marker's
 Vmax. A lower threshold of zero exactly preserves the previous `image / vmax`
 normalization.
 
-With `reuse_saved_normalization: true`, the CSV is loaded and its reviewed bounds
-are applied consistently across reruns. A legacy scalar
+Set `normalization_dict_path` to load a reviewed CSV directly from any
+project-relative or absolute path:
+
+```yaml
+nimbus:
+  normalization_dict_path: metadata/reviewed_normalization.csv
+```
+
+An explicit path takes precedence and does not require
+`reuse_saved_normalization: true`. It must point to a `.csv`; the source is read
+without modification when it is outside `nimbus.output_dir`. Nimbus writes the
+complete resolved table to
+`nimbus.output_dir/normalization_dict.csv`, filling any omitted selected markers
+with computed mask-aware Vmax values and a zero lower threshold.
+
+When `normalization_dict_path` is unset, `reuse_saved_normalization: true` loads
+the CSV already present in `nimbus.output_dir` and applies its reviewed bounds
+consistently across reruns. A legacy scalar
 `normalization_dict.json` remains readable for backwards compatibility; its
 lower thresholds default to zero, and Nimbus writes an equivalent preferred CSV
 without deleting the JSON.
@@ -386,6 +404,7 @@ nimbus:
   normalization_quantile: 0.999
   normalization_min_value: 3.0
   normalization_subset: 10
+  normalization_dict_path: null
   reuse_saved_normalization: false
   norm_dict_qc_only: false
 

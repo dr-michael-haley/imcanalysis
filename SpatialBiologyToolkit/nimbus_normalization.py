@@ -239,6 +239,39 @@ def load_normalization_file(
     )
 
 
+def resolve_normalization_input_path(
+    output_dir: str | Path,
+    *,
+    configured_path: str | Path | None = None,
+    reuse_saved: bool = False,
+) -> Path | None:
+    """Resolve an explicit preferred CSV or the legacy output-directory fallback."""
+
+    if configured_path is not None and str(configured_path).strip():
+        source = Path(configured_path).expanduser().resolve(strict=False)
+        if source.suffix.casefold() != ".csv":
+            raise ValueError(
+                "nimbus.normalization_dict_path must point to a .csv file in the "
+                "marker,vmax,lower_threshold format."
+            )
+        if not source.is_file():
+            raise FileNotFoundError(
+                f"Configured Nimbus normalization CSV not found: {source}"
+            )
+        return source
+
+    if not reuse_saved:
+        return None
+    root = Path(output_dir)
+    preferred = root / PREFERRED_NORMALIZATION_FILENAME
+    if preferred.is_file():
+        return preferred
+    legacy = root / LEGACY_NORMALIZATION_FILENAME
+    if legacy.is_file():
+        return legacy
+    return None
+
+
 def resolve_normalization_parameters(
     parameters: Mapping[str, NimbusNormalizationParameters],
     markers: Sequence[str],
@@ -332,6 +365,7 @@ __all__ = [
     "build_normalization_parameters",
     "load_normalization_file",
     "normalize_nimbus_image",
+    "resolve_normalization_input_path",
     "resolve_normalization_parameters",
     "validate_normalization_parameters",
     "write_normalization_csv",

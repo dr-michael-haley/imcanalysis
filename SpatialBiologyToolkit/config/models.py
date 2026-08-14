@@ -1081,6 +1081,14 @@ class NimbusConfig(ConfigModel):
             "and normalization QC is still regenerated."
         ),
     )
+    normalization_dict_path: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional path to a preferred Nimbus CSV with marker, vmax, and lower_threshold "
+            "columns. Relative paths resolve from the project root, this path takes precedence "
+            "over reuse_saved_normalization, and an external source is not overwritten."
+        ),
+    )
     norm_dict_qc_only: bool = Field(
         default=False,
         description=(
@@ -1139,6 +1147,22 @@ class NimbusConfig(ConfigModel):
             "available CPUs, and values above 1 request that many workers subject to ROI and CPU counts."
         ),
     )
+
+    @model_validator(mode="after")
+    def validate_normalization_dict_path(self) -> "NimbusConfig":
+        if self.normalization_dict_path is None:
+            return self
+        path = str(self.normalization_dict_path).strip()
+        if not path:
+            self.normalization_dict_path = None
+        elif not path.casefold().endswith(".csv"):
+            raise ValueError(
+                "nimbus.normalization_dict_path must point to a .csv file in the "
+                "marker,vmax,lower_threshold format"
+            )
+        else:
+            self.normalization_dict_path = path
+        return self
 
 
 @config_section("nimbus_normalization_scan")

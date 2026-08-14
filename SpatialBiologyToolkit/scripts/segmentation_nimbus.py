@@ -22,10 +22,10 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 from SpatialBiologyToolkit.nimbus_normalization import (
-    LEGACY_NORMALIZATION_FILENAME,
     PREFERRED_NORMALIZATION_FILENAME,
     load_normalization_file,
     normalize_nimbus_image,
+    resolve_normalization_input_path,
     resolve_normalization_parameters,
     write_normalization_csv,
 )
@@ -366,31 +366,40 @@ class ToolkitNimbusDataset(MultiplexDataset):
         n_subset: int = 10,
         multiprocessing: bool = False,  # kept for API compatibility
         reuse_saved: bool = False,
+        normalization_file: Optional[Path | str] = None,
     ):
         """
         Compute per-channel normalization using ALL FOVs and only in-mask pixels.
         Also writes a QC gallery and QC histograms.
         
-        If reuse_saved=True, normalization_dict.csv is preferred and a legacy
-        normalization_dict.json remains readable. Legacy JSON values receive a zero
-        lower threshold and are migrated to CSV without deleting the source JSON.
-        QC plots are regenerated with the loaded values.
+        An explicit normalization_file takes precedence and must use the preferred
+        CSV format. Otherwise, if reuse_saved=True, normalization_dict.csv is
+        preferred and a legacy normalization_dict.json remains readable. Legacy JSON
+        values receive a zero lower threshold and are migrated to CSV without deleting
+        the source JSON. QC plots are regenerated with the loaded values.
         """
         self.clip_values = tuple(clip_values)
         preferred_path = Path(self.output_dir) / PREFERRED_NORMALIZATION_FILENAME
-        legacy_path = Path(self.output_dir) / LEGACY_NORMALIZATION_FILENAME
         self.normalization_dict_path = str(preferred_path)
 
-        saved_path: Optional[Path] = None
-        if reuse_saved:
-            if preferred_path.is_file():
-                saved_path = preferred_path
-            elif legacy_path.is_file():
-                saved_path = legacy_path
+        saved_path = resolve_normalization_input_path(
+            self.output_dir,
+            configured_path=normalization_file,
+            reuse_saved=reuse_saved,
+        )
 
         if saved_path is not None:
             logging.info("Found existing normalization table at %s", saved_path)
-            logging.info("Reusing saved normalization values (reuse_saved_normalization=True)")
+            if normalization_file is not None:
+                logging.info(
+                    "Using explicitly configured Nimbus normalization CSV "
+                    "(nimbus.normalization_dict_path)."
+                )
+            else:
+                logging.info(
+                    "Reusing saved normalization values "
+                    "(reuse_saved_normalization=True)."
+                )
             loaded = load_normalization_file(saved_path)
             resolved = resolve_normalization_parameters(
                 loaded,
@@ -424,16 +433,16 @@ class ToolkitNimbusDataset(MultiplexDataset):
                 "Loaded %d channel normalization rows (manual values preserved).",
                 len(self.normalization_dict),
             )
-            if saved_path.suffix.casefold() == ".json" or missing:
+            source_is_preferred = (
+                saved_path.resolve(strict=False) == preferred_path.resolve(strict=False)
+            )
+            if saved_path.suffix.casefold() == ".json" or missing or not source_is_preferred:
                 write_normalization_csv(
                     preferred_path,
                     self.normalization_dict,
                     self.normalization_lower_thresholds,
                 )
-                logging.info(
-                    "Migrated legacy JSON normalization values to preferred CSV: %s",
-                    preferred_path,
-                )
+                logging.info("Wrote resolved normalization values to: %s", preferred_path)
         else:
             self.normalization_dict = self.compute_normalization_values(
                 quantile=quantile
@@ -1444,6 +1453,8 @@ def _predict_fovs_with_padding(
 
 
 def main() -> None:
+    from SpatialBiologyToolkit.reporting import project_asset_path
+
     pipeline_stage = "NimbusSegmentation"
     config = process_config_with_overrides()
     setup_logging(config.get("logging", {}), pipeline_stage)
@@ -1464,6 +1475,17 @@ def main() -> None:
     if skip_stage:
         logging.info("Skipping NimbusSegmentation stage based on AnnData stage policy.")
         return
+
+    configured_normalization_path: Optional[Path] = None
+    if nimbus_config.normalization_dict_path:
+        configured_normalization_path = project_asset_path(
+            nimbus_config.normalization_dict_path
+        )
+        resolve_normalization_input_path(
+            nimbus_config.output_dir,
+            configured_path=configured_normalization_path,
+            reuse_saved=nimbus_config.reuse_saved_normalization,
+        )
 
     metadata_folder = Path(general_config.metadata_folder)
     panel = _load_panel(metadata_folder, nimbus_config)
@@ -1565,6 +1587,7 @@ def main() -> None:
         n_subset=nimbus_config.normalization_subset,
         multiprocessing=nimbus_config.normalization_jobs > 1,
         reuse_saved=nimbus_config.reuse_saved_normalization,
+        normalization_file=configured_normalization_path,
     )
 
     # Early exit if only normalization dict and QC are requested

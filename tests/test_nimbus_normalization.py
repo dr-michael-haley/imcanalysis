@@ -7,9 +7,11 @@ import numpy as np
 import pytest
 
 from SpatialBiologyToolkit.cellvision import load_normalization_dict
+from SpatialBiologyToolkit.config.models import NimbusConfig
 from SpatialBiologyToolkit.nimbus_normalization import (
     load_normalization_file,
     normalize_nimbus_image,
+    resolve_normalization_input_path,
     resolve_normalization_parameters,
     write_normalization_csv,
 )
@@ -55,6 +57,44 @@ def test_legacy_json_and_two_column_csv_default_lower_threshold_to_zero(
     scan_values = load_normalization_file(scan_path)
     assert scan_values["FOXP3"].vmax == 5
     assert scan_values["FOXP3"].lower_threshold == pytest.approx(0.8)
+
+
+def test_explicit_normalization_csv_path_takes_precedence_and_requires_csv(
+    tmp_path: Path,
+):
+    output_dir = tmp_path / "nimbus_output"
+    output_dir.mkdir()
+    saved = write_normalization_csv(
+        output_dir / "normalization_dict.csv", {"CD3": 10}
+    )
+    explicit = write_normalization_csv(tmp_path / "reviewed.csv", {"CD3": 20})
+
+    assert resolve_normalization_input_path(
+        output_dir,
+        configured_path=explicit,
+        reuse_saved=True,
+    ) == explicit.resolve()
+    assert resolve_normalization_input_path(
+        output_dir, reuse_saved=True
+    ) == saved
+    assert resolve_normalization_input_path(output_dir, reuse_saved=False) is None
+
+    legacy = tmp_path / "normalization_dict.json"
+    legacy.write_text('{"CD3": 12}', encoding="utf-8")
+    with pytest.raises(ValueError, match="must point to a .csv"):
+        resolve_normalization_input_path(output_dir, configured_path=legacy)
+    with pytest.raises(FileNotFoundError, match="not found"):
+        resolve_normalization_input_path(
+            output_dir, configured_path=tmp_path / "missing.csv"
+        )
+
+
+def test_nimbus_config_accepts_an_explicit_normalization_csv_path():
+    assert NimbusConfig().normalization_dict_path is None
+    configured = NimbusConfig(normalization_dict_path=" metadata/reviewed_norm.csv ")
+    assert configured.normalization_dict_path == "metadata/reviewed_norm.csv"
+    with pytest.raises(ValueError, match="must point to a .csv"):
+        NimbusConfig(normalization_dict_path="metadata/legacy.json")
 
 
 def test_normalization_bounds_are_validated_and_case_insensitively_resolved(
