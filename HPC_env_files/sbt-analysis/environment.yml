@@ -16,16 +16,21 @@ channels:
 
 dependencies:
   # Python 3.12 is the common supported interpreter for RAPIDS-singlecell
-  # 0.16.1 and CellCharter 0.3.7. Nimbus metadata permits it, but upstream only
+  # 0.12.0 and CellCharter 0.3.7. Nimbus metadata permits it, but upstream only
   # documents Python 3.9-3.11, so Nimbus remains an explicit validation risk.
   - python=3.12
   - pip
 
-  # GPU runtime follows the upstream RAPIDS-singlecell CUDA 12 environment.
-  # CUDA 12.8 matches the successfully exported CSF3 environment and is within
-  # the CUDA 12.2-12.9 range supported by the precompiled cu12 wheel.
-  - rapids=26.04
-  - cuda-version=12.8
+  # RAPIDS 24.12 is the last release whose official Dask dependency generation
+  # matches SpatialData 0.4 and Squidpy 1.6.5. RAPIDS-singlecell 0.12.0 was
+  # released for this RAPIDS generation. CUDA 12.5 and Python 3.12 are an
+  # upstream-published 24.12 combination and remain supported by the CSF3
+  # driver used in the successful A100 smoke test.
+  - rapids=24.12
+  - cuda-version=12.5
+  - dask=2024.11.2
+  - distributed=2024.11.2
+  - dask-expr=1.1.19
   - cudnn
   - cutensor
   - cusparselt

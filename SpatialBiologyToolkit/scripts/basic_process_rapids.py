@@ -21,6 +21,8 @@ import numpy as np
 import pandas as pd
 import scanpy as sc
 
+from SpatialBiologyToolkit.rapids_compat import resolve_harmony_runtime_kwargs
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
@@ -692,16 +694,19 @@ def _run_rapids_harmony(
 
     params = _drop_managed_params(
         _normalise_dtype_param(harmony_params),
-        managed={"key", "basis", "adjusted_basis", "flavor"},
+        managed={"key", "basis", "adjusted_basis", "flavor", "correction_method"},
         section_name="harmony",
     )
-    params["flavor"] = _normalise_harmony_flavor(harmony_flavor)
+    configured_flavor = _normalise_harmony_flavor(harmony_flavor)
+    params.update(
+        resolve_harmony_runtime_kwargs(rsc.pp.harmony_integrate, configured_flavor)
+    )
     adata.obs[batch_key] = adata.obs[batch_key].astype("category")
     logging.info(
         "Running RAPIDS Harmony on adata.obsm['%s'] using obs key '%s' (flavor=%s).",
         pca_key,
         batch_key,
-        params["flavor"],
+        configured_flavor,
     )
     rsc.pp.harmony_integrate(
         adata,

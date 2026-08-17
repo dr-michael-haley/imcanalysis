@@ -1,4 +1,4 @@
-# Shared PyTorch/CUDA 12.8 stack. These versions match the working segmentation
+# Shared PyTorch/CUDA stack. These versions match the working segmentation
 # environment and are installed in the same resolver transaction as all four
 # migrated runtime families.
 numpy==1.26.4
@@ -7,9 +7,9 @@ torchvision==0.24.1
 torchaudio==2.9.1
 pytorch-lightning==2.6.0
 
-# Precompiled RAPIDS-singlecell CUDA 12 wheel. The RAPIDS/CuPy stack itself is
-# supplied by Conda above, so do not request the wheel's [rapids] extra.
-rapids-singlecell-cu12==0.16.1
+# RAPIDS-singlecell release paired with RAPIDS 24.12. The RAPIDS/CuPy stack is
+# supplied by Conda above, so do not request the package's [rapids12] extra.
+rapids-singlecell==0.12.0
 
 # imc_segmentation requirements.
 cellpose==3.1.0
@@ -32,7 +32,10 @@ xarray-dataclasses==1.9.1
 xarray==2024.11.0
 # Final Zarr 2 release; its metadata also enforces Numcodecs <0.16.
 zarr==2.18.7
+# These exactly match RAPIDS 24.12's rapids-dask-dependency package as well as
+# the upper bounds declared by SpatialData 0.4 and Squidpy 1.6.5.
 dask==2024.11.2
+distributed==2024.11.2
 dask-expr==1.1.19
 
 # imc_biobatchnet requirement, pinned to the commit captured from the working

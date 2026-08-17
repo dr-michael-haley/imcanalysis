@@ -184,9 +184,12 @@ Current RAPIDS-singlecell releases expose two algorithm flavours:
   differ.
 
 The flavour is always validated by the pipeline, even when `run_harmony` is
-false. Because the RAPIDS environment is externally maintained and currently
-has no repository lockfile, verify that its installed version supports
-`harmony2` before running this default configuration.
+false. The stage also inspects the installed RAPIDS-singlecell Harmony API.
+Modern runtimes receive `harmony1` or `harmony2` unchanged. The consolidated
+RAPIDS 24.12 runtime exposes the older API: `harmony1` maps explicitly to its
+original correction method, while `harmony2` is rejected rather than silently
+substituted with a scientifically different algorithm. Use the newer legacy
+RAPIDS environment when Harmony2 is required.
 
 Important advanced parameters include:
 
@@ -329,7 +332,8 @@ Some arguments are managed by dedicated pipeline fields and are deliberately
 ignored when repeated inside a dictionary:
 
 - `pca_params`: `n_comps`, `key_added`, and `copy` are managed;
-- `harmony_params`: `key`, `basis`, `adjusted_basis`, and `flavor` are managed;
+- `harmony_params`: `key`, `basis`, `adjusted_basis`, `flavor`, and
+  `correction_method` are managed;
 - `neighbors_params`: `n_neighbors`, `n_pcs`, `use_rep`, `key_added`, and `copy`
   are managed;
 - `umap_params`: `min_dist`, `key_added`, `neighbors_key`, and `copy` are

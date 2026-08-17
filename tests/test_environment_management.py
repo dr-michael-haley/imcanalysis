@@ -284,13 +284,16 @@ class RegistryTests(EnvironmentFixture):
             root / "HPC_env_files" / "sbt-analysis" / "pip-extras.txt"
         )
         self.assertEqual(conda_requirements["python"], "=3.12")
-        self.assertEqual(conda_requirements["rapids"], "=26.04")
-        self.assertEqual(conda_requirements["cuda-version"], "=12.8")
+        self.assertEqual(conda_requirements["rapids"], "=24.12")
+        self.assertEqual(conda_requirements["cuda-version"], "=12.5")
+        self.assertEqual(conda_requirements["dask"], "=2024.11.2")
+        self.assertEqual(conda_requirements["distributed"], "=2024.11.2")
+        self.assertEqual(conda_requirements["dask-expr"], "=1.1.19")
         self.assertEqual(conda_requirements["numpy"], "=1.26.4")
         self.assertEqual(conda_requirements["numcodecs"], "=0.15.1")
         self.assertEqual(pip_requirements["torch"].version, "2.9.1")
         self.assertEqual(
-            pip_requirements["rapids-singlecell-cu12"].version, "0.16.1"
+            pip_requirements["rapids-singlecell"].version, "0.12.0"
         )
         self.assertEqual(pip_requirements["cellcharter"].version, "0.3.7")
         self.assertNotIn("scarches", pip_requirements)
@@ -303,6 +306,9 @@ class RegistryTests(EnvironmentFixture):
         self.assertEqual(pip_requirements["xarray-dataclasses"].version, "1.9.1")
         self.assertEqual(pip_requirements["xarray"].version, "2024.11.0")
         self.assertEqual(pip_requirements["zarr"].version, "2.18.7")
+        self.assertEqual(pip_requirements["dask"].version, "2024.11.2")
+        self.assertEqual(pip_requirements["distributed"].version, "2024.11.2")
+        self.assertEqual(pip_requirements["dask-expr"].version, "1.1.19")
         self.assertEqual(pip_requirements["squidpy"].version, "1.6.5")
         self.assertEqual(pip_requirements["biobatchnet"].source_type, "vcs")
         analysis_smoke_scripts = " ".join(
@@ -311,6 +317,8 @@ class RegistryTests(EnvironmentFixture):
             if len(command) >= 3 and command[:2] == ["python", "-c"]
         ).casefold()
         self.assertNotIn("scarches", analysis_smoke_scripts)
+        self.assertIn("cugraph", analysis_smoke_scripts)
+        self.assertIn("dask_cudf", analysis_smoke_scripts)
 
     def test_legacy_python_environments_support_runtime_type_evaluation(self):
         root = Path(__file__).resolve().parents[1]
