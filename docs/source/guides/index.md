@@ -14,5 +14,6 @@ napari_sbt_help
 napari_sbt_migration
 project_console
 spatialdata
+spatial_permutation
 agent_population_qc
 ```
