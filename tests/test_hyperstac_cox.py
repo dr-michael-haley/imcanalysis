@@ -3,9 +3,12 @@ from __future__ import annotations
 import unittest
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pandas as pd
 
+from SpatialBiologyToolkit.scripts import hyperstac_full
 from SpatialBiologyToolkit.config.models import (
     CoxFeatureSourceConfig,
     HyperstacConfig,
@@ -38,6 +41,7 @@ class HyperstacConfigTests(unittest.TestCase):
         self.assertEqual(config.channels, [])
         self.assertEqual(config.leiden_resolutions, [0.2, 0.25, 0.3, 0.35])
         self.assertFalse(config.write_spatial_cluster_maps)
+        self.assertTrue(config.full_include_survival)
 
     def test_pipeline_registers_hyperstac_and_cox_sections(self):
         config = PipelineConfig()
@@ -49,6 +53,50 @@ class HyperstacConfigTests(unittest.TestCase):
     def test_feature_source_needs_a_feature_definition(self):
         with self.assertRaisesRegex(ValueError, "needs population_obs"):
             CoxFeatureSourceConfig(name="empty", adata_path="empty.h5ad")
+
+
+class HyperstacFullTests(unittest.TestCase):
+    def test_image_only_full_run_skips_survival_components(self):
+        config = SimpleNamespace(
+            hyperstac=SimpleNamespace(full_include_survival=False)
+        )
+        with patch.object(hyperstac_full, "load_runtime", return_value=config), patch.object(
+            hyperstac_full, "run_preprocess"
+        ) as preprocess, patch.object(
+            hyperstac_full, "run_model"
+        ) as model, patch.object(
+            hyperstac_full, "run_permutation"
+        ) as permutation, patch.object(
+            hyperstac_full, "run_visualisation"
+        ) as visualisation, patch.object(
+            hyperstac_full.cox_survival, "main"
+        ) as cox, patch.object(
+            hyperstac_full, "run_stability"
+        ) as stability:
+            hyperstac_full.main()
+
+        preprocess.assert_called_once_with()
+        model.assert_called_once_with()
+        permutation.assert_called_once_with()
+        visualisation.assert_called_once_with()
+        cox.assert_not_called()
+        stability.assert_not_called()
+
+    def test_full_run_includes_survival_components_when_enabled(self):
+        config = SimpleNamespace(
+            hyperstac=SimpleNamespace(full_include_survival=True)
+        )
+        with patch.object(hyperstac_full, "load_runtime", return_value=config), patch.object(
+            hyperstac_full, "run_preprocess"
+        ), patch.object(hyperstac_full, "run_model"), patch.object(
+            hyperstac_full, "run_permutation"
+        ), patch.object(hyperstac_full, "run_visualisation"), patch.object(
+            hyperstac_full.cox_survival, "main"
+        ) as cox, patch.object(hyperstac_full, "run_stability") as stability:
+            hyperstac_full.main()
+
+        cox.assert_called_once_with()
+        stability.assert_called_once_with()
 
 
 class CoxMultiSourceTests(unittest.TestCase):

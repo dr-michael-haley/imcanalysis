@@ -44,7 +44,7 @@ for ordering and usage guidance.
 | [`hyperstac-visualise`](hyperstac-visualise.md) | Run HyPERSTAC clustering scans and create embedding, marker, spatial, and gallery reports | `hyperstac` | general, hyperstac, logging |
 | [`cox`](cox.md) | Combine case-level features from one or more AnnData obs sources and compare Cox models | `hyperstac` | general, cox, logging |
 | [`hyperstac-stability`](hyperstac-stability.md) | Cross-reference HyPERSTAC Leiden marker environments, perturbation sensitivity, and Cox effects | `hyperstac` | general, hyperstac, cox, logging |
-| [`hyperstac-full`](hyperstac-full.md) | Run HyPERSTAC preprocessing, representation, sensitivity, visualisation, Cox, and stability in one GPU job | `hyperstac` | general, hyperstac, cox, logging |
+| [`hyperstac-full`](hyperstac-full.md) | Run HyPERSTAC image analysis and optional Cox/stability components in one GPU job | `hyperstac` | general, hyperstac, cox, logging |
 | [`cellfeat`](cellfeat.md) | Build resumable cohort-only IMC cell features using full-segmentation context | `imc_segmentation` | general, napari_sbt, logging |
 | [`maxfuse`](maxfuse.md) | Match one scRNA-seq reference to IMC cells with MaxFuse and generate transfer/QC assets | `imc_maxfuse` | general, maxfuse, logging |
 | [`spatialdata`](spatialdata.md) | Discover or explicitly select spatial assets and optionally build a validated SpatialData Zarr | `imc_segmentation` | general, spatialdata, logging |

@@ -4624,6 +4624,16 @@
           "title": "Input Images Folder",
           "ui_group": "Reusable assets"
         },
+        "full_include_survival": {
+          "advice": "Set false for an image-only full run that completes after visualisation in the same GPU allocation.",
+          "default": true,
+          "description": "Run Cox survival and cross-Leiden stability after visualisation in hyperstac-full.",
+          "level": "basic",
+          "stage": "hyperstac",
+          "title": "Full Include Survival",
+          "type": "boolean",
+          "ui_group": "Full workflow"
+        },
         "channels": {
           "advice": "The former GBM-specific marker list is intentionally not a package default.",
           "description": "Ordered channel names; an empty list infers and validates the common alphabetical channel set.",

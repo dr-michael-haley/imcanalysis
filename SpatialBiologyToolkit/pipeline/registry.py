@@ -811,19 +811,20 @@ STAGES: tuple[StageSpec, ...] = (
     _stage(
         "hyperstac-full",
         "job_hyperstac_full.sh",
-        "Run HyPERSTAC preprocessing, representation, perturbation, visualisation, Cox, and stability in one GPU job.",
+        "Run HyPERSTAC image analysis and optional Cox/stability components in one GPU job.",
         groups=("hyperstac-full",),
         requires=("hyperstac_input_images",),
         produces=("hyperstac_assets", "human_outputs"),
         outputs=(
             "Complete reusable HyPERSTAC asset tree",
             "clustering and perturbation visualisation report",
-            "multi-model Cox report",
-            "cross-Leiden stability report",
+            "optional multi-model Cox report",
+            "optional cross-Leiden stability report",
         ),
         notes=(
             "The Cox component remains independently runnable as sbt run cox.",
-            "The full job requires usable survival metadata for its Cox and stability components.",
+            "Set hyperstac.full_include_survival=false for a successful image-only run in one GPU allocation.",
+            "When survival is included, the full job requires usable outcome metadata for its Cox and stability components.",
         ),
     ),
     _stage(

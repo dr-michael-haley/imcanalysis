@@ -73,7 +73,9 @@ former control-plane role.
 - `hyperstac` is the checkpointed patch-representation mode: image
   preprocessing, VICReg modelling, perturbation sensitivity, visualisation,
   general Cox analysis, and cross-Leiden stability run as dependent jobs.
-- `hyperstac-full` performs the complete HyPERSTAC route in one GPU allocation.
+- `hyperstac-full` performs the HyPERSTAC route in one GPU allocation. Set
+  `hyperstac.full_include_survival=false` to complete after image
+  visualisation without running Cox or cross-Leiden survival stability.
 - `cox` is independently runnable for case-level features from any configured
   AnnData observation sources; it is not restricted to HyPERSTAC.
 - `scport` is an external single-cell portrait branch after denoising and mask generation. Its environment and external converter are not installed by the standard environment setup.

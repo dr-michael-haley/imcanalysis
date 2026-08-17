@@ -2,7 +2,7 @@
 
 # `hyperstac-full`
 
-Run HyPERSTAC preprocessing, representation, sensitivity, visualisation, Cox, and stability in one GPU job
+Run HyPERSTAC image analysis and optional Cox/stability components in one GPU job
 
 - Wrapper: [`job_hyperstac_full.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_hyperstac_full.sh)
 - Conda environment: `hyperstac`
@@ -10,11 +10,11 @@ Run HyPERSTAC preprocessing, representation, sensitivity, visualisation, Cox, an
 
 ## Inputs
 
-- configured ROI/channel TIFFs, Cox feature sources, and clinical survival metadata
+- configured ROI/channel TIFFs; Cox feature sources and clinical survival metadata when enabled
 
 ## Outputs
 
-- reusable HyPERSTAC assets plus managed visualisation, Cox, and cross-Leiden stability reports
+- reusable HyPERSTAC assets and managed visualisation, with optional Cox and stability reports
 
 ## Configuration
 

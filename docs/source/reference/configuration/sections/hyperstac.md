@@ -10,6 +10,12 @@
 | `input_images_folder` | `Optional[str]` | `null` | `basic` | Optional ROI/channel TIFF folder; null uses general.denoised_images_folder. | Each ROI must be a subfolder containing consistently named channel TIFF files. |
 | `overwrite` | `bool` | `True` | `advanced` | Replace existing HyPERSTAC model assets for a deliberate rerun. | - |
 
+## Full workflow
+
+| Field | Type | Default | Level | Description | Advice |
+|---|---|---|---|---|---|
+| `full_include_survival` | `bool` | `True` | `basic` | Run Cox survival and cross-Leiden stability after visualisation in hyperstac-full. | Set false for an image-only full run that completes after visualisation in the same GPU allocation. |
+
 ## Images
 
 | Field | Type | Default | Level | Description | Advice |

@@ -3408,6 +3408,14 @@ class HyperstacConfig(ConfigModel):
         ui_group="Reusable assets",
         advice="Each ROI must be a subfolder containing consistently named channel TIFF files.",
     )
+    full_include_survival: bool = config_field(
+        True,
+        description="Run Cox survival and cross-Leiden stability after visualisation in hyperstac-full.",
+        level="basic",
+        stage="hyperstac",
+        ui_group="Full workflow",
+        advice="Set false for an image-only full run that completes after visualisation in the same GPU allocation.",
+    )
     channels: List[str] = config_field(
         default_factory=list,
         description="Ordered channel names; an empty list infers and validates the common alphabetical channel set.",

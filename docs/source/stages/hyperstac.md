@@ -38,8 +38,18 @@ run everything in one GPU allocation:
 sbt run hyperstac-full
 ```
 
-The `cox` stage remains independently runnable even though the full job invokes
-it before stability analysis.
+By default this includes Cox and cross-Leiden survival stability. For an
+image-only run that still keeps preprocessing, model training, permutation,
+and visualisation inside one GPU allocation, configure:
+
+```yaml
+hyperstac:
+  full_include_survival: false
+```
+
+The job then completes successfully after visualisation. The `cox` stage
+remains independently runnable if compatible survival metadata becomes
+available later.
 
 ## Why the analysis is performed
 

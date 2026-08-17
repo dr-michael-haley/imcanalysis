@@ -51,6 +51,7 @@ def load_runtime(component: str) -> PipelineConfig:
     os.environ["SBT_CONFIG"] = str(config_path)
     os.environ.setdefault("SBT_PROJECT_ROOT", str(config_path.parent))
     atomic_stage = {
+        "full": "hyperstac-full",
         "preprocess": "hyperstac-preprocess",
         "model": "hyperstac-model",
         "permutation": "hyperstac-permutation",
