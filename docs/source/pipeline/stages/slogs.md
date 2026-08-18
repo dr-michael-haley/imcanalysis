@@ -5,7 +5,7 @@
 Organize SLURM output files using AnnData pipeline run metadata and verify against recorded jobs
 
 - Wrapper: [`job_slurmlogs.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_slurmlogs.sh)
-- Conda environment: `imc_segmentation`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.slurmlogs`
 
 ## Inputs

@@ -13,10 +13,10 @@ set -e
 #@DESC: Tile normalized IMC images, train HyPERSTAC VICReg, and extract patch representations
 #@IN:   hyperstac.asset_folder/normalised_images or configured source ROI/channel TIFFs
 #@OUT:  hyperstac.asset_folder patches, model weights, metadata, and representation/metric AnnData
-#@ENV:  hyperstac
+#@ENV:  sbt-hyperstac
 #@MODULE:  SpatialBiologyToolkit.scripts.hyperstac_model
 #@CONFIG: general, hyperstac, logging
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
-conda activate "${SBT_CONDA_ENV_HYPERSTAC:-${IMC_ENV_HYPERSTAC:-hyperstac-imc}}"
+conda activate "${SBT_CONDA_ENV_HYPERSTAC:-sbt-hyperstac}"
 python -m SpatialBiologyToolkit.scripts.hyperstac_model

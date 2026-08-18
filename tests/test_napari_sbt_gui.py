@@ -150,8 +150,11 @@ def test_unified_dock_is_cohort_gated_and_rejects_context_clicks(tmp_path: Path)
             "Feature Building",
             "Feature Refinement",
             "Explore",
-            "Populations",
+            "Population QC",
+            "Population naming",
+            "Scanpy plotting",
             "Classify",
+            "Labeler",
             "Regions & Export",
             "Layers & Status",
         ]

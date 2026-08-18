@@ -956,7 +956,7 @@ def _check_config_registry_assets_wrapper_environment_and_plan_align(tmp_path: P
     assert stage.catalogue_order == 40
     assert stage.depends_on == []
     assert stage.groups == ["qc"]
-    assert stage.environment_keys == ["segmentation"]
+    assert stage.environment_keys == ["analysis"]
     assert stage.config_sections == ["general", "neighbour_signal"]
     assert stage.requires_assets == ["anndata", "raw_images", "masks"]
     assert stage.produces_assets == [
@@ -969,12 +969,12 @@ def _check_config_registry_assets_wrapper_environment_and_plan_align(tmp_path: P
     wrapper = (REPO_ROOT / stage.slurm_script).read_text(encoding="utf-8")
     assert "#SBATCH --cpus-per-task=6" in wrapper
     assert "#SBATCH --mem=256G" in wrapper
-    assert "#@ENV:  imc_segmentation" in wrapper
+    assert "#@ENV:  sbt-analysis" in wrapper
     assert "OMP_NUM_THREADS=1" in wrapper
     environments = yaml.safe_load(
         (REPO_ROOT / "HPC_env_files" / "environments.yaml").read_text(encoding="utf-8")
     )
-    assert environments["stage_environments"]["neighsig"] == ["segmentation"]
+    assert environments["stage_environments"]["neighsig"] == ["analysis"]
 
     config = PipelineConfig()
     assets = {asset.role: asset for asset in resolve_assets(config, tmp_path)}

@@ -5,7 +5,7 @@
 Train the PyTorch CellVision VICReg encoder and extract identity-aligned cell embeddings
 
 - Wrapper: [`job_cellvision_embed.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_cellvision_embed.sh)
-- Conda environment: `scPortrait`
+- Conda environment: `sbt-scportrait`
 - Python module: `SpatialBiologyToolkit.scripts.cellvision_embed`
 
 ## Inputs

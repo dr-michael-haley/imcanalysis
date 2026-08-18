@@ -207,6 +207,9 @@ three red, green, and blue image channels with individual 0–1 contrast ranges.
 NapariSBT can suggest the three available image channels with the highest mean
 matched `adata.X` expression in that population. Each population-specific RGB
 view is stored in the shared Explore state, including its colours and contrast.
+Population QC has one workspace-wide 0–20 pixel outline preference for all
+populations (1 pixel by default; 0 fills the labels). It is not restored from or
+stored separately in each population recipe.
 
 When no saved population recipe exists, those three marker suggestions are
 calculated immediately and cached for the selected population. ROI abundance
@@ -221,7 +224,9 @@ ROIs can be recalculated by highest abundance, lowest abundance, or a reproducib
 random ordering, with a configurable result count and random seed. Buttons show
 the matching-cell count and change from green to grey once the ROI has been viewed
 with the exact current recipe fingerprint. Legacy IMC Explorer population-setting
-CSVs can be imported, and the current observation's settings can be exported.
+CSVs can be imported, and the current observation's settings can be exported. The
+global outline preference is deliberately not duplicated in those per-population
+CSV rows.
 
 Named Explore recipes and review histories persist in
 `explore/review_state.json`. Recipes can also be imported and exported as JSON.
@@ -472,6 +477,12 @@ the ROI again reconstructs the cohort and classification layers after deletion.
 New layers have opacity 1.0 by default, except for the deliberately dimmed
 full-segmentation context layer.
 
+Explore and Population QC also show a compact current-ROI metadata table.
+NapariSBT detects `adata.obs` columns that are constant within every ROI, excluding
+the ROI and object-ID columns, and formats categorical, text, Boolean, numeric,
+date/time, duration, and missing scalar values. This detection is cached when the
+AnnData changes; ordinary ROI navigation only retrieves the current ROI's values.
+
 Selected two-dimensional image channels can be loaded as independent greyscale
 layers or assigned, in displayed selection order, to repeating red, green,
 blue, cyan, yellow, and magenta colormaps. The three-channel RGB composite
@@ -488,7 +499,7 @@ mapped onto eligible mask objects as quantitative overlays.
 
 Observation overlays are cohort-restricted by default. Enable **Include cells
 outside the classification cohort** to map an observation over every
-identity-matched object in the ROI. Population Curation enables this scope when
+identity-matched object in the ROI. Population naming enables this scope when
 showing a newly crafted observation, allowing the refined population to be seen
 alongside the unchanged broad populations in the tissue.
 
@@ -580,12 +591,12 @@ AnnData and masks are never overwritten by default.
 
 ## Naming, merging, and subclustering populations
 
-The **Populations** tab is an auditable observation-crafting workspace. Choose
-one original categorical observation (for example, `leiden`) and create one or
-more sibling drafts from it. The first draft freezes a fingerprint of the cell
-identities and source labels. Every sibling draft in that workspace must remain
-a remapping of that same source; source changes require a new workspace rather
-than silently changing existing results.
+The **Population naming** tab crafts a named `adata.obs` column from one original
+categorical observation such as `leiden`. Only the new obs-column name is needed;
+there is no separate human display name. Changing the saved-work dropdown loads
+that draft immediately. The first draft freezes a fingerprint of the cell
+identities and source labels, and all sibling drafts remain remappings of that
+same source.
 
 The base table starts as an identity mapping. Editing **Proposed name** renames
 a cluster. Assigning the same final name to multiple rows is an explicit merge:
@@ -619,19 +630,60 @@ neighbour count are selectable, and the effective count is reduced to
 an explicit conservative alternative. The default runs each selected broad
 population separately; an opt-in mode clusters selected populations together.
 
-Applying a draft creates or refreshes only its derived observation in the live
-working AnnData, writes the derived Scanpy colour array, and immediately refreshes
-the Explore and classification selectors. An existing obs is protected unless
-the explicit overwrite checkbox is enabled. Quick pop-ups can redraw an existing
-two-dimensional embedding or a selected-marker population heat map. These are
-live QC aids and do not recompute embeddings or clustering.
+The readiness indicator reports unsaved edits separately from a saved draft that
+has not yet reached the rest of the app. **Save and update Explore / Population
+QC** persists the edits, creates or refreshes the derived observation and Scanpy
+colour array in the live AnnData, and selects the corresponding renamed
+population in Population QC where possible. Its current RGB view is carried to a
+renamed population when that target has no saved recipe. An obs owned by the same
+draft can be revised safely; unrelated existing columns retain an advanced
+overwrite guard. **Open these labels in Scanpy plotting** saves and synchronizes
+pending edits when approved, opens the dedicated plotting tab, and preselects the
+derived observation.
 
-Each source workspace owns an append-only `provenance.jsonl`. It records draft
-creation, mapping edits, explicit merge groups, CSV imports, subcluster requests and
-results, failures/cancellation, component replacement, live application, and
-exports. Each subcluster run also retains its request, assignments, and a declaration
-that preprocessing and batch correction were not rerun. Curated AnnData export
-writes a new file and refuses to replace an existing path.
+**View history…** shows a concise recent-action list. The full append-only
+`provenance.jsonl` remains on disk for reproducibility without occupying a main
+workflow tab. Subcluster runs retain their request, assignments, and preprocessing
+safety declaration. Curated AnnData export writes a new file and refuses to
+replace an existing path.
+
+## Scanpy plotting
+
+The **Scanpy plotting** tab replaces the small Live QC plot box previously nested
+inside Population naming. It is visible in every AnnData-based workflow and works
+with original, renamed, merged, subclustered, classifier-derived, or manually
+applied observations. Plot generation is read-only: it does not normalize or
+scale AnnData, rebuild neighbours, recalculate PCA or UMAP, rerun BioBatchNet, or
+change clustering.
+
+Common controls choose the primary label observation, all cells versus the frozen
+classification cohort versus selected populations, optional ROIs, and an
+expression source from `adata.X`, `adata.raw`, or `adata.layers`. Categorical
+ordering and `adata.uns["<obs>_colors"]` palettes are reused throughout. A live
+summary reports the selected cell and group counts before a plot can be opened.
+
+The initial plot collection includes:
+
+- population-coloured views of any existing `adata.obsm` embedding, with selectable
+  components, display limits, point size, opacity, and optional centroid names;
+- marker mean heat maps, mean/fraction-positive dot plots, and marker-distribution
+  violins from a searchable marker list;
+- population counts or within-sample percentages as stacked bars or heat maps,
+  grouped by ROI, patient, condition, or another observation;
+- old-versus-new label cross-tabulation heat maps using counts, row percentages,
+  or column percentages to make merges and splits explicit.
+
+Embedding previews use deterministic population-stratified downsampling above the
+configurable point limit. Expression code slices selected markers before making a
+dense working array, rather than expanding the complete AnnData matrix. Aggregated
+plots continue to use all selected cells.
+
+Each plot opens in a modeless resizable window. The Matplotlib canvas follows the
+window size and includes its standard zoom, pan, reset, and save toolbar. The
+underlying plotted points or aggregate values can be exported to CSV. The main tab
+tracks open windows and can focus, close, or close all of them. Plots are snapshots;
+when the live AnnData is reloaded or synchronized, open windows are visibly marked
+out of date instead of being silently redrawn.
 
 ## Experiment layout
 

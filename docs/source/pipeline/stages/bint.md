@@ -5,7 +5,7 @@
 Batch integration with Harmony and/or BBKNN, followed by UMAP/Leiden post-processing
 
 - Wrapper: [`job_batch_integration.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_batch_integration.sh)
-- Conda environment: `imc_cellcharter`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.basic_process_batch_integration`
 
 ## Inputs

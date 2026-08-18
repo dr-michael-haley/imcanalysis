@@ -9,47 +9,47 @@ for ordering and usage guidance.
 
 | Alias | Purpose | Environment | Config sections |
 |---|---|---|---|
-| [`prep`](prep.md) | Import IMC files, export TIFF stacks, unstack channels, and build metadata/panel tables | `imc_segmentation` | general, preprocess, logging |
-| [`vis`](vis.md) | Generate UMAP/matrix/overlay/population visualization outputs | `imc_segmentation` | general, visualization, process, logging |
-| [`nimbus`](nimbus.md) | Segment/quantify cells with Nimbus and build AnnData outputs | `imc_segmentation` | general, segmentation, nimbus, logging |
-| [`bint`](bint.md) | Batch integration with Harmony and/or BBKNN, followed by UMAP/Leiden post-processing | `imc_cellcharter` | general, batch_integration, logging |
-| [`rapids`](rapids.md) | GPU processing with rapids-singlecell: optional cell filtering, PCA, optional Harmony, neighbors, UMAP, Leiden, optional parameter scan | `rapids_singlecell` | general, rapids, visualization, logging |
-| [`cellvision-extract`](cellvision-extract.md) | Extract selected identity-tracked IMC cells into one 36 px H5SC dataset with scPortrait | `scPortrait` | general, cellvision, logging |
-| [`cellvision-embed`](cellvision-embed.md) | Train the PyTorch CellVision VICReg encoder and extract identity-aligned cell embeddings | `scPortrait` | general, cellvision, logging |
-| [`cellvision-cluster`](cellvision-cluster.md) | Fuse CellVision morphology and BioBatchNet intensity graphs, then run RAPIDS UMAP and Leiden | `rapids_singlecell` | general, cellvision, logging |
-| [`cellvision-plot`](cellvision-plot.md) | Plot CellVision UMAPs, cluster-explanation QC, original-label confusion, source projections, and H5SC galleries | `scPortrait` | general, cellvision, logging |
-| [`cellvision-full`](cellvision-full.md) | Run CellVision extraction, VICReg embedding, RAPIDS clustering, and plotting in one GPU job | `scPortrait, rapids_singlecell, scPortrait` | general, cellvision, logging |
-| [`bbn`](bbn.md) | Batch correction with BioBatchNet + UMAP/Leiden post-processing | `imc_biobatchnet` | general, biobatchnet, logging |
-| [`subcl`](subcl.md) | Run checkpointed population subclustering (template generation, subclustering QC, optional remap integration) | `imc_segmentation` | general, process, subclustering, logging |
-| [`cchar`](cchar.md) | Identify spatial neighborhoods with CellCharter from an existing embedding or optional TRVAE and save QC summaries | `imc_cellcharter` | general, process, cellcharter, logging |
-| [`starling`](starling.md) | Run STARLING segmentation-aware probabilistic phenotyping from IMC AnnData marker expression | `imc_starling` | general, starling, logging |
-| [`dnqc`](dnqc.md) | Generate denoising side-by-side QC and panel consistency checks | `imc_denoise, imc_segmentation` | general, denoising, logging (plus check_panel_consistency defaults) |
-| [`aiinter`](aiinter.md) | AI labeling of Leiden populations and writing *_AIlabel columns | `imc_segmentation` | general, visualization, process, logging |
-| [`denoise`](denoise.md) | Denoise channel TIFFs and compute denoising QC metrics | `imc_denoise` | general, denoising, logging |
-| [`config`](config.md) | Update config.yaml by syncing all default config sections/keys | `imc_segmentation` | all blocks (sync defaults): general, preprocess, denoising, createmasks, segmentation, nimbus, process, visualization, cellcharter, pairwise_spatial, networkx_spatial, remap_obs, subclustering, logging |
-| [`cellpose`](cellpose.md) | DNA preprocessing + CellPose-SAM mask generation | `imc_segmentation, imc_cellposesam` | general, createmasks, logging |
-| [`reint`](reint.md) | Reintegrate markers previously removed from the processed AnnData | `imc_segmentation` | general, segmentation, logging |
+| [`prep`](prep.md) | Import IMC files, export TIFF stacks, unstack channels, and build metadata/panel tables | `sbt-analysis` | general, preprocess, logging |
+| [`vis`](vis.md) | Generate UMAP/matrix/overlay/population visualization outputs | `sbt-analysis` | general, visualization, process, logging |
+| [`nimbus`](nimbus.md) | Segment/quantify cells with Nimbus and build AnnData outputs | `sbt-analysis` | general, segmentation, nimbus, logging |
+| [`bint`](bint.md) | Batch integration with Harmony and/or BBKNN, followed by UMAP/Leiden post-processing | `sbt-analysis` | general, batch_integration, logging |
+| [`rapids`](rapids.md) | GPU processing with rapids-singlecell: optional cell filtering, PCA, optional Harmony, neighbors, UMAP, Leiden, optional parameter scan | `sbt-analysis` | general, rapids, visualization, logging |
+| [`cellvision-extract`](cellvision-extract.md) | Extract selected identity-tracked IMC cells into one 36 px H5SC dataset with scPortrait | `sbt-scportrait` | general, cellvision, logging |
+| [`cellvision-embed`](cellvision-embed.md) | Train the PyTorch CellVision VICReg encoder and extract identity-aligned cell embeddings | `sbt-scportrait` | general, cellvision, logging |
+| [`cellvision-cluster`](cellvision-cluster.md) | Fuse CellVision morphology and BioBatchNet intensity graphs, then run RAPIDS UMAP and Leiden | `sbt-analysis` | general, cellvision, logging |
+| [`cellvision-plot`](cellvision-plot.md) | Plot CellVision UMAPs, cluster-explanation QC, original-label confusion, source projections, and H5SC galleries | `sbt-scportrait` | general, cellvision, logging |
+| [`cellvision-full`](cellvision-full.md) | Run CellVision extraction, VICReg embedding, RAPIDS clustering, and plotting in one GPU job | `sbt-scportrait, sbt-analysis, sbt-scportrait` | general, cellvision, logging |
+| [`bbn`](bbn.md) | Batch correction with BioBatchNet + UMAP/Leiden post-processing | `sbt-analysis` | general, biobatchnet, logging |
+| [`subcl`](subcl.md) | Run checkpointed population subclustering (template generation, subclustering QC, optional remap integration) | `sbt-analysis` | general, process, subclustering, logging |
+| [`cchar`](cchar.md) | Identify spatial neighborhoods with CellCharter from an existing embedding or optional TRVAE and save QC summaries | `sbt-analysis` | general, process, cellcharter, logging |
+| [`starling`](starling.md) | Run STARLING segmentation-aware probabilistic phenotyping from IMC AnnData marker expression | `sbt-starling` | general, starling, logging |
+| [`dnqc`](dnqc.md) | Generate denoising side-by-side QC and panel consistency checks | `sbt-denoise, sbt-analysis` | general, denoising, logging (plus check_panel_consistency defaults) |
+| [`aiinter`](aiinter.md) | AI labeling of Leiden populations and writing *_AIlabel columns | `sbt-analysis` | general, visualization, process, logging |
+| [`denoise`](denoise.md) | Denoise channel TIFFs and compute denoising QC metrics | `sbt-denoise` | general, denoising, logging |
+| [`config`](config.md) | Update config.yaml by syncing all default config sections/keys | `sbt-analysis` | all blocks (sync defaults): general, preprocess, denoising, createmasks, segmentation, nimbus, process, visualization, cellcharter, pairwise_spatial, networkx_spatial, remap_obs, subclustering, logging |
+| [`cellpose`](cellpose.md) | DNA preprocessing + CellPose-SAM mask generation | `sbt-analysis, sbt-cellpose-sam` | general, createmasks, logging |
+| [`reint`](reint.md) | Reintegrate markers previously removed from the processed AnnData | `sbt-analysis` | general, segmentation, logging |
 | [`zipqc`](zipqc.md) | Zip selected sequential execution output directories for download | `-` | none |
-| [`scport`](scport.md) | Generate single-cell portrait outputs via external scPortrait converter | `scPortrait` | none (does not read config.yaml) |
+| [`scport`](scport.md) | Generate single-cell portrait outputs via external scPortrait converter | `sbt-scportrait` | none (does not read config.yaml) |
 | [`debug`](debug.md) | Run environment + module import diagnostics for SLURM job scripts | `-` | none |
-| [`pairsp`](pairsp.md) | Run pairwise spatial analyses (Squidpy interactions, distance bootstrap, and PCF) with plots/raw exports | `imc_cellcharter` | general, process, pairwise_spatial, logging |
-| [`nxsp`](nxsp.md) | Run per-ROI Squidpy/NetworkX spatial graph metrics (assortativity, per-population clustering, bootstrapped nulls, and case aggregation) | `imc_cellcharter` | general, process, networkx_spatial, logging |
-| [`remap`](remap.md) | Apply a simple CSV-based remap onto adata.obs, or generate a blank remap template from an existing obs column | `imc_segmentation` | general, remap_obs, logging |
-| [`slogs`](slogs.md) | Organize SLURM output files using AnnData pipeline run metadata and verify against recorded jobs | `imc_segmentation` | general, logging |
-| [`rebuildmeta`](rebuildmeta.md) | Rebuild metadata folder tables from an existing AnnData file | `imc_segmentation` | general, rebuild_metadata, logging |
-| [`popqc`](popqc.md) | Assess population support from existing graph, UMAP, PCA, and precomputed clustering-sweep state | `imc_cellcharter` | general, population_embedding_qc, logging |
-| [`hyperstac-preprocess`](hyperstac-preprocess.md) | Background-correct and robustly scale ROI/channel TIFF images for HyPERSTAC | `hyperstac` | general, hyperstac, logging |
-| [`hyperstac-model`](hyperstac-model.md) | Tile normalized IMC images, train HyPERSTAC VICReg, and extract patch representations | `hyperstac` | general, hyperstac, logging |
-| [`hyperstac-permutation`](hyperstac-permutation.md) | Quantify HyPERSTAC embedding sensitivity to channel zeroing and pixel shuffling | `hyperstac` | general, hyperstac, logging |
-| [`hyperstac-visualise`](hyperstac-visualise.md) | Run HyPERSTAC clustering scans and create embedding, marker, spatial, and gallery reports | `hyperstac` | general, hyperstac, logging |
-| [`cox`](cox.md) | Combine case-level features from one or more AnnData obs sources and compare Cox models | `hyperstac` | general, cox, logging |
-| [`hyperstac-stability`](hyperstac-stability.md) | Cross-reference HyPERSTAC Leiden marker environments, perturbation sensitivity, and Cox effects | `hyperstac` | general, hyperstac, cox, logging |
-| [`hyperstac-full`](hyperstac-full.md) | Run HyPERSTAC image analysis and optional Cox/stability components in one GPU job | `hyperstac` | general, hyperstac, cox, logging |
-| [`cellfeat`](cellfeat.md) | Build resumable cohort-only IMC cell features using full-segmentation context | `imc_segmentation` | general, napari_sbt, logging |
-| [`maxfuse`](maxfuse.md) | Match one scRNA-seq reference to IMC cells with MaxFuse and generate transfer/QC assets | `imc_maxfuse` | general, maxfuse, logging |
-| [`spatialdata`](spatialdata.md) | Discover or explicitly select spatial assets and optionally build a validated SpatialData Zarr | `imc_segmentation` | general, spatialdata, logging |
-| [`neighsig`](neighsig.md) | Learn empirical marker halos, calculate neighbour-attributable fractions, and retain spatial source-cell provenance | `imc_segmentation` | general, neighbour_signal, logging |
-| [`nimbus-scan`](nimbus-scan.md) | Scan marker-wise Nimbus normalization values before AnnData or clustering | `imc_segmentation` | general, segmentation, nimbus, nimbus_normalization_scan, logging |
+| [`pairsp`](pairsp.md) | Run pairwise spatial analyses (Squidpy interactions, distance bootstrap, and PCF) with plots/raw exports | `sbt-analysis` | general, process, pairwise_spatial, logging |
+| [`nxsp`](nxsp.md) | Run per-ROI Squidpy/NetworkX spatial graph metrics (assortativity, per-population clustering, bootstrapped nulls, and case aggregation) | `sbt-analysis` | general, process, networkx_spatial, logging |
+| [`remap`](remap.md) | Apply a simple CSV-based remap onto adata.obs, or generate a blank remap template from an existing obs column | `sbt-analysis` | general, remap_obs, logging |
+| [`slogs`](slogs.md) | Organize SLURM output files using AnnData pipeline run metadata and verify against recorded jobs | `sbt-analysis` | general, logging |
+| [`rebuildmeta`](rebuildmeta.md) | Rebuild metadata folder tables from an existing AnnData file | `sbt-analysis` | general, rebuild_metadata, logging |
+| [`popqc`](popqc.md) | Assess population support from existing graph, UMAP, PCA, and precomputed clustering-sweep state | `sbt-analysis` | general, population_embedding_qc, logging |
+| [`hyperstac-preprocess`](hyperstac-preprocess.md) | Background-correct and robustly scale ROI/channel TIFF images for HyPERSTAC | `sbt-hyperstac` | general, hyperstac, logging |
+| [`hyperstac-model`](hyperstac-model.md) | Tile normalized IMC images, train HyPERSTAC VICReg, and extract patch representations | `sbt-hyperstac` | general, hyperstac, logging |
+| [`hyperstac-permutation`](hyperstac-permutation.md) | Quantify HyPERSTAC embedding sensitivity to channel zeroing and pixel shuffling | `sbt-hyperstac` | general, hyperstac, logging |
+| [`hyperstac-visualise`](hyperstac-visualise.md) | Run HyPERSTAC clustering scans and create embedding, marker, spatial, and gallery reports | `sbt-hyperstac` | general, hyperstac, logging |
+| [`cox`](cox.md) | Combine case-level features from one or more AnnData obs sources and compare Cox models | `sbt-hyperstac` | general, cox, logging |
+| [`hyperstac-stability`](hyperstac-stability.md) | Cross-reference HyPERSTAC Leiden marker environments, perturbation sensitivity, and Cox effects | `sbt-hyperstac` | general, hyperstac, cox, logging |
+| [`hyperstac-full`](hyperstac-full.md) | Run HyPERSTAC image analysis and optional Cox/stability components in one GPU job | `sbt-hyperstac` | general, hyperstac, cox, logging |
+| [`cellfeat`](cellfeat.md) | Build resumable cohort-only IMC cell features using full-segmentation context | `sbt-analysis` | general, napari_sbt, logging |
+| [`maxfuse`](maxfuse.md) | Match one scRNA-seq reference to IMC cells with MaxFuse and generate transfer/QC assets | `sbt-maxfuse` | general, maxfuse, logging |
+| [`spatialdata`](spatialdata.md) | Discover or explicitly select spatial assets and optionally build a validated SpatialData Zarr | `sbt-analysis` | general, spatialdata, logging |
+| [`neighsig`](neighsig.md) | Learn empirical marker halos, calculate neighbour-attributable fractions, and retain spatial source-cell provenance | `sbt-analysis` | general, neighbour_signal, logging |
+| [`nimbus-scan`](nimbus-scan.md) | Scan marker-wise Nimbus normalization values before AnnData or clustering | `sbt-analysis` | general, segmentation, nimbus, nimbus_normalization_scan, logging |
 
 ```{toctree}
 :maxdepth: 1

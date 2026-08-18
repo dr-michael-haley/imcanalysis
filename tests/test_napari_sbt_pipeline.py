@@ -16,7 +16,7 @@ def test_cellfeat_registry_resources_environment_and_docs_are_aligned():
     assert stage.catalogue_order == 37
     assert stage.depends_on == []
     assert stage.groups == []
-    assert stage.environment_keys == ["segmentation"]
+    assert stage.environment_keys == ["analysis"]
     assert stage.config_sections == ["general", "napari_sbt"]
     assert stage.python_modules == [
         "SpatialBiologyToolkit.scripts.cell_features"
@@ -29,7 +29,7 @@ def test_cellfeat_registry_resources_environment_and_docs_are_aligned():
     assert "#SBATCH -n 8" in wrapper
     assert "#SBATCH --mem=64G" in wrapper
     assert "#SBATCH -p himem" in wrapper
-    assert "#@ENV:  imc_segmentation" in wrapper
+    assert "#@ENV:  sbt-analysis" in wrapper
 
 
 def test_napari_sbt_config_and_asset_role_resolve_from_project(tmp_path: Path):

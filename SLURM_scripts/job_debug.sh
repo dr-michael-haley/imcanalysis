@@ -156,23 +156,30 @@ PY
 # Loop through job scripts
 ############################################
 for JOB in "$JOB_DIR"/*.sh; do
-    mapfile -t ENVS < <(sed -n 's/^#@ENV:[[:space:]]*//p' "$JOB")
-    mapfile -t MODULES < <(sed -n 's/^#@MODULE:[[:space:]]*//p' "$JOB")
+    mapfile -t ENV_MODULE_PAIRS < <(
+        awk '
+            /^#@ENV:/ {
+                sub(/^#@ENV:[[:space:]]*/, "")
+                env = $0
+                next
+            }
+            /^#@MODULE:/ && env != "" {
+                sub(/^#@MODULE:[[:space:]]*/, "")
+                print env "\t" $0
+            }
+        ' "$JOB"
+    )
 
-    if (( ${#ENVS[@]} == 0 || ${#MODULES[@]} == 0 )); then
+    if (( ${#ENV_MODULE_PAIRS[@]} == 0 )); then
         echo "[WARN] Skipping $(basename "$JOB") (missing #@ENV or #@MODULE)"
         echo
         continue
     fi
 
-    if (( ${#ENVS[@]} != ${#MODULES[@]} )); then
-        echo "[WARN] Skipping $(basename "$JOB") (#@ENV/#@MODULE counts differ)"
-        echo
-        continue
-    fi
-
-    for INDEX in "${!ENVS[@]}"; do
-        test_job "$JOB" "${ENVS[$INDEX]}" "${MODULES[$INDEX]}"
+    for PAIR in "${ENV_MODULE_PAIRS[@]}"; do
+        ENV_NAME="${PAIR%%$'\t'*}"
+        MODULE_NAME="${PAIR#*$'\t'}"
+        test_job "$JOB" "$ENV_NAME" "$MODULE_NAME"
     done
 done
 

@@ -5,7 +5,7 @@
 Run STARLING segmentation-aware probabilistic phenotyping from IMC AnnData marker expression
 
 - Wrapper: [`job_starling.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_starling.sh)
-- Conda environment: `imc_starling`
+- Conda environment: `sbt-starling`
 - Python module: `SpatialBiologyToolkit.scripts.starling_analysis`
 
 ## Inputs

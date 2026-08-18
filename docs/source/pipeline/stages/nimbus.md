@@ -5,7 +5,7 @@
 Segment/quantify cells with Nimbus and build AnnData outputs
 
 - Wrapper: [`job_nimbus.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_nimbus.sh)
-- Conda environment: `imc_segmentation`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.segmentation_nimbus`
 
 ## Inputs

@@ -5,7 +5,7 @@
 Generate UMAP/matrix/overlay/population visualization outputs
 
 - Wrapper: [`job_visualisations.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_visualisations.sh)
-- Conda environment: `imc_segmentation`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.basic_visualizations`
 
 ## Inputs

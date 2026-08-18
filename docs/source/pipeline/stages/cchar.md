@@ -5,7 +5,7 @@
 Identify spatial neighborhoods with CellCharter from an existing embedding or optional TRVAE and save QC summaries
 
 - Wrapper: [`job_cellcharter.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_cellcharter.sh)
-- Conda environment: `imc_cellcharter`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.cellcharter_neighborhoods`
 
 ## Inputs

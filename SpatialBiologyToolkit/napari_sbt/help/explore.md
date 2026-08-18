@@ -16,6 +16,19 @@ Data exploration and Population QC do not construct classification-cohort or
 excluded-context label arrays. Classification and Labeler workflows still create
 them because cell eligibility is part of those interactions.
 
+## ROI sample metadata
+
+NapariSBT automatically identifies `adata.obs` fields whose value is constant
+within every ROI, excluding the ROI and object-identity columns themselves. These
+fields are treated as sample-level metadata and shown for the current ROI near the
+top of Explore. Categorical, text, Boolean, integer, floating-point, date/time,
+duration, and missing scalar values are formatted appropriately.
+
+A field is omitted if it varies within any ROI, contains a mixture of missing and
+non-missing values within one ROI, is entirely missing, or stores unsupported
+non-scalar objects. Detection is cached for the loaded AnnData and is not repeated
+on ordinary Previous/Next navigation.
+
 **Hide all layers** and **Show all layers** change visibility without discarding
 the view. **Delete all layers** removes the displayed layers; saved reload-recipe
 entries can still reconstruct managed layers on the next ROI.

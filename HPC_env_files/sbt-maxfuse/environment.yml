@@ -1,4 +1,4 @@
-name: imc_maxfuse
+name: sbt-maxfuse
 channels:
   - conda-forge
   - defaults

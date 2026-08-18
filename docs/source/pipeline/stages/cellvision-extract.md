@@ -5,7 +5,7 @@
 Extract selected identity-tracked IMC cells into one 36 px H5SC dataset with scPortrait
 
 - Wrapper: [`job_cellvision_extract.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_cellvision_extract.sh)
-- Conda environment: `scPortrait`
+- Conda environment: `sbt-scportrait`
 - Python module: `SpatialBiologyToolkit.scripts.cellvision_extract`
 
 ## Inputs

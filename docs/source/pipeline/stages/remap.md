@@ -5,7 +5,7 @@
 Apply a simple CSV-based remap onto adata.obs, or generate a blank remap template from an existing obs column
 
 - Wrapper: [`job_remap_obs.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_remap_obs.sh)
-- Conda environment: `imc_segmentation`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.remap_obs`
 
 ## Inputs

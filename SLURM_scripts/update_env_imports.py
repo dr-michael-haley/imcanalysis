@@ -18,7 +18,7 @@ OUTPUT_YAML = SLURM_DIR / "env_imports.yaml"
 # Regex
 # -------------------------------------------------
 ENV_RE = re.compile(r"^#@ENV:\s*(\S+)")
-PYMOD_RE = re.compile(r"^\s*python\s+-m\s+([A-Za-z0-9_\.]+)")
+MODULE_RE = re.compile(r"^#@MODULE:\s*([A-Za-z0-9_\.]+)")
 
 # -------------------------------------------------
 # Helpers
@@ -70,30 +70,25 @@ env_imports = defaultdict(set)
 
 for script in SLURM_DIR.glob("*.sh"):
     env = None
-    modules = []
 
     with script.open(encoding="utf-8", errors="replace") as f:
         for line in f:
-            if env is None:
-                m = ENV_RE.match(line)
-                if m:
-                    env = m.group(1)
+            env_match = ENV_RE.match(line)
+            if env_match:
+                env = env_match.group(1)
+                continue
 
-            m = PYMOD_RE.search(line)
-            if m:
-                modules.append(m.group(1))
+            module_match = MODULE_RE.match(line)
+            if not module_match or not env:
+                continue
+            mod = module_match.group(1)
+            py_file = resolve_module_to_file(mod)
+            if not py_file:
+                print(f"WARNING: Could not resolve module {mod}")
+                continue
 
-    if not env:
-        continue
-
-    for mod in modules:
-        py_file = resolve_module_to_file(mod)
-        if not py_file:
-            print(f"⚠ Could not resolve module {mod}")
-            continue
-
-        imports = extract_top_level_imports(py_file)
-        env_imports[env].update(imports)
+            imports = extract_top_level_imports(py_file)
+            env_imports[env].update(imports)
 
 # -------------------------------------------------
 # Write YAML (stable output)
@@ -106,4 +101,4 @@ output = {
 with OUTPUT_YAML.open("w", encoding="utf-8") as f:
     yaml.safe_dump(output, f, sort_keys=False)
 
-print(f"✔ Generated {OUTPUT_YAML}")
+print(f"Generated {OUTPUT_YAML}")

@@ -5,7 +5,7 @@
 Run HyPERSTAC image analysis and optional Cox/stability components in one GPU job
 
 - Wrapper: [`job_hyperstac_full.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_hyperstac_full.sh)
-- Conda environment: `hyperstac`
+- Conda environment: `sbt-hyperstac`
 - Python module: `SpatialBiologyToolkit.scripts.hyperstac_full`
 
 ## Inputs

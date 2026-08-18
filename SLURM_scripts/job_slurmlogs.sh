@@ -12,7 +12,7 @@
 #@OUT:  general.slurm_logs_folder with renamed logs and *_Unverified flags for unmatched files
 #@OUT:  general.slurm_logs_folder/slurmlogs_manifest.csv
 #@OUT:  outputs/<execution_id>_Legacy_SLURM_Log_Migration/ stage report under sbt
-#@ENV:  imc_segmentation
+#@ENV:  sbt-analysis
 #@MODULE:  SpatialBiologyToolkit.scripts.slurmlogs
 #@CONFIG: general, logging
 
@@ -20,7 +20,7 @@ source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 echo "SLURM log organizer is using $SLURM_NTASKS CPU core(s)"
 
-conda activate "${SBT_CONDA_ENV:-${IMC_ENV_SEGMENTATION:-imc_segmentation}}"
+conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_ANALYSIS:-sbt-analysis}}"
 # Fix ctypes error
 export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
 

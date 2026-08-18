@@ -95,7 +95,7 @@ def _import_starling(repo_path: Optional[str]):
         from starling import starling, utility
     except ImportError as exc:  # pragma: no cover
         raise ImportError(
-            "Starling is required for this stage. Activate the 'imc_starling' "
+            "Starling is required for this stage. Activate the 'sbt-starling' "
             "environment, install biostarling, or set starling.starling_repo_path."
         ) from exc
     return starling, utility
@@ -110,7 +110,7 @@ def _import_lightning():
         from pytorch_lightning.callbacks import EarlyStopping
         from pytorch_lightning.loggers import TensorBoardLogger
     except ImportError as exc:  # pragma: no cover
-        raise ImportError("pytorch_lightning is required in the 'imc_starling' environment.") from exc
+        raise ImportError("pytorch_lightning is required in the 'sbt-starling' environment.") from exc
     return EarlyStopping, TensorBoardLogger, seed_everything
 
 

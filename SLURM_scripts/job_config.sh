@@ -10,7 +10,7 @@
 #@IN:   config.yaml (created if missing)
 #@OUT:  config.yaml (updated in place)
 #@OUT:  outputs/<execution_id>_Configuration_Maintenance/ stage report under sbt
-#@ENV:  imc_segmentation
+#@ENV:  sbt-analysis
 #@MODULE:  SpatialBiologyToolkit.scripts.update_config
 #@CONFIG: all blocks (sync defaults): general, preprocess, denoising, createmasks, segmentation, nimbus, process, visualization, cellcharter, pairwise_spatial, networkx_spatial, remap_obs, subclustering, logging
 
@@ -18,7 +18,7 @@ source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 echo "Config update job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 
-conda activate "${SBT_CONDA_ENV:-${IMC_ENV_SEGMENTATION:-imc_segmentation}}"
+conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_ANALYSIS:-sbt-analysis}}"
 # Fix ctypes error
 export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
 

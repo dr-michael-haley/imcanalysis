@@ -5,7 +5,7 @@
 Run per-ROI Squidpy/NetworkX spatial graph metrics (assortativity, per-population clustering, bootstrapped nulls, and case aggregation)
 
 - Wrapper: [`job_networkx_spatial.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_networkx_spatial.sh)
-- Conda environment: `imc_cellcharter`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.networkx_spatial`
 
 ## Inputs

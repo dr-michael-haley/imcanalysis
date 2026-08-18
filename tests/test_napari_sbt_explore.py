@@ -11,10 +11,12 @@ from SpatialBiologyToolkit.napari_sbt.explore import (
     ExploreReviewState,
     ExploreViewRecipe,
     categorical_colour_map,
+    format_roi_metadata_value,
     identity_value_map,
     marker_values,
     population_recipe_key,
     recipe_layer_data_is_current,
+    roi_level_metadata,
 )
 
 
@@ -93,6 +95,37 @@ def test_marker_values_extracts_one_dense_anndata_x_column():
     adata = _adata_like()
 
     assert marker_values(adata, "CD20").tolist() == [2.0, 4.0, 6.0]
+
+
+def test_roi_level_metadata_detects_constant_mixed_type_obs_fields():
+    obs = pd.DataFrame(
+        {
+            "ROI": ["A", "A", "B", "B"],
+            "ObjectNumber": [1, 2, 1, 2],
+            "patient": pd.Categorical(["P1", "P1", "P2", "P2"]),
+            "age": pd.Series([61, 61, 48, 48], dtype="Int64"),
+            "treated": [True, True, False, False],
+            "acquired": pd.to_datetime(
+                ["2026-01-01", "2026-01-01", "2026-02-03", "2026-02-03"]
+            ),
+            "population": ["T", "B", "T", "T"],
+            "partly_missing": ["x", None, "y", "y"],
+        }
+    )
+
+    metadata = roi_level_metadata(
+        obs,
+        roi_obs="ROI",
+        exclude_columns=("ObjectNumber",),
+    )
+
+    assert list(metadata["A"]) == ["patient", "age", "treated", "acquired"]
+    assert metadata["B"]["patient"] == "P2"
+    assert format_roi_metadata_value(metadata["A"]["age"]) == "61"
+    assert format_roi_metadata_value(metadata["B"]["treated"]) == "False"
+    assert format_roi_metadata_value(metadata["A"]["acquired"]).startswith(
+        "2026-01-01"
+    )
 
 
 def test_explore_recipe_fingerprint_tracks_colour_assignment_order():
@@ -179,12 +212,14 @@ def test_population_recipes_and_viewed_rois_round_trip():
     state = ExploreReviewState(
         population_recipes={key: recipe},
         viewed_rois={recipe.fingerprint: ["ROI_1", "ROI_2"]},
+        population_qc_contour_width=4,
     )
 
     restored = ExploreReviewState.model_validate(state.model_dump(mode="json"))
 
     assert restored.population_recipes[key] == recipe
     assert restored.viewed_rois[recipe.fingerprint] == ["ROI_1", "ROI_2"]
+    assert restored.population_qc_contour_width == 4
 
 
 def test_named_recipe_presets_and_function_keys_round_trip():
@@ -251,3 +286,4 @@ def test_legacy_explore_review_state_defaults_to_no_named_presets():
 
     assert restored.recipe_presets == {}
     assert restored.active_recipe_id is None
+    assert restored.population_qc_contour_width == 1

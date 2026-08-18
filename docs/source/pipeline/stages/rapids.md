@@ -5,7 +5,7 @@
 GPU processing with rapids-singlecell: optional cell filtering, PCA, optional Harmony, neighbors, UMAP, Leiden, optional parameter scan
 
 - Wrapper: [`job_rapids.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_rapids.sh)
-- Conda environment: `rapids_singlecell`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.basic_process_rapids`
 
 ## Inputs

@@ -5,7 +5,7 @@
 Run checkpointed population subclustering (template generation, subclustering QC, optional remap integration)
 
 - Wrapper: [`job_subclustering.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_subclustering.sh)
-- Conda environment: `imc_segmentation`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.subclustering`
 
 ## Inputs

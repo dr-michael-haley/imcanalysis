@@ -514,7 +514,7 @@ STAGES: tuple[StageSpec, ...] = (
             "UMAP, confusion, projection, and cell-gallery report",
         ),
         notes=(
-            "The combined wrapper switches between scPortrait and rapids_singlecell environments inside one GPU allocation.",
+            "The combined wrapper switches between sbt-scportrait and sbt-analysis environments inside one GPU allocation.",
             "Use the cellvision mode or individual cellvision-* stages for separate checkpoint jobs.",
         ),
     ),

@@ -5,7 +5,7 @@
 Run pairwise spatial analyses (Squidpy interactions, distance bootstrap, and PCF) with plots/raw exports
 
 - Wrapper: [`job_pairwise_spatial.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_pairwise_spatial.sh)
-- Conda environment: `imc_cellcharter`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.pairwise_spatial`
 
 ## Inputs

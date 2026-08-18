@@ -1,21 +1,23 @@
-# Population Curation
+# Population naming
 
 Use this tab to turn an original categorical observation such as `leiden` into
 one or more named, reviewable observations. The original observation is never
-edited. Each new observation is a sibling **draft** tied to the same frozen
-source labels and cell identities.
+edited. The main loop is: edit names, **Save and update Explore / Population
+QC**, review them in tissue, then return here to refine them.
 
 ## 1. Source workspace and drafts
 
-Choose the original observation before creating the first draft. NapariSBT
-records a fingerprint of every cell identity and source value. If either later
-changes, the existing workspace will refuse to apply silently; start an explicit
-new workspace or dataset revision instead.
+Choose the original observation, enter the single **New label column
+(adata.obs)** name, and create the first draft. That is the only new name needed:
+the technical draft display-name field has been removed. NapariSBT still records
+the original cell/label fingerprint internally so it cannot silently remap a
+different dataset.
 
-The draft display name is for people. **New adata.obs name** is the exact column
-that will be created in the live working AnnData. Several sibling drafts can be
-kept at once, but all drafts inside one workspace derive from the same original
-observation.
+Several saved label columns can derive from the same original observation.
+Changing **Saved naming work** loads it immediately; there is no separate Load
+button. The readiness indicator distinguishes unsaved edits, saved work which has
+not yet been synchronized, a conflicting obs name, and a saved revision already
+available throughout the app.
 
 ## Base naming and explicit merges
 
@@ -74,47 +76,47 @@ can read it. This snapshot is not written back to the user's original object.
 image classifier or another pipeline. The table must contain `obs_name` (or a
 supported cell-identity alias) and a class/label column. New assignments replace
 older split membership only for overlapping cells; unrelated components remain.
-Rename the imported components before applying the draft.
+Rename the imported components before saving the draft.
 
 **Use current classifier assignments** performs the same bridge without a file:
 confirmed labels override model predictions, unassigned cohort cells are ignored,
 and class IDs are converted to their configured class names. The imported groups
-remain proposals in this population draft until you review, rename, and apply it.
+remain proposals in this population draft until you review, rename, and save it.
 
-## Preview, apply, and QC
+## Preview and QC
 
 ### Applying a draft
 
 The preview always shows effective cell counts, split coverage, and each explicit
-merge. **Apply draft** adds or refreshes only the derived observation in the live
-working AnnData and refreshes Explore and Classify selectors. Existing columns
-are protected unless the overwrite checkbox is deliberately enabled.
+merge. **Save and update Explore / Population QC** now performs both actions: it
+saves the draft, adds or refreshes its derived observation in the live working
+AnnData, refreshes the app's observation selectors, and selects the corresponding
+new population name in Population QC where possible. The current Population QC
+RGB view is carried across a rename when there is no existing recipe for the new
+name.
 
-Apply only after reviewing the base mapping, split components, and explicit merge
-list. Use the overwrite checkbox only when intentionally revising the same derived
-observation. Export creates a new AnnData file and refuses to replace an existing
-file.
+Revising a label column previously created by the same draft is safe and does not
+need the overwrite checkbox. The advanced overwrite checkbox is only for
+deliberately replacing an unrelated existing observation. Export creates a new
+AnnData file and refuses to replace an existing file.
 
-### Live QC plots
+### Scanpy plotting handoff
 
-**Show in Explore** renders the same derived observation over the current tissue
-ROI and enables the full-dataset overlay scope, so broad populations outside a
-classification cohort remain visible alongside the split population. The
-embedding pop-up uses an existing two-dimensional `obsm`; the heat-map
-pop-up shows population means for selected `adata.X` markers and z-scores each
-marker across populations. These plots are quick QC views, not publication
-outputs, and they never recompute the embedding or clustering.
+**Open current labels in Explore** renders the same derived observation over the
+current tissue ROI and enables the full-dataset overlay scope, so broad populations
+outside a classification cohort remain visible alongside split populations.
 
-Choose an existing two-dimensional embedding for the scatter plot. Select a small,
-biologically informative marker set for the heat map; regenerate these quick views
-after naming, merging, or subclustering changes to check that the interpretation
-still makes sense in expression and tissue space.
+**Open these labels in Scanpy plotting** moves expression, embedding, composition,
+and old-versus-new label QC into the dedicated Scanpy plotting workspace. If the
+current mapping is unsaved or has not reached the live AnnData object, NapariSBT
+offers to save and synchronize it first. The plotting tab then opens with this
+derived observation already selected. Existing plot windows remain as snapshots
+and are marked out of date when labels change, making before-and-after comparison
+possible without silently redrawing results.
 
-## Provenance
+## History and provenance
 
-The append-only JSONL log records workspace and draft creation, every saved
-naming/colour/note change, current explicit merge groups, CSV imports, subcluster-run
-requests and results, cancellations/failures, component replacement, application
-to the live AnnData, mapping exports, and curated AnnData exports. Worker run
-folders also retain their exact request, assignment table, and preprocessing
-safety declaration.
+**View history…** opens a short human-readable list of recent actions. The full
+append-only JSONL audit remains available on disk for reproducibility, but it is
+no longer a permanent tab in the main naming interface. Worker run folders still
+retain their exact request, assignment table, and preprocessing safety declaration.

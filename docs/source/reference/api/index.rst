@@ -32,6 +32,7 @@ This reference is split by module so the site navigation stays compact.
    pcf
    plotting
    population_identification
+   rapids_compat
    scrnaseq_to_imc_matching
    spatial
    spatial_permutation

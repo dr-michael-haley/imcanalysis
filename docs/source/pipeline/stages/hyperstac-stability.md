@@ -5,7 +5,7 @@
 Cross-reference HyPERSTAC Leiden marker environments, perturbation sensitivity, and Cox effects
 
 - Wrapper: [`job_hyperstac_stability.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_hyperstac_stability.sh)
-- Conda environment: `hyperstac`
+- Conda environment: `sbt-hyperstac`
 - Python module: `SpatialBiologyToolkit.scripts.hyperstac_stability`
 
 ## Inputs

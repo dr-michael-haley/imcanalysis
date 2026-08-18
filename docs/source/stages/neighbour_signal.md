@@ -256,7 +256,7 @@ sentinels. Use the recommended `max` behavior when source identity is needed.
 
 ## Environment and resources
 
-The stage reuses `imc_segmentation`; its existing NumPy, SciPy, tifffile,
+The stage reuses `sbt-analysis`; its existing NumPy, SciPy, tifffile,
 AnnData, Scanpy, pandas, and matplotlib stack covers the analysis. No new
 environment or package is required.
 

@@ -14,13 +14,13 @@ set -euo pipefail
 #@IN:   spatialdata.root plus optional explicit AnnData, masks, image panels, histology, region-label, and MaxFuse paths
 #@OUT:  spatialdata.output_path when spatialdata.action=build
 #@OUT:  outputs/<execution_id>_SpatialData_Assembly/{tables,summaries}/
-#@ENV:  imc_segmentation
+#@ENV:  sbt-analysis
 #@MODULE:  SpatialBiologyToolkit.scripts.spatialdata_builder
 #@CONFIG: general, spatialdata, logging
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
-conda activate "${SBT_CONDA_ENV:-${IMC_ENV_SEGMENTATION:-imc_segmentation}}"
+conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_ANALYSIS:-sbt-analysis}}"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 export OPENBLAS_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"

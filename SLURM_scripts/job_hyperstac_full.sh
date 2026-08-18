@@ -13,11 +13,11 @@ set -e
 #@DESC: Run HyPERSTAC image analysis and optional Cox/stability components in one GPU job
 #@IN:   configured ROI/channel TIFFs; Cox feature sources and clinical survival metadata when enabled
 #@OUT:  reusable HyPERSTAC assets and managed visualisation, with optional Cox and stability reports
-#@ENV:  hyperstac
+#@ENV:  sbt-hyperstac
 #@MODULE:  SpatialBiologyToolkit.scripts.hyperstac_full
 #@CONFIG: general, hyperstac, cox, logging
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
-conda activate "${SBT_CONDA_ENV_HYPERSTAC:-${IMC_ENV_HYPERSTAC:-hyperstac-imc}}"
+conda activate "${SBT_CONDA_ENV_HYPERSTAC:-sbt-hyperstac}"
 
 python -m SpatialBiologyToolkit.scripts.hyperstac_full

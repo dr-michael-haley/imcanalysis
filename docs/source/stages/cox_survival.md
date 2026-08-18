@@ -159,6 +159,6 @@ fitted for the number of events.
   are relative to that reference.
 - Repeated cross-validation estimates internal performance only. Independent
   cohort validation remains necessary for a predictive biomarker claim.
-- Cox execution uses the externally managed `hyperstac-imc` environment because
+- Cox execution uses the externally managed `sbt-hyperstac` environment because
   lifelines and scikit-survival are not present in the lightweight CLI
   environment.

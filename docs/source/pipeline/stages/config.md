@@ -5,7 +5,7 @@
 Update config.yaml by syncing all default config sections/keys
 
 - Wrapper: [`job_config.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_config.sh)
-- Conda environment: `imc_segmentation`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.update_config`
 
 ## Inputs

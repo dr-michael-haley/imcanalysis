@@ -14,7 +14,7 @@
 #@IN:   adata.X by default, or starling.use_layer if set; optional starling.marker_include/marker_exclude
 #@OUT:  starling.output_adata_path (default general.anndata_path)
 #@OUT:  outputs/<execution_id>_STARLING_Phenotyping/
-#@ENV:  imc_starling
+#@ENV:  sbt-starling
 #@MODULE:  SpatialBiologyToolkit.scripts.starling_analysis
 #@CONFIG: general, starling, logging
 
@@ -22,7 +22,7 @@ source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 echo "STARLING job is using ${SLURM_GPUS:-0} GPU(s) with ID(s) ${CUDA_VISIBLE_DEVICES:-none} and ${SLURM_NTASKS:-${SLURM_NTASKS_PER_NODE:-1}} CPU core(s)"
 
-conda activate "${SBT_CONDA_ENV:-${IMC_ENV_STARLING:-imc_starling}}"
+conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_STARLING:-sbt-starling}}"
 export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
 
 python -m SpatialBiologyToolkit.scripts.starling_analysis

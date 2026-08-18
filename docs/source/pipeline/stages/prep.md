@@ -5,7 +5,7 @@
 Import IMC files, export TIFF stacks, unstack channels, and build metadata/panel tables
 
 - Wrapper: [`job_preprocess.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_preprocess.sh)
-- Conda environment: `imc_segmentation`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.preprocess`
 
 ## Inputs

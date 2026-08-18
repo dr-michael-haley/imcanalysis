@@ -5,7 +5,7 @@
 Batch correction with BioBatchNet + UMAP/Leiden post-processing
 
 - Wrapper: [`job_biobatchnet.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_biobatchnet.sh)
-- Conda environment: `imc_biobatchnet`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.basic_process_biobatchnet`
 
 ## Inputs

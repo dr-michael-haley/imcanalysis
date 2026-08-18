@@ -12,10 +12,10 @@ set -e
 #@DESC: Background-correct and robustly scale ROI/channel TIFF images for HyPERSTAC
 #@IN:   hyperstac.input_images_folder or general.denoised_images_folder
 #@OUT:  hyperstac.asset_folder/normalised_images and managed normalization QC tables
-#@ENV:  hyperstac
+#@ENV:  sbt-hyperstac
 #@MODULE:  SpatialBiologyToolkit.scripts.hyperstac_preprocess
 #@CONFIG: general, hyperstac, logging
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
-conda activate "${SBT_CONDA_ENV_HYPERSTAC:-${IMC_ENV_HYPERSTAC:-hyperstac-imc}}"
+conda activate "${SBT_CONDA_ENV_HYPERSTAC:-sbt-hyperstac}"
 python -m SpatialBiologyToolkit.scripts.hyperstac_preprocess

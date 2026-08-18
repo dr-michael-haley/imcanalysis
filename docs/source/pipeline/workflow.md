@@ -199,6 +199,9 @@ stage facts in the wrapper metadata.
 
 - Job email notifications use `IMC_EMAIL`.
 - Managed runs resolve environment keys and fixed names from
-  `HPC_env_files/environments.yaml`. `IMC_ENV_*` remains a transitional direct-wrapper fallback.
-- `rapids_singlecell`, `imc_starling`, and `scPortrait` are external/pre-existing environments rather than environments synchronized by `sbt env`.
+  `HPC_env_files/environments.yaml`; direct wrappers use the same
+  `SBT_CONDA_ENV_<KEY>` names and standardized defaults.
+- `sbt-analysis` supplies the standard RAPIDS runtime. `sbt-starling` and
+  `sbt-scportrait` remain external/pre-existing environments rather than
+  environments synchronized by `sbt env`.
 - If executable bits are missing, run `chmod +x ~/imcanalysis/SLURM_scripts/*.sh`.

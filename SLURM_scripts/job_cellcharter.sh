@@ -13,7 +13,7 @@
 #@IN:   adata.obs sample key (default cellcharter.sample_key=ROI) and spatial coords (obsm['spatial'] or X_loc/Y_loc)
 #@OUT:  cellcharter.output_adata_path (default anndata_cellcharter.h5ad)
 #@OUT:  outputs/<execution_id>_CellCharter_Neighbourhoods/ (legacy direct fallback: general.qc_folder)
-#@ENV:  imc_cellcharter
+#@ENV:  sbt-analysis
 #@MODULE:  SpatialBiologyToolkit.scripts.cellcharter_neighborhoods
 #@CONFIG: general, process, cellcharter, logging
 
@@ -21,7 +21,7 @@ source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 echo "CellCharter job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 
-conda activate "${SBT_CONDA_ENV:-${IMC_ENV_CELLCHARTER:-imc_cellcharter}}"
+conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_ANALYSIS:-sbt-analysis}}"
 # Fix ctypes error
 export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
 

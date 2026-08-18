@@ -5,7 +5,7 @@
 Denoise channel TIFFs and compute denoising QC metrics
 
 - Wrapper: [`job_denoising.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_denoising.sh)
-- Conda environment: `imc_denoise`
+- Conda environment: `sbt-denoise`
 - Python module: `SpatialBiologyToolkit.scripts.denoising`
 
 ## Inputs

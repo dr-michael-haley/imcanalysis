@@ -138,7 +138,7 @@ dmypy.json
 .idea
 .vscode
 .ipynb_checkpoints
-population_qc.md
+/population_qc.md
 new_skill.md
 pydantic_migration.md
 cli_launcher_migration.md

@@ -11,7 +11,7 @@
 #@IN:   batch_integration.batch_correction_obs must exist in AnnData.obs for Harmony/BBKNN modes
 #@OUT:  batch_integration.output_adata_path (default general.anndata_path)
 #@OUT:  outputs/<execution_id>_Batch_Integration/ (legacy direct fallback: general.qc_folder)
-#@ENV:  imc_cellcharter
+#@ENV:  sbt-analysis
 #@MODULE:  SpatialBiologyToolkit.scripts.basic_process_batch_integration
 #@CONFIG: general, batch_integration, logging
 
@@ -19,7 +19,7 @@ source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 echo "Batch integration job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 
-conda activate "${SBT_CONDA_ENV:-${IMC_ENV_CELLCHARTER:-imc_cellcharter}}"
+conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_ANALYSIS:-sbt-analysis}}"
 # Fix ctypes error
 export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
 

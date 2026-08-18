@@ -1,0 +1,193 @@
+schema_version: 1
+
+environments:
+  analysis:
+    conda_name: sbt-analysis
+    specification_directory: HPC_env_files/sbt-analysis
+    platform: linux-64
+    conda_channel_priority: flexible
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
+      - [python, -c, "import sys; assert sys.version_info[:2] == (3, 11)"]
+      - [python, -c, "import numpy, pandas, scipy, anndata, scanpy, torch, torchvision, pytorch_lightning"]
+      - [python, -c, "import cupy, cudf, cuml, cugraph, dask_cudf, rmm, rapids_singlecell"]
+      - [python, -c, "import cellpose, nimbus_inference, readimc, skimage, pyarrow, spatialdata"]
+      - [python, -c, "import biobatchnet, cellcharter, squidpy"]
+      - [python, -c, "import pkg_resources; from importlib.metadata import version; assert int(version('setuptools').split('.', 1)[0]) < 81; assert version('rapids-singlecell') == '0.12.0'; assert version('cugraph').startswith('24.12'); assert version('dask-cudf').startswith('24.12'); assert version('dask') == '2024.11.2'; assert version('distributed') == '2024.11.2'; assert version('dask-expr') == '1.1.19'; assert version('cellcharter') == '0.3.7'; assert version('torch').split('+', 1)[0] == '2.9.1'; assert version('numpy') == '1.26.4'; assert version('scikit-image') == '0.24.0'; assert version('spatialdata') == '0.4.0'; assert version('multiscale-spatial-image') == '2.0.2'; assert version('zarr') == '2.18.7'; assert version('numcodecs') == '0.15.1'; assert version('squidpy') == '1.6.5'"]
+      - [python, -c, "import SpatialBiologyToolkit.scripts.basic_process_rapids"]
+      - [python, -c, "import SpatialBiologyToolkit.scripts.basic_process_biobatchnet"]
+      - [python, -c, "import SpatialBiologyToolkit.scripts.cellcharter_neighborhoods"]
+      - [python, -c, "import SpatialBiologyToolkit.scripts.segmentation_nimbus"]
+      - [python, -c, "import SpatialBiologyToolkit.scripts.spatialdata_builder"]
+    notes:
+      - Candidate consolidated runtime for the existing segmentation, biobatchnet, cellcharter, and RAPIDS environment families, with SpatialData included.
+      - No stage uses this key until the joint install, strengthened smoke tests, and targeted end-to-end acceptance pass.
+      - CellCharter is supported through its default existing-embedding route; optional TRVAE/scArches mode is deliberately excluded from this candidate.
+      - RAPIDS 24.12 and RAPIDS-singlecell 0.12.0 retain the shared Dask 2024.11 generation required by SpatialData 0.4 and Squidpy 1.6.5. This runtime supports original Harmony only; Harmony2 remains available in the legacy RAPIDS environment.
+      - Stage-module smoke tests use separate Python processes, matching SLURM execution; importing the RAPIDS/Scanpy and SpatialData 0.4 stacks sequentially in one interpreter can select incompatible Dask DataFrame backends.
+      - Nimbus is provisionally included on Python 3.11, within its documented Python 3.9 through 3.11 range; split it only if inference validation fails.
+      - STARLING, MaxFuse, scPortrait, Cellpose-SAM, HyPERSTAC, and legacy denoising remain separate.
+
+  napari:
+    conda_name: sbt-napari
+    specification_directory: HPC_env_files/sbt-napari
+    managed: false
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
+      - [python, -c, "import napari, qtpy, anndata, pyarrow, sklearn, skimage"]
+      - [python, -m, SpatialBiologyToolkit.napari_sbt, --help]
+    notes:
+      - Interactive-only Linux environment; it is not mapped to a pipeline stage.
+      - The CSF3 bootstrap owns installation until a reviewed linux-64 lock is generated on CSF3.
+
+  segmentation:
+    conda_name: imc_segmentation
+    specification_directory: HPC_env_files/imc_segmentation
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
+      - [python, -c, "import scanpy, readimc, skimage, pyarrow, spatialdata"]
+      - [python, -c, "import scipy, tifffile; import SpatialBiologyToolkit.neighbour_signal, SpatialBiologyToolkit.neighbour_signal_reports"]
+
+  denoise:
+    conda_name: imc_denoise
+    specification_directory: HPC_env_files/imc_denoise
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
+      - [python, -c, "from SpatialBiologyToolkit.config import PipelineConfig; from SpatialBiologyToolkit.reporting import StageReporter; PipelineConfig()"]
+      - [python, -c, "import IMC_Denoise, tensorflow, tifffile"]
+
+  cellposesam:
+    conda_name: imc_cellposesam
+    specification_directory: HPC_env_files/imc_cellposesam
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
+      - [python, -c, "import cellpose, skimage"]
+
+  biobatchnet:
+    conda_name: imc_biobatchnet
+    specification_directory: HPC_env_files/imc_biobatchnet
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
+      - [python, -c, "from SpatialBiologyToolkit.config import PipelineConfig; from SpatialBiologyToolkit.reporting import StageReporter; PipelineConfig()"]
+      - [python, -c, "import scanpy, torch"]
+    notes:
+      - BioBatchNet is installed from its upstream VCS repository and requires review during capture.
+
+  cellcharter:
+    conda_name: imc_cellcharter
+    specification_directory: HPC_env_files/imc_cellcharter
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
+      - [python, -c, "import cellcharter, scanpy, torch"]
+
+  rapids:
+    conda_name: rapids_singlecell
+    managed: false
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, rapids_singlecell"]
+    notes:
+      - External GPU environment; no repository lockfile is currently maintained.
+
+  starling:
+    conda_name: imc_starling
+    managed: false
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, starling, torch"]
+    notes:
+      - External environment; no repository lockfile is currently maintained.
+
+  scportrait:
+    conda_name: scPortrait
+    managed: false
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, scportrait, torch, h5py"]
+    notes:
+      - External environment; CellVision uses the repository implementation and does not require the old converter checkout.
+
+  hyperstac:
+    conda_name: hyperstac-imc
+    specification_directory: HPC_env_files/hyperstac-imc
+    managed: false
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, anndata, scanpy, tensorflow"]
+      - [python, -c, "import lifelines, sksurv, tifffile, seaborn"]
+    notes:
+      - External GPU environment adapted from the local HyPERSTAC IMC environment.
+      - The intent specification is committed, but no platform lock was generated without explicit environment-mutation/lock authority.
+
+  maxfuse:
+    conda_name: imc_maxfuse
+    specification_directory: HPC_env_files/imc_maxfuse
+    managed: false
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, anndata, scanpy, seaborn"]
+      - [python, -c, "import maxfuse, igraph, leidenalg"]
+      - [python, HPC_env_files/imc_maxfuse/smoke_test.py]
+    notes:
+      - Dedicated CPU environment for MaxFuse 0.0.2 and notebook-derived reporting.
+      - Python 3.10 is required by the current SpatialBiologyToolkit package; MaxFuse supports Python 3.8 and newer.
+      - The intent specification is committed, but no platform lock was generated without explicit lock-generation authority.
+
+stage_environments:
+  prep: [segmentation]
+  vis: [segmentation]
+  nimbus: [segmentation]
+  nimbus-scan: [segmentation]
+  bint: [cellcharter]
+  rapids: [rapids]
+  cellvision-extract: [scportrait]
+  cellvision-embed: [scportrait]
+  cellvision-cluster: [rapids]
+  cellvision-plot: [scportrait]
+  cellvision-full: [scportrait, rapids]
+  bbn: [biobatchnet]
+  subcl: [segmentation]
+  cchar: [cellcharter]
+  starling: [starling]
+  dnqc: [denoise, segmentation]
+  aiinter: [segmentation]
+  denoise: [denoise]
+  config: [segmentation]
+  cellpose: [cellposesam, segmentation]
+  reint: [segmentation]
+  scport: [scportrait]
+  pairsp: [cellcharter]
+  nxsp: [cellcharter]
+  remap: [segmentation]
+  slogs: [segmentation]
+  rebuildmeta: [segmentation]
+  popqc: [cellcharter]
+  hyperstac-preprocess: [hyperstac]
+  hyperstac-model: [hyperstac]
+  hyperstac-permutation: [hyperstac]
+  hyperstac-visualise: [hyperstac]
+  cox: [hyperstac]
+  hyperstac-stability: [hyperstac]
+  hyperstac-full: [hyperstac]
+  cellfeat: [segmentation]
+  maxfuse: [maxfuse]
+  spatialdata: [segmentation]
+  neighsig: [segmentation]

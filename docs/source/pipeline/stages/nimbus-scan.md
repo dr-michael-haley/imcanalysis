@@ -5,7 +5,7 @@
 Scan marker-wise Nimbus normalization values before AnnData or clustering
 
 - Wrapper: [`job_nimbus_normalization_scan.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_nimbus_normalization_scan.sh)
-- Conda environment: `imc_segmentation`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.nimbus_normalization_scan`
 
 ## Inputs

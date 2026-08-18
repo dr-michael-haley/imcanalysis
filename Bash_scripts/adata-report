@@ -17,7 +17,7 @@ Options:
       --full-var-names      Print all var_names
       --no-var-names        Do not print var_names
       --python BIN          Python executable to use (default: PYTHON_BIN env, then python3/python)
-      --conda-env ENV       Conda env to activate before running (default: imc_segmentation)
+      --conda-env ENV       Conda env to activate before running (default: sbt-analysis)
       --no-conda            Do not activate conda env
       --no-print            Do not print report to stdout (only save to file/json)
   -h, --help                Show this help
@@ -30,7 +30,7 @@ Examples:
   adata-report anndata.h5ad
   adata-report --output adata_report.txt anndata.h5ad
   adata-report --metadata-dir metadata anndata.h5ad
-  adata-report --conda-env imc_cellcharter anndata.h5ad
+  adata-report --conda-env sbt-analysis anndata.h5ad
   adata-report --json adata_report.json --no-print anndata.h5ad
 EOF
 }
@@ -45,7 +45,7 @@ FULL_VAR_NAMES=0
 SHOW_VAR_NAMES=1
 NO_PRINT=0
 USE_CONDA=1
-CONDA_ENV="${ADATA_REPORT_ENV:-imc_segmentation}"
+CONDA_ENV="${ADATA_REPORT_ENV:-sbt-analysis}"
 PY_BIN="${PYTHON_BIN:-}"
 
 while [[ $# -gt 0 ]]; do

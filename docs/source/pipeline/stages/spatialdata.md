@@ -5,7 +5,7 @@
 Discover or explicitly select spatial assets and optionally build a validated SpatialData Zarr
 
 - Wrapper: [`job_spatialdata.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_spatialdata.sh)
-- Conda environment: `imc_segmentation`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.spatialdata_builder`
 
 ## Inputs

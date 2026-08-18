@@ -1,4 +1,4 @@
-name: imc_cellposesam
+name: sbt-cellpose-sam
 channels:
   - conda-forge
   - defaults

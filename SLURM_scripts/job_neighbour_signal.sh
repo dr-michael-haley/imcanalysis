@@ -16,13 +16,13 @@ set -euo pipefail
 #@OUT:  neighbour_signal.output_adata_path with halo scores, raw-intensity layers, and marker_halo provenance
 #@OUT:  neighbour_signal.source_target_table_path with sparse source-target provenance for max aggregation
 #@OUT:  outputs/<execution_id>_Neighbour_Attributable_Signal/{figures,tables,summaries}/
-#@ENV:  imc_segmentation
+#@ENV:  sbt-analysis
 #@MODULE:  SpatialBiologyToolkit.scripts.neighbour_signal
 #@CONFIG: general, neighbour_signal, logging
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
-conda activate "${SBT_CONDA_ENV:-${IMC_ENV_SEGMENTATION:-imc_segmentation}}"
+conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_ANALYSIS:-sbt-analysis}}"
 export OMP_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 export MKL_NUM_THREADS=1

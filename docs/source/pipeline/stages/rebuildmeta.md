@@ -5,7 +5,7 @@
 Rebuild metadata folder tables from an existing AnnData file
 
 - Wrapper: [`job_rebuild_metadata.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_rebuild_metadata.sh)
-- Conda environment: `imc_segmentation`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.rebuild_metadata`
 
 ## Inputs

@@ -389,7 +389,7 @@ def _check_stage_environment_assets_wrapper_and_docs_are_aligned(tmp_path: Path)
     wrapper = (REPO_ROOT / stage.slurm_script).read_text(encoding="utf-8")
     assert "#SBATCH --cpus-per-task=8" in wrapper
     assert "#SBATCH --mem=128G" in wrapper
-    assert "#@ENV:  imc_maxfuse" in wrapper
+    assert "#@ENV:  sbt-maxfuse" in wrapper
 
     config = PipelineConfig()
     assets = {

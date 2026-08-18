@@ -1,4 +1,4 @@
-name: hyperstac-imc
+name: sbt-hyperstac
 channels:
   - conda-forge
 

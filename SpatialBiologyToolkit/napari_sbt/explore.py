@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import date, datetime
 from typing import Any, Literal
 
 import numpy as np
@@ -201,6 +202,79 @@ def marker_values(adata, marker: str) -> np.ndarray:
     return values
 
 
+def roi_level_metadata(
+    obs: pd.DataFrame,
+    *,
+    roi_obs: str,
+    exclude_columns: tuple[str, ...] = (),
+) -> dict[str, dict[str, Any]]:
+    """Return scalar obs fields which are constant within every represented ROI.
+
+    Missing values participate in the constancy check. A column containing both a
+    value and a missing entry in one ROI is therefore not presented as reliable
+    sample metadata. Unhashable object-valued columns are ignored.
+    """
+
+    if roi_obs not in obs:
+        raise KeyError(f"AnnData ROI observation does not exist: {roi_obs}")
+    if obs.empty:
+        return {}
+    roi_values = obs[roi_obs].astype("string")
+    usable = roi_values.notna()
+    if not bool(usable.any()):
+        return {}
+    working = obs.loc[usable]
+    working_rois = roi_values.loc[usable]
+    grouped = working.groupby(working_rois, sort=False, observed=True)
+    excluded = {str(roi_obs), *(str(column) for column in exclude_columns)}
+    metadata_columns: list[Any] = []
+    for column in working.columns:
+        name = str(column)
+        if name in excluded or not bool(working[column].notna().any()):
+            continue
+        try:
+            per_roi_values = grouped[column].nunique(dropna=False)
+        except (TypeError, ValueError):
+            continue
+        if not per_roi_values.empty and bool(per_roi_values.le(1).all()):
+            metadata_columns.append(column)
+
+    result: dict[str, dict[str, Any]] = {}
+    roi_array = working_rois.astype(str).to_numpy()
+    for roi in dict.fromkeys(roi_array.tolist()):
+        first_position = int(np.flatnonzero(roi_array == roi)[0])
+        row = working.iloc[first_position]
+        result[str(roi)] = {
+            str(column): row[column] for column in metadata_columns
+        }
+    return result
+
+
+def format_roi_metadata_value(value: Any) -> str:
+    """Format common AnnData obs scalar types for compact read-only display."""
+
+    try:
+        missing = pd.isna(value)
+    except (TypeError, ValueError):
+        missing = False
+    if isinstance(missing, (bool, np.bool_)) and bool(missing):
+        return "Missing"
+    if isinstance(value, (bool, np.bool_)):
+        return "True" if bool(value) else "False"
+    if isinstance(value, (pd.Timestamp, datetime, date, np.datetime64)):
+        return pd.Timestamp(value).isoformat()
+    if isinstance(value, (pd.Timedelta, np.timedelta64)):
+        return str(pd.Timedelta(value))
+    if isinstance(value, (int, np.integer)):
+        return f"{int(value):,}"
+    if isinstance(value, (float, np.floating)):
+        numeric = float(value)
+        return f"{numeric:.8g}" if np.isfinite(numeric) else str(numeric)
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
 class ExploreViewRecipe(BaseModel):
     """The ROI-independent set of layers used for one visual assessment."""
 
@@ -309,6 +383,7 @@ class ExploreReviewState(BaseModel):
     recipe_presets: dict[str, ExploreRecipePreset] = Field(default_factory=dict)
     active_recipe_id: str | None = None
     viewed_rois: dict[str, list[str]] = Field(default_factory=dict)
+    population_qc_contour_width: int = Field(default=1, ge=0, le=20)
 
     @model_validator(mode="after")
     def _validate_recipe_presets(self):
@@ -353,9 +428,11 @@ __all__ = [
     "ExploreViewRecipe",
     "SIX_COLOUR_COLORMAPS",
     "categorical_colour_map",
+    "format_roi_metadata_value",
     "identity_value_map",
     "marker_values",
     "observation_categories",
     "population_recipe_key",
     "recipe_layer_data_is_current",
+    "roi_level_metadata",
 ]

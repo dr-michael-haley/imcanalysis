@@ -176,6 +176,6 @@ held-out cross-validation summaries and risk-group plots produced by `cox`.
 - `hyperstac-stability` needs compatible managed visualisation and Cox reports.
   It does not manufacture survival metadata or infer case identity from patch
   names.
-- The `hyperstac-imc` environment is externally managed. Its intent
+- The `sbt-hyperstac` environment is externally managed. Its intent
   specification is committed, but a Linux lock was not generated as part of
   this integration.

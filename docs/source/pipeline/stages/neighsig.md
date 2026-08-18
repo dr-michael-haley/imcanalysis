@@ -5,7 +5,7 @@
 Learn empirical marker halos, calculate neighbour-attributable fractions, and retain spatial source-cell provenance
 
 - Wrapper: [`job_neighbour_signal.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_neighbour_signal.sh)
-- Conda environment: `imc_segmentation`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.neighbour_signal`
 
 ## Inputs

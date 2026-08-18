@@ -5,7 +5,7 @@
 Reintegrate markers previously removed from the processed AnnData
 
 - Wrapper: [`job_reintegrate.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_reintegrate.sh)
-- Conda environment: `imc_segmentation`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.reintegrate_markers`
 
 ## Inputs

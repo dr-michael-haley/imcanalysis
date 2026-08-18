@@ -15,13 +15,13 @@ set -euo pipefail
 #@IN:   maxfuse.feature_mapping_path with target and reference linked-feature columns
 #@OUT:  maxfuse.asset_folder with match table, transfer AnnData, and retained feature mapping
 #@OUT:  outputs/<execution_id>_MaxFuse_Matching/{figures,tables,summaries,files}/
-#@ENV:  imc_maxfuse
+#@ENV:  sbt-maxfuse
 #@MODULE:  SpatialBiologyToolkit.scripts.maxfuse_matching
 #@CONFIG: general, maxfuse, logging
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
-conda activate "${SBT_CONDA_ENV:-${IMC_ENV_MAXFUSE:-imc_maxfuse}}"
+conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_MAXFUSE:-sbt-maxfuse}}"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 export OPENBLAS_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"

@@ -320,7 +320,7 @@ class PopulationIntegrationTests(unittest.TestCase):
 
     def test_config_registry_and_required_tables(self):
         stage = get_stage("popqc")
-        self.assertEqual(stage.environment_keys, ["cellcharter"])
+        self.assertEqual(stage.environment_keys, ["analysis"])
         self.assertEqual(stage.config_sections, ["general", "population_embedding_qc"])
         self.assertEqual(stage.depends_on, [])
         with tempfile.TemporaryDirectory() as temp_dir:

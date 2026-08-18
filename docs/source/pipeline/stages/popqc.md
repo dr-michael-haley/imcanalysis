@@ -5,7 +5,7 @@
 Assess population support from existing graph, UMAP, PCA, and precomputed clustering-sweep state
 
 - Wrapper: [`job_population_embedding_qc.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_population_embedding_qc.sh)
-- Conda environment: `imc_cellcharter`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.population_embedding_qc`
 
 ## Inputs

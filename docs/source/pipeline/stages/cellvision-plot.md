@@ -5,7 +5,7 @@
 Plot CellVision UMAPs, cluster-explanation QC, original-label confusion, source projections, and H5SC galleries
 
 - Wrapper: [`job_cellvision_plot.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_cellvision_plot.sh)
-- Conda environment: `scPortrait`
+- Conda environment: `sbt-scportrait`
 - Python module: `SpatialBiologyToolkit.scripts.cellvision_plot`
 
 ## Inputs

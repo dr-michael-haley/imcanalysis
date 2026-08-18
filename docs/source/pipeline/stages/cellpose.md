@@ -5,7 +5,7 @@
 DNA preprocessing + CellPose-SAM mask generation
 
 - Wrapper: [`job_cellposesam.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_cellposesam.sh)
-- Conda environments: `imc_segmentation, imc_cellposesam`
+- Conda environments: `sbt-analysis, sbt-cellpose-sam`
 - Python modules: `SpatialBiologyToolkit.scripts.preprocess_dna, SpatialBiologyToolkit.scripts.cellpose_sam`
 
 ## Inputs

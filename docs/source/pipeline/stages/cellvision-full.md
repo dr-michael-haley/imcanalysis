@@ -5,7 +5,7 @@
 Run CellVision extraction, VICReg embedding, RAPIDS clustering, and plotting in one GPU job
 
 - Wrapper: [`job_cellvision_full.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_cellvision_full.sh)
-- Conda environments: `scPortrait, rapids_singlecell, scPortrait`
+- Conda environments: `sbt-scportrait, sbt-analysis, sbt-scportrait`
 - Python modules: `SpatialBiologyToolkit.scripts.cellvision_extract, SpatialBiologyToolkit.scripts.cellvision_embed, SpatialBiologyToolkit.scripts.cellvision_cluster, SpatialBiologyToolkit.scripts.cellvision_plot`
 
 ## Inputs

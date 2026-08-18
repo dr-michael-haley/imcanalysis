@@ -5,7 +5,7 @@
 Generate single-cell portrait outputs via external scPortrait converter
 
 - Wrapper: [`job_scport.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_scport.sh)
-- Conda environment: `scPortrait`
+- Conda environment: `sbt-scportrait`
 
 ## Inputs
 

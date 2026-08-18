@@ -5,7 +5,7 @@
 Background-correct and robustly scale ROI/channel TIFF images for HyPERSTAC
 
 - Wrapper: [`job_hyperstac_preprocess.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_hyperstac_preprocess.sh)
-- Conda environment: `hyperstac`
+- Conda environment: `sbt-hyperstac`
 - Python module: `SpatialBiologyToolkit.scripts.hyperstac_preprocess`
 
 ## Inputs

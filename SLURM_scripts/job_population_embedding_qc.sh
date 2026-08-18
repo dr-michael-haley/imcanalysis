@@ -13,7 +13,7 @@
 #@IN:   Existing UMAP, optional PCA/connectivities, and population or precomputed Leiden obs columns
 #@OUT:  outputs/<execution_id>_Population_Embedding_QC/{figures,tables,summaries,files}/
 #@OUT:  population_embedding_qc.annotated_adata_path with reusable versioned .uns results only when write_annotated_h5ad is enabled
-#@ENV:  imc_cellcharter
+#@ENV:  sbt-analysis
 #@MODULE:  SpatialBiologyToolkit.scripts.population_embedding_qc
 #@CONFIG: general, population_embedding_qc, logging
 
@@ -21,7 +21,7 @@ source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 echo "Population embedding QC is using ${SLURM_CPUS_PER_TASK:-1} CPU core(s); no GPU is requested"
 
-conda activate "${SBT_CONDA_ENV:-${IMC_ENV_CELLCHARTER:-imc_cellcharter}}"
+conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_ANALYSIS:-sbt-analysis}}"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 export OPENBLAS_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 

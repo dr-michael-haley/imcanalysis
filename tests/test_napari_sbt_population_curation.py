@@ -13,6 +13,7 @@ from SpatialBiologyToolkit.napari_sbt.population_curation import (
     integrate_component_tables,
     list_population_drafts,
     merge_groups,
+    population_draft_sync_state,
     read_population_audit,
     save_population_draft,
     synthesize_population_labels,
@@ -76,6 +77,7 @@ def test_draft_renaming_explicit_merge_and_apply(tmp_path):
         adata=data,
         action="save_test_mapping",
     )
+    assert population_draft_sync_state(data, draft) == "missing"
     summary = apply_population_draft(
         data,
         draft=draft,
@@ -83,6 +85,7 @@ def test_draft_renaming_explicit_merge_and_apply(tmp_path):
         components=components,
         membership=membership,
     )
+    assert population_draft_sync_state(data, draft) == "synced"
 
     assert data.obs["population_named"].astype(str).tolist() == [
         "immune",
@@ -103,6 +106,17 @@ def test_draft_renaming_explicit_merge_and_apply(tmp_path):
         event["action"] == "save_test_mapping"
         for event in read_population_audit(paths)
     )
+
+    newer = save_population_draft(
+        paths,
+        draft,
+        base,
+        components,
+        membership,
+        adata=data,
+        action="save_newer_revision",
+    )
+    assert population_draft_sync_state(data, newer) == "stale"
 
 
 def test_source_labels_with_trailing_whitespace_use_one_canonical_mapping(tmp_path):

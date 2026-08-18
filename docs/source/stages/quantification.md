@@ -516,4 +516,4 @@ appropriate statistical design.
   [doi:10.1038/s41592-025-02826-9](https://doi.org/10.1038/s41592-025-02826-9).
 - [angelolab/Nimbus-Inference](https://github.com/angelolab/Nimbus-Inference), the
   released inference and fine-tuning implementation. SpatialBiologyToolkit uses
-  the dependency version pinned in `HPC_env_files/imc_segmentation/pip-extras.txt`.
+  the dependency version pinned in `HPC_env_files/sbt-analysis/pip-extras.txt`.

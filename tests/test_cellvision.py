@@ -421,7 +421,7 @@ class CellVisionChannelAndConfigTests(unittest.TestCase):
 
     def test_registry_environment_mode_and_asset_role(self):
         full_stage = get_stage("cellvision-full")
-        self.assertEqual(full_stage.environment_keys, ["scportrait", "rapids"])
+        self.assertEqual(full_stage.environment_keys, ["scportrait", "analysis"])
         self.assertEqual(
             get_mode("cellvision").stages,
             [
@@ -436,7 +436,7 @@ class CellVisionChannelAndConfigTests(unittest.TestCase):
             get_stage("cellvision-extract").environment_keys, ["scportrait"]
         )
         self.assertEqual(
-            get_stage("cellvision-cluster").environment_keys, ["rapids"]
+            get_stage("cellvision-cluster").environment_keys, ["analysis"]
         )
         assets = {
             asset.role: asset for asset in resolve_assets(PipelineConfig(), Path("."))
@@ -473,9 +473,9 @@ class CellVisionChannelAndConfigTests(unittest.TestCase):
             )
             environment = sbt_environment(context, run, "cellvision-full")
 
-        self.assertEqual(environment["SBT_CONDA_ENV"], "scPortrait")
-        self.assertEqual(environment["SBT_CONDA_ENV_SCPORTRAIT"], "scPortrait")
-        self.assertEqual(environment["SBT_CONDA_ENV_RAPIDS"], "rapids_singlecell")
+        self.assertEqual(environment["SBT_CONDA_ENV"], "sbt-scportrait")
+        self.assertEqual(environment["SBT_CONDA_ENV_SCPORTRAIT"], "sbt-scportrait")
+        self.assertEqual(environment["SBT_CONDA_ENV_ANALYSIS"], "sbt-analysis")
 
     def test_cluster_component_no_deps_requires_existing_embeddings(self):
         with tempfile.TemporaryDirectory() as temp_dir:

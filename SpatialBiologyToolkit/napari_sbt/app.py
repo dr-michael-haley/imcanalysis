@@ -56,10 +56,12 @@ from .explore import (
     ExploreReviewState,
     ExploreViewRecipe,
     categorical_colour_map,
+    format_roi_metadata_value,
     identity_value_map,
     marker_values,
     population_recipe_key,
     recipe_layer_data_is_current,
+    roi_level_metadata,
 )
 from .exports import (
     apply_assignments_to_anndata,
@@ -125,6 +127,7 @@ from .population_curation import (
     load_population_draft,
     ordered_source_labels,
     population_draft_paths,
+    population_draft_sync_state,
     population_workspace_paths,
     read_population_audit,
     save_graph_subcluster_request,
@@ -141,9 +144,11 @@ from .population_qc import (
     inherit_setup_contrast_limits,
     parse_legacy_contrast,
     rank_population_rois,
+    retarget_population_qc_recipe,
     top_population_markers,
 )
 from .resources import resolve_worker_count
+from .scanpy_plotting import build_scanpy_plot
 from .setup import (
     WORKFLOW_PRESENTATIONS,
     WorkspaceSummary,
@@ -181,15 +186,17 @@ EXPLORE_DATA_CACHE_MAX_ITEMS = 48
 WORKFLOW_DESCRIPTIONS = {
     "data_exploration": (
         "Explore ROIs, images, AnnData overlays, reusable layer recipes, regions, "
-        "and optional population-focused views. Classification controls are hidden."
+        "population-focused views, and Scanpy plots. Classification controls are "
+        "hidden."
     ),
     "population_qc": (
         "Review existing populations with saved RGB marker combinations, abundance-"
-        "guided ROI sampling, and tissue overlays."
+        "guided ROI sampling, tissue overlays, and Scanpy summary plots."
     ),
     "classification": (
         "Define a cohort and classes, build/refine features, annotate examples, "
-        "train a model, review predictions, and export final identities."
+        "train a model, review predictions, inspect Scanpy plots, and export final "
+        "identities."
     ),
     "cell_labeling": (
         "Manually assign simple labels to selected cells and export identity lists "
@@ -197,7 +204,7 @@ WORKFLOW_DESCRIPTIONS = {
     ),
     "population_curation": (
         "Name, merge, subcluster, inspect, and export AnnData population observations "
-        "with image-based Population QC."
+        "with image-based Population QC and dedicated Scanpy plotting."
     ),
     "full_workspace": (
         "Show every NapariSBT tab. Use this when combining exploration, population "
@@ -210,10 +217,17 @@ WORKFLOW_VISIBLE_TABS = {
         "setup",
         "explore",
         "population_qc",
+        "scanpy_plotting",
         "regions_export",
         "layers_status",
     },
-    "population_qc": {"setup", "explore", "population_qc", "layers_status"},
+    "population_qc": {
+        "setup",
+        "explore",
+        "population_qc",
+        "scanpy_plotting",
+        "layers_status",
+    },
     "classification": {
         "setup",
         "feature_building",
@@ -221,6 +235,7 @@ WORKFLOW_VISIBLE_TABS = {
         "explore",
         "population_qc",
         "populations",
+        "scanpy_plotting",
         "classify",
         "regions_export",
         "layers_status",
@@ -229,6 +244,7 @@ WORKFLOW_VISIBLE_TABS = {
         "setup",
         "explore",
         "population_qc",
+        "scanpy_plotting",
         "labeler",
         "layers_status",
     },
@@ -237,6 +253,7 @@ WORKFLOW_VISIBLE_TABS = {
         "explore",
         "population_qc",
         "populations",
+        "scanpy_plotting",
         "regions_export",
         "layers_status",
     },
@@ -247,6 +264,7 @@ WORKFLOW_VISIBLE_TABS = {
         "explore",
         "population_qc",
         "populations",
+        "scanpy_plotting",
         "classify",
         "labeler",
         "regions_export",
@@ -485,10 +503,11 @@ class NapariSBTController:
         self.population_workspace: PopulationWorkspace | None = None
         self.population_workspace_paths: PopulationWorkspacePaths | None = None
         self.population_draft: PopulationDraft | None = None
+        self._population_draft_dirty = False
         self.population_base_mapping = pd.DataFrame(columns=BASE_MAPPING_COLUMNS)
         self.population_components = pd.DataFrame(columns=COMPONENT_COLUMNS)
         self.population_membership = empty_membership()
-        self.population_plot_dialogs: list[object] = []
+        self.scanpy_plot_windows: dict[str, dict[str, object]] = {}
         self.reviewed_rois: set[str] = set()
         self._class_shortcuts: list[str] = []
         self._explore_recipe_shortcuts: list[str] = []
@@ -506,6 +525,7 @@ class NapariSBTController:
         self._population_qc_marker_cache: dict[tuple, list[str]] = {}
         self._population_qc_ranking_cache: dict[tuple, list[tuple[str, int]]] = {}
         self._adata_roi_positions: dict[str, np.ndarray] = {}
+        self._roi_level_metadata: dict[str, dict[str, object]] | None = None
         self._cohort_ids_by_roi: dict[str, set[int]] = {}
         self._recipe_tracking_workflow: str | None = None
         self._explore_layer_names: set[str] = set()
@@ -1518,6 +1538,35 @@ class NapariSBTController:
         explore_layout.addLayout(roi_options_row)
         explore_layout.addWidget(self.viewed_rois_label)
 
+        explore_metadata_group = workflow_group(
+            "Current ROI sample metadata",
+            "explore",
+            "ROI sample metadata",
+        )
+        explore_metadata_layout = QVBoxLayout(explore_metadata_group)
+        self.explore_roi_metadata_summary = QLabel(
+            "Load an ROI to show automatically detected sample metadata."
+        )
+        self.explore_roi_metadata_summary.setWordWrap(True)
+        self.explore_roi_metadata_table = QTableWidget(0, 2)
+        self.explore_roi_metadata_table.setHorizontalHeaderLabels(
+            ["Metadata field", "Value"]
+        )
+        self.explore_roi_metadata_table.setEditTriggers(
+            QAbstractItemView.NoEditTriggers
+        )
+        self.explore_roi_metadata_table.verticalHeader().setVisible(False)
+        self.explore_roi_metadata_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeToContents
+        )
+        self.explore_roi_metadata_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.Stretch
+        )
+        self.explore_roi_metadata_table.setMaximumHeight(180)
+        explore_metadata_layout.addWidget(self.explore_roi_metadata_summary)
+        explore_metadata_layout.addWidget(self.explore_roi_metadata_table)
+        explore_layout.addWidget(explore_metadata_group)
+
         layer_actions = QHBoxLayout()
         self.hide_all_layers_button = QPushButton("Hide all layers")
         self.show_all_layers_button = QPushButton("Show all layers")
@@ -1707,13 +1756,57 @@ class NapariSBTController:
         population_qc_selection_form = QFormLayout(population_qc_selection_group)
         self.population_qc_obs_combo = QComboBox()
         self.population_qc_population_combo = QComboBox()
+        self.population_qc_contour_spin = QSpinBox()
+        self.population_qc_contour_spin.setRange(0, 20)
+        self.population_qc_contour_spin.setValue(
+            self.explore_review_state.population_qc_contour_width
+        )
+        self.population_qc_contour_spin.setSuffix(" px")
+        self.population_qc_contour_spin.setToolTip(
+            "One outline width shared by every Population QC population. "
+            "New workspaces start at 1 px; set 0 to show filled labels."
+        )
         population_qc_selection_form.addRow(
             "Population observation", self.population_qc_obs_combo
         )
         population_qc_selection_form.addRow(
             "Population", self.population_qc_population_combo
         )
+        population_qc_selection_form.addRow(
+            "Outline width for all populations", self.population_qc_contour_spin
+        )
         population_qc_layout.addWidget(population_qc_selection_group)
+
+        population_qc_metadata_group = workflow_group(
+            "Current ROI sample metadata",
+            "population_qc",
+            "ROI sample metadata",
+        )
+        population_qc_metadata_layout = QVBoxLayout(population_qc_metadata_group)
+        self.population_qc_roi_metadata_summary = QLabel(
+            "Open an ROI to show automatically detected sample metadata."
+        )
+        self.population_qc_roi_metadata_summary.setWordWrap(True)
+        self.population_qc_roi_metadata_table = QTableWidget(0, 2)
+        self.population_qc_roi_metadata_table.setHorizontalHeaderLabels(
+            ["Metadata field", "Value"]
+        )
+        self.population_qc_roi_metadata_table.setEditTriggers(
+            QAbstractItemView.NoEditTriggers
+        )
+        self.population_qc_roi_metadata_table.verticalHeader().setVisible(False)
+        self.population_qc_roi_metadata_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeToContents
+        )
+        self.population_qc_roi_metadata_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.Stretch
+        )
+        self.population_qc_roi_metadata_table.setMaximumHeight(180)
+        population_qc_metadata_layout.addWidget(
+            self.population_qc_roi_metadata_summary
+        )
+        population_qc_metadata_layout.addWidget(self.population_qc_roi_metadata_table)
+        population_qc_layout.addWidget(population_qc_metadata_group)
 
         population_qc_rgb_group = workflow_group(
             "2. RGB verification recipe",
@@ -1854,40 +1947,47 @@ class NapariSBTController:
         add_tab(population_qc, "🧿 Population QC", "population_qc")
         self.population_qc_tab_index = self.tabs.count() - 1
 
-        # Population Curation
+        # Population naming and curation
         populations = QWidget()
         populations_layout = QVBoxLayout(populations)
         populations_intro = QLabel(
-            "Craft one or more named observations from a single immutable source "
-            "observation. Base populations can be renamed or explicitly merged; "
-            "Scanpy and image-classifier results appear as editable split components."
+            "Turn numbered clusters into a clearly named AnnData label column. "
+            "Rename or merge populations here, save, then move between Population "
+            "naming, Explore, and Population QC while refining the labels."
         )
         populations_intro.setWordWrap(True)
         populations_layout.addWidget(populations_intro)
 
         population_workspace_group = workflow_group(
-            "1. Source-locked workspace and derived observations",
+            "1. Choose the source and new label column",
             "populations",
             "1. Source workspace and drafts",
         )
         population_workspace_form = QFormLayout(population_workspace_group)
         self.curation_source_combo = QComboBox()
         self.curation_draft_combo = QComboBox()
-        self.curation_draft_name_edit = QLineEdit("Named populations")
         self.curation_derived_obs_edit = QLineEdit("population_curated")
+        self.curation_derived_obs_edit.setPlaceholderText(
+            "For example: population_named"
+        )
         self.create_population_draft_button = QPushButton(
-            "Create new derived-observation draft"
+            "Create new label draft"
         )
-        self.load_population_draft_button = QPushButton("Load selected draft")
         self.save_population_draft_button = QPushButton(
-            "Save mapping, split edits, and provenance"
+            "Save and update Explore / Population QC"
         )
+        self.save_population_draft_button.setObjectName("sbtPrimaryActionButton")
+        self.view_population_history_button = QPushButton("View history…")
         population_draft_actions = QWidget()
         population_draft_actions_layout = QHBoxLayout(population_draft_actions)
         population_draft_actions_layout.setContentsMargins(0, 0, 0, 0)
         population_draft_actions_layout.addWidget(self.create_population_draft_button)
-        population_draft_actions_layout.addWidget(self.load_population_draft_button)
         population_draft_actions_layout.addWidget(self.save_population_draft_button)
+        population_draft_actions_layout.addWidget(self.view_population_history_button)
+        self.population_naming_readiness_label = QLabel(
+            "● Start by choosing a source observation and a new label-column name."
+        )
+        self.population_naming_readiness_label.setWordWrap(True)
         self.population_workspace_label = QLabel(
             "Load AnnData, then choose the original clustering observation."
         )
@@ -1896,16 +1996,16 @@ class NapariSBTController:
             "Original source obs", self.curation_source_combo
         )
         population_workspace_form.addRow(
-            "Existing sibling draft", self.curation_draft_combo
+            "Saved naming work", self.curation_draft_combo
         )
         population_workspace_form.addRow(
-            "Draft display name", self.curation_draft_name_edit
+            "New label column (adata.obs)", self.curation_derived_obs_edit
         )
         population_workspace_form.addRow(
-            "New adata.obs name", self.curation_derived_obs_edit
+            "Readiness", self.population_naming_readiness_label
         )
         population_workspace_form.addRow("", population_draft_actions)
-        population_workspace_form.addRow("Workspace", self.population_workspace_label)
+        population_workspace_form.addRow("Source", self.population_workspace_label)
         populations_layout.addWidget(population_workspace_group)
 
         self.population_editor_tabs = QTabWidget()
@@ -1939,6 +2039,9 @@ class NapariSBTController:
         )
         self.population_base_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.population_base_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        # Napari's dark stylesheet can leave Qt's alternate-base colour white
+        # while retaining a light foreground, making every second row unreadable.
+        self.population_base_table.setAlternatingRowColors(False)
         self.population_base_table.setMinimumHeight(300)
         base_mapping_actions = QHBoxLayout()
         self.name_selected_populations_button = QPushButton(
@@ -1960,7 +2063,7 @@ class NapariSBTController:
         base_mapping_layout.addWidget(base_mapping_help)
         base_mapping_layout.addWidget(self.population_base_table)
         base_mapping_layout.addLayout(base_mapping_actions)
-        self.population_editor_tabs.addTab(base_mapping_page, "Base naming & merges")
+        self.population_editor_tabs.addTab(base_mapping_page, "Rename & merge")
 
         split_page = QWidget()
         split_layout = QVBoxLayout(split_page)
@@ -2070,6 +2173,7 @@ class NapariSBTController:
         self.population_components_table.setSelectionMode(
             QAbstractItemView.ExtendedSelection
         )
+        self.population_components_table.setAlternatingRowColors(False)
         self.population_components_table.setMinimumHeight(250)
         split_table_actions = QHBoxLayout()
         self.import_population_components_button = QPushButton(
@@ -2103,19 +2207,25 @@ class NapariSBTController:
         self.population_merge_preview.setReadOnly(True)
         self.population_merge_preview.setMinimumHeight(220)
         population_apply_group = workflow_group(
-            "Apply to the live working AnnData",
+            "Use the current labels in the rest of NapariSBT",
             "populations",
             "Applying a draft",
         )
         population_apply_form = QFormLayout(population_apply_group)
-        self.population_overwrite_check = QCheckBox(
-            "Allow replacing an existing derived obs with the same name"
+        population_apply_help = QLabel(
+            "Saving in box 1 updates the live AnnData label column and refreshes "
+            "Explore and Population QC automatically. Use these buttons only to "
+            "open the current overlay or export a separate AnnData copy."
         )
-        self.apply_population_draft_button = QPushButton(
-            "Apply draft and refresh all AnnData selectors"
+        population_apply_help.setWordWrap(True)
+        self.population_overwrite_check = QCheckBox(
+            "Advanced: allow replacing an unrelated existing obs with this name"
         )
         self.show_curated_population_overlay_button = QPushButton(
-            "Show the derived observation in Explore"
+            "Open current labels in Explore"
+        )
+        self.open_population_scanpy_plotting_button = QPushButton(
+            "Open these labels in Scanpy plotting"
         )
         self.export_curated_anndata_button = QPushButton(
             "Export all live curated observations to a new AnnData copy..."
@@ -2123,8 +2233,10 @@ class NapariSBTController:
         apply_actions = QWidget()
         apply_actions_layout = QHBoxLayout(apply_actions)
         apply_actions_layout.setContentsMargins(0, 0, 0, 0)
-        apply_actions_layout.addWidget(self.apply_population_draft_button)
         apply_actions_layout.addWidget(self.show_curated_population_overlay_button)
+        apply_actions_layout.addWidget(self.open_population_scanpy_plotting_button)
+        apply_actions_layout.addStretch(1)
+        population_apply_form.addRow("", population_apply_help)
         population_apply_form.addRow("Overwrite guard", self.population_overwrite_check)
         population_apply_form.addRow("", apply_actions)
         population_apply_form.addRow("", self.export_curated_anndata_button)
@@ -2132,49 +2244,41 @@ class NapariSBTController:
         preview_layout.addWidget(self.population_merge_preview)
         preview_layout.addWidget(population_apply_group)
 
-        qc_group = workflow_group(
-            "Live QC plots (simple, regenerable pop-ups)",
-            "populations",
-            "Live QC plots",
-        )
-        qc_form = QFormLayout(qc_group)
-        self.population_embedding_combo = QComboBox()
-        self.population_marker_list = QListWidget()
-        self.population_marker_list.setSelectionMode(
-            QAbstractItemView.ExtendedSelection
-        )
-        self.population_marker_list.setMaximumHeight(135)
-        qc_actions = QWidget()
-        qc_actions_layout = QHBoxLayout(qc_actions)
-        qc_actions_layout.setContentsMargins(0, 0, 0, 0)
-        self.population_embedding_plot_button = QPushButton("Open embedding QC plot")
-        self.population_heatmap_button = QPushButton("Open selected-marker heat map")
-        qc_actions_layout.addWidget(self.population_embedding_plot_button)
-        qc_actions_layout.addWidget(self.population_heatmap_button)
-        qc_form.addRow("Existing 2-D embedding", self.population_embedding_combo)
-        qc_form.addRow("Markers of interest", self.population_marker_list)
-        qc_form.addRow("", qc_actions)
-        preview_layout.addWidget(qc_group)
-        self.population_editor_tabs.addTab(preview_page, "Preview, apply & QC")
+        self.population_editor_tabs.addTab(preview_page, "Preview & QC")
 
-        provenance_page = QWidget()
-        provenance_layout = QVBoxLayout(provenance_page)
-        provenance_explanation = QLabel(
-            "The log is append-only and records draft creation, every saved naming "
-            "edit, explicit merge groups, imported or computed split memberships, "
-            "live application, and export."
-        )
-        provenance_explanation.setWordWrap(True)
-        self.population_provenance_text = QTextEdit()
+        # Detailed audit data remains on disk, but is deliberately kept out of the
+        # main naming loop. The compact history is shown only when requested.
+        self.population_provenance_text = QTextEdit(populations)
         self.population_provenance_text.setReadOnly(True)
-        self.refresh_population_provenance_button = QPushButton("Refresh provenance")
-        provenance_layout.addWidget(provenance_explanation)
-        provenance_layout.addWidget(self.population_provenance_text)
-        provenance_layout.addWidget(self.refresh_population_provenance_button)
-        self.population_editor_tabs.addTab(provenance_page, "Provenance")
+        self.population_provenance_text.hide()
 
         populations_layout.addWidget(self.population_editor_tabs)
-        add_tab(populations, "🧭 Populations", "populations")
+        add_tab(populations, "🏷️ Population naming", "populations")
+
+        # Scanpy plotting. Qt is imported lazily with the GUI and the reusable
+        # data/figure logic remains in ``scanpy_plotting.py``.
+        from .scanpy_plotting_ui import ScanpyPlottingPanel
+
+        self.scanpy_plotting_panel = ScanpyPlottingPanel(
+            group_factory=workflow_group,
+            generate_callback=self._guard(self.generate_scanpy_plot),
+            refresh_callback=self._guard(self.refresh_scanpy_plotting_choices),
+            focus_callback=self._guard(
+                self.focus_scanpy_plot_window,
+                pass_signal_args=True,
+            ),
+            close_callback=self._guard(
+                self.close_scanpy_plot_window,
+                pass_signal_args=True,
+            ),
+            close_all_callback=self._guard(self.close_all_scanpy_plot_windows),
+        )
+        add_tab(
+            self.scanpy_plotting_panel.widget,
+            "📊 Scanpy plotting",
+            "scanpy_plotting",
+        )
+        self.scanpy_plotting_tab_index = self.tabs.count() - 1
 
         # Classify
         classify = QWidget()
@@ -2862,6 +2966,7 @@ class NapariSBTController:
             QTabBar::tab:nth-child(8) { background: #f1f5f9; }
             QTabBar::tab:nth-child(9) { background: #ffedd5; }
             QTabBar::tab:nth-child(10) { background: #f3e8ff; }
+            QTabBar::tab:nth-child(11) { background: #cffafe; }
             QTabBar::tab:selected {
                 font-weight: bold;
                 border: 2px solid #5f6368;
@@ -2884,6 +2989,7 @@ class NapariSBTController:
             "#475569",
             "#c2410c",
             "#7e22ce",
+            "#0e7490",
         )
         for index, colour in enumerate(tab_text_colours):
             self.tabs.tabBar().setTabTextColor(index, self.QColor(colour))
@@ -2926,6 +3032,7 @@ class NapariSBTController:
         self._connect_signals()
         self._initialise_setup_controls()
         self._update_workflow_mode()
+        self._refresh_population_naming_readiness()
         self._bind_viewer_cell_picking()
         for family, checkbox in self.feature_family_checks.items():
             self._feature_family_toggled(family, checkbox.isChecked())
@@ -3252,6 +3359,12 @@ class NapariSBTController:
         self.population_qc_population_combo.currentTextChanged.connect(
             self._guard(self.load_population_qc_recipe_controls)
         )
+        self.population_qc_contour_spin.valueChanged.connect(
+            self._guard(
+                self.set_population_qc_contour_width,
+                pass_signal_args=True,
+            )
+        )
         self.suggest_population_qc_markers_button.clicked.connect(
             self._guard(self.suggest_population_qc_markers)
         )
@@ -3288,14 +3401,17 @@ class NapariSBTController:
         self.create_population_draft_button.clicked.connect(
             self._guard(self.create_population_draft)
         )
-        self.load_population_draft_button.clicked.connect(
-            self._guard(self.load_selected_population_draft)
-        )
         self.save_population_draft_button.clicked.connect(
             self._guard(self.save_current_population_draft)
         )
+        self.view_population_history_button.clicked.connect(
+            self._guard(self.show_population_history)
+        )
         self.curation_draft_combo.currentIndexChanged.connect(
             self._guard(self.load_selected_population_draft)
+        )
+        self.curation_derived_obs_edit.textEdited.connect(
+            self._guard(self._mark_population_draft_dirty)
         )
         self.population_base_table.itemChanged.connect(
             self._guard(self._population_tables_changed)
@@ -3352,23 +3468,14 @@ class NapariSBTController:
         self.remove_population_components_button.clicked.connect(
             self._guard(self.remove_selected_population_components)
         )
-        self.apply_population_draft_button.clicked.connect(
-            self._guard(self.apply_current_population_draft)
-        )
         self.show_curated_population_overlay_button.clicked.connect(
             self._guard(self.show_curated_population_overlay)
         )
+        self.open_population_scanpy_plotting_button.clicked.connect(
+            self._guard(self.open_population_scanpy_plotting)
+        )
         self.export_curated_anndata_button.clicked.connect(
             self._guard(self.export_curated_anndata)
-        )
-        self.population_embedding_plot_button.clicked.connect(
-            self._guard(self.show_population_embedding_qc)
-        )
-        self.population_heatmap_button.clicked.connect(
-            self._guard(self.show_population_heatmap_qc)
-        )
-        self.refresh_population_provenance_button.clicked.connect(
-            self._guard(self.refresh_population_provenance)
         )
         self.propose_button.clicked.connect(
             self._guard(lambda: self.annotate_selected("proposed"))
@@ -3996,6 +4103,8 @@ class NapariSBTController:
         self.current_roi = None
         self.current_mask = None
         self.current_mask_path = None
+        self._invalidate_population_qc_caches()
+        self._refresh_roi_metadata_display()
         self._integrity_signature = None
         self._asset_index_signature = None
         self._mask_path_index.clear()
@@ -4014,6 +4123,7 @@ class NapariSBTController:
         )
         self.explore_recipe = ExploreViewRecipe()
         self.explore_review_state = ExploreReviewState()
+        self._sync_population_qc_contour_control()
         self._sync_population_qc_contrast_defaults(force=True)
         self._set_classification_enabled(False)
         self.scope_label.setText(
@@ -4350,7 +4460,75 @@ class NapariSBTController:
         self._population_qc_marker_cache.clear()
         self._population_qc_ranking_cache.clear()
         self._adata_roi_positions.clear()
+        self._roi_level_metadata = None
         self._cohort_ids_by_roi.clear()
+
+    def _ensure_roi_level_metadata(self) -> dict[str, dict[str, object]]:
+        """Detect sample-level obs fields once, then reuse them on ROI changes."""
+
+        if self._roi_level_metadata is not None:
+            return self._roi_level_metadata
+        if self.adata is None:
+            self._roi_level_metadata = {}
+            return self._roi_level_metadata
+        roi_obs = (
+            self.manifest.roi_obs
+            if self.manifest is not None
+            else self.roi_obs_edit.text().strip()
+        )
+        object_obs = (
+            self.manifest.object_id_obs
+            if self.manifest is not None
+            else self.object_obs_edit.text().strip()
+        )
+        if not roi_obs or roi_obs not in self.adata.obs:
+            self._roi_level_metadata = {}
+            return self._roi_level_metadata
+        self._roi_level_metadata = roi_level_metadata(
+            self.adata.obs,
+            roi_obs=roi_obs,
+            exclude_columns=(object_obs,),
+        )
+        return self._roi_level_metadata
+
+    def _refresh_roi_metadata_display(self) -> None:
+        """Show the current ROI's cached sample metadata in both review tabs."""
+
+        if not hasattr(self, "explore_roi_metadata_table"):
+            return
+        roi = str(self.current_roi or "")
+        values = self._ensure_roi_level_metadata().get(roi, {}) if roi else {}
+        targets = (
+            (self.explore_roi_metadata_summary, self.explore_roi_metadata_table),
+            (
+                self.population_qc_roi_metadata_summary,
+                self.population_qc_roi_metadata_table,
+            ),
+        )
+        if not roi:
+            summary = "Load an ROI to show automatically detected sample metadata."
+        elif values:
+            summary = (
+                f"ROI {roi!r}: {len(values):,} sample-level field(s) detected "
+                "because they are constant within every ROI."
+            )
+        else:
+            summary = (
+                f"ROI {roi!r}: no additional obs fields are constant within "
+                "every ROI."
+            )
+        for label, table in targets:
+            label.setText(summary)
+            table.setRowCount(0)
+            for row, (field, value) in enumerate(values.items()):
+                table.insertRow(row)
+                field_item = self.QTableWidgetItem(str(field))
+                value_item = self.QTableWidgetItem(format_roi_metadata_value(value))
+                value_item.setToolTip(
+                    f"Stored Python/pandas type: {type(value).__name__}"
+                )
+                table.setItem(row, 0, field_item)
+                table.setItem(row, 1, value_item)
 
     def _invalidate_integrity_result(self, *_args) -> None:
         self._integrity_signature = None
@@ -5004,6 +5182,8 @@ class NapariSBTController:
         self.refresh_feature_channel_choices()
         self._refresh_population_data_choices()
         self.refresh_population_workspace()
+        self.mark_scanpy_plots_stale()
+        self.refresh_scanpy_plotting_choices()
         self.refresh_setup_readiness()
         self.set_status(
             f"Loaded AnnData selectors for {self.adata.n_obs:,} cells from {source}."
@@ -5033,7 +5213,7 @@ class NapariSBTController:
         return self.project_root / "napari_sbt" / "population_curation"
 
     def _refresh_population_data_choices(self) -> None:
-        """Refresh source values, graph keys, embeddings, and marker selectors."""
+        """Refresh source-population and subclustering representation choices."""
 
         if self.adata is None:
             return
@@ -5080,30 +5260,6 @@ class NapariSBTController:
         elif "connectivities" in graph_keys:
             self.population_adjacency_combo.setCurrentText("connectivities")
         self._update_population_neighbor_controls()
-
-        current_embedding = self.population_embedding_combo.currentText()
-        embeddings = [
-            str(key)
-            for key, value in self.adata.obsm.items()
-            if getattr(value, "ndim", 0) == 2 and value.shape[1] >= 2
-        ]
-        self.population_embedding_combo.clear()
-        self.population_embedding_combo.addItems(embeddings)
-        if current_embedding in embeddings:
-            self.population_embedding_combo.setCurrentText(current_embedding)
-        elif "X_umap" in embeddings:
-            self.population_embedding_combo.setCurrentText("X_umap")
-
-        selected_markers = {
-            item.text() for item in self.population_marker_list.selectedItems()
-        }
-        self.population_marker_list.clear()
-        self.population_marker_list.addItems(
-            [str(marker) for marker in self.adata.var_names]
-        )
-        for index in range(self.population_marker_list.count()):
-            item = self.population_marker_list.item(index)
-            item.setSelected(item.text() in selected_markers)
 
     def _update_population_graph_provenance(self) -> None:
         if self.adata is None:
@@ -5173,6 +5329,71 @@ class NapariSBTController:
         self.population_adjacency_combo.setEnabled(not rebuild)
         self._update_population_graph_provenance()
 
+    def _mark_population_draft_dirty(self, *_args) -> None:
+        if self.population_draft is None:
+            return
+        self._population_draft_dirty = True
+        self._refresh_population_naming_readiness()
+
+    def _refresh_population_naming_readiness(self) -> None:
+        """Show whether edits are saved and visible in the rest of the app."""
+
+        if not hasattr(self, "population_naming_readiness_label"):
+            return
+        if self.population_draft is None or self.adata is None:
+            text = "● Not started — choose a source and create a new label draft."
+            style = (
+                "background: #fee2e2; color: #991b1b; border: 1px solid #ef4444;"
+            )
+            self.save_population_draft_button.setEnabled(False)
+        elif self._population_draft_dirty:
+            text = (
+                "● Unsaved changes — Save and update the app before reviewing "
+                "these names in Explore or Population QC."
+            )
+            style = (
+                "background: #fef3c7; color: #92400e; border: 1px solid #f59e0b;"
+            )
+            self.save_population_draft_button.setEnabled(True)
+        else:
+            sync_state = population_draft_sync_state(
+                self.adata, self.population_draft
+            )
+            if sync_state == "synced":
+                text = (
+                    f"● Ready — adata.obs[{self.population_draft.derived_obs!r}] "
+                    "matches this saved draft and is available in Explore and "
+                    "Population QC."
+                )
+                style = (
+                    "background: #dcfce7; color: #166534; "
+                    "border: 1px solid #22c55e;"
+                )
+            elif sync_state == "conflict":
+                text = (
+                    f"● Name conflict — adata.obs[{self.population_draft.derived_obs!r}] "
+                    "exists but belongs to something else. Choose another name, or "
+                    "use the advanced overwrite option deliberately."
+                )
+                style = (
+                    "background: #fee2e2; color: #991b1b; "
+                    "border: 1px solid #ef4444;"
+                )
+            else:
+                text = (
+                    "● Saved but not synchronized — use Save and update the app "
+                    "to make this revision available in Explore and Population QC."
+                )
+                style = (
+                    "background: #fef3c7; color: #92400e; "
+                    "border: 1px solid #f59e0b;"
+                )
+            self.save_population_draft_button.setEnabled(True)
+        self.population_naming_readiness_label.setText(text)
+        self.population_naming_readiness_label.setStyleSheet(
+            style + " border-radius: 6px; padding: 7px; font-weight: 700;"
+        )
+
     def refresh_population_workspace(self) -> None:
         """Discover sibling drafts for the currently selected immutable source."""
 
@@ -5200,13 +5421,14 @@ class NapariSBTController:
             self.population_base_mapping = pd.DataFrame(columns=BASE_MAPPING_COLUMNS)
             self.population_components = empty_components()
             self.population_membership = empty_membership()
+            self._population_draft_dirty = False
             self._set_population_tables(
                 self.population_base_mapping,
                 self.population_components,
             )
             self.population_workspace_label.setText(
-                f"No workspace yet for source obs {source_obs!r}. Creating the "
-                "first draft will freeze its cell/label fingerprint."
+                f"Original obs {source_obs!r} will remain unchanged. Create the "
+                "first naming draft to begin."
             )
             default_obs = f"{slugify(source_obs)}_named"
             if not self.curation_derived_obs_edit.text().strip() or (
@@ -5215,6 +5437,7 @@ class NapariSBTController:
                 self.curation_derived_obs_edit.setText(default_obs)
             self.curation_draft_combo.blockSignals(False)
             self.refresh_population_provenance()
+            self._refresh_population_naming_readiness()
             return
 
         workspace, workspace_paths = ensure_population_workspace(
@@ -5226,8 +5449,10 @@ class NapariSBTController:
         self.population_workspace_paths = workspace_paths
         drafts = list_population_drafts(workspace_paths)
         for draft in drafts:
+            sync_state = population_draft_sync_state(self.adata, draft)
+            status = "✓ synced" if sync_state == "synced" else "○ saved"
             self.curation_draft_combo.addItem(
-                f"{draft.name} → {draft.derived_obs} (r{draft.revision})",
+                f"{status} — {draft.derived_obs} (r{draft.revision})",
                 draft.draft_id,
             )
         index = self.curation_draft_combo.findData(previous_draft_id)
@@ -5237,21 +5462,24 @@ class NapariSBTController:
             self.curation_draft_combo.setCurrentIndex(index)
         self.curation_draft_combo.blockSignals(False)
         self.population_workspace_label.setText(
-            f"Source {workspace.source_obs!r} is frozen at fingerprint "
-            f"{workspace.source_fingerprint[:12]}…; {len(drafts)} sibling "
-            "derived-observation draft(s)."
+            f"Original obs {workspace.source_obs!r} is protected; "
+            f"{len(drafts)} saved label draft(s) use it as their source."
         )
         if index >= 0:
             self.load_selected_population_draft()
         else:
             self.refresh_population_provenance()
+            self._refresh_population_naming_readiness()
 
     def create_population_draft(self) -> None:
         if self.adata is None:
             raise RuntimeError("Load AnnData before creating a population draft.")
         source_obs = self.curation_source_combo.currentText().strip()
-        name = self.curation_draft_name_edit.text().strip()
         derived_obs = self.curation_derived_obs_edit.text().strip()
+        if not source_obs:
+            raise ValueError("Choose the original source observation first.")
+        if not derived_obs:
+            raise ValueError("Enter the new AnnData label-column name first.")
         (
             workspace,
             workspace_paths,
@@ -5263,7 +5491,7 @@ class NapariSBTController:
             self.adata,
             self._population_curation_root(),
             source_obs=source_obs,
-            name=name,
+            name=derived_obs,
             derived_obs=derived_obs,
         )
         self.population_workspace = workspace
@@ -5276,11 +5504,10 @@ class NapariSBTController:
         index = self.curation_draft_combo.findData(draft.draft_id)
         if index >= 0:
             self.curation_draft_combo.setCurrentIndex(index)
-        self.load_selected_population_draft()
         self.population_editor_tabs.setCurrentIndex(0)
         self.set_status(
-            f"Created population draft {draft.name!r} for live obs "
-            f"{derived_obs!r}. The source fingerprint is now frozen."
+            f"Created naming draft for adata.obs[{derived_obs!r}]. Rename or "
+            "merge populations, then save to update Explore and Population QC."
         )
 
     def load_selected_population_draft(self) -> None:
@@ -5289,6 +5516,25 @@ class NapariSBTController:
         draft_id = self.curation_draft_combo.currentData()
         if not draft_id:
             return
+        if (
+            self._population_draft_dirty
+            and self.population_draft is not None
+            and str(draft_id) != self.population_draft.draft_id
+        ):
+            reply = self.QMessageBox.question(
+                self.root,
+                "Discard unsaved population names?",
+                "This naming draft has unsaved edits. Discard them and open the "
+                "selected saved work?",
+            )
+            if reply != self.QMessageBox.Yes:
+                previous = self.curation_draft_combo.findData(
+                    self.population_draft.draft_id
+                )
+                blocked = self.curation_draft_combo.blockSignals(True)
+                self.curation_draft_combo.setCurrentIndex(previous)
+                self.curation_draft_combo.blockSignals(blocked)
+                return
         draft, base, components, membership = load_population_draft(
             self.population_workspace_paths, str(draft_id)
         )
@@ -5296,12 +5542,16 @@ class NapariSBTController:
         self.population_base_mapping = base
         self.population_components = components
         self.population_membership = membership
-        self.curation_draft_name_edit.setText(draft.name)
         self.curation_derived_obs_edit.setText(draft.derived_obs)
+        self._population_draft_dirty = False
         self._set_population_tables(base, components)
         self._refresh_population_merge_preview()
         self.refresh_population_provenance()
-        self.set_status(f"Loaded population draft {draft.name!r} r{draft.revision}.")
+        self._refresh_population_naming_readiness()
+        self.set_status(
+            f"Loaded saved naming work for adata.obs[{draft.derived_obs!r}] "
+            f"r{draft.revision}."
+        )
 
     def _readonly_table_item(self, value: object):
         item = self.QTableWidgetItem(str(value))
@@ -5410,6 +5660,7 @@ class NapariSBTController:
     def _population_tables_changed(self) -> None:
         if self.population_draft is None:
             return
+        self._mark_population_draft_dirty()
         try:
             for table, colour_column in (
                 (self.population_base_table, 3),
@@ -5445,7 +5696,7 @@ class NapariSBTController:
         )
         counts = labels.value_counts(dropna=False)
         lines = [
-            f"Derived obs: {self.population_draft.derived_obs}",
+            f"New label column: {self.curation_derived_obs_edit.text().strip()}",
             f"{summary['label_count']:,} effective population(s) across "
             f"{summary['cell_count']:,} cells; {summary['split_cell_count']:,} "
             "cells currently use split-component assignments.",
@@ -5495,20 +5746,22 @@ class NapariSBTController:
         self.population_base_table.blockSignals(True)
         for row in range(self.population_base_table.rowCount()):
             name_item = self.population_base_table.item(row, 2)
-            name_item.setBackground(
-                self.QColor("#fed7aa")
-                if name_item.text().strip() in merged_names
-                else self.QColor("#ffffff")
-            )
+            if name_item.text().strip() in merged_names:
+                name_item.setBackground(self.QColor("#fed7aa"))
+                name_item.setForeground(self.QColor("#7c2d12"))
+            else:
+                name_item.setData(self.Qt.BackgroundRole, None)
+                name_item.setData(self.Qt.ForegroundRole, None)
         self.population_base_table.blockSignals(False)
         self.population_components_table.blockSignals(True)
         for row in range(self.population_components_table.rowCount()):
             name_item = self.population_components_table.item(row, 4)
-            name_item.setBackground(
-                self.QColor("#fed7aa")
-                if name_item.text().strip() in merged_names
-                else self.QColor("#ffffff")
-            )
+            if name_item.text().strip() in merged_names:
+                name_item.setBackground(self.QColor("#fed7aa"))
+                name_item.setForeground(self.QColor("#7c2d12"))
+            else:
+                name_item.setData(self.Qt.BackgroundRole, None)
+                name_item.setData(self.Qt.ForegroundRole, None)
         self.population_components_table.blockSignals(False)
 
     def _save_current_population_draft(
@@ -5526,7 +5779,6 @@ class NapariSBTController:
         base, components = self._population_tables_to_frames()
         draft = self.population_draft.model_copy(
             update={
-                "name": self.curation_draft_name_edit.text().strip(),
                 "derived_obs": self.curation_derived_obs_edit.text().strip(),
             },
             deep=True,
@@ -5544,18 +5796,184 @@ class NapariSBTController:
         self.population_draft = updated
         self.population_base_mapping = base
         self.population_components = components
+        self._population_draft_dirty = False
+        self._refresh_population_naming_readiness()
         return updated
 
     def save_current_population_draft(self) -> None:
-        updated = self._save_current_population_draft(action="save_draft")
-        self.refresh_population_workspace()
-        index = self.curation_draft_combo.findData(updated.draft_id)
-        if index >= 0:
-            self.curation_draft_combo.setCurrentIndex(index)
+        if self.population_draft is None:
+            raise RuntimeError("Create or choose saved naming work first.")
+        sync_context = self._capture_population_qc_naming_context()
+        updated = self._save_current_population_draft(action="save_and_sync_labels")
+        summary = self._sync_saved_population_draft(updated, sync_context)
         self.set_status(
-            f"Saved population draft {updated.name!r} r{updated.revision}; "
-            "naming and merge changes were appended to provenance."
+            f"Saved and synchronized adata.obs[{updated.derived_obs!r}] r"
+            f"{updated.revision}: {summary['label_count']} populations, "
+            f"{len(summary['merge_groups'])} explicit merge group(s)."
         )
+
+    def _capture_population_qc_naming_context(self) -> dict[str, object]:
+        """Capture the current QC focus before AnnData selectors are rebuilt."""
+
+        observation = self.population_qc_obs_combo.currentText().strip()
+        population = self.population_qc_population_combo.currentText().strip()
+        recipe = None
+        if observation and population:
+            try:
+                recipe = self._population_qc_recipe_from_controls()
+            except (TypeError, ValueError):
+                recipe = self.explore_review_state.population_recipes.get(
+                    population_recipe_key(observation, population)
+                )
+        source_values: list[str] = []
+        selected_positions: list[int] = []
+        if self.population_draft is not None and self.adata is not None and population:
+            source_obs = self.population_draft.source_obs
+            if observation in self.adata.obs:
+                selected = (
+                    self.adata.obs[observation]
+                    .astype("string")
+                    .eq(population)
+                    .fillna(False)
+                )
+                selected_positions = np.flatnonzero(selected.to_numpy()).tolist()
+            if observation == source_obs:
+                source_values = [population]
+            elif observation in self.adata.obs and source_obs in self.adata.obs:
+                source_values = (
+                    self.adata.obs.loc[selected, source_obs]
+                    .astype("string")
+                    .dropna()
+                    .drop_duplicates()
+                    .astype(str)
+                    .str.strip()
+                    .tolist()
+                )
+        return {
+            "observation": observation,
+            "population": population,
+            "recipe": recipe,
+            "source_values": source_values,
+            "selected_positions": selected_positions,
+        }
+
+    def _preferred_synced_population(
+        self,
+        draft: PopulationDraft,
+        context: dict[str, object],
+    ) -> str | None:
+        categories = [
+            str(value) for value in self.adata.obs[draft.derived_obs].cat.categories
+        ]
+        selected_positions = [
+            int(value) for value in context.get("selected_positions", [])
+        ]
+        if selected_positions:
+            overlap = (
+                self.adata.obs[draft.derived_obs]
+                .iloc[selected_positions]
+                .astype("string")
+                .dropna()
+                .value_counts()
+            )
+            if not overlap.empty and str(overlap.index[0]) in categories:
+                return str(overlap.index[0])
+        source_values = {str(value) for value in context.get("source_values", [])}
+        if source_values and not self.population_base_mapping.empty:
+            mapped = self.population_base_mapping.loc[
+                self.population_base_mapping["source_value"]
+                .astype(str)
+                .isin(source_values)
+            ].copy()
+            if not mapped.empty:
+                mapped["_cell_count"] = pd.to_numeric(
+                    mapped["cell_count"], errors="coerce"
+                ).fillna(0)
+                mapped = mapped.sort_values("_cell_count", ascending=False)
+                proposed = str(mapped.iloc[0]["proposed_label"])
+                if proposed in categories:
+                    return proposed
+        previous = str(context.get("population") or "")
+        if previous in categories:
+            return previous
+        return categories[0] if categories else None
+
+    def _sync_saved_population_draft(
+        self,
+        draft: PopulationDraft,
+        context: dict[str, object],
+    ) -> dict[str, object]:
+        """Apply a saved draft and redirect Explore/Population QC to its labels."""
+
+        if self.adata is None or self.population_workspace_paths is None:
+            raise RuntimeError("A live AnnData and population workspace are required.")
+        current_state = population_draft_sync_state(self.adata, draft)
+        owned_existing_obs = current_state in {"stale", "synced"}
+        if current_state == "conflict" and not self.population_overwrite_check.isChecked():
+            raise ValueError(
+                f"AnnData already contains unrelated obs[{draft.derived_obs!r}]. "
+                "Choose another new label-column name, or enable the advanced "
+                "overwrite option deliberately."
+            )
+        summary = apply_population_draft(
+            self.adata,
+            draft=draft,
+            base_mapping=self.population_base_mapping,
+            components=self.population_components,
+            membership=self.population_membership,
+            overwrite=(
+                owned_existing_obs or self.population_overwrite_check.isChecked()
+            ),
+        )
+        preferred_population = self._preferred_synced_population(draft, context)
+        source_recipe = context.get("recipe")
+        if source_recipe is not None and preferred_population:
+            target_key = population_recipe_key(
+                draft.derived_obs, preferred_population
+            )
+            if target_key not in self.explore_review_state.population_recipes:
+                self.explore_review_state.population_recipes[target_key] = (
+                    self._population_qc_recipe_for_storage(
+                        retarget_population_qc_recipe(
+                            source_recipe,
+                            observation=draft.derived_obs,
+                            population=preferred_population,
+                        )
+                    )
+                )
+                if self.paths is not None:
+                    self._save_explore_review_state()
+        append_population_audit(
+            self.population_workspace_paths,
+            action="sync_labels_into_live_app",
+            draft_id=draft.draft_id,
+            details={
+                "derived_obs": draft.derived_obs,
+                "draft_revision": draft.revision,
+                "label_count": summary["label_count"],
+                "merge_group_count": len(summary["merge_groups"]),
+            },
+        )
+        self._populate_anndata_selectors(
+            source=f"saved population labels {draft.derived_obs!r}"
+        )
+        self.overlay_obs_combo.setCurrentText(draft.derived_obs)
+        population_obs_blocked = self.population_obs_combo.blockSignals(True)
+        self.population_obs_combo.setCurrentText(draft.derived_obs)
+        self.population_obs_combo.blockSignals(population_obs_blocked)
+        self.refresh_population_values()
+        if preferred_population:
+            self.population_value_combo.setCurrentText(preferred_population)
+        population_qc_obs_blocked = self.population_qc_obs_combo.blockSignals(True)
+        self.population_qc_obs_combo.setCurrentText(draft.derived_obs)
+        self.population_qc_obs_combo.blockSignals(population_qc_obs_blocked)
+        self.refresh_population_qc_populations()
+        if preferred_population:
+            self.population_qc_population_combo.setCurrentText(preferred_population)
+        self._population_draft_dirty = False
+        self.refresh_population_provenance()
+        self._refresh_population_naming_readiness()
+        return summary
 
     def _selected_population_table_rows(self, table) -> list[int]:
         return sorted({index.row() for index in table.selectionModel().selectedRows()})
@@ -6095,45 +6513,9 @@ class NapariSBTController:
         )
 
     def apply_current_population_draft(self) -> None:
-        if self.population_draft is None or self.adata is None:
-            raise RuntimeError("Create or load a population draft first.")
-        target_obs = self.curation_derived_obs_edit.text().strip()
-        if (
-            target_obs in self.adata.obs
-            and not self.population_overwrite_check.isChecked()
-        ):
-            raise ValueError(
-                f"AnnData already contains obs[{target_obs!r}]. Enable the explicit "
-                "overwrite checkbox before replacing it."
-            )
-        draft = self.population_draft.model_copy(
-            update={"status": "applied"}, deep=True
-        )
-        self.population_draft = draft
-        draft = self._save_current_population_draft(action="save_before_live_apply")
-        summary = apply_population_draft(
-            self.adata,
-            draft=draft,
-            base_mapping=self.population_base_mapping,
-            components=self.population_components,
-            membership=self.population_membership,
-            overwrite=self.population_overwrite_check.isChecked(),
-        )
-        append_population_audit(
-            self.population_workspace_paths,
-            action="apply_live_derived_obs",
-            draft_id=draft.draft_id,
-            details=summary,
-        )
-        self._populate_anndata_selectors(source=f"population draft {draft.name!r}")
-        self.overlay_obs_combo.setCurrentText(draft.derived_obs)
-        self.population_obs_combo.setCurrentText(draft.derived_obs)
-        self.refresh_population_provenance()
-        self.set_status(
-            f"Applied adata.obs[{draft.derived_obs!r}] in memory: "
-            f"{summary['label_count']} populations, "
-            f"{len(summary['merge_groups'])} explicit merge group(s)."
-        )
+        """Compatibility action: saving is now the single save-and-sync step."""
+
+        self.save_current_population_draft()
 
     def show_curated_population_overlay(self) -> None:
         if self.population_draft is None or self.adata is None:
@@ -6141,7 +6523,7 @@ class NapariSBTController:
         observation = self.population_draft.derived_obs
         if observation not in self.adata.obs:
             raise ValueError(
-                "Apply the draft to the live AnnData before showing its overlay."
+                "Save and update the app before showing this label overlay."
             )
         self.overlay_obs_combo.setCurrentText(observation)
         self.overlay_full_dataset_check.setChecked(True)
@@ -6185,7 +6567,7 @@ class NapariSBTController:
     def refresh_population_provenance(self) -> None:
         if self.population_workspace_paths is None:
             self.population_provenance_text.setPlainText(
-                "No population workspace has been created for this source obs."
+                "No naming history exists for this source observation yet."
             )
             return
         events = read_population_audit(self.population_workspace_paths)
@@ -6194,18 +6576,50 @@ class NapariSBTController:
             if self.population_draft is not None
             else None
         )
-        lines = []
-        for event in events[-300:]:
+        lines = [
+            "Recent naming history",
+            "The complete machine-readable audit remains in provenance.jsonl.",
+            "",
+        ]
+        for event in events[-100:]:
             if event.get("draft_id") not in {None, current_draft_id}:
                 continue
-            lines.append(
-                f"{event.get('timestamp')}  {event.get('action')}  "
-                f"actor={event.get('actor')}"
-            )
             details = event.get("details") or {}
-            lines.append(json.dumps(details, indent=2, ensure_ascii=False, default=str))
-            lines.append("")
+            summary_parts = []
+            for key, label in (
+                ("draft_revision", "revision"),
+                ("label_count", "populations"),
+                ("merge_group_count", "merges"),
+                ("updated_population_count", "renamed rows"),
+                ("new_component_count", "new subclusters"),
+                ("path", "file"),
+            ):
+                if key in details:
+                    summary_parts.append(f"{label}: {details[key]}")
+            action = str(event.get("action") or "updated").replace("_", " ")
+            timestamp = str(event.get("timestamp") or "")[:19].replace("T", " ")
+            suffix = f" — {', '.join(summary_parts)}" if summary_parts else ""
+            lines.append(f"{timestamp}  {action}{suffix}")
         self.population_provenance_text.setPlainText("\n".join(lines))
+
+    def show_population_history(self) -> None:
+        """Show a compact human-readable view of the retained technical audit."""
+
+        self.refresh_population_provenance()
+        dialog = self.QDialog(self.root)
+        dialog.setWindowTitle("NapariSBT population naming history")
+        dialog.resize(760, 520)
+        from qtpy.QtWidgets import QTextEdit, QVBoxLayout
+
+        layout = QVBoxLayout(dialog)
+        text = QTextEdit(dialog)
+        text.setReadOnly(True)
+        text.setPlainText(self.population_provenance_text.toPlainText())
+        buttons = self.QDialogButtonBox(self.QDialogButtonBox.Close, parent=dialog)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(text)
+        layout.addWidget(buttons)
+        dialog.exec()
 
     def _population_derived_obs_for_qc(self) -> str:
         if self.population_draft is None or self.adata is None:
@@ -6213,121 +6627,237 @@ class NapariSBTController:
         observation = self.population_draft.derived_obs
         if observation not in self.adata.obs:
             raise ValueError(
-                "Apply the current draft before generating QC plots. This keeps "
+                "Save and update the app before generating QC plots. This keeps "
                 "the plotted labels identical to the Explore overlay."
             )
         return observation
 
-    def _show_population_figure(self, figure, title: str) -> None:
+    def _scanpy_plotting_cohort_names(self) -> set[str] | None:
+        if self.cohort.empty or "obs_name" not in self.cohort:
+            return None
+        return set(self.cohort["obs_name"].astype(str))
+
+    def refresh_scanpy_plotting_choices(
+        self,
+        preferred_groupby: str | None = None,
+    ) -> None:
+        """Synchronize the plotting panel with the live AnnData object."""
+
+        if self.adata is None:
+            raise ValueError("Load AnnData before configuring Scanpy plots.")
+        roi_obs = (
+            self.manifest.roi_obs
+            if self.manifest is not None
+            else self.roi_obs_edit.text().strip()
+        )
+        if roi_obs not in self.adata.obs:
+            roi_obs = None
+        self.scanpy_plotting_panel.refresh_from_anndata(
+            self.adata,
+            roi_obs=roi_obs,
+            cohort_obs_names=self._scanpy_plotting_cohort_names(),
+            preferred_groupby=preferred_groupby,
+        )
+
+    def open_population_scanpy_plotting(self) -> None:
+        """Save pending population names and open them in the plotting workspace."""
+
+        if self.population_draft is None or self.adata is None:
+            raise RuntimeError("Create or load population naming work first.")
+        observation = self.population_draft.derived_obs
+        requires_sync = self._population_draft_dirty or observation not in self.adata.obs
+        if requires_sync:
+            reply = self.QMessageBox.question(
+                self.root,
+                "Save labels before plotting",
+                "The current population names have not been synchronized with "
+                "the live AnnData object. Save and update them now, then open "
+                "Scanpy plotting?",
+            )
+            if reply != self.QMessageBox.Yes:
+                self.set_status("Opening Scanpy plotting was cancelled.")
+                return
+            self.save_current_population_draft()
+        observation = self._population_derived_obs_for_qc()
+        self.refresh_scanpy_plotting_choices(preferred_groupby=observation)
+        self.scanpy_plotting_panel.select_groupby(observation)
+        self.tabs.setCurrentIndex(self.scanpy_plotting_tab_index)
+        self.set_status(
+            f"Scanpy plotting is ready with adata.obs[{observation!r}] selected."
+        )
+
+    def generate_scanpy_plot(self) -> None:
+        """Generate one read-only artifact and show it in a managed popup."""
+
+        if self.adata is None:
+            raise ValueError("Load AnnData before generating a plot.")
+        request = self.scanpy_plotting_panel.current_request()
+        self._activity_update(
+            f"Preparing {request.plot_type.replace('_', ' ')} from the selected "
+            "AnnData cells…"
+        )
+        self.QApplication.processEvents()
+        artifact = build_scanpy_plot(
+            self.adata,
+            request,
+            cohort_obs_names=self._scanpy_plotting_cohort_names(),
+        )
+        self._show_scanpy_plot_artifact(artifact, request)
+        self.set_status(f"Opened Scanpy plot: {artifact.summary}")
+
+    def _show_scanpy_plot_artifact(self, artifact, request) -> None:
+        """Open a modeless, resizable Matplotlib window and track its state."""
+
         try:
-            from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+            from matplotlib.backends.backend_qtagg import (
+                FigureCanvasQTAgg,
+                NavigationToolbar2QT,
+            )
         except ImportError:  # Matplotlib < 3.5 compatibility
-            from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
-        from qtpy.QtWidgets import QVBoxLayout
+            from matplotlib.backends.backend_qt5agg import (
+                FigureCanvasQTAgg,
+                NavigationToolbar2QT,
+            )
+        from qtpy.QtWidgets import (
+            QHBoxLayout,
+            QLabel,
+            QPushButton,
+            QSizePolicy,
+            QVBoxLayout,
+        )
 
         dialog = self.QDialog(self.root)
-        dialog.setWindowTitle(title)
-        dialog.resize(980, 760)
+        window_id = uuid4().hex
+        dialog.setWindowTitle(f"NapariSBT Scanpy plotting — {artifact.title}")
+        dialog.resize(1040, 800)
         layout = QVBoxLayout(dialog)
-        canvas = FigureCanvasQTAgg(figure)
+        canvas = FigureCanvasQTAgg(artifact.figure)
+        canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        toolbar = NavigationToolbar2QT(canvas, dialog)
+        stale_label = QLabel("● Current snapshot")
+        stale_label.setStyleSheet("color: #166534; font-weight: 700;")
+        summary_label = QLabel(artifact.summary)
+        summary_label.setWordWrap(True)
+        actions = QHBoxLayout()
+        export_data_button = QPushButton("Export plotted data CSV…")
+        close_button = QPushButton("Close")
+        actions.addWidget(stale_label)
+        actions.addStretch(1)
+        actions.addWidget(export_data_button)
+        actions.addWidget(close_button)
+        layout.addWidget(toolbar)
         layout.addWidget(canvas)
+        layout.addWidget(summary_label)
+        layout.addLayout(actions)
         canvas.draw()
         dialog.setAttribute(self.Qt.WA_DeleteOnClose, True)
-        self.population_plot_dialogs.append(dialog)
+        self.scanpy_plot_windows[window_id] = {
+            "dialog": dialog,
+            "artifact": artifact,
+            "request": request,
+            "stale_label": stale_label,
+        }
+        self.scanpy_plotting_panel.add_window(
+            window_id,
+            artifact.title,
+            f"{artifact.cell_count:,} cells",
+        )
+        export_data_button.clicked.connect(
+            self._guard(lambda: self.export_scanpy_plot_data(window_id))
+        )
+        close_button.clicked.connect(dialog.close)
 
         def forget_dialog(*_args):
-            if dialog in self.population_plot_dialogs:
-                self.population_plot_dialogs.remove(dialog)
+            self.scanpy_plot_windows.pop(window_id, None)
+            self.scanpy_plotting_panel.remove_window(window_id)
 
         dialog.destroyed.connect(forget_dialog)
         dialog.show()
 
+    def export_scanpy_plot_data(self, window_id: str) -> None:
+        record = self.scanpy_plot_windows.get(str(window_id))
+        if record is None:
+            raise ValueError("The selected plot window is no longer open.")
+        artifact = record["artifact"]
+        default_folder = self.paths.root / "plots" if self.paths else self.project_root
+        selected, _filter = self.QFileDialog.getSaveFileName(
+            self.root,
+            "Export plotted values",
+            str(default_folder / f"{slugify(artifact.title)}.csv"),
+            "CSV tables (*.csv)",
+        )
+        if not selected:
+            return
+        destination = Path(selected)
+        if destination.suffix.casefold() != ".csv":
+            destination = destination.with_suffix(".csv")
+        write_dataframe(destination, artifact.data)
+        self.set_status(
+            f"Exported {len(artifact.data):,} plotted-value rows to {destination}."
+        )
+
+    def focus_scanpy_plot_window(self, window_id: str) -> None:
+        if not window_id:
+            self.set_status("Select an open plot first.")
+            return
+        record = self.scanpy_plot_windows.get(str(window_id))
+        if record is None:
+            self.scanpy_plotting_panel.remove_window(window_id)
+            self.set_status("That plot window is no longer open.")
+            return
+        dialog = record["dialog"]
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def close_scanpy_plot_window(self, window_id: str) -> None:
+        if not window_id:
+            self.set_status("Select an open plot first.")
+            return
+        record = self.scanpy_plot_windows.get(str(window_id))
+        if record is None:
+            self.scanpy_plotting_panel.remove_window(window_id)
+            return
+        record["dialog"].close()
+
+    def close_all_scanpy_plot_windows(self) -> None:
+        if not self.scanpy_plot_windows:
+            self.set_status("There are no Scanpy plot windows to close.")
+            return
+        count = len(self.scanpy_plot_windows)
+        for record in list(self.scanpy_plot_windows.values()):
+            record["dialog"].close()
+        self.set_status(f"Closed {count:,} Scanpy plot windows.")
+
+    def mark_scanpy_plots_stale(self) -> None:
+        """Mark snapshots visibly when the live AnnData labels may have changed."""
+
+        if not hasattr(self, "scanpy_plotting_panel"):
+            return
+        self.scanpy_plotting_panel.mark_windows_stale()
+        for record in self.scanpy_plot_windows.values():
+            label = record.get("stale_label")
+            if label is not None:
+                label.setText("● Out of date — live AnnData may have changed")
+                label.setStyleSheet("color: #b45309; font-weight: 700;")
+
+    # Compatibility callbacks retained for callers of the former Population
+    # naming Live QC actions. They now route through the dedicated workspace.
     def show_population_embedding_qc(self) -> None:
         observation = self._population_derived_obs_for_qc()
-        embedding_key = self.population_embedding_combo.currentText().strip()
-        if embedding_key not in self.adata.obsm:
-            raise ValueError("Choose an existing 2-D AnnData embedding.")
-        coordinates = np.asarray(self.adata.obsm[embedding_key])[:, :2]
-        labels = self.adata.obs[observation].astype("string")
-        colours = categorical_colour_map(self.adata, observation)
-        from matplotlib.figure import Figure
-
-        figure = Figure(figsize=(9, 7), constrained_layout=True)
-        axis = figure.add_subplot(111)
-        missing = labels.isna().to_numpy()
-        if bool(missing.any()):
-            axis.scatter(
-                coordinates[missing, 0],
-                coordinates[missing, 1],
-                s=2,
-                c="#d1d5db",
-                alpha=0.35,
-                linewidths=0,
-                label="unassigned",
-            )
-        for population in labels.dropna().drop_duplicates():
-            selected = labels.eq(population).to_numpy()
-            axis.scatter(
-                coordinates[selected, 0],
-                coordinates[selected, 1],
-                s=3,
-                c=colours.get(str(population), "#ffffff"),
-                alpha=0.75,
-                linewidths=0,
-                label=str(population),
-            )
-        axis.set_title(f"{observation} on {embedding_key}")
-        axis.set_xlabel(f"{embedding_key} 1")
-        axis.set_ylabel(f"{embedding_key} 2")
-        if labels.nunique(dropna=True) <= 30:
-            axis.legend(
-                bbox_to_anchor=(1.02, 1),
-                loc="upper left",
-                markerscale=3,
-                frameon=False,
-            )
-        self._show_population_figure(figure, f"NapariSBT population QC — {observation}")
+        self.refresh_scanpy_plotting_choices(preferred_groupby=observation)
+        self.scanpy_plotting_panel.plot_type_combo.setCurrentIndex(
+            self.scanpy_plotting_panel.plot_type_combo.findData("embedding")
+        )
+        self.generate_scanpy_plot()
 
     def show_population_heatmap_qc(self) -> None:
         observation = self._population_derived_obs_for_qc()
-        markers = [item.text() for item in self.population_marker_list.selectedItems()]
-        if not markers:
-            raise ValueError("Select at least one marker of interest.")
-        if len(markers) > 100:
-            raise ValueError("Select at most 100 markers for the live QC heat map.")
-        positions = [self.adata.var_names.get_loc(marker) for marker in markers]
-        matrix = self.adata.X[:, positions]
-        if hasattr(matrix, "toarray"):
-            matrix = matrix.toarray()
-        matrix = np.asarray(matrix, dtype=float)
-        labels = self.adata.obs[observation].astype("string")
-        categories = [str(value) for value in labels.dropna().drop_duplicates()]
-        means = np.vstack(
-            [
-                np.nanmean(matrix[labels.eq(category).to_numpy()], axis=0)
-                for category in categories
-            ]
+        self.refresh_scanpy_plotting_choices(preferred_groupby=observation)
+        self.scanpy_plotting_panel.plot_type_combo.setCurrentIndex(
+            self.scanpy_plotting_panel.plot_type_combo.findData("heatmap")
         )
-        column_mean = np.nanmean(means, axis=0)
-        column_sd = np.nanstd(means, axis=0)
-        column_sd[column_sd == 0] = 1
-        scaled = (means - column_mean) / column_sd
-        from matplotlib.figure import Figure
-
-        width = max(8, min(20, len(markers) * 0.35 + 4))
-        height = max(5, min(20, len(categories) * 0.32 + 3))
-        figure = Figure(figsize=(width, height), constrained_layout=True)
-        axis = figure.add_subplot(111)
-        image = axis.imshow(scaled, aspect="auto", cmap="coolwarm", vmin=-2, vmax=2)
-        axis.set_xticks(np.arange(len(markers)), labels=markers, rotation=90)
-        axis.set_yticks(np.arange(len(categories)), labels=categories)
-        axis.set_title(
-            f"{observation}: population mean marker expression (marker-wise z-score)"
-        )
-        figure.colorbar(image, ax=axis, label="z-score")
-        self._show_population_figure(
-            figure, f"NapariSBT marker heat map — {observation}"
-        )
+        self.generate_scanpy_plot()
 
     def refresh_scope_values(self) -> None:
         self.value_list.clear()
@@ -7832,11 +8362,21 @@ class NapariSBTController:
             return None
         return self.paths.root / "explore" / "review_state.json"
 
+    def _sync_population_qc_contour_control(self) -> None:
+        if not hasattr(self, "population_qc_contour_spin"):
+            return
+        blocked = self.population_qc_contour_spin.blockSignals(True)
+        self.population_qc_contour_spin.setValue(
+            int(self.explore_review_state.population_qc_contour_width)
+        )
+        self.population_qc_contour_spin.blockSignals(blocked)
+
     def _load_explore_review_state(self) -> None:
         self.explore_recipe = ExploreViewRecipe()
         self.explore_review_state = ExploreReviewState()
         path = self._explore_state_path()
         if path is None or not path.exists():
+            self._sync_population_qc_contour_control()
             self._bind_explore_recipe_shortcuts()
             self._refresh_recipe_preset_controls()
             self._refresh_reload_recipe_list()
@@ -7846,6 +8386,10 @@ class NapariSBTController:
                 json.loads(path.read_text(encoding="utf-8"))
             )
             self.explore_review_state.schema_version = EXPLORE_STATE_VERSION
+            self.explore_review_state.population_recipes = {
+                key: self._population_qc_recipe_for_storage(recipe)
+                for key, recipe in self.explore_review_state.population_recipes.items()
+            }
             active_id = self.explore_review_state.active_recipe_id
             if active_id is not None:
                 self.explore_recipe = self.explore_review_state.recipe_presets[
@@ -7855,6 +8399,7 @@ class NapariSBTController:
             self.set_status(
                 f"Could not read Explore review state from {path.name}: {exc}"
             )
+        self._sync_population_qc_contour_control()
         self._bind_explore_recipe_shortcuts()
         self._refresh_recipe_preset_controls()
         self._refresh_reload_recipe_list()
@@ -8248,7 +8793,7 @@ class NapariSBTController:
         if key is None:
             raise ValueError("Select a population observation and population first.")
         self.explore_review_state.population_recipes[key] = (
-            self.explore_recipe.model_copy(deep=True)
+            self._population_qc_recipe_for_storage(self.explore_recipe)
         )
         self._save_explore_review_state()
         if self.paths is not None:
@@ -8263,9 +8808,9 @@ class NapariSBTController:
             )
         self.set_status(
             "Saved the current images, colours, populations, observation, "
-            "marker overlays, layer visibility, opacity, contours, and contrast "
-            "limits for "
-            f"{self.population_value_combo.currentText()!r}."
+            "marker overlays, layer visibility, opacity, and contrast limits for "
+            f"{self.population_value_combo.currentText()!r}. The population "
+            "outline remains a workspace-wide setting."
         )
 
     def restore_population_view(self) -> None:
@@ -8283,7 +8828,9 @@ class NapariSBTController:
         self.explore_review_state.active_recipe_id = None
         self._save_explore_review_state()
         self._refresh_recipe_preset_controls()
-        self._apply_explore_recipe(recipe)
+        self._apply_explore_recipe(
+            self._population_recipe_with_global_outline(recipe)
+        )
         self.set_status(
             f"Loaded the saved Explore view for "
             f"{self.population_value_combo.currentText()!r}."
@@ -9700,6 +10247,7 @@ class NapariSBTController:
             self.refresh_labeler_layers()
         else:
             self._remove_layers([LABELER_LAYER_NAME])
+        self._refresh_roi_metadata_display()
         self.refresh_channel_list()
         self.refresh_population_qc_marker_choices()
         if replay_view:
@@ -11030,6 +11578,86 @@ class NapariSBTController:
             population=population,
             channels=channels,
             contrast_limits=limits,
+            contour_width=int(self.population_qc_contour_spin.value()),
+        )
+
+    @staticmethod
+    def _population_qc_recipe_for_storage(
+        recipe: ExploreViewRecipe,
+    ) -> ExploreViewRecipe:
+        """Remove the workspace-wide outline preference from a population recipe."""
+
+        payload = recipe.model_dump(mode="python")
+        payload["layer_contours"] = {
+            name: value
+            for name, value in payload.get("layer_contours", {}).items()
+            if not str(name).startswith("population::")
+        }
+        return ExploreViewRecipe.model_validate(payload)
+
+    def _population_recipe_with_global_outline(
+        self,
+        recipe: ExploreViewRecipe,
+    ) -> ExploreViewRecipe:
+        """Apply the workspace-wide outline to a stored population view."""
+
+        if not recipe.population_observation or not recipe.populations:
+            return recipe.model_copy(deep=True)
+        payload = recipe.model_dump(mode="python")
+        contours = dict(payload.get("layer_contours", {}))
+        width = int(self.explore_review_state.population_qc_contour_width)
+        for population in recipe.populations:
+            contours[
+                f"population::{recipe.population_observation}::{population}"
+            ] = width
+        payload["layer_contours"] = contours
+        return ExploreViewRecipe.model_validate(payload)
+
+    def set_population_qc_contour_width(self, value: int) -> None:
+        """Persist and apply one outline width across all Population QC views."""
+
+        width = int(value)
+        if not 0 <= width <= 20:
+            raise ValueError("Population QC outline width must be between 0 and 20 px.")
+        self.explore_review_state.population_qc_contour_width = width
+        self.explore_review_state.population_recipes = {
+            key: self._population_qc_recipe_for_storage(recipe)
+            for key, recipe in self.explore_review_state.population_recipes.items()
+        }
+        if self.paths is not None:
+            self._save_explore_review_state()
+
+        observation = self.population_qc_obs_combo.currentText().strip()
+        population = self.population_qc_population_combo.currentText().strip()
+        layer_name = (
+            f"population::{observation}::{population}"
+            if observation and population
+            else ""
+        )
+        if (
+            layer_name
+            and self.explore_review_state.active_recipe_id is None
+            and self.explore_recipe.population_observation == observation
+            and self.explore_recipe.populations == [population]
+        ):
+            contours = dict(self.explore_recipe.layer_contours)
+            contours[layer_name] = width
+            self.explore_recipe = self.explore_recipe.model_copy(
+                update={"layer_contours": contours},
+                deep=True,
+            )
+            if layer_name in self.viewer.layers:
+                layer = self.viewer.layers[layer_name]
+                if hasattr(layer, "contour"):
+                    previous_state = self._updating_recipe_layer_state
+                    self._updating_recipe_layer_state = True
+                    try:
+                        layer.contour = width
+                    finally:
+                        self._updating_recipe_layer_state = previous_state
+        self.refresh_population_qc_rois()
+        self.set_status(
+            f"Population QC outline width is now {width} px for every population."
         )
 
     def _store_population_qc_recipe(
@@ -11046,7 +11674,9 @@ class NapariSBTController:
             )
         observation, population = self._population_qc_selection()
         key = population_recipe_key(observation, population)
-        self.explore_review_state.population_recipes[key] = recipe.model_copy(deep=True)
+        self.explore_review_state.population_recipes[key] = (
+            self._population_qc_recipe_for_storage(recipe)
+        )
         if persist:
             self._save_explore_review_state()
         if audit:
@@ -11081,7 +11711,8 @@ class NapariSBTController:
         observation, population = self._population_qc_selection()
         self.set_status(
             f"Saved the RGB channels, colours, and contrast ranges for "
-            f"{observation}={population}."
+            f"{observation}={population}. The {self.population_qc_contour_spin.value()} "
+            "px outline is shared by every population."
         )
 
     def _set_population_qc_combo_value(self, combo, value: str) -> None:
@@ -11149,7 +11780,8 @@ class NapariSBTController:
         else:
             self.population_qc_status_label.setText(
                 "Restored this population's saved RGB channels, colours, and "
-                "contrast ranges. Missing current-ROI channels remain selectable."
+                "contrast ranges. The outline width remains the workspace-wide "
+                "setting shown above; missing current-ROI channels remain selectable."
             )
         self.refresh_population_qc_rois()
 
@@ -11157,7 +11789,9 @@ class NapariSBTController:
         recipe = self._population_qc_recipe_from_controls()
         self._store_population_qc_recipe(recipe, persist=False, audit=False)
         self.explore_review_state.active_recipe_id = None
-        self._apply_explore_recipe(recipe)
+        self._apply_explore_recipe(
+            self._population_recipe_with_global_outline(recipe)
+        )
         if not self.current_roi:
             self._save_explore_review_state()
         self._append_population_qc_audit(recipe, "load_population_qc_view")
@@ -11240,7 +11874,8 @@ class NapariSBTController:
             )
             button.setToolTip(
                 ("Viewed" if is_viewed else "Not yet viewed")
-                + f" with this exact RGB/contrast recipe; {count:,} matching cells."
+                + f" with this exact RGB/contrast/outline recipe; {count:,} "
+                "matching cells."
             )
             button.clicked.connect(
                 lambda _checked=False,
@@ -11254,7 +11889,7 @@ class NapariSBTController:
         self.population_qc_status_label.setText(
             f"Showing {len(ranking):,} {ordering_text} eligible ROIs for "
             f"{observation}={population}. Green is unvisited; grey is viewed with "
-            "this exact RGB and contrast recipe."
+            "this exact RGB, contrast, and outline recipe."
         )
 
     def recalculate_population_qc_rois(self) -> None:
@@ -11287,7 +11922,7 @@ class NapariSBTController:
                 "font-weight: 600; padding: 5px; }"
             )
             button.setToolTip(
-                "Viewed with this exact RGB/contrast recipe; click to revisit."
+                "Viewed with this exact RGB/contrast/outline recipe; click to revisit."
             )
         self.population_qc_status_label.setText(
             f"Loaded ROI {roi!r} with the cached Population QC recipe and marked "
@@ -11352,10 +11987,11 @@ class NapariSBTController:
                 population=population,
                 channels=channels,
                 contrast_limits=limits,
+                contour_width=self.explore_review_state.population_qc_contour_width,
             )
             self.explore_review_state.population_recipes[
                 population_recipe_key(observation, population)
-            ] = recipe
+            ] = self._population_qc_recipe_for_storage(recipe)
             imported += 1
         self._save_explore_review_state()
         append_audit(

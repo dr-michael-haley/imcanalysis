@@ -11,7 +11,7 @@
 #@IN:   OPENAI_API_KEY environment variable (if visualization.enable_ai=true)
 #@OUT:  process.output_adata_path (updated in place)
 #@OUT:  outputs/<execution_id>_AI_Interpretation/ (legacy direct fallback: general.qc_folder)
-#@ENV:  imc_segmentation
+#@ENV:  sbt-analysis
 #@MODULE:  SpatialBiologyToolkit.scripts.ai_interpretation
 #@CONFIG: general, visualization, process, logging
 
@@ -19,7 +19,7 @@ source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 echo "AI interpretation job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 
-conda activate "${SBT_CONDA_ENV:-${IMC_ENV_SEGMENTATION:-imc_segmentation}}"
+conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_ANALYSIS:-sbt-analysis}}"
 # Fix ctypes error
 export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
 

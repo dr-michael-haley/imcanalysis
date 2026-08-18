@@ -5,7 +5,7 @@
 Quantify HyPERSTAC embedding sensitivity to channel zeroing and pixel shuffling
 
 - Wrapper: [`job_hyperstac_permutation.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_hyperstac_permutation.sh)
-- Conda environment: `hyperstac`
+- Conda environment: `sbt-hyperstac`
 - Python module: `SpatialBiologyToolkit.scripts.hyperstac_permutation`
 
 ## Inputs

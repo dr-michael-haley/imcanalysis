@@ -11,6 +11,7 @@ from SpatialBiologyToolkit.napari_sbt.population_qc import (
     build_population_qc_recipe,
     inherit_setup_contrast_limits,
     rank_population_rois,
+    retarget_population_qc_recipe,
     top_population_markers,
 )
 
@@ -101,6 +102,7 @@ def test_population_qc_recipe_persists_rgb_colours_and_ranges():
         population="1",
         channels=["CD3", "CD68", "PanCK"],
         contrast_limits=[(0.05, 0.8), (0.0, 0.6), (0.1, 1.0)],
+        contour_width=5,
     )
 
     assert recipe.image_mode == "six_colour"
@@ -110,6 +112,7 @@ def test_population_qc_recipe_persists_rgb_colours_and_ranges():
         "image::PanCK": "blue",
     }
     assert recipe.layer_contrast_limits["image::CD68"] == (0.0, 0.6)
+    assert recipe.layer_contours["population::leiden::1"] == 5
     assert recipe.populations == ["1"]
 
 
@@ -140,3 +143,25 @@ def test_setup_contrast_updates_only_an_unmodified_unsaved_population_range():
         (0.1, 0.8),
         has_saved_recipe=True,
     ) == (0.0, 1.0)
+
+
+def test_population_qc_recipe_can_follow_a_renamed_population():
+    recipe = build_population_qc_recipe(
+        observation="leiden",
+        population="3",
+        channels=["CD3", "CD68"],
+        contrast_limits=[(0.1, 0.8), (0.0, 0.6)],
+    )
+
+    renamed = retarget_population_qc_recipe(
+        recipe,
+        observation="population_named",
+        population="T cells",
+    )
+
+    assert renamed.population_observation == "population_named"
+    assert renamed.populations == ["T cells"]
+    assert recipe.layer_contours["population::leiden::3"] == 1
+    assert "population::leiden::3" not in renamed.layer_visibility
+    assert renamed.layer_visibility["population::population_named::T cells"]
+    assert renamed.layer_contrast_limits == recipe.layer_contrast_limits

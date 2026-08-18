@@ -12,7 +12,7 @@
 #@OUT:  general.raw_images_folder (default tiffs/)
 #@OUT:  general.metadata_folder/{metadata.csv,dictionary.csv,panel.csv[,panel_mapping.csv]}
 #@OUT:  outputs/<execution_id>_Preprocessing/ stage report
-#@ENV:  imc_segmentation
+#@ENV:  sbt-analysis
 #@MODULE:  SpatialBiologyToolkit.scripts.preprocess
 #@CONFIG: general, preprocess, logging
 
@@ -20,7 +20,7 @@ source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 echo "Preprocessing job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 
-conda activate "${SBT_CONDA_ENV:-${IMC_ENV_SEGMENTATION:-imc_segmentation}}"
+conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_ANALYSIS:-sbt-analysis}}"
 # Fix ctypes error
 export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
 python -m SpatialBiologyToolkit.scripts.preprocess

@@ -5,7 +5,7 @@
 Build resumable cohort-only IMC cell features using full-segmentation context
 
 - Wrapper: [`job_cell_features.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_cell_features.sh)
-- Conda environment: `imc_segmentation`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.cell_features`
 
 ## Inputs

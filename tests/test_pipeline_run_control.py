@@ -147,14 +147,14 @@ class RunControlTests(unittest.TestCase):
                 exported["SBT_TECHNICAL_RUN_ID"],
             )
             self.assertEqual(exported["SBT_STAGE"], "prep")
-            self.assertEqual(exported["SBT_ENVIRONMENT_KEY"], "segmentation")
-            self.assertEqual(exported["SBT_CONDA_ENV"], "imc_segmentation")
-            self.assertEqual(exported["SBT_CONDA_ENV_SEGMENTATION"], "imc_segmentation")
+            self.assertEqual(exported["SBT_ENVIRONMENT_KEY"], "analysis")
+            self.assertEqual(exported["SBT_CONDA_ENV"], "sbt-analysis")
+            self.assertEqual(exported["SBT_CONDA_ENV_ANALYSIS"], "sbt-analysis")
 
     def test_single_stage_environment_override_is_exported_and_persisted(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             context, plan = self._project_and_plan(temp_dir, ["prep"])
-            plan = apply_environment_override(plan, "analysis")
+            plan = apply_environment_override(plan, "denoise")
             run = create_run_record(context, plan, command="sbt run prep")
             submit_run(
                 context,
@@ -169,21 +169,21 @@ class RunControlTests(unittest.TestCase):
                 context.root / run.executions[0].output_folder / "stage_manifest.yaml"
             )
 
-            self.assertEqual(plan.environment_overrides, {"prep": "analysis"})
-            self.assertEqual(exported["SBT_ENVIRONMENT_KEY"], "analysis")
-            self.assertEqual(exported["SBT_CONDA_ENV"], "sbt-analysis")
-            self.assertEqual(exported["SBT_CONDA_ENV_ANALYSIS"], "sbt-analysis")
+            self.assertEqual(plan.environment_overrides, {"prep": "denoise"})
+            self.assertEqual(exported["SBT_ENVIRONMENT_KEY"], "denoise")
+            self.assertEqual(exported["SBT_CONDA_ENV"], "sbt-denoise")
+            self.assertEqual(exported["SBT_CONDA_ENV_DENOISE"], "sbt-denoise")
             self.assertEqual(exported["SBT_ENVIRONMENT_OVERRIDE"], "1")
             self.assertEqual(
-                exported["SBT_DEFAULT_ENVIRONMENT_KEYS"], "segmentation"
+                exported["SBT_DEFAULT_ENVIRONMENT_KEYS"], "analysis"
             )
             self.assertEqual(
-                manifest["environment_overrides"], {"prep": "analysis"}
+                manifest["environment_overrides"], {"prep": "denoise"}
             )
-            self.assertEqual(stage_manifest["environment"]["key"], "analysis")
+            self.assertEqual(stage_manifest["environment"]["key"], "denoise")
             self.assertTrue(stage_manifest["environment"]["overridden"])
             self.assertEqual(
-                stage_manifest["environment"]["default_keys"], ["segmentation"]
+                stage_manifest["environment"]["default_keys"], ["analysis"]
             )
             readme = (
                 context.root / run.executions[0].output_folder / "README.md"
@@ -659,14 +659,14 @@ class RunControlTests(unittest.TestCase):
                         "--project",
                         str(root),
                         "--environment",
-                        "analysis",
+                        "denoise",
                         "--dry-run",
                     ],
                 )
 
             self.assertEqual(result.exit_code, 0, result.stdout)
-            self.assertIn("Environment override: prep=analysis", result.stdout)
-            self.assertIn("SBT_CONDA_ENV=sbt-analysis", result.stdout)
+            self.assertIn("Environment override: prep=denoise", result.stdout)
+            self.assertIn("SBT_CONDA_ENV=sbt-denoise", result.stdout)
 
     def test_unknown_environment_override_stops_before_run_creation(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -775,8 +775,8 @@ class RunControlTests(unittest.TestCase):
                 def required_for_stages(self, stages):
                     return [
                         EnvironmentSummary(
-                            key="segmentation",
-                            conda_name="imc_segmentation",
+                            key="analysis",
+                            conda_name="sbt-analysis",
                             managed=True,
                             exists=self.installed,
                             stages=list(stages),
@@ -808,10 +808,10 @@ class RunControlTests(unittest.TestCase):
                 )
 
             self.assertEqual(result.exit_code, 0, result.stdout)
-            self.assertIn("imc_segmentation", result.stdout)
+            self.assertIn("sbt-analysis", result.stdout)
             self.assertIn("Install the missing environment(s) now", result.stdout)
             self.assertIn("[y/N]", result.stdout)
-            self.assertEqual(manager.synced, ["segmentation"])
+            self.assertEqual(manager.synced, ["analysis"])
             submit_mock.assert_called_once()
 
     def test_run_declining_environment_install_stops_before_run_creation(self):
@@ -823,8 +823,8 @@ class RunControlTests(unittest.TestCase):
             manager = SimpleNamespace(
                 required_for_stages=lambda _stages: [
                     EnvironmentSummary(
-                        key="segmentation",
-                        conda_name="imc_segmentation",
+                        key="analysis",
+                        conda_name="sbt-analysis",
                         managed=True,
                         exists=False,
                         stages=["prep"],
@@ -846,7 +846,7 @@ class RunControlTests(unittest.TestCase):
 
             self.assertNotEqual(result.exit_code, 0)
             output = result.stdout + result.stderr
-            self.assertIn("sbt env sync segmentation", output)
+            self.assertIn("sbt env sync analysis", output)
             self.assertIn("No run record was created", output)
             submit_mock.assert_not_called()
             self.assertEqual(list((root / ".sbt" / "runs").iterdir()), [])
@@ -863,11 +863,11 @@ class RunControlTests(unittest.TestCase):
             manager = SimpleNamespace(
                 required_for_stages=lambda _stages: [
                     EnvironmentSummary(
-                        key="rapids",
-                        conda_name="rapids_singlecell",
+                        key="starling",
+                        conda_name="sbt-starling",
                         managed=False,
                         exists=False,
-                        stages=["rapids"],
+                        stages=["starling"],
                     )
                 ]
             )
@@ -879,7 +879,7 @@ class RunControlTests(unittest.TestCase):
             ):
                 result = CliRunner().invoke(
                     app,
-                    ["run", "rapids", "--project", str(root), "--no-deps"],
+                    ["run", "starling", "--project", str(root), "--no-deps"],
                 )
 
             self.assertNotEqual(result.exit_code, 0)
@@ -898,8 +898,8 @@ class RunControlTests(unittest.TestCase):
             manager = SimpleNamespace(
                 required_for_stages=lambda _stages: [
                     EnvironmentSummary(
-                        key="segmentation",
-                        conda_name="imc_segmentation",
+                        key="analysis",
+                        conda_name="sbt-analysis",
                         managed=True,
                         exists=False,
                         stages=["prep"],

@@ -5,7 +5,7 @@
 AI labeling of Leiden populations and writing *_AIlabel columns
 
 - Wrapper: [`job_ai.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_ai.sh)
-- Conda environment: `imc_segmentation`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.ai_interpretation`
 
 ## Inputs

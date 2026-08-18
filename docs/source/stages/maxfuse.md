@@ -137,7 +137,7 @@ the ordinary DEG analysis still runs.
 
 ## Environment and resources
 
-The stage uses the dedicated `imc_maxfuse` environment with Python 3.10 and
+The stage uses the dedicated `sbt-maxfuse` environment with Python 3.10 and
 `maxfuse==0.0.2`. MaxFuse itself supports Python 3.8 and newer, but current SBT
 requires Python 3.10 or newer.
 

@@ -37,10 +37,11 @@ name as `SBT_ENVIRONMENT_KEY`, `SBT_ENVIRONMENT_KEYS`, `SBT_CONDA_ENV`, and
 key-specific `SBT_CONDA_ENV_<KEY>` variables. Active wrappers prefer those
 values.
 
-Direct wrapper execution remains transitional: wrappers fall back to existing
-`IMC_ENV_*` overrides and then the historical fixed name. Existing
-`~/.imc_config` files therefore continue to work, but new environment-name
-configuration belongs in `HPC_env_files/environments.yaml`.
+Direct wrapper execution uses the key-specific `SBT_CONDA_ENV_<KEY>` override
+when supplied and otherwise falls back to the current standardized `sbt-*`
+fixed name. The former `IMC_ENV_*` runtime overrides and retired physical names
+are not discovered automatically. New environment-name configuration belongs
+in `HPC_env_files/environments.yaml`.
 
 The legacy pipeline commands `pl`, `pll`, and `pls` are unchanged compatibility
 interfaces. Use `sbt` for new planning, submission, environment, status, and
@@ -59,5 +60,8 @@ sbt env lock --all
 ```
 
 No lockfile is regenerated silently during migration, capture, or comparison.
-The RAPIDS, STARLING, and scPortrait environments remain explicitly external
-until curated specifications are added.
+RAPIDS is now part of the repository-managed `sbt-analysis` runtime. STARLING
+and scPortrait remain explicitly external under the standardized
+`sbt-starling` and `sbt-scportrait` names until curated specifications are
+added. Superseded specifications and the pre-standardization registry are
+retained under `image_migration/archive/retired_hpc_environments/`.

@@ -5,7 +5,7 @@
 Fuse CellVision morphology and BioBatchNet intensity graphs, then run RAPIDS UMAP and Leiden
 
 - Wrapper: [`job_cellvision_cluster.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_cellvision_cluster.sh)
-- Conda environment: `rapids_singlecell`
+- Conda environment: `sbt-analysis`
 - Python module: `SpatialBiologyToolkit.scripts.cellvision_cluster`
 
 ## Inputs

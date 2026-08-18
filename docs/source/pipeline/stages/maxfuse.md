@@ -5,7 +5,7 @@
 Match one scRNA-seq reference to IMC cells with MaxFuse and generate transfer/QC assets
 
 - Wrapper: [`job_maxfuse.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_maxfuse.sh)
-- Conda environment: `imc_maxfuse`
+- Conda environment: `sbt-maxfuse`
 - Python module: `SpatialBiologyToolkit.scripts.maxfuse_matching`
 
 ## Inputs

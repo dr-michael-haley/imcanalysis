@@ -414,7 +414,7 @@ def test_stage_registry_wrapper_environment_docs_and_planner_align(tmp_path: Pat
     assert stage.catalogue_order == 41
     assert stage.depends_on == ["cellpose"]
     assert stage.groups == ["qc"]
-    assert stage.environment_keys == ["segmentation"]
+    assert stage.environment_keys == ["analysis"]
     assert stage.config_sections == [
         "general",
         "segmentation",
@@ -429,10 +429,10 @@ def test_stage_registry_wrapper_environment_docs_and_planner_align(tmp_path: Pat
     wrapper = (REPO_ROOT / stage.slurm_script).read_text(encoding="utf-8")
     assert "#SBATCH -G 1" in wrapper
     assert "#SBATCH --cpus-per-task=6" in wrapper
-    assert "#@ENV:  imc_segmentation" in wrapper
+    assert "#@ENV:  sbt-analysis" in wrapper
     assert "SpatialBiologyToolkit.scripts.nimbus_normalization_scan" in wrapper
     environments = load_environment_registry(REPO_ROOT)
-    assert environments.stage_environments["nimbus-scan"] == ["segmentation"]
+    assert environments.stage_environments["nimbus-scan"] == ["analysis"]
 
     context = initialize_project(tmp_path / "project")
     assets = {
@@ -472,4 +472,4 @@ def test_stage_registry_wrapper_environment_docs_and_planner_align(tmp_path: Pat
     raw_registry = yaml.safe_load(
         (REPO_ROOT / "HPC_env_files" / "environments.yaml").read_text(encoding="utf-8")
     )
-    assert raw_registry["stage_environments"]["nimbus-scan"] == ["segmentation"]
+    assert raw_registry["stage_environments"]["nimbus-scan"] == ["analysis"]

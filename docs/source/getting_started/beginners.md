@@ -153,7 +153,7 @@ one tool's packages from breaking another.
 SpatialBiologyToolkit deliberately separates:
 
 - `sbt-cli`: a small environment containing the lightweight `sbt` command;
-- scientific environments such as `imc_segmentation` and `imc_denoise`, used
+- scientific environments such as `sbt-analysis` and `sbt-denoise`, used
   by the corresponding SLURM jobs.
 
 You do **not** install every scientific environment at the beginning. When you

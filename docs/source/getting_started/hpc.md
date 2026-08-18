@@ -171,7 +171,7 @@ SpatialBiologyToolkit uses environments in two ways:
   command on the login node.
 - Scientific environments contain the larger packages used by pipeline stages.
   For example, the `prep` stage uses an environment called
-  `imc_segmentation`.
+  `sbt-analysis`.
 
 You do not need to install every scientific environment at the start. When you
 run a stage, `sbt` checks which environment that stage needs.
@@ -213,8 +213,8 @@ The first time, you should see a warning similar to:
 
 ```text
 Required Conda environments:
-  - imc_segmentation (segmentation; repository-managed): MISSING for prep
-Install the missing environment(s) now (imc_segmentation)? [y/N]:
+  - sbt-analysis (analysis; repository-managed): MISSING for prep
+Install the missing environment(s) now (sbt-analysis)? [y/N]:
 ```
 
 Type `y` and press **Enter**. Installing the environment can take several

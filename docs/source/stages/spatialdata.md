@@ -126,7 +126,7 @@ The planner report is the audit surface for this initial implementation.
 
 ## Environment and resources
 
-The stage uses the CPU `imc_segmentation` environment with SpatialData added
+The stage uses the CPU `sbt-analysis` environment with SpatialData added
 to its explicit pip requirements. The wrapper initially requests 8 CPUs,
 128 GB RAM, and 24 hours on the high-memory partition. Raster construction is
 lazy, but planning reads label values and mask instances, and construction

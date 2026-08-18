@@ -13,10 +13,10 @@ set -e
 #@DESC: Quantify HyPERSTAC embedding sensitivity to channel zeroing and pixel shuffling
 #@IN:   HyPERSTAC patch metadata, patch arrays, representation AnnData, and encoder weights
 #@OUT:  hyperstac.asset_folder/permutation_sensitivity AnnData and managed sensitivity tables
-#@ENV:  hyperstac
+#@ENV:  sbt-hyperstac
 #@MODULE:  SpatialBiologyToolkit.scripts.hyperstac_permutation
 #@CONFIG: general, hyperstac, logging
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
-conda activate "${SBT_CONDA_ENV_HYPERSTAC:-${IMC_ENV_HYPERSTAC:-hyperstac-imc}}"
+conda activate "${SBT_CONDA_ENV_HYPERSTAC:-sbt-hyperstac}"
 python -m SpatialBiologyToolkit.scripts.hyperstac_permutation

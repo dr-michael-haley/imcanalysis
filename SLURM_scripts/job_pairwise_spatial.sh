@@ -10,7 +10,7 @@
 #@IN:   pairwise_spatial.input_adata_path (fallback: process.output_adata_path, then process.input_adata_path)
 #@IN:   adata.obs keys configured in pairwise_spatial (population_obs, roi_obs, X/Y coords, optional groupby_obs)
 #@OUT:  outputs/<execution_id>_Pairwise_Spatial_Analysis/
-#@ENV:  imc_cellcharter
+#@ENV:  sbt-analysis
 #@MODULE:  SpatialBiologyToolkit.scripts.pairwise_spatial
 #@CONFIG: general, process, pairwise_spatial, logging
 
@@ -18,7 +18,7 @@ source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 echo "Pairwise spatial job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 
-conda activate "${SBT_CONDA_ENV:-${IMC_ENV_CELLCHARTER:-imc_cellcharter}}"
+conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_ANALYSIS:-sbt-analysis}}"
 # Fix ctypes error
 export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
 

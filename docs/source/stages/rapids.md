@@ -443,10 +443,9 @@ human-facing report.
 - The active wrapper requests one NVIDIA GPU. Although RAPIDS-singlecell supports
   Dask, out-of-core, and multi-GPU workflows, this stage does not automatically
   configure the paper's multi-GPU setup.
-- The `rapids_singlecell` environment is marked as externally managed and has no
-  repository specification or lockfile. Capture its RAPIDS-singlecell, CUDA,
-  CuPy, cuML, cuGraph, cuVS, AnnData, and Scanpy versions for every consequential
-  analysis.
+- RAPIDS runs in the repository-managed `sbt-analysis` environment. Its lock
+  fixes the RAPIDS, CUDA, CuPy, cuML, cuGraph, Dask, AnnData, and Scanpy stack;
+  managed reports capture the observed runtime as additional evidence.
 - GPU memory must hold the active data and algorithm intermediates. Host-memory
   spilling can allow an oversized analysis to continue but may remove much of
   the speed advantage.

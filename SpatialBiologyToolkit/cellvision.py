@@ -815,7 +815,7 @@ def run_scportrait_extraction(
     except ImportError as exc:  # pragma: no cover - environment-specific
         raise ImportError(
             "CellVision extraction requires scPortrait. Activate the registered "
-            "'scPortrait' environment."
+            "'sbt-scportrait' environment."
         ) from exc
 
     cache_root = Path(tempfile.mkdtemp(prefix="cellvision_scp_"))

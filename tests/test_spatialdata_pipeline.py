@@ -61,7 +61,7 @@ class SpatialDataPipelineTests(unittest.TestCase):
     def test_registry_environment_assets_wrapper_and_docs_align(self):
         stage = STAGE_REGISTRY["spatialdata"]
         self.assertEqual(stage.catalogue_order, 39)
-        self.assertEqual(stage.environment_keys, ["segmentation"])
+        self.assertEqual(stage.environment_keys, ["analysis"])
         self.assertEqual(stage.config_sections, ["general", "spatialdata"])
         self.assertEqual(stage.requires_assets, [])
         self.assertEqual(
@@ -73,7 +73,7 @@ class SpatialDataPipelineTests(unittest.TestCase):
         wrapper = (REPO_ROOT / stage.slurm_script).read_text(encoding="utf-8")
         self.assertIn("#SBATCH --cpus-per-task=8", wrapper)
         self.assertIn("#SBATCH --mem=128G", wrapper)
-        self.assertIn("#@ENV:  imc_segmentation", wrapper)
+        self.assertIn("#@ENV:  sbt-analysis", wrapper)
         self.assertIn(
             "SpatialBiologyToolkit.scripts.spatialdata_builder",
             wrapper,
@@ -81,10 +81,10 @@ class SpatialDataPipelineTests(unittest.TestCase):
         pip_extras = (
             REPO_ROOT
             / "HPC_env_files"
-            / "imc_segmentation"
+            / "sbt-analysis"
             / "pip-extras.txt"
         ).read_text(encoding="utf-8")
-        self.assertIn("spatialdata>=0.7,<0.8", pip_extras)
+        self.assertIn("spatialdata==0.4.0", pip_extras)
 
         config = PipelineConfig()
         assets = {asset.role: asset for asset in resolve_assets(config, Path("."))}

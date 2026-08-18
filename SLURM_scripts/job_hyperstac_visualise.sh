@@ -12,10 +12,10 @@ set -e
 #@DESC: Run HyPERSTAC clustering scans and create embedding, marker, spatial, and gallery reports
 #@IN:   HyPERSTAC representation/metric AnnData, patches, and optional permutation AnnData
 #@OUT:  managed HyPERSTAC visualisation report and optional clustered representation AnnData update
-#@ENV:  hyperstac
+#@ENV:  sbt-hyperstac
 #@MODULE:  SpatialBiologyToolkit.scripts.hyperstac_visualise
 #@CONFIG: general, hyperstac, logging
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
-conda activate "${SBT_CONDA_ENV_HYPERSTAC:-${IMC_ENV_HYPERSTAC:-hyperstac-imc}}"
+conda activate "${SBT_CONDA_ENV_HYPERSTAC:-sbt-hyperstac}"
 python -m SpatialBiologyToolkit.scripts.hyperstac_visualise

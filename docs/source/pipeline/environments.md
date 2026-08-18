@@ -27,18 +27,14 @@ lightweight smoke tests.
 
 | Key | Fixed Conda name | Management |
 |---|---|---|
-| `analysis` | `sbt-analysis` | Repository-managed consolidation candidate; reviewed Linux lock pending |
+| `analysis` | `sbt-analysis` | Repository-managed standard scientific runtime |
 | `napari` | `sbt-napari` | Explicit interactive bootstrap; Linux lock pending |
-| `segmentation` | `imc_segmentation` | Repository lock |
-| `denoise` | `imc_denoise` | Repository lock |
-| `cellposesam` | `imc_cellposesam` | Repository lock |
-| `biobatchnet` | `imc_biobatchnet` | Repository lock |
-| `cellcharter` | `imc_cellcharter` | Repository lock |
-| `rapids` | `rapids_singlecell` | External/pre-existing |
-| `starling` | `imc_starling` | External/pre-existing |
-| `scportrait` | `scPortrait` | External/pre-existing |
-| `hyperstac` | `hyperstac-imc` | External/pre-existing |
-| `maxfuse` | `imc_maxfuse` | External/pre-existing |
+| `denoise` | `sbt-denoise` | Repository lock |
+| `cellposesam` | `sbt-cellpose-sam` | Repository lock |
+| `starling` | `sbt-starling` | External/pre-existing |
+| `scportrait` | `sbt-scportrait` | External/pre-existing |
+| `hyperstac` | `sbt-hyperstac` | External/pre-existing |
+| `maxfuse` | `sbt-maxfuse` | External/pre-existing |
 
 Commands accept either the logical key or fixed name. External environments
 can be listed, shown, smoke-tested, and captured into observational
@@ -55,12 +51,9 @@ The stage mapping is also centralized:
 
 | Environment key | Pipeline stages |
 |---|---|
-| `segmentation` | `prep`, `vis`, `nimbus`, `subcl`, `dnqc`, `aiinter`, `config`, `cellpose`, `reint`, `remap`, `slogs`, `rebuildmeta`, `cellfeat`, `spatialdata` |
+| `analysis` | `prep`, `vis`, `nimbus`, `nimbus-scan`, `bint`, `rapids`, `cellvision-cluster`, `cellvision-full`, `bbn`, `subcl`, `cchar`, `dnqc`, `aiinter`, `config`, `cellpose`, `reint`, `pairsp`, `nxsp`, `remap`, `slogs`, `rebuildmeta`, `popqc`, `cellfeat`, `spatialdata`, `neighsig` |
 | `denoise` | `denoise`, `dnqc` |
 | `cellposesam` | `cellpose` |
-| `biobatchnet` | `bbn` |
-| `cellcharter` | `bint`, `cchar`, `pairsp`, `nxsp`, `popqc` |
-| `rapids` | `rapids`, `cellvision-cluster`, `cellvision-full` |
 | `starling` | `starling` |
 | `scportrait` | `scport`, `cellvision-extract`, `cellvision-embed`, `cellvision-plot`, `cellvision-full` |
 | `hyperstac` | `hyperstac-preprocess`, `hyperstac-model`, `hyperstac-permutation`, `hyperstac-visualise`, `cox`, `hyperstac-stability`, `hyperstac-full` |
@@ -69,22 +62,28 @@ The stage mapping is also centralized:
 `cellpose`, `dnqc`, and `cellvision-full` intentionally use two environments;
 their primary environment is listed first in the registry mapping.
 
-## Per-run compatibility testing
+The superseded segmentation, BioBatchNet, CellCharter, and standalone RAPIDS
+specifications are retained only under
+`image_migration/archive/retired_hpc_environments/`. They are not active
+registry entries and are not discovered as automatic fallbacks.
+
+## Per-run environment selection
 
 A registered environment can temporarily replace the default for one resolved,
 single-environment stage:
 
 ```bash
-sbt run prep --environment analysis --dry-run
-sbt run prep --environment analysis
+sbt run hyperstac-model --environment hyperstac --dry-run
+sbt run hyperstac-model --environment sbt-hyperstac
 ```
 
 The override is execution state, not project configuration: it does not alter
 `stage_environments` or affect later runs. SBT checks the selected environment,
 exports its logical key and fixed name to the wrapper, snapshots its committed
 specification, inspects its runtime, and identifies the override in the stage
-report. This supports scientific-parity testing of `sbt-analysis` while the
-existing environment mappings remain the rollback path.
+report. The selector must be a registered logical key or its current fixed
+name. It does not select retired names such as `hyperstac-imc`; managed
+HyPERSTAC runs now resolve `hyperstac` to `sbt-hyperstac`.
 
 The current interface deliberately rejects a plan containing several stages,
 stages without an environment, and wrappers that switch between multiple
@@ -110,7 +109,7 @@ Inspect and validate without changing anything:
 ```bash
 sbt env list
 sbt env list --compare
-sbt env show imc_cellcharter
+sbt env show analysis
 sbt env doctor
 sbt env validate-spec --all
 ```
@@ -132,7 +131,7 @@ deliberate manual maintenance of one environment.
 Always inspect the plan first:
 
 ```bash
-sbt env sync imc_cellcharter --dry-run
+sbt env sync analysis --dry-run
 ```
 
 `--all` remains available for administrators or deliberate full-stack
@@ -150,9 +149,9 @@ If a fixed environment exists and differs, `sbt` does not remove it silently.
 Review the drift and request recreation explicitly:
 
 ```bash
-sbt env sync imc_cellcharter --recreate
+sbt env sync analysis --recreate
 # non-interactive only after review:
-sbt env sync imc_cellcharter --recreate --yes
+sbt env sync analysis --recreate --yes
 ```
 
 Before removal, the live environment is written beneath
@@ -163,10 +162,10 @@ locks stop synchronisation; there is no silent unlocked solve.
 ## Drift comparison
 
 ```bash
-sbt env compare imc_cellcharter
+sbt env compare analysis
 sbt env compare --all
-sbt env compare imc_cellcharter --format yaml
-sbt env compare imc_cellcharter --format json
+sbt env compare analysis --format yaml
+sbt env compare analysis --format json
 ```
 
 Comparison keeps separate layers for:
@@ -190,9 +189,9 @@ itself ordinary package drift.
 ## Lock maintenance
 
 ```bash
-sbt env lock imc_cellcharter
+sbt env lock analysis
 sbt env lock --all
-sbt env lock imc_cellcharter --check
+sbt env lock analysis --check
 ```
 
 Lock generation uses the `conda-lock` installation in Conda base and a
@@ -211,14 +210,13 @@ Capture is deliberately explicit because an installed environment cannot
 perfectly reconstruct the original dependency intent:
 
 ```bash
-sbt env capture imc_cellcharter --dry-run
-sbt env capture imc_cellcharter --write
+sbt env capture analysis --dry-run
+sbt env capture analysis --write
 ```
 
 External environments use the same command without `--write`:
 
 ```bash
-sbt env capture rapids --dry-run --verbose
 sbt env capture starling --dry-run --verbose
 sbt env capture scportrait --dry-run --verbose
 ```
@@ -282,7 +280,7 @@ leaves existing repository files unchanged.
 ## Smoke tests and diagnostics
 
 ```bash
-sbt env test imc_cellcharter
+sbt env test analysis
 sbt env test --all
 sbt env doctor
 ```

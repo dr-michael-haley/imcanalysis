@@ -1,4 +1,4 @@
-name: imc_denoise
+name: sbt-denoise
 channels:
   - conda-forge
   - nvidia

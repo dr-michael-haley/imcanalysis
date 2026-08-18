@@ -24,9 +24,9 @@ allocation instead, run:
 sbt run cellvision-full
 ```
 
-The `job_cellvision_full.sh` wrapper switches from `scPortrait` for
-extraction/training, to `rapids_singlecell` for clustering, and back to
-`scPortrait` for plots.
+The `job_cellvision_full.sh` wrapper switches from `sbt-scportrait` for
+extraction/training, to `sbt-analysis` for clustering, and back to
+`sbt-scportrait` for plots.
 
 ## Why it is performed
 
@@ -250,6 +250,7 @@ discovery, not a validated out-of-sample classifier.
   configured representation is missing. If population selection leaves little
   biological overlap between batches, local graph rebuilding preserves the
   BioBatchNet coordinates but cannot create missing cross-batch support.
-- The external `scPortrait` and `rapids_singlecell` environments are registered
-  but are not locked by this repository. Run `sbt env test scportrait` and
-  `sbt env test rapids` after environment changes.
+- The external `sbt-scportrait` environment is registered but not locked by
+  this repository. RAPIDS clustering uses the repository-managed
+  `sbt-analysis` runtime. Run `sbt env test scportrait` and
+  `sbt env test analysis` after environment changes.

@@ -12,7 +12,7 @@
 #@IN:   general.metadata_folder/panel.csv
 #@OUT:  general.denoised_images_folder (default processed/)
 #@OUT:  outputs/<execution_id>_Denoising/ plus reusable denoised channel images
-#@ENV:  imc_denoise
+#@ENV:  sbt-denoise
 #@MODULE:  SpatialBiologyToolkit.scripts.denoising
 #@CONFIG: general, denoising, logging
 
@@ -20,5 +20,5 @@ source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 echo "Denoising job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 
-conda activate "${SBT_CONDA_ENV:-${IMC_ENV_DENOISE:-imc_denoise}}"
+conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_DENOISE:-sbt-denoise}}"
 python -m SpatialBiologyToolkit.scripts.denoising

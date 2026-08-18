@@ -12,10 +12,10 @@ set -e
 #@DESC: Combine case-level features from one or more AnnData obs sources and compare Cox models
 #@IN:   cox.feature_sources plus configured clinical AnnData or CSV metadata
 #@OUT:  managed case-feature audit, Cox PH/Ridge/CoxNet comparisons, validation tables, and plots
-#@ENV:  hyperstac
+#@ENV:  sbt-hyperstac
 #@MODULE:  SpatialBiologyToolkit.scripts.cox_survival
 #@CONFIG: general, cox, logging
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
-conda activate "${SBT_CONDA_ENV_HYPERSTAC:-${IMC_ENV_HYPERSTAC:-hyperstac-imc}}"
+conda activate "${SBT_CONDA_ENV_HYPERSTAC:-sbt-hyperstac}"
 python -m SpatialBiologyToolkit.scripts.cox_survival

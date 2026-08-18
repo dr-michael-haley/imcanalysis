@@ -31,7 +31,7 @@ try:
 except ImportError as exc:  # pragma: no cover - dependency guard
     raise ImportError(
         "rapids-singlecell is required for this script. Activate the "
-        "'rapids_singlecell' environment before running basic_process_rapids."
+        "'sbt-analysis' environment before running basic_process_rapids."
     ) from exc
 
 try:

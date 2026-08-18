@@ -109,6 +109,7 @@ def build_population_qc_recipe(
     population: str,
     channels: Sequence[str],
     contrast_limits: Sequence[tuple[float, float]],
+    contour_width: int = 1,
 ) -> ExploreViewRecipe:
     """Build an ordinary Explore recipe from simplified RGB controls."""
 
@@ -123,6 +124,9 @@ def build_population_qc_recipe(
         raise ValueError("Population QC supports at most three RGB channels.")
     if len(contrast_limits) != len(cleaned_channels):
         raise ValueError("Every Population QC channel requires one contrast range.")
+    contour_width = int(contour_width)
+    if not 0 <= contour_width <= 20:
+        raise ValueError("Population QC contour width must be between 0 and 20 px.")
     colours = ("red", "green", "blue")
     layer_colormaps: dict[str, str] = {}
     layer_contrast_limits: dict[str, tuple[float, float]] = {}
@@ -156,7 +160,7 @@ def build_population_qc_recipe(
         layer_colormaps=layer_colormaps,
         layer_visibility=layer_visibility,
         layer_opacities=layer_opacities,
-        layer_contours={population_layer: 2},
+        layer_contours={population_layer: contour_width},
         layer_contrast_limits=layer_contrast_limits,
     )
 
@@ -205,11 +209,49 @@ def inherit_setup_contrast_limits(
     return new_default
 
 
+def retarget_population_qc_recipe(
+    recipe: ExploreViewRecipe,
+    *,
+    observation: str,
+    population: str,
+) -> ExploreViewRecipe:
+    """Carry one RGB view to a renamed population without retaining old layers."""
+
+    payload = recipe.model_dump(mode="python")
+    payload["population_observation"] = str(observation)
+    payload["populations"] = [str(population)]
+    new_layer = f"population::{observation}::{population}"
+    for field, default in (
+        ("layer_visibility", True),
+        ("layer_opacities", 1.0),
+        ("layer_contours", None),
+        ("layer_colormaps", None),
+        ("layer_colormap_specs", None),
+    ):
+        mapping = dict(payload.get(field, {}))
+        old_population_values = [
+            value
+            for name, value in mapping.items()
+            if str(name).startswith("population::")
+        ]
+        mapping = {
+            name: value
+            for name, value in mapping.items()
+            if not str(name).startswith("population::")
+        }
+        replacement = old_population_values[0] if old_population_values else default
+        if replacement is not None:
+            mapping[new_layer] = replacement
+        payload[field] = mapping
+    return ExploreViewRecipe.model_validate(payload)
+
+
 __all__ = [
     "POPULATION_QC_SETTINGS_COLUMNS",
     "build_population_qc_recipe",
     "inherit_setup_contrast_limits",
     "parse_legacy_contrast",
     "rank_population_rois",
+    "retarget_population_qc_recipe",
     "top_population_markers",
 ]

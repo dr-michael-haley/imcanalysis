@@ -263,14 +263,23 @@ class RegistryTests(EnvironmentFixture):
         for stage, keys in central.stage_environments.items():
             self.assertEqual(by_name[stage].environment_keys, keys)
 
-    def test_joint_analysis_candidate_is_registered_but_not_active(self):
+    def test_joint_analysis_environment_is_registered_and_standard(self):
         root = Path(__file__).resolve().parents[1]
         central = load_environment_registry(root)
         definition = central.environments["analysis"]
 
         self.assertEqual(definition.conda_name, "sbt-analysis")
         self.assertTrue(definition.managed)
-        self.assertEqual(associated_stages(central, "analysis"), [])
+        analysis_stages = associated_stages(central, "analysis")
+        for stage in (
+            "prep",
+            "bbn",
+            "cchar",
+            "rapids",
+            "cellvision-cluster",
+            "spatialdata",
+        ):
+            self.assertIn(stage, analysis_stages)
         self.assertIn("segmentation", " ".join(definition.notes).casefold())
         self.assertIn("biobatchnet", " ".join(definition.notes).casefold())
         self.assertIn("cellcharter", " ".join(definition.notes).casefold())
@@ -340,29 +349,61 @@ class RegistryTests(EnvironmentFixture):
             matching = [script for script in stage_smoke_scripts if module in script]
             self.assertEqual(matching, [f"import SpatialBiologyToolkit.scripts.{module}"])
 
-    def test_legacy_python_environments_support_runtime_type_evaluation(self):
+    def test_retired_environment_keys_are_absent_and_names_are_standardized(self):
         root = Path(__file__).resolve().parents[1]
         central = load_environment_registry(root)
 
-        for key in ("denoise", "biobatchnet"):
-            definition = central.environments[key]
-            specification = root / definition.specification_directory
-            pip_requirements = declared_pip_requirements(
-                specification / "pip-extras.txt"
-            )
-            smoke_scripts = [
-                command[-1]
-                for command in definition.smoke_tests
-                if len(command) >= 3 and command[:2] == ["python", "-c"]
-            ]
+        for retired in ("segmentation", "biobatchnet", "cellcharter", "rapids"):
+            self.assertNotIn(retired, central.environments)
+        expected_names = {
+            "analysis": "sbt-analysis",
+            "napari": "sbt-napari",
+            "denoise": "sbt-denoise",
+            "cellposesam": "sbt-cellpose-sam",
+            "starling": "sbt-starling",
+            "scportrait": "sbt-scportrait",
+            "hyperstac": "sbt-hyperstac",
+            "maxfuse": "sbt-maxfuse",
+        }
+        self.assertEqual(
+            {key: item.conda_name for key, item in central.environments.items()},
+            expected_names,
+        )
 
-            self.assertIn("eval-type-backport", pip_requirements)
-            self.assertTrue(
-                any(
-                    "PipelineConfig" in script and "StageReporter" in script
-                    for script in smoke_scripts
-                )
+    def test_slurm_wrappers_use_registered_names_without_legacy_runtime_overrides(self):
+        root = Path(__file__).resolve().parents[1]
+        central = load_environment_registry(root)
+        registered_names = {
+            definition.conda_name for definition in central.environments.values()
+        }
+
+        for wrapper in sorted((root / "SLURM_scripts").glob("job_*.sh")):
+            text = wrapper.read_text(encoding="utf-8")
+            self.assertNotIn("IMC_ENV_", text, wrapper.name)
+            for line in text.splitlines():
+                if line.startswith("#@ENV:"):
+                    self.assertIn(line.split(":", 1)[1].strip(), registered_names)
+
+    def test_legacy_denoise_environment_supports_runtime_type_evaluation(self):
+        root = Path(__file__).resolve().parents[1]
+        central = load_environment_registry(root)
+
+        definition = central.environments["denoise"]
+        specification = root / definition.specification_directory
+        pip_requirements = declared_pip_requirements(specification / "pip-extras.txt")
+        smoke_scripts = [
+            command[-1]
+            for command in definition.smoke_tests
+            if len(command) >= 3 and command[:2] == ["python", "-c"]
+        ]
+
+        self.assertIn("eval-type-backport", pip_requirements)
+        self.assertTrue(
+            any(
+                "PipelineConfig" in script and "StageReporter" in script
+                for script in smoke_scripts
             )
+        )
 
     def test_required_stage_environments_report_live_availability_once(self):
         manager, runner = self.manager(exists=False)
@@ -725,7 +766,7 @@ class EnvironmentCliTests(unittest.TestCase):
         result = CliRunner().invoke(app, ["env", "list", "--format", "json"])
         self.assertEqual(result.exit_code, 0, result.output)
         payload = json.loads(result.output)
-        self.assertIn("segmentation", {item["key"] for item in payload})
+        self.assertIn("analysis", {item["key"] for item in payload})
 
     def test_capture_all_continues_after_failure_and_summarizes(self):
         manager = Mock()

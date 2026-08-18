@@ -34,7 +34,6 @@ from SpatialBiologyToolkit.pipeline.manifests import (
 from .models import slugify
 from .storage import dataframe_sha256, read_dataframe, write_dataframe
 
-
 CURATION_SCHEMA_VERSION = 1
 BASE_MAPPING_COLUMNS = [
     "source_value",
@@ -1370,6 +1369,34 @@ def apply_population_draft(
     return {**summary, **provenance}
 
 
+def population_draft_sync_state(
+    adata: Any,
+    draft: PopulationDraft,
+) -> Literal["missing", "stale", "synced", "conflict"]:
+    """Describe whether a saved draft revision owns the live derived obs."""
+
+    if draft.derived_obs not in adata.obs:
+        return "missing"
+    napari_uns = adata.uns.get("napari_sbt", {})
+    population_uns = (
+        napari_uns.get("population_curation", {})
+        if isinstance(napari_uns, dict)
+        else {}
+    )
+    provenance = (
+        population_uns.get(draft.derived_obs, {})
+        if isinstance(population_uns, dict)
+        else {}
+    )
+    if not isinstance(provenance, dict) or provenance.get("draft_id") != draft.draft_id:
+        return "conflict"
+    try:
+        applied_revision = int(provenance.get("draft_revision", -1))
+    except (TypeError, ValueError):
+        return "stale"
+    return "synced" if applied_revision == draft.revision else "stale"
+
+
 def atomic_write_curated_anndata(adata: Any, destination: str | Path) -> Path:
     """Write a new AnnData copy and refuse to replace any existing object."""
 
@@ -1423,6 +1450,7 @@ __all__ = [
     "normalise_source_label",
     "ordered_source_labels",
     "population_draft_paths",
+    "population_draft_sync_state",
     "population_workspace_paths",
     "read_population_audit",
     "save_graph_subcluster_request",
