@@ -283,7 +283,8 @@ class RegistryTests(EnvironmentFixture):
         pip_requirements = declared_pip_requirements(
             root / "HPC_env_files" / "sbt-analysis" / "pip-extras.txt"
         )
-        self.assertEqual(conda_requirements["python"], "=3.12")
+        self.assertEqual(conda_requirements["python"], "=3.11")
+        self.assertEqual(conda_requirements["scikit-image"], "=0.24.0")
         self.assertEqual(conda_requirements["rapids"], "=24.12")
         self.assertEqual(conda_requirements["cuda-version"], "=12.5")
         self.assertEqual(conda_requirements["dask"], "=2024.11.2")
@@ -291,6 +292,7 @@ class RegistryTests(EnvironmentFixture):
         self.assertEqual(conda_requirements["dask-expr"], "=1.1.19")
         self.assertEqual(conda_requirements["numpy"], "=1.26.4")
         self.assertEqual(conda_requirements["numcodecs"], "=0.15.1")
+        self.assertEqual(pip_requirements["scikit-image"].version, "0.24.0")
         self.assertEqual(pip_requirements["torch"].version, "2.9.1")
         self.assertEqual(
             pip_requirements["rapids-singlecell"].version, "0.12.0"

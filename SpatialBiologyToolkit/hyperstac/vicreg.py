@@ -53,11 +53,13 @@ class VICReg(tf.keras.Model):
         representation = self.encoder(image, training=training)
         return self.projector(representation, training=training)
 
-    def _losses(
+    def _compute_vicreg_losses(
         self,
         first: tf.Tensor,
         second: tf.Tensor,
     ) -> tuple[tf.Tensor, tf.Tensor, tf.Tensor, tf.Tensor]:
+        """Calculate the VICReg objective without shadowing Keras ``_losses``."""
+
         invariance = tf.reduce_mean(tf.square(first - second))
 
         variance = tf.add_n(
@@ -96,7 +98,10 @@ class VICReg(tf.keras.Model):
         with tf.GradientTape() as tape:
             first = self._project(first_view, training=True)
             second = self._project(second_view, training=True)
-            total, invariance, variance, covariance = self._losses(first, second)
+            total, invariance, variance, covariance = self._compute_vicreg_losses(
+                first,
+                second,
+            )
 
         gradients = tape.gradient(total, self.trainable_variables)
         pairs = [
@@ -110,4 +115,3 @@ class VICReg(tf.keras.Model):
         self.variance_tracker.update_state(variance)
         self.covariance_tracker.update_state(covariance)
         return {metric.name: metric.result() for metric in self.metrics}
-

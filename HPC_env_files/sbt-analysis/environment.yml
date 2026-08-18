@@ -6,7 +6,7 @@
 #
 # STARLING, MaxFuse, scPortrait, Cellpose-SAM, HyPERSTAC, and IMC-Denoise are
 # deliberately outside this environment. Nimbus is included provisionally and
-# must pass its Python 3.12 smoke and inference tests before stage remapping.
+# must pass its Python 3.11 smoke and inference tests before stage remapping.
 name: sbt-analysis
 channels:
   - rapidsai
@@ -15,17 +15,15 @@ channels:
   - bioconda
 
 dependencies:
-  # Python 3.12 is the common supported interpreter for RAPIDS-singlecell
-  # 0.12.0 and CellCharter 0.3.7. Nimbus metadata permits it, but upstream only
-  # documents Python 3.9-3.11, so Nimbus remains an explicit validation risk.
-  - python=3.12
+  # Python 3.11 is shared by the available RAPIDS 24.12 Conda builds,
+  # RAPIDS-singlecell 0.12.0, CellCharter 0.3.7, and Nimbus's documented range.
+  - python=3.11
   - pip
 
   # RAPIDS 24.12 is the last release whose official Dask dependency generation
   # matches SpatialData 0.4 and Squidpy 1.6.5. RAPIDS-singlecell 0.12.0 was
-  # released for this RAPIDS generation. CUDA 12.5 and Python 3.12 are an
-  # upstream-published 24.12 combination and remain supported by the CSF3
-  # driver used in the successful A100 smoke test.
+  # released for this RAPIDS generation. CUDA 12.5 remains supported by the
+  # CSF3 driver used in the successful A100 smoke test.
   - rapids=24.12
   - cuda-version=12.5
   - dask=2024.11.2
@@ -40,7 +38,8 @@ dependencies:
   - pandas>=2.2,<2.4
   - scipy>=1.13,<1.17
   - scikit-learn>=1.6,<1.9
-  - scikit-image>=0.25,<0.26
+  # RAPIDS 24.12's cuCIM package requires scikit-image <0.25.
+  - scikit-image=0.24.0
   - matplotlib>=3.9,<3.11
   - seaborn>=0.13,<0.14
   - h5py>=3.14,<4

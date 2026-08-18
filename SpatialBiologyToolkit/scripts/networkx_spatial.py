@@ -383,7 +383,7 @@ def _plot_all_populations_by_group(
     dpi: int,
     add_points: bool,
     plot_kind: str,
-    errorbar = None
+    errorbar: Any = None,
 ) -> None:
     plot_data = data[["population", group_col, value_col]].dropna().copy()
     if plot_data.empty:
@@ -415,6 +415,9 @@ def _plot_all_populations_by_group(
             ax=ax,
         )
     else:
+        resolved_errorbar = errorbar
+        if resolved_errorbar is None:
+            resolved_errorbar = "se" if len(plot_data) > 1 else None
         sns.barplot(
             data=plot_data,
             x="population",
@@ -422,7 +425,7 @@ def _plot_all_populations_by_group(
             hue=group_col,
             order=pop_order,
             hue_order=group_order,
-            errorbar="se" if len(plot_data) > 1 else None,
+            errorbar=resolved_errorbar,
             palette=group_palette,
             edgecolor="black",
             linewidth=0.6,
@@ -471,6 +474,7 @@ def _plot_all_populations_no_group(
     dpi: int,
     add_points: bool,
     plot_kind: str,
+    errorbar: Any = None,
 ) -> None:
     plot_data = data[["population", value_col]].dropna().copy()
     if plot_data.empty:
@@ -502,10 +506,9 @@ def _plot_all_populations_no_group(
             ax=ax,
         )
     else:
-        
-        if errorbar is None:
-            errorbar = "se" if len(plot_data) > 1 else None
-        
+        resolved_errorbar = errorbar
+        if resolved_errorbar is None:
+            resolved_errorbar = "se" if len(plot_data) > 1 else None
         sns.barplot(
             data=plot_data,
             x="population",
@@ -514,7 +517,7 @@ def _plot_all_populations_no_group(
             hue="population",
             hue_order=pop_order,
             dodge=False,
-            errorbar=errorbar,
+            errorbar=resolved_errorbar,
             palette=palette,
             edgecolor="black",
             linewidth=0.6,
