@@ -178,9 +178,37 @@ def parse_legacy_contrast(value, *, fallback: float) -> float:
     return result
 
 
+def inherit_setup_contrast_limits(
+    current: tuple[float, float],
+    previous_default: tuple[float, float],
+    new_default: tuple[float, float],
+    *,
+    has_saved_recipe: bool,
+) -> tuple[float, float]:
+    """Update an untouched Population QC range while preserving an override.
+
+    Saved recipe ranges and values which differ from the previous Setup default
+    are explicit Population QC choices. Only an unsaved, unchanged default should
+    follow a later edit made in Setup.
+    """
+
+    current = tuple(float(value) for value in current)
+    previous_default = tuple(float(value) for value in previous_default)
+    new_default = tuple(float(value) for value in new_default)
+    if has_saved_recipe or not np.allclose(
+        current,
+        previous_default,
+        rtol=0.0,
+        atol=1e-9,
+    ):
+        return current
+    return new_default
+
+
 __all__ = [
     "POPULATION_QC_SETTINGS_COLUMNS",
     "build_population_qc_recipe",
+    "inherit_setup_contrast_limits",
     "parse_legacy_contrast",
     "rank_population_rois",
     "top_population_markers",

@@ -7,8 +7,8 @@ from SpatialBiologyToolkit.napari_sbt.help import (
     load_help_markdown,
 )
 
-
 BOX_HELP_SECTIONS = (
+    ("setup", "Start or resume"),
     ("setup", "Workflow selection"),
     ("setup", "Dataset inputs"),
     ("setup", "Image normalization and default display"),

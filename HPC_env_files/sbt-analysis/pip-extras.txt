@@ -4,6 +4,8 @@
 numpy==1.26.4
 # Keep pip from upgrading the cuCIM-compatible Conda build.
 scikit-image==0.24.0
+# Preserve pkg_resources for SpatialData 0.4's xarray-schema dependency.
+setuptools<81
 torch==2.9.1
 torchvision==0.24.1
 torchaudio==2.9.1

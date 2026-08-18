@@ -9,6 +9,7 @@ import pytest
 from SpatialBiologyToolkit.napari_sbt.models import DisplaySettings
 from SpatialBiologyToolkit.napari_sbt.population_qc import (
     build_population_qc_recipe,
+    inherit_setup_contrast_limits,
     rank_population_rois,
     top_population_markers,
 )
@@ -118,3 +119,24 @@ def test_display_settings_require_normalized_ordered_contrast_limits():
 
     with pytest.raises(ValueError, match="lower < upper"):
         DisplaySettings(default_contrast_limits=(0.9, 0.1))
+
+
+def test_setup_contrast_updates_only_an_unmodified_unsaved_population_range():
+    assert inherit_setup_contrast_limits(
+        (0.0, 1.0),
+        (0.0, 1.0),
+        (0.1, 0.8),
+        has_saved_recipe=False,
+    ) == (0.1, 0.8)
+    assert inherit_setup_contrast_limits(
+        (0.2, 0.7),
+        (0.0, 1.0),
+        (0.1, 0.8),
+        has_saved_recipe=False,
+    ) == (0.2, 0.7)
+    assert inherit_setup_contrast_limits(
+        (0.0, 1.0),
+        (0.0, 1.0),
+        (0.1, 0.8),
+        has_saved_recipe=True,
+    ) == (0.0, 1.0)

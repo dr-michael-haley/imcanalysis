@@ -138,11 +138,23 @@ from .population_curation import (
 from .population_qc import (
     POPULATION_QC_SETTINGS_COLUMNS,
     build_population_qc_recipe,
+    inherit_setup_contrast_limits,
     parse_legacy_contrast,
     rank_population_rois,
     top_population_markers,
 )
 from .resources import resolve_worker_count
+from .setup import (
+    WORKFLOW_PRESENTATIONS,
+    WorkspaceSummary,
+    discover_workspaces,
+    setup_checks,
+    setup_is_ready,
+    suggest_identity_columns,
+    workflow_presentation,
+    workspace_destination,
+    workspace_folder,
+)
 from .storage import (
     append_audit,
     dataframe_sha256,
@@ -428,6 +440,15 @@ class NapariSBTController:
             if project_root
             else Path.cwd()
         )
+        self._workspace_container = workspace_folder(self.project_root)
+        self._workspace_summaries: list[WorkspaceSummary] = []
+        self._launch_experiment = (
+            Path(experiment).expanduser().resolve(strict=False) if experiment else None
+        )
+        self._setup_status_labels: dict[str, object] = {}
+        self._workflow_radios: dict[str, object] = {}
+        self._updating_setup_controls = False
+        self._loaded_workspace_root: Path | None = None
         self.manifest: ExperimentManifest | None = None
         self.paths = None
         self._in_memory_adata = in_memory_anndata
@@ -618,20 +639,128 @@ class NapariSBTController:
         setup = QWidget()
         setup_layout = QVBoxLayout(setup)
 
+        workspace_group = workflow_group(
+            "1. Start or resume",
+            "setup",
+            "Start or resume",
+        )
+        workspace_layout = QVBoxLayout(workspace_group)
+        workspace_intro = QLabel(
+            "A workspace is NapariSBT's saved analysis area. Open one to continue "
+            "where you left off, or name a new one before connecting the dataset."
+        )
+        workspace_intro.setWordWrap(True)
+        workspace_layout.addWidget(workspace_intro)
+
+        project_row = QWidget()
+        project_row_layout = QHBoxLayout(project_row)
+        project_row_layout.setContentsMargins(0, 0, 0, 0)
+        self.registered_project_combo = QComboBox()
+        self.registered_project_combo.setMinimumWidth(180)
+        self.project_edit = QLineEdit(str(self.project_root))
+        self.project_edit.setReadOnly(True)
+        self.choose_project_button = QPushButton("Choose project folder…")
+        project_row_layout.addWidget(self.registered_project_combo)
+        project_row_layout.addWidget(self.project_edit, 1)
+        project_row_layout.addWidget(self.choose_project_button)
+        project_form = QFormLayout()
+        project_form.addRow("Project or dataset", project_row)
+        workspace_layout.addLayout(project_form)
+
+        existing_row = QWidget()
+        existing_row_layout = QHBoxLayout(existing_row)
+        existing_row_layout.setContentsMargins(0, 0, 0, 0)
+        self.workspace_combo = QComboBox()
+        self.workspace_combo.setMinimumWidth(280)
+        self.refresh_workspaces_button = QPushButton("Refresh list")
+        self.open_workspace_button = QPushButton("Open selected workspace")
+        self.load_experiment_button = QPushButton("Browse elsewhere…")
+        self.new_workspace_button = QPushButton("Set up a new workspace")
+        existing_row_layout.addWidget(self.workspace_combo, 1)
+        existing_row_layout.addWidget(self.refresh_workspaces_button)
+        existing_row_layout.addWidget(self.open_workspace_button)
+        existing_row_layout.addWidget(self.load_experiment_button)
+        existing_row_layout.addWidget(self.new_workspace_button)
+        workspace_layout.addWidget(QLabel("Continue an existing workspace"))
+        workspace_layout.addWidget(existing_row)
+        self.workspace_summary_label = QLabel(
+            "No saved workspace has been selected yet."
+        )
+        self.workspace_summary_label.setWordWrap(True)
+        workspace_layout.addWidget(self.workspace_summary_label)
+
+        new_workspace_form = QFormLayout()
+        self.name_edit = QLineEdit()
+        self.name_edit.setPlaceholderText("For example: T-cell population review")
+        location_row = QWidget()
+        location_layout = QHBoxLayout(location_row)
+        location_layout.setContentsMargins(0, 0, 0, 0)
+        initial_experiment = _path_text(experiment) or str(
+            self._workspace_container / "new_workspace"
+        )
+        self.experiment_edit = QLineEdit(initial_experiment)
+        self._suggested_workspace_path = Path(initial_experiment).expanduser().resolve(
+            strict=False
+        )
+        self.choose_experiment_folder_button = QPushButton("Change location…")
+        location_layout.addWidget(self.experiment_edit, 1)
+        location_layout.addWidget(self.choose_experiment_folder_button)
+        new_workspace_form.addRow("New workspace name", self.name_edit)
+        new_workspace_form.addRow("Saved at", location_row)
+        workspace_layout.addLayout(new_workspace_form)
+
+        self.setup_readiness_label = QLabel(
+            "● Action required — choose a workflow and connect the dataset below."
+        )
+        self.setup_readiness_label.setObjectName("sbtSetupReadiness")
+        self.setup_readiness_label.setWordWrap(True)
+        workspace_layout.addWidget(self.setup_readiness_label)
+        workspace_actions = QHBoxLayout()
+        self.create_button = QPushButton("Create workspace and start")
+        self.create_button.setObjectName("sbtPrimaryActionButton")
+        self.create_button.setEnabled(False)
+        self.next_setup_problem_button = QPushButton("Show next item to fix")
+        workspace_actions.addWidget(self.create_button)
+        workspace_actions.addWidget(self.next_setup_problem_button)
+        workspace_actions.addStretch(1)
+        workspace_layout.addLayout(workspace_actions)
+        setup_layout.addWidget(workspace_group)
+
         workflow_choice_group = workflow_group(
-            "1. Choose this session's workflow",
+            "2. What would you like to do?",
             "setup",
             "Workflow selection",
         )
-        workflow_choice_form = QFormLayout(workflow_choice_group)
+        workflow_choice_layout = QVBoxLayout(workflow_choice_group)
         self.workflow_combo = QComboBox()
         self.workflow_combo.addItem("Choose a workflow...", None)
-        self.workflow_combo.addItem("Data exploration", "data_exploration")
-        self.workflow_combo.addItem("Population QC", "population_qc")
-        self.workflow_combo.addItem("Cell classification", "classification")
-        self.workflow_combo.addItem("Manual cell labeling", "cell_labeling")
-        self.workflow_combo.addItem("Population curation", "population_curation")
-        self.workflow_combo.addItem("Full workspace", "full_workspace")
+        for presentation in WORKFLOW_PRESENTATIONS:
+            self.workflow_combo.addItem(presentation.title, presentation.mode)
+        self.workflow_combo.hide()
+        self.workflow_button_group = QButtonGroup(self.root)
+        self.workflow_button_group.setExclusive(True)
+        for presentation in WORKFLOW_PRESENTATIONS:
+            card = QFrame()
+            card.setObjectName("sbtWorkflowChoiceCard")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(10, 7, 10, 7)
+            radio = QRadioButton(presentation.title)
+            radio.setProperty("workflowMode", presentation.mode)
+            summary = QLabel(
+                f"{presentation.summary}\n{presentation.requirements}"
+            )
+            summary.setWordWrap(True)
+            summary.setStyleSheet("color: #475569; padding-left: 24px;")
+            card_layout.addWidget(radio)
+            card_layout.addWidget(summary)
+            self.workflow_button_group.addButton(radio)
+            self._workflow_radios[presentation.mode] = radio
+            workflow_choice_layout.addWidget(card)
+            if presentation.advanced:
+                card.hide()
+                self.advanced_workflow_card = card
+        self.advanced_workflow_check = QCheckBox("Show advanced combined workflow")
+        workflow_choice_layout.addWidget(self.advanced_workflow_check)
         self.live_recipe_tracking_check = QCheckBox(
             "Track manual Napari layer changes in the working recipe"
         )
@@ -642,22 +771,18 @@ class NapariSBTController:
             "back into the working recipe automatically."
         )
         self.workflow_description_label = QLabel(
-            "Choose what you want to do. NapariSBT will keep Setup visible and "
-            "show only the tabs needed for that workflow."
+            "Choose the card that best matches your task. NapariSBT will show only "
+            "the tabs you need; changing this choice does not delete saved data."
         )
         self.workflow_description_label.setWordWrap(True)
-        workflow_choice_form.addRow("Workflow", self.workflow_combo)
-        workflow_choice_form.addRow(
-            "What this enables", self.workflow_description_label
-        )
-        workflow_choice_form.addRow(
-            "Live recipe tracking", self.live_recipe_tracking_check
-        )
+        workflow_choice_layout.insertWidget(0, self.workflow_description_label)
+        workflow_choice_layout.addWidget(self.live_recipe_tracking_check)
         setup_layout.addWidget(workflow_choice_group)
 
-        inputs = workflow_group("Dataset inputs", "setup", "Dataset inputs")
+        inputs = workflow_group(
+            "3. Connect and check the dataset", "setup", "Dataset inputs"
+        )
         inputs_form = QFormLayout(inputs)
-        self.name_edit = QLineEdit("NapariSBT workspace")
         self.anndata_edit = QLineEdit(_path_text(resolved_anndata_path))
         if in_memory_anndata is not None:
             self.anndata_edit.setPlaceholderText(
@@ -672,38 +797,129 @@ class NapariSBTController:
         self.images_edit.setMaximumHeight(70)
         self.extra_images_edit = QTextEdit("\n".join(map(str, extra_images_folders)))
         self.extra_images_edit.setMaximumHeight(55)
-        self.experiment_edit = QLineEdit(_path_text(experiment))
         self.roi_obs_edit = QLineEdit("ROI")
         self.object_obs_edit = QLineEdit("ObjectNumber")
-        inputs_form.addRow("Experiment name", self.name_edit)
-        inputs_form.addRow("AnnData source", self.anndata_edit)
-        inputs_form.addRow("Masks folder", self.masks_edit)
-        inputs_form.addRow("IMC image folders", self.images_edit)
-        inputs_form.addRow("Extra image folders", self.extra_images_edit)
-        inputs_form.addRow("Experiment folder", self.experiment_edit)
-        inputs_form.addRow("ROI identity observation", self.roi_obs_edit)
-        inputs_form.addRow("Mask object-ID observation", self.object_obs_edit)
-        self.validate_integrity_button = QPushButton(
-            "Validate integrity and build fast asset index"
+
+        def setup_picker(field, choose_button, reload_button=None):
+            row = QWidget()
+            layout = QHBoxLayout(row)
+            layout.setContentsMargins(0, 0, 0, 0)
+            status = QLabel("● Action required")
+            status.setObjectName("sbtInputStatus")
+            status.setMinimumWidth(128)
+            layout.addWidget(status)
+            layout.addWidget(field, 1)
+            layout.addWidget(choose_button)
+            if reload_button is not None:
+                layout.addWidget(reload_button)
+            return row, status
+
+        self.choose_anndata_button = QPushButton("Choose…")
+        self.reload_anndata_button = QPushButton("Load / reload")
+        anndata_row, self._setup_status_labels["anndata"] = setup_picker(
+            self.anndata_edit,
+            self.choose_anndata_button,
+            self.reload_anndata_button,
         )
+        self.choose_masks_button = QPushButton("Choose…")
+        masks_row, self._setup_status_labels["masks"] = setup_picker(
+            self.masks_edit,
+            self.choose_masks_button,
+        )
+
+        image_widget = QWidget()
+        image_layout = QHBoxLayout(image_widget)
+        image_layout.setContentsMargins(0, 0, 0, 0)
+        self._setup_status_labels["images"] = QLabel("● Action required")
+        self._setup_status_labels["images"].setObjectName("sbtInputStatus")
+        self._setup_status_labels["images"].setMinimumWidth(128)
+        image_actions = QVBoxLayout()
+        self.add_images_folder_button = QPushButton("Add folder…")
+        self.remove_images_folder_button = QPushButton("Remove folder…")
+        self.clear_images_folders_button = QPushButton("Clear")
+        image_actions.addWidget(self.add_images_folder_button)
+        image_actions.addWidget(self.remove_images_folder_button)
+        image_actions.addWidget(self.clear_images_folders_button)
+        image_actions.addStretch(1)
+        image_layout.addWidget(self._setup_status_labels["images"])
+        image_layout.addWidget(self.images_edit, 1)
+        image_layout.addLayout(image_actions)
+
+        extra_widget = QWidget()
+        extra_layout = QHBoxLayout(extra_widget)
+        extra_layout.setContentsMargins(0, 0, 0, 0)
+        self.extra_images_status_label = QLabel("○ Optional")
+        self._setup_status_labels["extra_images"] = self.extra_images_status_label
+        self.extra_images_status_label.setObjectName("sbtInputStatus")
+        self.extra_images_status_label.setMinimumWidth(128)
+        extra_actions = QVBoxLayout()
+        self.add_extra_images_folder_button = QPushButton("Add folder…")
+        self.remove_extra_images_folder_button = QPushButton("Remove folder…")
+        self.clear_extra_images_folders_button = QPushButton("Clear")
+        extra_actions.addWidget(self.add_extra_images_folder_button)
+        extra_actions.addWidget(self.remove_extra_images_folder_button)
+        extra_actions.addWidget(self.clear_extra_images_folders_button)
+        extra_actions.addStretch(1)
+        extra_layout.addWidget(self.extra_images_status_label)
+        extra_layout.addWidget(self.extra_images_edit, 1)
+        extra_layout.addLayout(extra_actions)
+
+        inputs_form.addRow("Processed cell data (.h5ad)", anndata_row)
+        inputs_form.addRow("Cell masks folder", masks_row)
+        inputs_form.addRow("Staining image folders", image_widget)
+        inputs_form.addRow("Additional image folders", extra_widget)
+
+        identity_summary = QWidget()
+        identity_summary_layout = QHBoxLayout(identity_summary)
+        identity_summary_layout.setContentsMargins(0, 0, 0, 0)
+        self._setup_status_labels["identity"] = QLabel("● Check needed")
+        self._setup_status_labels["identity"].setObjectName("sbtInputStatus")
+        self._setup_status_labels["identity"].setMinimumWidth(128)
+        self.identity_summary_label = QLabel(
+            "Defaulting to ROI for image names and ObjectNumber for mask IDs."
+        )
+        self.identity_summary_label.setWordWrap(True)
+        identity_summary_layout.addWidget(self._setup_status_labels["identity"])
+        identity_summary_layout.addWidget(self.identity_summary_label, 1)
+        inputs_form.addRow("How cells match images", identity_summary)
+        self.advanced_identity_check = QCheckBox(
+            "Show advanced cell-identity settings"
+        )
+        self.identity_widget = QWidget()
+        identity_form = QFormLayout(self.identity_widget)
+        identity_form.setContentsMargins(0, 0, 0, 0)
+        identity_form.addRow("Image / ROI name column", self.roi_obs_edit)
+        identity_form.addRow("Cell mask ID column", self.object_obs_edit)
+        self.identity_widget.hide()
+        inputs_form.addRow(self.advanced_identity_check)
+        inputs_form.addRow(self.identity_widget)
+        self.validate_integrity_button = QPushButton(
+            "Check dataset integrity and build the fast image index"
+        )
+        self.reload_all_inputs_button = QPushButton("Reload all selected components")
         self.integrity_status_label = QLabel(
             "Not validated in this session. Normal navigation uses direct, "
             "cached file lookups and does not scan complete folders."
         )
         self.integrity_status_label.setWordWrap(True)
-        inputs_form.addRow(self.validate_integrity_button)
+        input_actions = QHBoxLayout()
+        input_actions.addWidget(self.reload_all_inputs_button)
+        input_actions.addWidget(self.validate_integrity_button)
+        input_actions.addStretch(1)
+        inputs_form.addRow(input_actions)
         inputs_form.addRow("Integrity status", self.integrity_status_label)
         setup_layout.addWidget(inputs)
 
         display_group = workflow_group(
-            "2. Image normalization and default display",
+            "4. Optional image brightness and display defaults",
             "setup",
             "Image normalization and default display",
         )
         display_layout = QVBoxLayout(display_group)
         display_explanation = QLabel(
             "Load a Nimbus channel-to-maximum JSON mapping or a CSV with Marker "
-            "and Value columns, then review or edit it below. Scalar images are "
+            "and Value columns, then review or edit the Marker/Value table below. "
+            "Scalar images are "
             "normalized to 0-1; the default contrast handles below are used only "
             "when a saved recipe has no channel-specific range."
         )
@@ -717,16 +933,35 @@ class NapariSBTController:
         )
         self.choose_normalization_button = QPushButton("Choose...")
         self.load_normalization_button = QPushButton("Load into editor")
+        self._setup_status_labels["normalization"] = QLabel("○ Optional")
+        self._setup_status_labels["normalization"].setObjectName("sbtInputStatus")
+        self._setup_status_labels["normalization"].setMinimumWidth(128)
+        normalization_source_layout.addWidget(
+            self._setup_status_labels["normalization"]
+        )
         normalization_source_layout.addWidget(self.normalization_edit, 1)
         normalization_source_layout.addWidget(self.choose_normalization_button)
         normalization_source_layout.addWidget(self.load_normalization_button)
-        self.normalization_json_edit = QTextEdit("{}")
-        self.normalization_json_edit.setPlaceholderText(
-            '{\n  "CD3": 12.5,\n  "PanCK": 20.0\n}'
+        self.normalization_table = QTableWidget(0, 2)
+        self.normalization_table.setHorizontalHeaderLabels(["Marker", "Value"])
+        self.normalization_table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.Stretch
         )
+        self.normalization_table.setMaximumHeight(190)
+        normalization_table_actions = QHBoxLayout()
+        self.add_normalization_row_button = QPushButton("Add marker")
+        self.remove_normalization_row_button = QPushButton("Remove selected marker")
+        self.advanced_normalization_check = QCheckBox("Show technical JSON preview")
+        normalization_table_actions.addWidget(self.add_normalization_row_button)
+        normalization_table_actions.addWidget(self.remove_normalization_row_button)
+        normalization_table_actions.addStretch(1)
+        normalization_table_actions.addWidget(self.advanced_normalization_check)
+        self.normalization_json_edit = QTextEdit("{}")
+        self.normalization_json_edit.setReadOnly(True)
         self.normalization_json_edit.setMaximumHeight(190)
+        self.normalization_json_edit.hide()
         normalization_actions = QHBoxLayout()
-        self.validate_normalization_button = QPushButton("Validate edited JSON")
+        self.validate_normalization_button = QPushButton("Validate edited values")
         self.save_normalization_button = QPushButton("Save edited copy into experiment")
         normalization_actions.addWidget(self.validate_normalization_button)
         normalization_actions.addWidget(self.save_normalization_button)
@@ -768,6 +1003,8 @@ class NapariSBTController:
         self.normalization_status_label.setWordWrap(True)
         display_layout.addWidget(display_explanation)
         display_layout.addWidget(normalization_source)
+        display_layout.addWidget(self.normalization_table)
+        display_layout.addLayout(normalization_table_actions)
         display_layout.addWidget(self.normalization_json_edit)
         display_layout.addLayout(normalization_actions)
         display_layout.addWidget(display_defaults)
@@ -779,7 +1016,7 @@ class NapariSBTController:
         classification_setup_layout.setContentsMargins(0, 0, 0, 0)
 
         scope_group = workflow_group(
-            "3. Classification cell scope", "setup", "Cell scope"
+            "5. Classification cell scope", "setup", "Cell scope"
         )
         scope_grid = QGridLayout(scope_group)
         self.scope_combo = QComboBox()
@@ -806,7 +1043,7 @@ class NapariSBTController:
         classification_setup_layout.addWidget(scope_group)
 
         trial_group = workflow_group(
-            "4. Classification mode and feature-discovery ROIs",
+            "6. Classification mode and feature-discovery ROIs",
             "setup",
             "Full experiment or Feature Discovery Trial",
         )
@@ -841,7 +1078,7 @@ class NapariSBTController:
         classification_setup_layout.addWidget(trial_group)
 
         class_group = workflow_group(
-            "5. Classification classes (2–8)", "setup", "Classes"
+            "7. Classification classes (2–8)", "setup", "Classes"
         )
         class_layout = QVBoxLayout(class_group)
         self.class_table = QTableWidget(0, 5)
@@ -879,13 +1116,6 @@ class NapariSBTController:
         class_layout.addLayout(class_buttons)
         classification_setup_layout.addWidget(class_group)
         setup_layout.addWidget(self.classification_setup_widget)
-
-        setup_actions = QHBoxLayout()
-        self.create_button = QPushButton("Create workflow workspace")
-        self.load_experiment_button = QPushButton("Load existing workspace")
-        setup_actions.addWidget(self.create_button)
-        setup_actions.addWidget(self.load_experiment_button)
-        setup_layout.addLayout(setup_actions)
         add_tab(setup, "⚙ Setup", "setup")
 
         # Feature Building
@@ -1522,6 +1752,15 @@ class NapariSBTController:
             population_qc_rgb_layout.addWidget(marker_combo, row, 1)
             population_qc_rgb_layout.addWidget(lower_spin, row, 2)
             population_qc_rgb_layout.addWidget(upper_spin, row, 3)
+        self._population_qc_last_setup_defaults = (
+            float(self.display_lower_contrast_spin.value()),
+            float(self.display_upper_contrast_spin.value()),
+        )
+        self.population_qc_contrast_defaults_label = QLabel()
+        self.population_qc_contrast_defaults_label.setWordWrap(True)
+        population_qc_rgb_layout.addWidget(
+            self.population_qc_contrast_defaults_label, 4, 0, 1, 4
+        )
         population_qc_rgb_actions = QWidget()
         population_qc_rgb_actions_layout = QHBoxLayout(population_qc_rgb_actions)
         population_qc_rgb_actions_layout.setContentsMargins(0, 0, 0, 0)
@@ -1532,14 +1771,20 @@ class NapariSBTController:
             "Save RGB recipe for population"
         )
         self.load_population_qc_view_button = QPushButton("Load population view")
+        self.reset_population_qc_contrast_button = QPushButton(
+            "Use Setup contrast defaults"
+        )
         population_qc_rgb_actions_layout.addWidget(
             self.suggest_population_qc_markers_button
         )
         population_qc_rgb_actions_layout.addWidget(
             self.save_population_qc_recipe_button
         )
+        population_qc_rgb_actions_layout.addWidget(
+            self.reset_population_qc_contrast_button
+        )
         population_qc_rgb_actions_layout.addWidget(self.load_population_qc_view_button)
-        population_qc_rgb_layout.addWidget(population_qc_rgb_actions, 4, 0, 1, 4)
+        population_qc_rgb_layout.addWidget(population_qc_rgb_actions, 5, 0, 1, 4)
         population_qc_io_actions = QWidget()
         population_qc_io_actions_layout = QHBoxLayout(population_qc_io_actions)
         population_qc_io_actions_layout.setContentsMargins(0, 0, 0, 0)
@@ -1551,7 +1796,8 @@ class NapariSBTController:
         )
         population_qc_io_actions_layout.addWidget(self.import_population_qc_csv_button)
         population_qc_io_actions_layout.addWidget(self.export_population_qc_csv_button)
-        population_qc_rgb_layout.addWidget(population_qc_io_actions, 5, 0, 1, 4)
+        population_qc_rgb_layout.addWidget(population_qc_io_actions, 6, 0, 1, 4)
+        self._update_population_qc_contrast_defaults_label()
         population_qc_layout.addWidget(population_qc_rgb_group)
 
         population_qc_roi_group = workflow_group(
@@ -2567,6 +2813,38 @@ class NapariSBTController:
             QPushButton#sbtPrimaryActionButton:hover {
                 background-color: #065f46;
             }
+            QPushButton#sbtPrimaryActionButton:disabled {
+                background-color: #cbd5e1;
+                color: #64748b;
+                border-color: #94a3b8;
+            }
+            QFrame#sbtWorkflowChoiceCard {
+                background-color: #f8fafc;
+                border: 1px solid #cbd5e1;
+                border-radius: 7px;
+            }
+            QFrame#sbtWorkflowChoiceCard:hover {
+                background-color: #eff6ff;
+                border-color: #60a5fa;
+            }
+            QFrame#sbtWorkflowChoiceCard QRadioButton {
+                color: #0f172a;
+                font-size: 14px;
+                font-weight: 800;
+            }
+            QLabel#sbtInputStatus {
+                border-radius: 5px;
+                padding: 4px 7px;
+                font-weight: 700;
+            }
+            QLabel#sbtSetupReadiness {
+                border: 2px solid #dc2626;
+                border-radius: 7px;
+                background-color: #fee2e2;
+                color: #7f1d1d;
+                padding: 8px;
+                font-weight: 800;
+            }
             QTabBar::tab {
                 color: #202124;
                 border: 1px solid #9aa0a6;
@@ -2646,6 +2924,7 @@ class NapariSBTController:
         self._set_labeler_class_rows(self.labeler_classes)
         self._refresh_labeler_controls()
         self._connect_signals()
+        self._initialise_setup_controls()
         self._update_workflow_mode()
         self._bind_viewer_cell_picking()
         for family, checkbox in self.feature_family_checks.items():
@@ -2658,11 +2937,44 @@ class NapariSBTController:
             self.load_existing_experiment(Path(experiment))
         elif resolved_anndata_path is not None or in_memory_anndata is not None:
             self.load_anndata_selectors()
+        self.refresh_setup_readiness()
 
     def _connect_signals(self) -> None:
         self.tabs.currentChanged.connect(self._workflow_tab_changed)
+        self.workflow_button_group.buttonClicked.connect(
+            self._guard(self._workflow_card_selected, pass_signal_args=True)
+        )
         self.workflow_combo.currentIndexChanged.connect(
             self._guard(self._update_workflow_mode)
+        )
+        self.advanced_workflow_check.toggled.connect(
+            self.advanced_workflow_card.setVisible
+        )
+        self.registered_project_combo.activated.connect(
+            self._guard(self.use_selected_registered_project)
+        )
+        self.choose_project_button.clicked.connect(
+            self._guard(self.choose_project_folder)
+        )
+        self.refresh_workspaces_button.clicked.connect(
+            self._guard(self.refresh_workspace_choices)
+        )
+        self.workspace_combo.currentIndexChanged.connect(
+            self._guard(self._workspace_selection_changed)
+        )
+        self.open_workspace_button.clicked.connect(
+            self._guard(self.open_selected_workspace)
+        )
+        self.new_workspace_button.clicked.connect(
+            self._guard(self.start_new_workspace)
+        )
+        self.name_edit.textChanged.connect(self._workspace_name_changed)
+        self.experiment_edit.textChanged.connect(self.refresh_setup_readiness)
+        self.choose_experiment_folder_button.clicked.connect(
+            self._guard(self.choose_new_workspace_folder)
+        )
+        self.next_setup_problem_button.clicked.connect(
+            self._guard(self.focus_next_setup_problem)
         )
         self.live_recipe_tracking_check.toggled.connect(
             self._guard(self._live_recipe_tracking_changed)
@@ -2678,11 +2990,54 @@ class NapariSBTController:
             self.object_obs_edit.textChanged,
         ):
             signal.connect(self._invalidate_dataset_indexes)
+        self.anndata_edit.textChanged.connect(self._invalidate_integrity_result)
+        self.choose_anndata_button.clicked.connect(
+            self._guard(self.choose_anndata_file)
+        )
+        self.reload_anndata_button.clicked.connect(
+            self._guard(self.load_anndata_selectors)
+        )
+        self.choose_masks_button.clicked.connect(
+            self._guard(self.choose_masks_folder)
+        )
+        self.add_images_folder_button.clicked.connect(
+            self._guard(self.add_images_folder)
+        )
+        self.remove_images_folder_button.clicked.connect(
+            self._guard(self.remove_images_folder)
+        )
+        self.clear_images_folders_button.clicked.connect(self.images_edit.clear)
+        self.add_extra_images_folder_button.clicked.connect(
+            self._guard(self.add_extra_images_folder)
+        )
+        self.remove_extra_images_folder_button.clicked.connect(
+            self._guard(self.remove_extra_images_folder)
+        )
+        self.clear_extra_images_folders_button.clicked.connect(
+            self.extra_images_edit.clear
+        )
+        self.advanced_identity_check.toggled.connect(self.identity_widget.setVisible)
+        self.reload_all_inputs_button.clicked.connect(
+            self._guard(self.reload_all_dataset_components)
+        )
+        self.normalization_edit.textChanged.connect(self.refresh_setup_readiness)
         self.choose_normalization_button.clicked.connect(
             self._guard(self.choose_normalization_json)
         )
         self.load_normalization_button.clicked.connect(
             self._guard(self.load_normalization_json)
+        )
+        self.add_normalization_row_button.clicked.connect(
+            self.add_normalization_row
+        )
+        self.remove_normalization_row_button.clicked.connect(
+            self.remove_selected_normalization_rows
+        )
+        self.advanced_normalization_check.toggled.connect(
+            self.normalization_json_edit.setVisible
+        )
+        self.normalization_table.itemChanged.connect(
+            self._sync_normalization_json_preview
         )
         self.validate_normalization_button.clicked.connect(
             self._guard(self.validate_normalization_editor)
@@ -2902,6 +3257,9 @@ class NapariSBTController:
         )
         self.save_population_qc_recipe_button.clicked.connect(
             self._guard(self.save_population_qc_recipe)
+        )
+        self.reset_population_qc_contrast_button.clicked.connect(
+            self._guard(self.reset_population_qc_contrasts_to_setup_defaults)
         )
         self.load_population_qc_view_button.clicked.connect(
             self._guard(self.load_population_qc_view)
@@ -3353,6 +3711,614 @@ class NapariSBTController:
 
         self.show_help(topic, title)
 
+    def _initialise_setup_controls(self) -> None:
+        """Populate project/workspace choices without scanning scientific assets."""
+
+        self._refresh_registered_project_choices()
+        self._apply_project_root(self.project_root, replace_inputs=False)
+        self.refresh_workspace_choices()
+
+    def _refresh_registered_project_choices(self) -> None:
+        """List current and registered projects without modifying the registry."""
+
+        self.registered_project_combo.blockSignals(True)
+        self.registered_project_combo.clear()
+        self.registered_project_combo.addItem(
+            f"Current: {self.project_root.name or self.project_root}",
+            str(self.project_root),
+        )
+        try:
+            from SpatialBiologyToolkit.pipeline.project_registry import (
+                load_project_registry,
+            )
+
+            registry = load_project_registry()
+            for project in registry.projects:
+                path = Path(project.path).expanduser().resolve(strict=False)
+                if path == self.project_root:
+                    continue
+                self.registered_project_combo.addItem(project.name, str(path))
+                index = self.registered_project_combo.count() - 1
+                self.registered_project_combo.setItemData(
+                    index,
+                    f"Registered SBT project\n{path}",
+                    self.Qt.ToolTipRole,
+                )
+        except Exception as exc:  # noqa: BLE001 - registry is optional in the GUI
+            self.registered_project_combo.setToolTip(
+                f"Registered projects could not be read: {exc}. Use Choose project folder."
+            )
+        self.registered_project_combo.blockSignals(False)
+
+    @staticmethod
+    def _project_relative_path(project_root: Path, configured: str | Path) -> Path:
+        path = Path(configured).expanduser()
+        if not path.is_absolute():
+            path = project_root / path
+        return path.resolve(strict=False)
+
+    def _apply_project_root(self, root: str | Path, *, replace_inputs: bool) -> None:
+        """Use an SBT project's typed defaults, or retain a standalone folder."""
+
+        root = Path(root).expanduser().resolve(strict=False)
+        if not root.is_dir():
+            raise FileNotFoundError(f"Project or dataset folder not found: {root}")
+        self.project_root = root
+        self.project_edit.setText(str(root))
+        experiment_folder = "napari_sbt"
+        context = None
+        try:
+            from SpatialBiologyToolkit.pipeline.project import load_project
+
+            context = load_project(root)
+            experiment_folder = context.config.napari_sbt.experiment_folder
+        except Exception:  # Standalone datasets remain supported.
+            context = None
+        self._workspace_container = workspace_folder(root, experiment_folder)
+        if replace_inputs:
+            self._launch_experiment = None
+        if context is not None and self._launch_experiment is None:
+            active = context.config.napari_sbt.active_experiment
+            if active:
+                configured = Path(active).expanduser()
+                self._launch_experiment = (
+                    configured.resolve(strict=False)
+                    if configured.is_absolute()
+                    else (self._workspace_container / configured).resolve(
+                        strict=False
+                    )
+                )
+        normalization_to_load: Path | None = None
+        if context is not None:
+            self._updating_setup_controls = True
+            try:
+                if self._in_memory_adata is None and (
+                    replace_inputs or not self.anndata_edit.text().strip()
+                ):
+                    self.anndata_edit.setText(
+                        str(
+                            self._project_relative_path(
+                                root, context.config.general.anndata_path
+                            )
+                        )
+                    )
+                if replace_inputs or not self.masks_edit.text().strip():
+                    self.masks_edit.setText(
+                        str(
+                            self._project_relative_path(
+                                root, context.config.general.masks_folder
+                            )
+                        )
+                    )
+                if replace_inputs or not self.images_edit.toPlainText().strip():
+                    self.images_edit.setPlainText(
+                        str(
+                            self._project_relative_path(
+                                root, context.config.general.denoised_images_folder
+                            )
+                        )
+                    )
+                normalization = context.config.nimbus.normalization_dict_path
+                if normalization and (
+                    replace_inputs or not self.normalization_edit.text().strip()
+                ):
+                    normalization_to_load = self._project_relative_path(
+                        root, normalization
+                    )
+                    self.normalization_edit.setText(str(normalization_to_load))
+            finally:
+                self._updating_setup_controls = False
+        if normalization_to_load is not None and normalization_to_load.is_file():
+            self.load_normalization_json()
+        self._loaded_workspace_root = None
+        if replace_inputs or self._launch_experiment is None:
+            self._update_suggested_workspace_path(force=True)
+        self._invalidate_dataset_indexes()
+        self.refresh_workspace_choices()
+
+    def use_selected_registered_project(self) -> None:
+        path = self.registered_project_combo.currentData()
+        if path:
+            self._prepare_to_change_project(Path(path))
+
+    def choose_project_folder(self) -> None:
+        selected = self.QFileDialog.getExistingDirectory(
+            self.root,
+            "Choose an SBT project or standalone dataset folder",
+            str(self.project_root),
+        )
+        if selected:
+            self._prepare_to_change_project(Path(selected))
+
+    def _prepare_to_change_project(self, root: Path) -> None:
+        if self.paths is not None:
+            reply = self.QMessageBox.question(
+                self.root,
+                "Change project",
+                "Close the current NapariSBT workspace and choose data from a "
+                "different project? Saved workspace files will not be deleted.",
+            )
+            if reply != self.QMessageBox.Yes:
+                return
+        self.start_new_workspace(confirm=False)
+        self._apply_project_root(root, replace_inputs=True)
+        self._refresh_registered_project_choices()
+        self.set_status(f"Using project or dataset folder: {self.project_root}")
+
+    def refresh_workspace_choices(self) -> None:
+        """Refresh the bounded one-level workspace list."""
+
+        current_root = self.workspace_combo.currentData() if self.workspace_combo.count() else None
+        self._workspace_summaries = discover_workspaces(
+            self._workspace_container,
+            explicit=self._launch_experiment,
+        )
+        self.workspace_combo.blockSignals(True)
+        self.workspace_combo.clear()
+        if not self._workspace_summaries:
+            self.workspace_combo.addItem("No saved workspaces found", None)
+        for summary in self._workspace_summaries:
+            presentation = workflow_presentation(summary.workflow_mode)
+            workflow = presentation.title if presentation else "Unknown workflow"
+            counts = (
+                f"{summary.eligible_cells:,} cells / {summary.represented_rois:,} ROIs"
+                if summary.eligible_cells is not None
+                and summary.represented_rois is not None
+                else "could not read details"
+            )
+            prefix = {
+                "ready": "● Ready",
+                "check": "● Check",
+                "blocked": "⚠ Cannot open",
+            }[summary.level]
+            self.workspace_combo.addItem(
+                f"{prefix} {summary.name} — {workflow} — {counts}",
+                str(summary.root),
+            )
+            index = self.workspace_combo.count() - 1
+            tooltip = str(summary.root)
+            if summary.modified_at is not None:
+                tooltip += f"\nLast changed: {summary.modified_at:%Y-%m-%d %H:%M}"
+            if summary.issue:
+                tooltip += f"\nCannot open: {summary.issue}"
+                self.workspace_combo.setItemData(
+                    index, self.QColor("#b91c1c"), self.Qt.ForegroundRole
+                )
+            elif summary.warnings:
+                tooltip += "\nNeeds attention: " + "; ".join(summary.warnings)
+                self.workspace_combo.setItemData(
+                    index, self.QColor("#b45309"), self.Qt.ForegroundRole
+                )
+            else:
+                self.workspace_combo.setItemData(
+                    index, self.QColor("#15803d"), self.Qt.ForegroundRole
+                )
+            self.workspace_combo.setItemData(index, tooltip, self.Qt.ToolTipRole)
+        selected_index = self.workspace_combo.findData(current_root)
+        if selected_index < 0 and self._loaded_workspace_root is not None:
+            selected_index = self.workspace_combo.findData(
+                str(self._loaded_workspace_root)
+            )
+        self.workspace_combo.setCurrentIndex(max(0, selected_index))
+        self.workspace_combo.blockSignals(False)
+        self._workspace_selection_changed()
+
+    def _selected_workspace_summary(self) -> WorkspaceSummary | None:
+        root = self.workspace_combo.currentData()
+        if not root:
+            return None
+        resolved = Path(root).expanduser().resolve(strict=False)
+        return next(
+            (summary for summary in self._workspace_summaries if summary.root == resolved),
+            None,
+        )
+
+    def _workspace_selection_changed(self) -> None:
+        summary = self._selected_workspace_summary()
+        if summary is None:
+            self.workspace_summary_label.setText(
+                f"No saved workspace was found in {self._workspace_container}."
+            )
+            self.open_workspace_button.setEnabled(False)
+            return
+        self.open_workspace_button.setEnabled(summary.loadable)
+        if summary.issue:
+            self.workspace_summary_label.setText(
+                f"⚠ {summary.root}\nThis workspace cannot currently be opened: "
+                f"{summary.issue}"
+            )
+            return
+        presentation = workflow_presentation(summary.workflow_mode)
+        changed = (
+            summary.modified_at.strftime("%d %b %Y, %H:%M")
+            if summary.modified_at
+            else "unknown"
+        )
+        self.workspace_summary_label.setText(
+            f"{summary.name} — "
+            f"{presentation.title if presentation else summary.workflow_mode}; "
+            f"{summary.eligible_cells:,} eligible cells across "
+            f"{summary.represented_rois:,} ROIs; last changed {changed}."
+            + (
+                " Needs attention: " + "; ".join(summary.warnings) + "."
+                if summary.warnings
+                else " All configured source locations were found."
+            )
+        )
+
+    def open_selected_workspace(self) -> None:
+        summary = self._selected_workspace_summary()
+        if summary is None:
+            raise ValueError("Choose a saved workspace first.")
+        if not summary.loadable:
+            raise ValueError(summary.issue or "The selected workspace cannot be opened.")
+        self.load_existing_experiment(summary.root)
+
+    def start_new_workspace(self, *, confirm: bool = True) -> None:
+        """Leave a loaded workspace without changing any saved source files."""
+
+        if confirm and self.paths is not None:
+            reply = self.QMessageBox.question(
+                self.root,
+                "Set up a new workspace",
+                "Leave the currently open workspace and start a new setup? Existing "
+                "workspace files remain saved and can be reopened from this list.",
+            )
+            if reply != self.QMessageBox.Yes:
+                return
+        self.manifest = None
+        self.paths = None
+        self._loaded_workspace_root = None
+        self.preview = None
+        self.cohort = pd.DataFrame()
+        self.labels = empty_labels()
+        self.scores = pd.DataFrame()
+        self.current_roi = None
+        self.current_mask = None
+        self.current_mask_path = None
+        self._integrity_signature = None
+        self._asset_index_signature = None
+        self._mask_path_index.clear()
+        self._roi_image_path_index.clear()
+        self._clear_explore_layers()
+        self._remove_layers(
+            [
+                "classification_cohort",
+                "excluded_segmentation_context",
+                NONCONTEXT_MASK_LAYER_NAME,
+                *CLASS_LAYER_NAMES.values(),
+                SELECTED_CELL_LAYER_NAME,
+                LABELER_LAYER_NAME,
+                LABELER_SELECTED_CELL_LAYER_NAME,
+            ]
+        )
+        self.explore_recipe = ExploreViewRecipe()
+        self.explore_review_state = ExploreReviewState()
+        self._sync_population_qc_contrast_defaults(force=True)
+        self._set_classification_enabled(False)
+        self.scope_label.setText(
+            "No workflow workspace: complete Setup, then create it."
+        )
+        self.name_edit.setReadOnly(False)
+        self.experiment_edit.setReadOnly(False)
+        self.choose_experiment_folder_button.setEnabled(True)
+        self._set_dataset_source_editable(True)
+        self._updating_setup_controls = True
+        try:
+            self.name_edit.clear()
+        finally:
+            self._updating_setup_controls = False
+        self._update_suggested_workspace_path(force=True)
+        self.refresh_setup_readiness()
+
+    def _set_dataset_source_editable(self, editable: bool) -> None:
+        """Prevent a loaded manifest from being silently contradicted by the form."""
+
+        self.anndata_edit.setReadOnly(not editable)
+        self.masks_edit.setReadOnly(not editable)
+        self.images_edit.setReadOnly(not editable)
+        self.extra_images_edit.setReadOnly(not editable)
+        for button in (
+            self.choose_anndata_button,
+            self.choose_masks_button,
+            self.add_images_folder_button,
+            self.remove_images_folder_button,
+            self.clear_images_folders_button,
+            self.add_extra_images_folder_button,
+            self.remove_extra_images_folder_button,
+            self.clear_extra_images_folders_button,
+        ):
+            button.setEnabled(editable)
+        self.roi_obs_edit.setReadOnly(not editable)
+        self.object_obs_edit.setReadOnly(not editable)
+
+    def _workflow_card_selected(self, button) -> None:
+        mode = str(button.property("workflowMode") or "")
+        index = self.workflow_combo.findData(mode)
+        if index >= 0:
+            self.workflow_combo.setCurrentIndex(index)
+
+    def _sync_workflow_cards(self) -> None:
+        mode = self.current_workflow_mode()
+        for value, radio in self._workflow_radios.items():
+            was_blocked = radio.blockSignals(True)
+            radio.setChecked(value == mode)
+            radio.blockSignals(was_blocked)
+        if mode == "full_workspace":
+            self.advanced_workflow_check.setChecked(True)
+            self.advanced_workflow_card.show()
+
+    def _workspace_name_changed(self, *_args) -> None:
+        if self._updating_setup_controls or self.manifest is not None:
+            self.refresh_setup_readiness()
+            return
+        self._update_suggested_workspace_path()
+        self.refresh_setup_readiness()
+
+    def _update_suggested_workspace_path(self, *, force: bool = False) -> None:
+        if not self.name_edit.text().strip():
+            if force:
+                suggested = (self._workspace_container / "new_workspace").resolve(
+                    strict=False
+                )
+                self._suggested_workspace_path = suggested
+                was_blocked = self.experiment_edit.blockSignals(True)
+                self.experiment_edit.setText(str(suggested))
+                self.experiment_edit.blockSignals(was_blocked)
+            return
+        current = Path(self.experiment_edit.text() or ".").expanduser().resolve(
+            strict=False
+        )
+        if not force and current != getattr(self, "_suggested_workspace_path", current):
+            return
+        suggested = workspace_destination(self._workspace_container, self.name_edit.text())
+        self._suggested_workspace_path = suggested
+        was_blocked = self.experiment_edit.blockSignals(True)
+        self.experiment_edit.setText(str(suggested))
+        self.experiment_edit.blockSignals(was_blocked)
+
+    def choose_new_workspace_folder(self) -> None:
+        selected = self.QFileDialog.getExistingDirectory(
+            self.root,
+            "Choose an empty folder for the new workspace",
+            str(Path(self.experiment_edit.text()).expanduser().parent),
+        )
+        if selected:
+            self._suggested_workspace_path = Path(selected).resolve(strict=False)
+            self.experiment_edit.setText(str(self._suggested_workspace_path))
+
+    def choose_anndata_file(self) -> None:
+        selected, _filter = self.QFileDialog.getOpenFileName(
+            self.root,
+            "Choose processed cell data",
+            self.anndata_edit.text().strip() or str(self.project_root),
+            "AnnData files (*.h5ad);;All files (*)",
+        )
+        if selected:
+            self.anndata_edit.setText(selected)
+            self.load_anndata_selectors()
+
+    def choose_masks_folder(self) -> None:
+        selected = self.QFileDialog.getExistingDirectory(
+            self.root,
+            "Choose cell masks folder",
+            self.masks_edit.text().strip() or str(self.project_root),
+        )
+        if selected:
+            self.masks_edit.setText(selected)
+
+    def _append_folder_choice(self, editor, title: str) -> None:
+        existing = _split_paths(editor.toPlainText())
+        selected = self.QFileDialog.getExistingDirectory(
+            self.root,
+            title,
+            existing[-1] if existing else str(self.project_root),
+        )
+        if selected and selected not in existing:
+            editor.setPlainText("\n".join([*existing, selected]))
+
+    def add_images_folder(self) -> None:
+        self._append_folder_choice(self.images_edit, "Add staining image folder")
+
+    def _remove_folder_choice(self, editor, title: str) -> None:
+        existing = _split_paths(editor.toPlainText())
+        if not existing:
+            return
+        selected, accepted = self.QInputDialog.getItem(
+            self.root,
+            title,
+            "Folder to remove",
+            existing,
+            0,
+            False,
+        )
+        if accepted and selected:
+            editor.setPlainText(
+                "\n".join(path for path in existing if path != selected)
+            )
+
+    def remove_images_folder(self) -> None:
+        self._remove_folder_choice(
+            self.images_edit, "Remove staining image folder"
+        )
+
+    def add_extra_images_folder(self) -> None:
+        self._append_folder_choice(
+            self.extra_images_edit, "Add optional additional image folder"
+        )
+
+    def remove_extra_images_folder(self) -> None:
+        self._remove_folder_choice(
+            self.extra_images_edit, "Remove optional additional image folder"
+        )
+
+    def reload_all_dataset_components(self) -> None:
+        """Reload known sources without performing the expensive integrity scan."""
+
+        if self.paths is not None:
+            root = self.paths.root
+            self.load_existing_experiment(root)
+            self.set_status(
+                "Reloaded the workspace manifest, AnnData, saved review state, and "
+                "current ROI components. Integrity was not rescanned."
+            )
+            return
+        if self.anndata_edit.text().strip() or self._in_memory_adata is not None:
+            self.load_anndata_selectors()
+        if self.normalization_edit.text().strip():
+            self.load_normalization_json()
+        self._clear_explore_layer_data_cache()
+        self.refresh_setup_readiness()
+        self.set_status(
+            "Reloaded the selected setup components. Run the explicit integrity "
+            "check when folders or identities have changed."
+        )
+
+    def focus_next_setup_problem(self) -> None:
+        checks = getattr(self, "_current_setup_checks", ())
+        problem = next(
+            (check for check in checks if check.level == "blocked"),
+            next(
+                (
+                    check
+                    for check in checks
+                    if check.level == "check" and check.key != "normalization"
+                ),
+                None,
+            ),
+        )
+        if problem is None:
+            self.create_button.setFocus()
+            return
+        if problem.key == "identity":
+            self.advanced_identity_check.setChecked(True)
+        targets = {
+            "workspace": self.name_edit,
+            "workflow": next(iter(self._workflow_radios.values())),
+            "anndata": self.choose_anndata_button,
+            "masks": self.choose_masks_button,
+            "images": self.add_images_folder_button,
+            "extra_images": self.add_extra_images_folder_button,
+            "identity": self.roi_obs_edit,
+            "normalization": self.choose_normalization_button,
+            "integrity": self.validate_integrity_button,
+        }
+        target = targets.get(problem.key)
+        if target is not None:
+            target.setFocus()
+        self.set_status(f"Setup needs attention: {problem.label} — {problem.detail}")
+
+    def refresh_setup_readiness(self, *_args) -> None:
+        """Update row badges and gate new-workspace creation."""
+
+        if not hasattr(self, "setup_readiness_label"):
+            return
+        integrity_current = bool(
+            self.preview is not None
+            and self._integrity_signature == self._current_integrity_signature()
+        )
+        checks = setup_checks(
+            workspace_name=self.name_edit.text(),
+            workspace_path=self.experiment_edit.text(),
+            workflow_mode=self.current_workflow_mode(),
+            anndata_path=self.anndata_edit.text(),
+            has_in_memory_anndata=self._in_memory_adata is not None,
+            masks_folder=self.masks_edit.text(),
+            image_folders=_split_paths(self.images_edit.toPlainText()),
+            extra_image_folders=_split_paths(
+                self.extra_images_edit.toPlainText()
+            ),
+            roi_obs=self.roi_obs_edit.text(),
+            object_id_obs=self.object_obs_edit.text(),
+            normalization_path=self.normalization_edit.text(),
+            integrity_current=integrity_current,
+        )
+        self._current_setup_checks = checks
+        styles = {
+            "ready": ("● Ready", "#dcfce7", "#166534", "#22c55e"),
+            "check": ("● Check needed", "#fef3c7", "#92400e", "#f59e0b"),
+            "blocked": ("● Action required", "#fee2e2", "#991b1b", "#ef4444"),
+            "optional": ("○ Optional", "#f1f5f9", "#475569", "#94a3b8"),
+        }
+        for check in checks:
+            label = self._setup_status_labels.get(check.key)
+            if label is None:
+                continue
+            text, background, foreground, border = styles[check.level]
+            label.setText(text)
+            label.setToolTip(f"{check.label}: {check.detail}")
+            label.setStyleSheet(
+                f"background: {background}; color: {foreground}; "
+                f"border: 1px solid {border}; border-radius: 5px; "
+                "padding: 4px 7px; font-weight: 700;"
+            )
+            if check.key == "identity":
+                self.identity_summary_label.setText(check.detail)
+        if self.manifest is not None and self.paths is not None:
+            self.create_button.setEnabled(False)
+            self.next_setup_problem_button.setEnabled(False)
+            self.setup_readiness_label.setText(
+                f"● Workspace open — {self.manifest.name}. Use Reload all selected "
+                "components below, or choose Set up a new workspace."
+            )
+            self.setup_readiness_label.setStyleSheet(
+                "background: #dcfce7; color: #166534; border: 2px solid #22c55e; "
+                "border-radius: 7px; padding: 8px; font-weight: 800;"
+            )
+            return
+        ready = setup_is_ready(checks)
+        self.create_button.setEnabled(ready)
+        self.next_setup_problem_button.setEnabled(not ready)
+        problems = [
+            check for check in checks if check.level in {"blocked", "check"}
+        ]
+        if ready:
+            self.setup_readiness_label.setText(
+                "● Ready — create the workspace and start the selected workflow."
+            )
+            style = (
+                "background: #dcfce7; color: #166534; border: 2px solid #22c55e;"
+            )
+        else:
+            first = problems[0].detail if problems else "Complete the setup below."
+            self.setup_readiness_label.setText(
+                f"● {len(problems)} item(s) need attention — {first}"
+            )
+            has_blocker = any(check.level == "blocked" for check in problems)
+            style = (
+                "background: #fee2e2; color: #991b1b; border: 2px solid #ef4444;"
+                if has_blocker
+                else "background: #fef3c7; color: #92400e; border: 2px solid #f59e0b;"
+            )
+        self.setup_readiness_label.setStyleSheet(
+            style + " border-radius: 7px; padding: 8px; font-weight: 800;"
+        )
+        self.create_button.setToolTip(
+            "\n".join(f"{check.label}: {check.detail}" for check in problems)
+            if problems
+            else "Create the new workspace."
+        )
+
     def current_workflow_mode(self) -> str | None:
         value = self.workflow_combo.currentData()
         return str(value) if value is not None else None
@@ -3390,9 +4356,10 @@ class NapariSBTController:
         self._integrity_signature = None
         if hasattr(self, "integrity_status_label"):
             self.integrity_status_label.setText(
-                "Dataset or cohort settings changed. Run Validate integrity before "
-                "creating a new workspace."
+                "Dataset or cohort settings changed. Run Check dataset integrity "
+                "before creating a new workspace."
             )
+        self.refresh_setup_readiness()
 
     def _invalidate_dataset_indexes(self, *_args) -> None:
         self._mask_path_index.clear()
@@ -3401,6 +4368,7 @@ class NapariSBTController:
         self._invalidate_integrity_result()
         self._invalidate_population_qc_caches()
         self._clear_explore_layer_data_cache()
+        self.refresh_setup_readiness()
 
     def _channel_aliases(self) -> dict[str, str]:
         if self.adata is None:
@@ -3528,6 +4496,7 @@ class NapariSBTController:
         """Show only the tabs relevant to the selected session workflow."""
 
         mode = self.current_workflow_mode()
+        self._sync_workflow_cards()
         if mode != self._recipe_tracking_workflow:
             self.live_recipe_tracking_check.blockSignals(True)
             self.live_recipe_tracking_check.setChecked(mode != "population_qc")
@@ -3596,15 +4565,70 @@ class NapariSBTController:
                 f"Workflow view set to {self.workflow_combo.currentText()!r}. "
                 "The workspace still uses the same experiment-backed data model."
             )
+        self.refresh_setup_readiness()
 
     def _normalization_from_editor(self) -> dict[str, float]:
-        text = self.normalization_json_edit.toPlainText().strip() or "{}"
-        payload = json.loads(text)
-        if isinstance(payload, dict) and isinstance(
-            payload.get("normalization_dict"), dict
-        ):
-            payload = payload["normalization_dict"]
+        payload: dict[str, float] = {}
+        for row in range(self.normalization_table.rowCount()):
+            marker_item = self.normalization_table.item(row, 0)
+            value_item = self.normalization_table.item(row, 1)
+            marker = marker_item.text().strip() if marker_item is not None else ""
+            value_text = value_item.text().strip() if value_item is not None else ""
+            if not marker and not value_text:
+                continue
+            if not marker or not value_text:
+                raise ValueError(
+                    f"Normalization row {row + 1} requires both Marker and Value."
+                )
+            if marker in payload:
+                raise ValueError(f"Normalization marker {marker!r} is duplicated.")
+            try:
+                payload[marker] = float(value_text)
+            except ValueError as exc:
+                raise ValueError(
+                    f"Normalization value for {marker!r} must be a number."
+                ) from exc
         return prepare_normalization_dict(payload)
+
+    def _set_normalization_table(self, mapping: dict[str, float]) -> None:
+        self.normalization_table.blockSignals(True)
+        try:
+            self.normalization_table.setRowCount(len(mapping))
+            for row, (marker, value) in enumerate(sorted(mapping.items())):
+                self.normalization_table.setItem(
+                    row, 0, self.QTableWidgetItem(str(marker))
+                )
+                self.normalization_table.setItem(
+                    row, 1, self.QTableWidgetItem(f"{float(value):g}")
+                )
+        finally:
+            self.normalization_table.blockSignals(False)
+        self._sync_normalization_json_preview()
+
+    def add_normalization_row(self) -> None:
+        row = self.normalization_table.rowCount()
+        self.normalization_table.insertRow(row)
+        self.normalization_table.setItem(row, 0, self.QTableWidgetItem(""))
+        self.normalization_table.setItem(row, 1, self.QTableWidgetItem(""))
+        self.normalization_table.setCurrentCell(row, 0)
+        self.normalization_table.editItem(self.normalization_table.item(row, 0))
+
+    def remove_selected_normalization_rows(self) -> None:
+        rows = sorted(
+            {index.row() for index in self.normalization_table.selectedIndexes()},
+            reverse=True,
+        )
+        for row in rows:
+            self.normalization_table.removeRow(row)
+        self._sync_normalization_json_preview()
+
+    def _sync_normalization_json_preview(self, *_args) -> None:
+        try:
+            payload = self._normalization_from_editor()
+            text = json.dumps(payload, indent=2, sort_keys=True)
+        except ValueError as exc:
+            text = json.dumps({"needs_attention": str(exc)}, indent=2)
+        self.normalization_json_edit.setPlainText(text)
 
     def choose_normalization_json(self) -> None:
         selected, _filter = self.QFileDialog.getOpenFileName(
@@ -3621,9 +4645,7 @@ class NapariSBTController:
     def load_normalization_json(self) -> None:
         source = Path(self.normalization_edit.text().strip()).expanduser()
         self.display_normalization = load_normalization_mapping(source)
-        self.normalization_json_edit.setPlainText(
-            json.dumps(self.display_normalization, indent=2, sort_keys=True)
-        )
+        self._set_normalization_table(self.display_normalization)
         self._clear_explore_layer_data_cache()
         self.normalization_status_label.setText(
             f"Loaded {len(self.display_normalization):,} channel maxima from "
@@ -3707,11 +4729,80 @@ class NapariSBTController:
                 "ranges are unaffected."
             )
             return
+        self._sync_population_qc_contrast_defaults()
         self._clear_explore_layer_data_cache()
         self._refresh_feature_normalization_summary()
         self.normalization_status_label.setText(
             f"New unspecific image layers will use contrast {lower:.3f}-{upper:.3f}. "
-            "Saved recipe-specific ranges still take precedence."
+            "Population QC views without saved or manually edited ranges inherit "
+            "these values; saved recipe-specific ranges still take precedence."
+        )
+
+    def _population_qc_setup_contrast_limits(self) -> tuple[float, float]:
+        settings = self._display_settings_from_controls()
+        return tuple(float(value) for value in settings.default_contrast_limits)
+
+    def _update_population_qc_contrast_defaults_label(self) -> None:
+        if not hasattr(self, "population_qc_contrast_defaults_label"):
+            return
+        lower, upper = self._population_qc_setup_contrast_limits()
+        self.population_qc_contrast_defaults_label.setText(
+            f"Setup default: {lower:.3f}–{upper:.3f}. It initializes populations "
+            "without a saved RGB recipe. Edit any per-channel value below to "
+            "override it for this population."
+        )
+
+    def _sync_population_qc_contrast_defaults(self, *, force: bool = False) -> None:
+        """Apply Setup defaults only to Population QC controls still inheriting them."""
+
+        if not hasattr(self, "population_qc_lower_spins"):
+            return
+        new_default = self._population_qc_setup_contrast_limits()
+        previous_default = getattr(
+            self,
+            "_population_qc_last_setup_defaults",
+            (0.0, 1.0),
+        )
+        observation = self.population_qc_obs_combo.currentText().strip()
+        population = self.population_qc_population_combo.currentText().strip()
+        has_saved_recipe = bool(
+            observation
+            and population
+            and population_recipe_key(observation, population)
+            in self.explore_review_state.population_recipes
+        )
+        for colour in ("red", "green", "blue"):
+            lower_spin = self.population_qc_lower_spins[colour]
+            upper_spin = self.population_qc_upper_spins[colour]
+            current = (float(lower_spin.value()), float(upper_spin.value()))
+            limits = (
+                new_default
+                if force
+                else inherit_setup_contrast_limits(
+                    current,
+                    previous_default,
+                    new_default,
+                    has_saved_recipe=has_saved_recipe,
+                )
+            )
+            lower_blocked = lower_spin.blockSignals(True)
+            upper_blocked = upper_spin.blockSignals(True)
+            lower_spin.setValue(float(limits[0]))
+            upper_spin.setValue(float(limits[1]))
+            lower_spin.blockSignals(lower_blocked)
+            upper_spin.blockSignals(upper_blocked)
+        self._population_qc_last_setup_defaults = new_default
+        self._update_population_qc_contrast_defaults_label()
+
+    def reset_population_qc_contrasts_to_setup_defaults(self) -> None:
+        """Explicitly replace all three working RGB ranges with Setup defaults."""
+
+        self._sync_population_qc_contrast_defaults(force=True)
+        lower, upper = self._population_qc_setup_contrast_limits()
+        self.population_qc_status_label.setText(
+            f"Reset all working RGB contrasts to the Setup default "
+            f"{lower:.3f}–{upper:.3f}. Edit individual channels if needed, then "
+            "save or load the population view."
         )
 
     def _set_classification_enabled(self, enabled: bool) -> None:
@@ -3847,6 +4938,15 @@ class NapariSBTController:
         self._clear_explore_layer_data_cache()
         self._invalidate_population_qc_caches()
         columns = [str(column) for column in self.adata.obs.columns]
+        if self.manifest is None:
+            suggested_roi, suggested_object = suggest_identity_columns(columns)
+            if self.roi_obs_edit.text().strip() not in columns and suggested_roi:
+                self.roi_obs_edit.setText(suggested_roi)
+            if (
+                self.object_obs_edit.text().strip() not in columns
+                and suggested_object
+            ):
+                self.object_obs_edit.setText(suggested_object)
         selector_combos = (
             self.obs_combo,
             self.overlay_obs_combo,
@@ -3904,6 +5004,7 @@ class NapariSBTController:
         self.refresh_feature_channel_choices()
         self._refresh_population_data_choices()
         self.refresh_population_workspace()
+        self.refresh_setup_readiness()
         self.set_status(
             f"Loaded AnnData selectors for {self.adata.n_obs:,} cells from {source}."
         )
@@ -5355,6 +6456,7 @@ class NapariSBTController:
         self.set_status(
             "Dataset integrity validated and the fast ROI asset index was built."
         )
+        self.refresh_setup_readiness()
         return self.preview
 
     def _class_colour_item(self, colour_text: str):
@@ -5801,7 +6903,7 @@ class NapariSBTController:
             or self._integrity_signature != self._current_integrity_signature()
         ):
             raise ValueError(
-                "Run Setup → Validate integrity and build fast asset index after "
+                "Run Setup → Check dataset integrity and build the fast image index after "
                 "choosing the dataset and cohort, then create the workspace. This "
                 "keeps costly folder and mask checks out of normal navigation."
             )
@@ -5846,7 +6948,7 @@ class NapariSBTController:
         )
         reply = self.QMessageBox.question(
             self.root,
-            "Create workflow workspace",
+            "Create workspace and start",
             (
                 f"Create a {self.workflow_combo.currentText()!r} workspace with "
                 f"{preview.eligible_cell_count:,} eligible identities across "
@@ -5936,6 +7038,31 @@ class NapariSBTController:
 
     def load_existing_experiment(self, path: Path) -> None:
         self.manifest, self.paths = load_experiment(path)
+        self._loaded_workspace_root = self.paths.root
+        self._launch_experiment = self.paths.root
+        self.name_edit.setReadOnly(True)
+        self.experiment_edit.setReadOnly(True)
+        self.choose_experiment_folder_button.setEnabled(False)
+        self._set_dataset_source_editable(False)
+        if self.manifest.project_root:
+            manifest_project = Path(self.manifest.project_root).expanduser().resolve(
+                strict=False
+            )
+            if manifest_project.is_dir():
+                self.project_root = manifest_project
+                self.project_edit.setText(str(manifest_project))
+                configured_folder = "napari_sbt"
+                try:
+                    from SpatialBiologyToolkit.pipeline.project import load_project
+
+                    configured_folder = load_project(
+                        manifest_project
+                    ).config.napari_sbt.experiment_folder
+                except Exception:
+                    pass
+                self._workspace_container = workspace_folder(
+                    manifest_project, configured_folder
+                )
         workflow_index = self.workflow_combo.findData(self.manifest.workflow_mode)
         self.workflow_combo.blockSignals(True)
         self.workflow_combo.setCurrentIndex(max(0, workflow_index))
@@ -6008,6 +7135,7 @@ class NapariSBTController:
             widget.blockSignals(True)
             widget.setValue(float(value))
             widget.blockSignals(False)
+        self._sync_population_qc_contrast_defaults()
         normalization_path = (
             display_settings.normalization_dict_path
             or self.manifest.synthetic_features.normalization_dict_path
@@ -6034,7 +7162,7 @@ class NapariSBTController:
             self.load_normalization_json()
         else:
             self.display_normalization = {}
-            self.normalization_json_edit.setPlainText("{}")
+            self._set_normalization_table({})
             self.normalization_status_label.setText(
                 "No usable fixed normalization mapping is stored; channels use "
                 "the configured fallback quantile."
@@ -6195,8 +7323,9 @@ class NapariSBTController:
         if not self._load_integrity_index():
             self.integrity_status_label.setText(
                 "No matching saved asset index is available. Nested ROI folders "
-                "and directly named masks will use fast lazy lookups; run Validate "
-                "integrity to index flat image folders and check complete coverage."
+                "and directly named masks will use fast lazy lookups; run Check "
+                "dataset integrity to index flat image folders and check complete "
+                "coverage."
             )
         self.refresh_feature_channel_choices()
         requested_channels = set(self.manifest.synthetic_features.channels)
@@ -6218,6 +7347,9 @@ class NapariSBTController:
             f"Loaded experiment {self.manifest.name!r}, revision "
             f"{self.manifest.revision}."
         )
+        self._refresh_registered_project_choices()
+        self.refresh_workspace_choices()
+        self.refresh_setup_readiness()
         self.refresh_status()
         self.load_refinement_results(silent=True)
 
@@ -9968,6 +11100,7 @@ class NapariSBTController:
     def load_population_qc_recipe_controls(self) -> None:
         """Restore a population's compact RGB controls from the shared recipe store."""
 
+        self._update_population_qc_contrast_defaults_label()
         observation = self.population_qc_obs_combo.currentText().strip()
         population = self.population_qc_population_combo.currentText().strip()
         if not observation or not population:
@@ -10341,7 +11474,7 @@ class NapariSBTController:
         self.preview_cohort()
         self.set_status(
             "Population transferred into Setup. Review the cohort-only mask preview "
-            "and click Create workflow workspace to freeze it."
+            "and click Create workspace and start to freeze it."
         )
 
     def _labeler_code_map(self) -> dict[str, int]:

@@ -1,18 +1,49 @@
 # Setup
 
-Setup defines the kind of NapariSBT session and its common dataset inputs. Only a
-classification workflow asks for a frozen cohort, feature-discovery mode, and
-classes; exploration and population-QC workspaces keep those controls out of the
-way while retaining the same experiment-backed folders and recipes.
+Setup is a guided start screen for opening or creating a NapariSBT workspace,
+choosing a task, connecting a dataset, and checking that it is ready. A workspace
+stores the scientific manifest, cohort, recipes, labels, models, and exports; it
+does not save and restore the complete Napari window layout.
+
+## Start or resume
+
+The first box is the normal starting point, even when NapariSBT was launched
+without command-line path options. **Project or dataset** shows the current folder
+and projects already present in the SBT project register. Use **Choose project
+folder…** for an unregistered or standalone dataset. When an initialized SBT
+project is selected, its configured AnnData, masks, image folder, normalization
+file, and NapariSBT workspace location are proposed automatically.
+
+NapariSBT looks only in the configured workspace folder (normally
+`<project>/napari_sbt`) and one directory level below it for `experiment.yaml`.
+This bounded lookup is deliberately cheap and is not a recursive scan of the
+dataset. The workspace list shows its workflow, eligible-cell and ROI counts,
+last modification time, and a green, amber, or red state. Amber workspaces can
+open but have a missing configured source; red entries contain an unreadable
+manifest and remain visible so the problem is not hidden.
+
+Select a workspace and click **Open selected workspace**, or use **Browse
+elsewhere…**. To create one, enter a descriptive **New workspace name**. Its folder
+is generated automatically under the configured workspace location; **Change
+location…** is available when required. NapariSBT refuses to overwrite an
+existing workspace. The readiness banner explains why **Create workspace and
+start** is disabled and enables it only after all required checks pass.
+
+When a workspace is open, its immutable name and location are protected from
+accidental edits. **Set up a new workspace** leaves the current saved files
+untouched and returns to new-workspace setup using the same dataset as a starting
+point.
 
 ## Workflow selection
 
-Choose the main task before creating or loading a workspace. **Data exploration**
-shows general images, overlays, recipes, regions, and layer tools. **Population
-QC** concentrates on population-specific RGB review. **Cell classification** adds
-feature building, active learning, and prediction export. **Manual cell labeling**
-provides simple hand-assigned identity lists, while **Population curation** adds
-naming, merging, and subclustering. **Full workspace** exposes every tab.
+Choose the plain-language card that describes the main task. **Explore my images
+and cells** shows images, overlays, recipes, regions, and layer tools. **Check
+existing cell populations** concentrates on population-specific RGB review.
+**Train a cell classifier** adds feature building, active learning, and prediction
+export. **Manually collect labelled cells** creates hand-assigned identity lists,
+while **Rename, merge, or subcluster populations** opens population curation.
+**Show every tool** is hidden behind the advanced-workflow checkbox because it
+exposes the most complicated interface.
 
 Changing this selection hides irrelevant tabs; it does not delete their data or
 saved recipes. The selection is stored in the experiment manifest, so reopening
@@ -27,65 +58,79 @@ live tracking is disabled.
 
 ## Dataset inputs
 
-After choosing AnnData, masks, image folders, and identity observations, click
-**Validate integrity and build fast asset index**. This is the explicit expensive
-check: it scans the configured folders, validates eligible object IDs against all
-relevant masks, reports missing coverage, and builds an ROI-to-file index. The
-index is stored at `inputs/integrity_index.json` inside the workspace and reused
-when its configured inputs still match.
+The main data rows have mouse-driven file/folder choosers and accessible status
+badges: green **Ready**, amber **Check needed**, red **Action required**, or grey
+**Optional**. Colour is never the only signal. **Processed cell data** loads an
+`.h5ad` file or uses the AnnData object supplied by a notebook. Add one or more
+**Staining image folders**; additional-image folders are optional.
+
+AnnData columns used to match cells to images and integer mask labels are proposed
+from conventional names such as `ROI` and `ObjectNumber`. Their current meaning
+is summarized in plain language. Use **Show advanced cell-identity settings** only
+when the proposed columns are wrong.
+
+After choosing AnnData, masks, and image folders, click **Check dataset integrity
+and build the fast image index**. This is the explicit expensive check: it scans
+the configured folders, validates eligible object IDs against all relevant masks,
+reports missing coverage, and builds an ROI-to-file index. The index is stored at
+`inputs/integrity_index.json` after workspace creation and reused when its
+configured inputs still match.
 
 Normal ROI navigation never performs another complete folder scan. It uses the
 saved index, or fast direct lookups for conventionally named masks and nested
 `images/<ROI>/` folders. Re-run validation deliberately after changing files or
 folders. Creating a new workspace requires a current validation result, avoiding
-an unexpected repeat of the expensive scan when **Create** is pressed.
+an unexpected repeat of the expensive scan when **Create workspace and start** is
+pressed.
 
-Enter a descriptive experiment name, then identify the AnnData, masks, and image
-folders. Add one image folder per line; NapariSBT searches all of them and matches
-channels to the AnnData panel. Extra-image folders are for non-panel images that
-should remain available in Explore. Set the ROI observation to the field containing
-image/mask names and the object-ID observation to the integer mask-label field.
+Use **Reload all selected components** to reread a loaded workspace, AnnData,
+normalization values, saved review state, and current ROI without running the
+expensive folder scan. Use the integrity button separately after files, folders,
+or identity columns change.
 
-The experiment folder is NapariSBT's working area for the manifest, frozen cohort,
-features, labels, and models. It should be a new or existing NapariSBT experiment
-folder, not the source image or mask directory. Source images, masks, and AnnData
-are not overwritten.
+The workspace folder is NapariSBT's working area for the manifest, frozen cohort,
+features, labels, and models. It is not the source image or mask directory. Source
+images, masks, and AnnData are never overwritten.
 
 When launched from a Notebook with a live `AnnData`, selectors and previews use
-that object directly and its path field is intentionally blank. Creating the
-experiment writes a frozen copy under `inputs/anndata.h5ad` so the experiment
-can be reopened and used by feature-building subprocesses. The GUI then uses
-that snapshot too; opening the dock alone does not write the object.
+that object directly. Creating the workspace writes a frozen copy under
+`inputs/anndata.h5ad` so the workspace can be reopened and used by feature-building
+subprocesses. Opening the dock alone does not write the object.
 
 ## Image normalization and default display
 
 Choose either a Nimbus normalization JSON or a CSV containing `Marker` and
-`Value` columns. Both formats load the channel-to-maximum mapping into the
-editable JSON pane. **Validate edited JSON** checks the values without writing
-them. After a workspace exists, **Save edited copy into experiment** stores the
-mapping in canonical JSON form at `display/normalization.json` and records it in
-the manifest. Workspace creation also writes this experiment-owned copy,
-including an empty mapping when no fixed maxima are supplied.
+`Value` columns. Both formats load the channel-to-maximum mapping into an editable
+two-column table. Add or remove marker rows without writing JSON. **Show technical
+JSON preview** provides a read-only representation for troubleshooting.
+**Validate edited values** checks the table without writing it. After a workspace
+exists, **Save edited copy into experiment** stores the mapping in canonical JSON
+form at `display/normalization.json` and records it in the manifest. Workspace
+creation also writes this experiment-owned copy, including an empty mapping when
+no fixed maxima are supplied.
 
 For channels without a fixed maximum, the fallback quantile and minimum-pixel
 threshold reproduce the legacy IMC Explorer display normalization. Default lower
 and upper contrast values apply to newly loaded scalar images whose recipe has no
-explicit range. Recipe-specific contrast always takes precedence. Pixel values
-and Napari's contrast slider range remain normalized to 0–1, even when the handles
-are restored to a narrower default or recipe range.
+explicit range. They also initialize Population QC RGB contrast controls for
+populations without a saved recipe. Population QC values can be changed per
+channel, and manual or saved overrides are not replaced by later Setup changes.
+Recipe-specific contrast always takes precedence. Pixel values and Napari's
+contrast slider range remain normalized to 0–1.
 
 ## Cell scope
 
 Choose **All cells** for whole-segmentation QC, or **Selected adata.obs values**
 to subclassify one or more existing populations. Previewing validates identities,
 mask coverage, represented ROIs, and eligible-cell counts. The eligible identity
-snapshot is frozen when the experiment is created; original masks and AnnData are
+snapshot is frozen when the workspace is created; original masks and AnnData are
 never modified.
 
-Click **Load AnnData selectors**, choose the observation and one or more values,
-then click **Validate integrity and preview cohort**. Read the preview before continuing:
-unexpectedly low counts, missing masks, duplicate identities, or unrepresented
-ROIs usually indicate an identity-column or filename mismatch.
+Choose the observation and one or more values, then click **Check dataset integrity
+and build the fast image index** (or **Validate integrity and preview cohort** in
+the classification scope box). Read the preview before continuing: unexpectedly low counts,
+missing masks, duplicate identities, or unrepresented ROIs usually indicate an
+identity-column or filename mismatch.
 
 ## Full experiment or Feature Discovery Trial
 
@@ -109,10 +154,7 @@ mask exports. Class semantics become locked after confirmed labels exist.
 
 Use **Add class** and **Remove selected class** to edit the table, or start from
 **Segmentation QC template** for a good-versus-artifact task. Apply class edits
-before creating the experiment. The Colour column is a true swatch: double-click
+before creating the workspace. The Colour column is a true swatch: double-click
 it, or select a row and click **Pick selected colour…**, to open the system colour
-picker. The chosen hexadecimal value is shown on the swatch. Choose distinct
-colours and shortcuts because both are reused throughout annotation and review.
-
-Create the experiment only after checking the cohort preview, trial scope, and
-class table. Loading an existing experiment restores these definitions.
+picker. Choose distinct colours and shortcuts because both are reused throughout
+annotation and review.

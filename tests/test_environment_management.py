@@ -284,6 +284,7 @@ class RegistryTests(EnvironmentFixture):
             root / "HPC_env_files" / "sbt-analysis" / "pip-extras.txt"
         )
         self.assertEqual(conda_requirements["python"], "=3.11")
+        self.assertEqual(conda_requirements["setuptools"], "<81")
         self.assertEqual(conda_requirements["scikit-image"], "=0.24.0")
         self.assertEqual(conda_requirements["rapids"], "=24.12")
         self.assertEqual(conda_requirements["cuda-version"], "=12.5")
@@ -292,6 +293,7 @@ class RegistryTests(EnvironmentFixture):
         self.assertEqual(conda_requirements["dask-expr"], "=1.1.19")
         self.assertEqual(conda_requirements["numpy"], "=1.26.4")
         self.assertEqual(conda_requirements["numcodecs"], "=0.15.1")
+        self.assertEqual(pip_requirements["setuptools"].version, "<81")
         self.assertEqual(pip_requirements["scikit-image"].version, "0.24.0")
         self.assertEqual(pip_requirements["torch"].version, "2.9.1")
         self.assertEqual(
@@ -321,6 +323,22 @@ class RegistryTests(EnvironmentFixture):
         self.assertNotIn("scarches", analysis_smoke_scripts)
         self.assertIn("cugraph", analysis_smoke_scripts)
         self.assertIn("dask_cudf", analysis_smoke_scripts)
+        stage_smoke_scripts = [
+            command[-1]
+            for command in definition.smoke_tests
+            if len(command) >= 3
+            and command[:2] == ["python", "-c"]
+            and "SpatialBiologyToolkit.scripts." in command[-1]
+        ]
+        for module in (
+            "basic_process_rapids",
+            "basic_process_biobatchnet",
+            "cellcharter_neighborhoods",
+            "segmentation_nimbus",
+            "spatialdata_builder",
+        ):
+            matching = [script for script in stage_smoke_scripts if module in script]
+            self.assertEqual(matching, [f"import SpatialBiologyToolkit.scripts.{module}"])
 
     def test_legacy_python_environments_support_runtime_type_evaluation(self):
         root = Path(__file__).resolve().parents[1]

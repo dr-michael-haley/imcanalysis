@@ -19,6 +19,9 @@ dependencies:
   # RAPIDS-singlecell 0.12.0, CellCharter 0.3.7, and Nimbus's documented range.
   - python=3.11
   - pip
+  # xarray-schema, reached through SpatialData 0.4, still imports
+  # pkg_resources. Setuptools 81+ no longer provides that compatibility API.
+  - setuptools<81
 
   # RAPIDS 24.12 is the last release whose official Dask dependency generation
   # matches SpatialData 0.4 and Squidpy 1.6.5. RAPIDS-singlecell 0.12.0 was

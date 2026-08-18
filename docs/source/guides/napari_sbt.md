@@ -106,13 +106,36 @@ interface.
 
 ## Setup and the frozen cohort
 
-Workflow selection is required before a workspace is created. Exploration-only
-workspaces still create the same experiment-backed folder structure, allowing
-named views and reviewed-ROI state to persist without exposing feature building
-or classifier controls. The selected workflow is stored in the manifest and can
-be changed later without deleting data from hidden tabs.
+Setup is designed to work without launcher path arguments. Its first section
+shows the current project or standalone dataset folder, registered SBT projects,
+saved workspaces detected under the configured `napari_sbt.experiment_folder`,
+and mouse-driven open/create actions. Workspace discovery is bounded to the
+container itself and immediate child `experiment.yaml` files; it never recursively
+scans the project. Each entry reports its workflow, cohort size, ROI count, last
+change time, and missing-source warnings.
 
-Setup provides an explicit **Validate integrity and build fast asset index**
+New workspaces require a friendly name and receive an automatically derived,
+collision-checked folder. A text-and-colour readiness banner keeps **Create
+workspace and start** disabled until required inputs and the integrity check are
+complete. Existing workspaces reopen directly from the detected list or a folder
+chooser. Workspace persistence covers scientific state and deliberately does not
+restore the complete Napari window layout.
+
+Workflow selection uses plain-language task cards rather than requiring knowledge
+of internal modes. Exploration-only workspaces still create the same
+experiment-backed folder structure, allowing named views and reviewed-ROI state
+to persist without exposing feature building or classifier controls. The selected
+workflow is stored in the manifest and can be changed later without deleting data
+from hidden tabs. The combined full workspace remains behind an advanced toggle.
+
+AnnData, masks, staining images, optional extra images, and normalization files
+have **Choose…** or **Add folder…** controls and status badges which combine
+colour with Ready, Check needed, Action required, or Optional text. Conventional
+ROI and object-ID observations are proposed after AnnData loads; the raw fields
+are hidden under advanced cell-identity settings. **Reload all selected
+components** rereads known data and current-ROI state without running a full scan.
+
+Setup provides an explicit **Check dataset integrity and build the fast image index**
 action. It is the only normal UI operation that scans complete mask/image folders
 and validates every eligible mask identity. The resulting
 `inputs/integrity_index.json` is reused across ROI changes and later sessions;
@@ -165,12 +188,16 @@ colour picker; the saved hexadecimal value remains visible on the swatch.
 
 Setup also owns scientific-display normalization. A Nimbus normalization JSON,
 or a CSV containing `Marker` and `Value` columns, can be loaded into an editable
-pane, validated, and copied in canonical JSON form to
+Marker/Value table, validated, and copied in canonical JSON form to
 `display/normalization.json` inside the workspace. Fixed per-channel maxima are
 used where available; unmatched channels use the configurable fallback quantile
 and minimum-pixel threshold. Default contrast handles apply only when a recipe
 does not contain an explicit channel range. Images and Napari's slider range stay
 on 0–1, while saved recipe contrast limits take precedence over Setup defaults.
+A read-only technical JSON preview remains available under an advanced toggle.
+Population QC uses these Setup contrast limits to initialize an unsaved
+population view, while retaining per-channel manual overrides and saved RGB
+recipes. Its **Use Setup contrast defaults** button provides an explicit reset.
 
 ## Population QC
 

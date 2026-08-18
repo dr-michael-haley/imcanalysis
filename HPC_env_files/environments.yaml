@@ -14,13 +14,18 @@ environments:
       - [python, -c, "import cupy, cudf, cuml, cugraph, dask_cudf, rmm, rapids_singlecell"]
       - [python, -c, "import cellpose, nimbus_inference, readimc, skimage, pyarrow, spatialdata"]
       - [python, -c, "import biobatchnet, cellcharter, squidpy"]
-      - [python, -c, "from importlib.metadata import version; assert version('rapids-singlecell') == '0.12.0'; assert version('cugraph').startswith('24.12'); assert version('dask-cudf').startswith('24.12'); assert version('dask') == '2024.11.2'; assert version('distributed') == '2024.11.2'; assert version('dask-expr') == '1.1.19'; assert version('cellcharter') == '0.3.7'; assert version('torch').split('+', 1)[0] == '2.9.1'; assert version('numpy') == '1.26.4'; assert version('scikit-image') == '0.24.0'; assert version('spatialdata') == '0.4.0'; assert version('multiscale-spatial-image') == '2.0.2'; assert version('zarr') == '2.18.7'; assert version('numcodecs') == '0.15.1'; assert version('squidpy') == '1.6.5'"]
-      - [python, -c, "import SpatialBiologyToolkit.scripts.basic_process_rapids, SpatialBiologyToolkit.scripts.basic_process_biobatchnet, SpatialBiologyToolkit.scripts.cellcharter_neighborhoods, SpatialBiologyToolkit.scripts.segmentation_nimbus, SpatialBiologyToolkit.scripts.spatialdata_builder"]
+      - [python, -c, "import pkg_resources; from importlib.metadata import version; assert int(version('setuptools').split('.', 1)[0]) < 81; assert version('rapids-singlecell') == '0.12.0'; assert version('cugraph').startswith('24.12'); assert version('dask-cudf').startswith('24.12'); assert version('dask') == '2024.11.2'; assert version('distributed') == '2024.11.2'; assert version('dask-expr') == '1.1.19'; assert version('cellcharter') == '0.3.7'; assert version('torch').split('+', 1)[0] == '2.9.1'; assert version('numpy') == '1.26.4'; assert version('scikit-image') == '0.24.0'; assert version('spatialdata') == '0.4.0'; assert version('multiscale-spatial-image') == '2.0.2'; assert version('zarr') == '2.18.7'; assert version('numcodecs') == '0.15.1'; assert version('squidpy') == '1.6.5'"]
+      - [python, -c, "import SpatialBiologyToolkit.scripts.basic_process_rapids"]
+      - [python, -c, "import SpatialBiologyToolkit.scripts.basic_process_biobatchnet"]
+      - [python, -c, "import SpatialBiologyToolkit.scripts.cellcharter_neighborhoods"]
+      - [python, -c, "import SpatialBiologyToolkit.scripts.segmentation_nimbus"]
+      - [python, -c, "import SpatialBiologyToolkit.scripts.spatialdata_builder"]
     notes:
       - Candidate consolidated runtime for the existing segmentation, biobatchnet, cellcharter, and RAPIDS environment families, with SpatialData included.
       - No stage uses this key until the joint install, strengthened smoke tests, and targeted end-to-end acceptance pass.
       - CellCharter is supported through its default existing-embedding route; optional TRVAE/scArches mode is deliberately excluded from this candidate.
       - RAPIDS 24.12 and RAPIDS-singlecell 0.12.0 retain the shared Dask 2024.11 generation required by SpatialData 0.4 and Squidpy 1.6.5. This runtime supports original Harmony only; Harmony2 remains available in the legacy RAPIDS environment.
+      - Stage-module smoke tests use separate Python processes, matching SLURM execution; importing the RAPIDS/Scanpy and SpatialData 0.4 stacks sequentially in one interpreter can select incompatible Dask DataFrame backends.
       - Nimbus is provisionally included on Python 3.11, within its documented Python 3.9 through 3.11 range; split it only if inference validation fails.
       - STARLING, MaxFuse, scPortrait, Cellpose-SAM, HyPERSTAC, and legacy denoising remain separate.
 
