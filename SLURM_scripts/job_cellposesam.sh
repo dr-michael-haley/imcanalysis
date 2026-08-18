@@ -29,4 +29,6 @@ export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
 python -m SpatialBiologyToolkit.scripts.preprocess_dna
 
 conda activate "${SBT_CONDA_ENV_CELLPOSESAM:-sbt-cellpose-sam}"
+# Torch otherwise loads CSF3's older system libstdc++ before SciPy is imported.
+export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
 python -m SpatialBiologyToolkit.scripts.cellpose_sam

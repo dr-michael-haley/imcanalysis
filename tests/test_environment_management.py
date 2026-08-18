@@ -370,6 +370,52 @@ class RegistryTests(EnvironmentFixture):
             expected_names,
         )
 
+    def test_cellpose_sam_runtime_preserves_working_cuda_stack_and_cpp_runtime(self):
+        root = Path(__file__).resolve().parents[1]
+        central = load_environment_registry(root)
+        definition = central.environments["cellposesam"]
+        specification = root / definition.specification_directory
+
+        conda_requirements = declared_conda_requirements(
+            specification / "environment.yml"
+        )
+        pip_requirements = declared_pip_requirements(
+            specification / "pip-extras.txt"
+        )
+        self.assertEqual(conda_requirements["pydantic"], ">=2.4,<3")
+        self.assertEqual(conda_requirements["libstdcxx-ng"], ">=15")
+        self.assertEqual(pip_requirements["cellpose"].version, "4.0.7")
+        self.assertEqual(pip_requirements["torch"].version, "2.9.1")
+        self.assertEqual(pip_requirements["torchvision"].version, "0.24.1")
+        self.assertEqual(
+            pip_requirements["nvidia-cuda-runtime-cu12"].version, "12.8.90"
+        )
+
+        smoke_text = " ".join(
+            argument
+            for command in definition.smoke_tests
+            for argument in command
+        )
+        self.assertIn("from cellpose import models", smoke_text)
+        self.assertIn("SpatialBiologyToolkit.scripts.cellpose_sam", smoke_text)
+        self.assertIn("$CONDA_PREFIX/lib", smoke_text)
+
+        wrapper = (root / "SLURM_scripts" / "job_cellposesam.sh").read_text(
+            encoding="utf-8"
+        )
+        activation = wrapper.index(
+            'conda activate "${SBT_CONDA_ENV_CELLPOSESAM:-sbt-cellpose-sam}"'
+        )
+        library_path = wrapper.index(
+            'export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"',
+            activation,
+        )
+        stage_run = wrapper.index(
+            "python -m SpatialBiologyToolkit.scripts.cellpose_sam", library_path
+        )
+        self.assertLess(activation, library_path)
+        self.assertLess(library_path, stage_run)
+
     def test_slurm_wrappers_use_registered_names_without_legacy_runtime_overrides(self):
         root = Path(__file__).resolve().parents[1]
         central = load_environment_registry(root)

@@ -1,4 +1,4 @@
-"""Read-only AnnData preparation and figure builders for Scanpy-style QC plots."""
+"""Read-only AnnData preparation and native Scanpy/Matplotlib QC plots."""
 
 from __future__ import annotations
 
@@ -23,15 +23,22 @@ PlotType = Literal[
 MatrixSource = Literal["X", "raw"] | str
 CellScope = Literal["all_cells", "cohort", "selected_groups"]
 ExpressionScale = Literal["none", "zscore_marker", "minmax_marker"]
+ExpressionColormap = Literal[
+    "automatic", "viridis", "Blues", "Reds", "magma", "plasma", "coolwarm"
+]
 CompositionMeasure = Literal["count", "percent"]
 ComparisonNormalisation = Literal["count", "row_percent", "column_percent"]
+SideAnnotation = Literal["none", "dendrogram", "totals"]
+TotalsSort = Literal["none", "ascending", "descending"]
+DendrogramCorrelation = Literal["pearson", "spearman", "kendall"]
+DendrogramLinkage = Literal["complete", "average", "single"]
 
 
 PLOT_TYPE_LABELS: dict[str, str] = {
-    "embedding": "Embedding",
-    "heatmap": "Marker heat map",
-    "dotplot": "Marker dot plot",
-    "violin": "Marker distributions",
+    "embedding": "Embedding (Scanpy)",
+    "heatmap": "Marker matrix plot (Scanpy)",
+    "dotplot": "Marker dot plot (Scanpy)",
+    "violin": "Stacked violin (Scanpy)",
     "composition_bar": "Population composition — stacked bars",
     "composition_heatmap": "Population composition — heat map",
     "label_comparison": "Compare two label columns",
@@ -51,6 +58,13 @@ class ScanpyPlotRequest(BaseModel):
     markers: list[str] = Field(default_factory=list)
     expression_scale: ExpressionScale = "zscore_marker"
     positivity_threshold: float = 0.0
+    expression_colormap: ExpressionColormap = "automatic"
+    side_annotation: SideAnnotation = "none"
+    totals_sort: TotalsSort = "none"
+    dendrogram_correlation: DendrogramCorrelation = "pearson"
+    dendrogram_linkage: DendrogramLinkage = "complete"
+    dendrogram_optimal_ordering: bool = True
+    swap_axes: bool = False
     embedding_key: str | None = None
     x_component: int = Field(default=1, ge=1)
     y_component: int = Field(default=2, ge=1)
@@ -264,10 +278,12 @@ def deterministic_stratified_indices(
 
     labels = np.asarray(labels, dtype=str)
     count = len(labels)
-    maximum = max(1, int(maximum))
+    groups = list(dict.fromkeys(labels.tolist()))
+    # Keeping at least one point per visible category is more informative than
+    # strictly enforcing a display limit smaller than the number of categories.
+    maximum = max(1, int(maximum), len(groups))
     if count <= maximum:
         return np.arange(count, dtype=int)
-    groups = list(dict.fromkeys(labels.tolist()))
     rng = np.random.default_rng(int(seed))
     selected: list[np.ndarray] = []
     remaining = maximum
@@ -314,6 +330,17 @@ def expression_group_summary(
     )
     labels = _display_labels(adata.obs[request.groupby].iloc[np.flatnonzero(mask)])
     groups = _present_group_order(adata.obs[request.groupby], mask)
+    return _expression_summary_from_values(values, labels, groups, request)
+
+
+def _expression_summary_from_values(
+    values: np.ndarray,
+    labels: np.ndarray,
+    groups: list[str],
+    request: ScanpyPlotRequest,
+) -> pd.DataFrame:
+    """Aggregate one already-sliced marker matrix without loading it again."""
+
     rows: list[dict[str, object]] = []
     for group in groups:
         group_values = values[labels == group]
@@ -376,6 +403,273 @@ def _summary_matrix(
     )
 
 
+def _native_scanpy_modules():
+    """Import the heavy plotting stack only when the user requests a plot."""
+
+    try:
+        import scanpy as sc
+        from anndata import AnnData
+    except ImportError as error:  # pragma: no cover - depends on runtime environment
+        raise RuntimeError(
+            "Native Scanpy plots require Scanpy and AnnData in the NapariSBT "
+            "environment. Refresh the sbt-analysis environment and try again."
+        ) from error
+    return sc, AnnData
+
+
+def _plot_obs(
+    labels: np.ndarray,
+    *,
+    groups: list[str],
+    groupby: str,
+    obs_names,
+) -> pd.DataFrame:
+    """Create the small categorical observation table expected by Scanpy plots."""
+
+    return pd.DataFrame(
+        {
+            groupby: pd.Categorical(
+                np.asarray(labels, dtype=str),
+                categories=list(groups),
+                ordered=True,
+            )
+        },
+        index=pd.Index(obs_names, dtype=str),
+    )
+
+
+def _apply_plot_palette(
+    plot_adata, source_adata, groupby: str, groups: list[str]
+) -> None:
+    """Copy the live AnnData category palette onto a temporary plotting object."""
+
+    colours = categorical_colour_map(source_adata, groupby)
+    plot_adata.uns[f"{groupby}_colors"] = [
+        colours.get(group, "#9ca3af") for group in groups
+    ]
+
+
+def _enable_tight_layout(figure) -> None:
+    """Keep Scanpy labels and legends inside a dynamically resized canvas."""
+
+    try:
+        figure.set_layout_engine("tight", pad=1.2, w_pad=1.0, h_pad=1.0)
+    except (AttributeError, RuntimeError, TypeError):
+        # Compatibility with older Matplotlib releases supported by existing
+        # local environments. The layout is evaluated again whenever Qt draws
+        # the resized canvas.
+        figure.set_tight_layout({"pad": 1.2, "w_pad": 1.0, "h_pad": 1.0})
+
+
+def figure_subplot_margins(figure) -> tuple[float, float, float, float]:
+    """Capture margins that can be restored before a responsive layout pass."""
+
+    margins = figure.subplotpars
+    return (
+        float(margins.left),
+        float(margins.right),
+        float(margins.bottom),
+        float(margins.top),
+    )
+
+
+def fit_scanpy_figure_to_canvas(
+    figure,
+    *,
+    baseline_margins: tuple[float, float, float, float] | None = None,
+    padding_pixels: float = 12.0,
+    maximum_passes: int = 3,
+) -> bool:
+    """Fit Scanpy's nested axes to the current interactive canvas.
+
+    Scanpy BasePlot figures use nested GridSpecs and separately positioned legend
+    axes. Matplotlib's tight-layout engine can decline to adjust these figures,
+    especially after Qt makes a wide matrix plot narrower than its requested
+    ``figsize``. This routine measures the rendered artists and adjusts the outer
+    subplot margins directly. Supplying the original margins makes repeated calls
+    responsive in both directions instead of accumulating padding after each resize.
+    """
+
+    canvas = getattr(figure, "canvas", None)
+    if canvas is None or not figure.axes:
+        return False
+    try:
+        figure.set_layout_engine(None)
+    except (AttributeError, RuntimeError, TypeError):
+        figure.set_tight_layout(False)
+    if baseline_margins is not None:
+        left, right, bottom, top = baseline_margins
+        figure.subplots_adjust(left=left, right=right, bottom=bottom, top=top)
+
+    changed = False
+    for _pass in range(max(1, int(maximum_passes))):
+        canvas.draw()
+        renderer = canvas.get_renderer()
+        boxes = []
+        for axis in figure.axes:
+            if not axis.get_visible():
+                continue
+            box = axis.get_tightbbox(renderer)
+            if box is not None and np.isfinite(box.extents).all():
+                boxes.append(box)
+        if not boxes:
+            break
+
+        from matplotlib.transforms import Bbox
+
+        content = Bbox.union(boxes)
+        figure_box = figure.bbox
+        padding = max(0.0, float(padding_pixels))
+        over_left = max(0.0, figure_box.x0 + padding - content.x0)
+        over_right = max(0.0, content.x1 - (figure_box.x1 - padding))
+        over_bottom = max(0.0, figure_box.y0 + padding - content.y0)
+        over_top = max(0.0, content.y1 - (figure_box.y1 - padding))
+        if max(over_left, over_right, over_bottom, over_top) < 0.5:
+            break
+
+        margins = figure.subplotpars
+        width = max(1.0, float(figure_box.width))
+        height = max(1.0, float(figure_box.height))
+        new_left = float(margins.left) + over_left / width
+        new_right = float(margins.right) - over_right / width
+        new_bottom = float(margins.bottom) + over_bottom / height
+        new_top = float(margins.top) - over_top / height
+        # Keep a usable central plotting region even in a very small popup. The
+        # remaining overflow will disappear naturally when the window is enlarged.
+        if new_right - new_left < 0.12 or new_top - new_bottom < 0.12:
+            break
+        figure.subplots_adjust(
+            left=new_left,
+            right=new_right,
+            bottom=new_bottom,
+            top=new_top,
+        )
+        changed = True
+
+    if changed:
+        canvas.draw()
+    return changed
+
+
+def _expression_colormap(request: ScanpyPlotRequest) -> str:
+    if request.expression_colormap != "automatic":
+        return request.expression_colormap
+    return "coolwarm" if request.expression_scale == "zscore_marker" else "viridis"
+
+
+def _configure_scanpy_baseplot(
+    sc,
+    plot_adata,
+    plot_object,
+    request: ScanpyPlotRequest,
+    groups: list[str],
+) -> None:
+    """Apply shared native options without consulting source-AnnData plot state."""
+
+    if request.side_annotation == "dendrogram":
+        if len(request.markers) < 2:
+            raise ValueError(
+                "A fresh expression dendrogram requires at least two markers."
+            )
+        if len(groups) < 3:
+            raise ValueError(
+                "A dendrogram requires at least three represented populations."
+            )
+        dendrogram_key = "_napari_sbt_fresh_dendrogram"
+        try:
+            sc.tl.dendrogram(
+                plot_adata,
+                groupby=request.groupby,
+                var_names=request.markers,
+                use_raw=False,
+                cor_method=request.dendrogram_correlation,
+                linkage_method=request.dendrogram_linkage,
+                optimal_ordering=request.dendrogram_optimal_ordering,
+                key_added=dendrogram_key,
+                inplace=True,
+            )
+        except Exception as error:  # noqa: BLE001 - provide an actionable GUI error
+            raise ValueError(
+                "The fresh dendrogram could not be calculated from the currently "
+                "selected cells and markers. Try adding informative markers or "
+                "using more represented populations."
+            ) from error
+        plot_object.add_dendrogram(dendrogram_key=dendrogram_key)
+    elif request.side_annotation == "totals":
+        totals_sort = None if request.totals_sort == "none" else request.totals_sort
+        plot_object.add_totals(sort=totals_sort)
+    if request.swap_axes:
+        plot_object.swap_axes()
+
+
+def _expression_option_summary(request: ScanpyPlotRequest) -> str:
+    options: list[str] = []
+    if request.side_annotation == "dendrogram":
+        options.append(
+            "fresh "
+            f"{request.dendrogram_correlation}/{request.dendrogram_linkage} "
+            "dendrogram"
+        )
+    elif request.side_annotation == "totals":
+        ordering = (
+            "source order"
+            if request.totals_sort == "none"
+            else f"{request.totals_sort} order"
+        )
+        options.append(f"population totals ({ordering})")
+    if request.swap_axes:
+        options.append("axes swapped")
+    options.append(f"{_expression_colormap(request)} colour map")
+    return "; ".join(options)
+
+
+def _scanpy_baseplot_figure(plot_object):
+    """Materialize and detach a Scanpy BasePlot figure for the managed Qt popup."""
+
+    plot_object.make_figure()
+    figure = plot_object.fig
+    if figure is None:
+        raise RuntimeError("Scanpy did not create a Matplotlib figure.")
+    # BasePlot uses nested GridSpecs plus separate legend axes. Its layout is fitted
+    # after the Qt canvas has its real pixel dimensions, and again after a resize.
+    try:
+        figure.set_layout_engine(None)
+    except (AttributeError, RuntimeError, TypeError):
+        figure.set_tight_layout(False)
+    # Scanpy builds through pyplot. Remove its hidden manager before NapariSBT
+    # attaches the same Figure to the resizable popup canvas.
+    from matplotlib import pyplot as plt
+
+    plt.close(figure)
+    return figure
+
+
+def _expression_plot_adata(
+    adata,
+    request: ScanpyPlotRequest,
+    groups: list[str],
+    *,
+    positions: np.ndarray,
+    labels: np.ndarray,
+    values: np.ndarray,
+):
+    """Create a marker-only AnnData so native plotting never copies full ``X``."""
+
+    _sc, AnnData = _native_scanpy_modules()
+    plot_adata = AnnData(
+        X=values,
+        obs=_plot_obs(
+            labels,
+            groups=groups,
+            groupby=request.groupby,
+            obs_names=adata.obs_names[positions].astype(str),
+        ),
+        var=pd.DataFrame(index=pd.Index(request.markers, dtype=str)),
+    )
+    _apply_plot_palette(plot_adata, adata, request.groupby, groups)
+    return plot_adata
+
+
 def _build_embedding_plot(
     adata,
     request: ScanpyPlotRequest,
@@ -401,49 +695,48 @@ def _build_embedding_plot(
     )
     display_positions = positions[keep]
     display_labels = labels[keep]
-    groups = _present_group_order(adata.obs[request.groupby], mask)
-    colours = categorical_colour_map(adata, request.groupby)
-    from matplotlib.figure import Figure
-
-    figure = Figure(figsize=(9, 7), constrained_layout=True)
-    axis = figure.add_subplot(111)
-    for group in groups:
-        selected = display_labels == group
-        if not bool(selected.any()):
-            continue
-        axis.scatter(
-            coordinates[display_positions[selected], x_position],
-            coordinates[display_positions[selected], y_position],
-            s=float(request.point_size),
-            c=colours.get(group, "#9ca3af"),
-            alpha=float(request.point_alpha),
-            linewidths=0,
-            rasterized=True,
-            label=group,
-        )
-        if request.label_centroids:
-            x_values = coordinates[display_positions[selected], x_position]
-            y_values = coordinates[display_positions[selected], y_position]
-            axis.text(
-                float(np.nanmedian(x_values)),
-                float(np.nanmedian(y_values)),
-                group,
-                fontsize=8,
-                weight="bold",
-                ha="center",
-                va="center",
-            )
-    axis.set_xlabel(f"{request.embedding_key} {request.x_component}")
-    axis.set_ylabel(f"{request.embedding_key} {request.y_component}")
+    groups = [
+        group
+        for group in _present_group_order(adata.obs[request.groupby], mask)
+        if group in set(display_labels)
+    ]
     title = f"{request.groupby} on {request.embedding_key}"
-    axis.set_title(title)
-    if len(groups) <= 30:
-        axis.legend(
-            bbox_to_anchor=(1.02, 1),
-            loc="upper left",
-            markerscale=3,
-            frameon=False,
-        )
+    sc, AnnData = _native_scanpy_modules()
+    plot_adata = AnnData(
+        X=np.empty((len(display_positions), 0), dtype=np.float32),
+        obs=_plot_obs(
+            display_labels,
+            groups=groups,
+            groupby=request.groupby,
+            obs_names=adata.obs_names[display_positions].astype(str),
+        ),
+    )
+    plot_adata.obsm[request.embedding_key] = np.asarray(
+        coordinates[display_positions], dtype=float
+    )
+    _apply_plot_palette(plot_adata, adata, request.groupby, groups)
+    figure = sc.pl.embedding(
+        plot_adata,
+        basis=request.embedding_key,
+        color=request.groupby,
+        dimensions=(x_position, y_position),
+        size=float(request.point_size),
+        alpha=float(request.point_alpha),
+        legend_loc="on data" if request.label_centroids else "right margin",
+        legend_fontsize=8,
+        legend_fontweight="bold",
+        frameon=True,
+        title=title,
+        return_fig=True,
+        show=False,
+    )
+    if figure is None:
+        raise RuntimeError("Scanpy did not create an embedding figure.")
+    figure.set_size_inches(9, 7, forward=True)
+    _enable_tight_layout(figure)
+    from matplotlib import pyplot as plt
+
+    plt.close(figure)
     table = pd.DataFrame(
         {
             "obs_name": adata.obs_names[display_positions].astype(str),
@@ -464,7 +757,16 @@ def _build_expression_plot(
     request: ScanpyPlotRequest,
     mask: np.ndarray,
 ) -> ScanpyPlotArtifact:
-    summary = expression_group_summary(adata, request, mask)
+    positions = np.flatnonzero(mask)
+    values = _expression_values(
+        adata,
+        source=request.matrix_source,
+        markers=request.markers,
+        mask=mask,
+    )
+    labels = _display_labels(adata.obs[request.groupby].iloc[positions])
+    groups = _present_group_order(adata.obs[request.groupby], mask)
+    summary = _expression_summary_from_values(values, labels, groups, request)
     groups = list(dict.fromkeys(summary["population"].astype(str)))
     markers = list(request.markers)
     displayed = _summary_matrix(
@@ -478,122 +780,96 @@ def _build_expression_plot(
         "zscore_marker": "marker-wise z-score",
         "minmax_marker": "marker-wise 0–1 range",
     }[request.expression_scale]
-    from matplotlib.figure import Figure
-
     width = max(8, min(22, len(markers) * 0.38 + 4))
     height = max(5, min(22, len(groups) * 0.32 + 3))
-    figure = Figure(figsize=(width, height), constrained_layout=True)
-    axis = figure.add_subplot(111)
+    colour_values = pd.DataFrame(displayed, index=groups, columns=markers)
+    sc, _AnnData = _native_scanpy_modules()
+    plot_adata = _expression_plot_adata(
+        adata,
+        request,
+        groups,
+        positions=positions,
+        labels=labels,
+        values=values,
+    )
+    cmap = _expression_colormap(request)
+    option_summary = _expression_option_summary(request)
     if request.plot_type == "dotplot":
-        fractions = _summary_matrix(
-            summary,
-            value="fraction_positive",
-            groups=groups,
-            markers=markers,
-        )
-        x, y = np.meshgrid(np.arange(len(markers)), np.arange(len(groups)))
-        points = axis.scatter(
-            x.ravel(),
-            y.ravel(),
-            s=20 + np.nan_to_num(fractions.ravel(), nan=0.0) * 300,
-            c=displayed.ravel(),
-            cmap="viridis",
-            edgecolors="#374151",
-            linewidths=0.25,
-        )
-        figure.colorbar(points, ax=axis, label=scale_label)
         title = f"{request.groupby}: marker dot plot"
+        plot_object = sc.pl.dotplot(
+            plot_adata,
+            markers,
+            groupby=request.groupby,
+            use_raw=False,
+            categories_order=groups,
+            expression_cutoff=float(request.positivity_threshold),
+            dot_color_df=colour_values,
+            title=title,
+            colorbar_title=scale_label,
+            size_title=(f"Fraction > {float(request.positivity_threshold):g}"),
+            figsize=(width, height),
+            cmap=cmap,
+            return_fig=True,
+            show=False,
+        )
+        _configure_scanpy_baseplot(sc, plot_adata, plot_object, request, groups)
+        figure = _scanpy_baseplot_figure(plot_object)
     elif request.plot_type == "violin":
         if len(markers) > 12:
             raise ValueError("Select at most 12 markers for a distribution plot.")
-        figure.clear()
-        figure.set_size_inches(
-            max(9, min(24, len(groups) * 0.45 + 5)),
-            max(5, min(28, len(markers) * 2.0 + 2)),
-            forward=True,
-        )
-        axes = figure.subplots(len(markers), 1, squeeze=False).ravel()
-        values = _expression_values(
-            adata,
-            source=request.matrix_source,
-            markers=markers,
-            mask=mask,
-        )
-        labels = _display_labels(adata.obs[request.groupby].iloc[np.flatnonzero(mask)])
-        rng = np.random.default_rng(0)
-        for marker_index, (marker, marker_axis) in enumerate(zip(markers, axes)):
-            distributions: list[np.ndarray] = []
-            distribution_positions: list[int] = []
-            constant_positions: list[int] = []
-            constant_values: list[float] = []
-            for group_index, group in enumerate(groups, start=1):
-                population_values = values[labels == group, marker_index]
-                population_values = population_values[np.isfinite(population_values)]
-                if len(population_values) > 2_000:
-                    population_values = rng.choice(
-                        population_values, size=2_000, replace=False
-                    )
-                if len(population_values):
-                    if (
-                        len(population_values) >= 2
-                        and float(
-                            np.nanmax(population_values) - np.nanmin(population_values)
-                        )
-                        > 0
-                    ):
-                        distributions.append(population_values)
-                        distribution_positions.append(group_index)
-                    else:
-                        constant_positions.append(group_index)
-                        constant_values.append(float(population_values[0]))
-            if distributions:
-                marker_axis.violinplot(
-                    distributions,
-                    positions=distribution_positions,
-                    showmedians=True,
-                    showextrema=False,
-                )
-            if constant_positions:
-                marker_axis.scatter(
-                    constant_positions,
-                    constant_values,
-                    marker="_",
-                    s=80,
-                    color="#1f2937",
-                    linewidths=1.5,
-                )
-            marker_axis.set_ylabel(marker)
-            marker_axis.set_xticks(np.arange(1, len(groups) + 1))
-            marker_axis.set_xticklabels(
-                groups if marker_index == len(markers) - 1 else [],
-                rotation=45,
-                ha="right",
-            )
         title = f"{request.groupby}: marker distributions"
-        figure.suptitle(title)
+        plot_object = sc.pl.stacked_violin(
+            plot_adata,
+            markers,
+            groupby=request.groupby,
+            use_raw=False,
+            categories_order=groups,
+            title=title,
+            colorbar_title="Median expression",
+            figsize=(
+                max(9, min(24, len(groups) * 0.45 + 5)),
+                max(5, min(28, len(markers) * 0.75 + 3)),
+            ),
+            stripplot=False,
+            cmap=cmap,
+            return_fig=True,
+            show=False,
+        )
+        _configure_scanpy_baseplot(sc, plot_adata, plot_object, request, groups)
+        figure = _scanpy_baseplot_figure(plot_object)
         return ScanpyPlotArtifact(
             figure,
             title,
             summary,
             int(mask.sum()),
             f"{int(mask.sum()):,} selected cells; {len(groups)} populations; "
-            f"{len(markers)} markers from {request.matrix_source}.",
+            f"{len(markers)} markers from {request.matrix_source}; {option_summary}.",
         )
     else:
-        image = axis.imshow(displayed, aspect="auto", cmap="coolwarm")
-        figure.colorbar(image, ax=axis, label=scale_label)
         title = f"{request.groupby}: population mean marker expression"
-    axis.set_xticks(np.arange(len(markers)), labels=markers, rotation=90)
-    axis.set_yticks(np.arange(len(groups)), labels=groups)
-    axis.set_ylim(len(groups) - 0.5, -0.5)
-    axis.set_title(title)
+        plot_object = sc.pl.matrixplot(
+            plot_adata,
+            markers,
+            groupby=request.groupby,
+            use_raw=False,
+            categories_order=groups,
+            values_df=colour_values,
+            title=title,
+            colorbar_title=scale_label,
+            figsize=(width, height),
+            cmap=cmap,
+            return_fig=True,
+            show=False,
+        )
+        _configure_scanpy_baseplot(sc, plot_adata, plot_object, request, groups)
+        figure = _scanpy_baseplot_figure(plot_object)
     return ScanpyPlotArtifact(
         figure,
         title,
         summary,
         int(mask.sum()),
         f"{int(mask.sum()):,} selected cells; {len(groups)} populations; "
-        f"{len(markers)} markers from {request.matrix_source}.",
+        f"{len(markers)} markers from {request.matrix_source}; {option_summary}.",
     )
 
 
@@ -772,6 +1048,8 @@ __all__ = [
     "build_scanpy_plot",
     "deterministic_stratified_indices",
     "expression_group_summary",
+    "figure_subplot_margins",
+    "fit_scanpy_figure_to_canvas",
     "groupable_obs_columns",
     "matrix_source_choices",
     "matrix_source_var_names",

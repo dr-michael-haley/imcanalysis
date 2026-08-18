@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import numpy as np
+
 from .scanpy_plotting import (
     PLOT_TYPE_LABELS,
     ScanpyPlotRequest,
@@ -90,6 +92,15 @@ class ScanpyPlottingPanel:
         self.roi_list = QListWidget()
         self.roi_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.roi_list.setMaximumHeight(105)
+        roi_actions = QWidget()
+        roi_actions_layout = QHBoxLayout(roi_actions)
+        roi_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.clear_rois_button = QPushButton("Clear ROI selection")
+        self.clear_rois_button.setToolTip(
+            "Use every available ROI by clearing the optional ROI filter."
+        )
+        roi_actions_layout.addWidget(self.clear_rois_button)
+        roi_actions_layout.addStretch(1)
         self.matrix_source_combo = QComboBox()
         self.data_summary_label = QLabel("Load AnnData to configure plotting.")
         self.data_summary_label.setWordWrap(True)
@@ -98,6 +109,7 @@ class ScanpyPlottingPanel:
         data_form.addRow("Populations", self.group_values_list)
         data_form.addRow("", group_actions)
         data_form.addRow("ROIs (none selected = all)", self.roi_list)
+        data_form.addRow("", roi_actions)
         data_form.addRow("Expression matrix", self.matrix_source_combo)
         data_form.addRow("Selection summary", self.data_summary_label)
         layout.addWidget(data_group)
@@ -184,11 +196,62 @@ class ScanpyPlottingPanel:
             "A cell is counted as positive when its selected-matrix value is "
             "strictly greater than this threshold."
         )
+        self.expression_colormap_combo = QComboBox()
+        for label, value in (
+            ("Automatic", "automatic"),
+            ("Viridis", "viridis"),
+            ("Blue", "Blues"),
+            ("Red", "Reds"),
+            ("Magma", "magma"),
+            ("Plasma", "plasma"),
+            ("Diverging blue–red", "coolwarm"),
+        ):
+            self.expression_colormap_combo.addItem(label, value)
+        self.side_annotation_combo = QComboBox()
+        self.side_annotation_combo.addItem("None", "none")
+        self.side_annotation_combo.addItem(
+            "Fresh dendrogram — recalculate now", "dendrogram"
+        )
+        self.side_annotation_combo.addItem("Population cell totals", "totals")
+        self.totals_sort_combo = QComboBox()
+        self.totals_sort_combo.addItem("Keep population order", "none")
+        self.totals_sort_combo.addItem("Smallest population first", "ascending")
+        self.totals_sort_combo.addItem("Largest population first", "descending")
+        self.dendrogram_correlation_combo = QComboBox()
+        self.dendrogram_correlation_combo.addItem("Pearson", "pearson")
+        self.dendrogram_correlation_combo.addItem("Spearman", "spearman")
+        self.dendrogram_correlation_combo.addItem("Kendall", "kendall")
+        self.dendrogram_linkage_combo = QComboBox()
+        self.dendrogram_linkage_combo.addItem("Complete", "complete")
+        self.dendrogram_linkage_combo.addItem("Average", "average")
+        self.dendrogram_linkage_combo.addItem("Single", "single")
+        self.dendrogram_optimal_ordering_check = QCheckBox(
+            "Minimise distances between adjacent leaves"
+        )
+        self.dendrogram_optimal_ordering_check.setChecked(True)
+        self.swap_axes_check = QCheckBox("Put populations on the horizontal axis")
+        self.fresh_dendrogram_label = QLabel(
+            "Fresh dendrograms use only the currently selected cells and markers. "
+            "Any dendrogram stored in the source AnnData is ignored."
+        )
+        self.fresh_dendrogram_label.setWordWrap(True)
         expression_form.addRow("Find marker", self.marker_search_edit)
         expression_form.addRow("Markers", self.marker_list)
         expression_form.addRow("", marker_actions)
         expression_form.addRow("Colour scaling", self.expression_scale_combo)
         expression_form.addRow("Dot-plot positivity threshold", self.positivity_spin)
+        expression_form.addRow("Colour map", self.expression_colormap_combo)
+        expression_form.addRow("Side annotation", self.side_annotation_combo)
+        expression_form.addRow("Totals ordering", self.totals_sort_combo)
+        expression_form.addRow(
+            "Dendrogram correlation", self.dendrogram_correlation_combo
+        )
+        expression_form.addRow("Dendrogram linkage", self.dendrogram_linkage_combo)
+        expression_form.addRow(
+            "Dendrogram ordering", self.dendrogram_optimal_ordering_check
+        )
+        expression_form.addRow("Axis arrangement", self.swap_axes_check)
+        expression_form.addRow("", self.fresh_dendrogram_label)
         self.options_stack.addWidget(expression_page)
 
         composition_page = QWidget()
@@ -289,6 +352,7 @@ class ScanpyPlottingPanel:
         self.clear_markers_button.clicked.connect(self.marker_list.clearSelection)
         self.select_all_groups_button.clicked.connect(self.group_values_list.selectAll)
         self.clear_groups_button.clicked.connect(self.group_values_list.clearSelection)
+        self.clear_rois_button.clicked.connect(self.roi_list.clearSelection)
         for control in (
             self.embedding_x_spin,
             self.embedding_y_spin,
@@ -298,6 +362,13 @@ class ScanpyPlottingPanel:
             self.centroid_labels_check,
             self.expression_scale_combo,
             self.positivity_spin,
+            self.expression_colormap_combo,
+            self.side_annotation_combo,
+            self.totals_sort_combo,
+            self.dendrogram_correlation_combo,
+            self.dendrogram_linkage_combo,
+            self.dendrogram_optimal_ordering_check,
+            self.swap_axes_check,
             self.composition_obs_combo,
             self.composition_measure_combo,
             self.comparison_obs_combo,
@@ -309,6 +380,9 @@ class ScanpyPlottingPanel:
             if signal is None:
                 signal = getattr(control, "toggled")
             signal.connect(self._controls_changed)
+        self.side_annotation_combo.currentIndexChanged.connect(
+            self._expression_annotation_changed
+        )
         self._plot_type_changed()
 
     @staticmethod
@@ -433,8 +507,10 @@ class ScanpyPlottingPanel:
             or self._roi_obs not in self._adata.obs
         ):
             self.roi_list.setEnabled(False)
+            self.clear_rois_button.setEnabled(False)
             return
         self.roi_list.setEnabled(True)
+        self.clear_rois_button.setEnabled(True)
         self.roi_list.addItems(ordered_obs_values(self._adata.obs[self._roi_obs]))
         for index in range(self.roi_list.count()):
             item = self.roi_list.item(index)
@@ -486,18 +562,25 @@ class ScanpyPlottingPanel:
         if plot_type == "embedding":
             page = 0
             description = (
-                "Shows the selected labels on an existing AnnData embedding; "
+                "Uses scanpy.pl.embedding to show the selected labels on an "
+                "existing AnnData embedding; "
                 "large views are stratified and downsampled for responsiveness."
             )
         elif plot_type in {"heatmap", "dotplot", "violin"}:
             page = 1
             description = {
-                "heatmap": "Compares mean marker expression between populations.",
-                "dotplot": (
-                    "Shows mean expression by colour and the fraction above the "
-                    "positivity threshold by dot size."
+                "heatmap": (
+                    "Uses scanpy.pl.matrixplot to compare mean marker expression "
+                    "between populations."
                 ),
-                "violin": "Shows marker-value distributions within each population.",
+                "dotplot": (
+                    "Uses scanpy.pl.dotplot: mean expression is shown by colour "
+                    "and the fraction above the positivity threshold by dot size."
+                ),
+                "violin": (
+                    "Uses scanpy.pl.stacked_violin to show marker-value "
+                    "distributions within each population."
+                ),
             }[plot_type]
         elif plot_type in {"composition_bar", "composition_heatmap"}:
             page = 2
@@ -512,8 +595,30 @@ class ScanpyPlottingPanel:
                 "subclusters are explicit."
             )
         self.options_stack.setCurrentIndex(page)
+        self.expression_scale_combo.setEnabled(plot_type in {"heatmap", "dotplot"})
+        self.expression_scale_combo.setToolTip(
+            "Controls matrix and dot colours. Stacked violins always show the "
+            "stored values from the selected expression matrix."
+        )
+        self.positivity_spin.setEnabled(plot_type == "dotplot")
+        self._expression_annotation_changed()
         self.plot_description_label.setText(description)
         self._controls_changed()
+
+    def _expression_annotation_changed(self, *_args) -> None:
+        plot_type = self.plot_type_combo.currentData()
+        expression_plot = plot_type in {"heatmap", "dotplot", "violin"}
+        annotation = self.side_annotation_combo.currentData()
+        dendrogram = expression_plot and annotation == "dendrogram"
+        totals = expression_plot and annotation == "totals"
+        for control in (
+            self.dendrogram_correlation_combo,
+            self.dendrogram_linkage_combo,
+            self.dendrogram_optimal_ordering_check,
+            self.fresh_dendrogram_label,
+        ):
+            control.setEnabled(dendrogram)
+        self.totals_sort_combo.setEnabled(totals)
 
     def _filter_markers(self, text: str) -> None:
         needle = str(text).strip().casefold()
@@ -541,6 +646,15 @@ class ScanpyPlottingPanel:
             markers=self._selected_text(self.marker_list),
             expression_scale=str(self.expression_scale_combo.currentData()),
             positivity_threshold=float(self.positivity_spin.value()),
+            expression_colormap=str(self.expression_colormap_combo.currentData()),
+            side_annotation=str(self.side_annotation_combo.currentData()),
+            totals_sort=str(self.totals_sort_combo.currentData()),
+            dendrogram_correlation=str(self.dendrogram_correlation_combo.currentData()),
+            dendrogram_linkage=str(self.dendrogram_linkage_combo.currentData()),
+            dendrogram_optimal_ordering=bool(
+                self.dendrogram_optimal_ordering_check.isChecked()
+            ),
+            swap_axes=bool(self.swap_axes_check.isChecked()),
             embedding_key=self.embedding_combo.currentText() or None,
             x_component=int(self.embedding_x_spin.value()),
             y_component=int(self.embedding_y_spin.value()),
@@ -575,6 +689,24 @@ class ScanpyPlottingPanel:
                 maximum = 12 if request.plot_type == "violin" else 100
                 if len(request.markers) > maximum:
                     raise ValueError(f"Select at most {maximum} markers for this plot.")
+                if request.side_annotation == "dendrogram":
+                    if len(request.markers) < 2:
+                        raise ValueError(
+                            "A fresh expression dendrogram requires at least two "
+                            "markers."
+                        )
+                    represented_groups = int(
+                        self._adata.obs[request.groupby]
+                        .iloc[np.flatnonzero(mask)]
+                        .astype("string")
+                        .fillna("Unassigned")
+                        .nunique()
+                    )
+                    if represented_groups < 3:
+                        raise ValueError(
+                            "A dendrogram requires at least three represented "
+                            "populations in the selected cells."
+                        )
             if request.plot_type.startswith("composition"):
                 if not request.composition_obs:
                     raise ValueError("Choose a sample or ROI grouping.")
@@ -595,9 +727,16 @@ class ScanpyPlottingPanel:
             if request.selected_rois
             else " across all available ROIs"
         )
+        annotation_text = ""
+        if request.plot_type in {"heatmap", "dotplot", "violin"}:
+            annotation_text = {
+                "none": "",
+                "dendrogram": "; a fresh dendrogram will be recalculated",
+                "totals": "; population totals will be displayed",
+            }[request.side_annotation]
         summary = (
             f"{int(mask.sum()):,} cells in {group_count:,} label groups{roi_text}; "
-            f"expression source {request.matrix_source}."
+            f"expression source {request.matrix_source}{annotation_text}."
         )
         self.data_summary_label.setText(summary)
         self._set_readiness(True, f"Ready — {summary}")

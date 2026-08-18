@@ -148,7 +148,11 @@ from .population_qc import (
     top_population_markers,
 )
 from .resources import resolve_worker_count
-from .scanpy_plotting import build_scanpy_plot
+from .scanpy_plotting import (
+    build_scanpy_plot,
+    figure_subplot_margins,
+    fit_scanpy_figure_to_canvas,
+)
 from .setup import (
     WORKFLOW_PRESENTATIONS,
     WorkspaceSummary,
@@ -6718,6 +6722,7 @@ class NapariSBTController:
                 FigureCanvasQTAgg,
                 NavigationToolbar2QT,
             )
+        from qtpy.QtCore import QTimer
         from qtpy.QtWidgets import (
             QHBoxLayout,
             QLabel,
@@ -6729,7 +6734,21 @@ class NapariSBTController:
         dialog = self.QDialog(self.root)
         window_id = uuid4().hex
         dialog.setWindowTitle(f"NapariSBT Scanpy plotting — {artifact.title}")
-        dialog.resize(1040, 800)
+        requested_width = max(
+            1040,
+            int(artifact.figure.get_figwidth() * artifact.figure.dpi) + 40,
+        )
+        requested_height = max(
+            800,
+            int(artifact.figure.get_figheight() * artifact.figure.dpi) + 150,
+        )
+        try:
+            available = self.root.screen().availableGeometry()
+            requested_width = min(requested_width, int(available.width() * 0.94))
+            requested_height = min(requested_height, int(available.height() * 0.94))
+        except (AttributeError, RuntimeError):
+            pass
+        dialog.resize(requested_width, requested_height)
         layout = QVBoxLayout(dialog)
         canvas = FigureCanvasQTAgg(artifact.figure)
         canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -6750,12 +6769,46 @@ class NapariSBTController:
         layout.addWidget(summary_label)
         layout.addLayout(actions)
         canvas.draw()
+        responsive_scanpy_layout = request.plot_type in {
+            "heatmap",
+            "dotplot",
+            "violin",
+        }
+        baseline_margins = (
+            figure_subplot_margins(artifact.figure)
+            if responsive_scanpy_layout
+            else None
+        )
+        layout_timer = QTimer(dialog)
+        layout_timer.setSingleShot(True)
+        layout_timer.setInterval(60)
+
+        def refit_scanpy_layout() -> None:
+            if not responsive_scanpy_layout or not canvas.isVisible():
+                return
+            fit_scanpy_figure_to_canvas(
+                artifact.figure,
+                baseline_margins=baseline_margins,
+            )
+
+        layout_timer.timeout.connect(refit_scanpy_layout)
+
+        def schedule_scanpy_layout(*_args) -> None:
+            if responsive_scanpy_layout:
+                layout_timer.start()
+
+        resize_connection = canvas.mpl_connect(
+            "resize_event",
+            schedule_scanpy_layout,
+        )
         dialog.setAttribute(self.Qt.WA_DeleteOnClose, True)
         self.scanpy_plot_windows[window_id] = {
             "dialog": dialog,
             "artifact": artifact,
             "request": request,
             "stale_label": stale_label,
+            "layout_timer": layout_timer,
+            "resize_connection": resize_connection,
         }
         self.scanpy_plotting_panel.add_window(
             window_id,
@@ -6773,6 +6826,7 @@ class NapariSBTController:
 
         dialog.destroyed.connect(forget_dialog)
         dialog.show()
+        schedule_scanpy_layout()
 
     def export_scanpy_plot_data(self, window_id: str) -> None:
         record = self.scanpy_plot_windows.get(str(window_id))

@@ -59,7 +59,11 @@ environments:
     toolkit_overlay: editable-no-deps
     smoke_tests:
       - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
-      - [python, -c, "import cellpose, skimage"]
+      - [python, -c, "from importlib.metadata import version; assert version('cellpose') == '4.0.7'; assert version('torch') == '2.9.1'; assert version('torchvision') == '0.24.1'; assert version('nvidia-cuda-runtime-cu12') == '12.8.90'"]
+      - [bash, -c, 'export LD_LIBRARY_PATH="$CONDA_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; python -c "from cellpose import models; import skimage; import SpatialBiologyToolkit.scripts.cellpose_sam"']
+    notes:
+      - Dedicated Cellpose-SAM runtime using the CUDA 12.8 and Torch 2.9.1 generation captured from the working CSF3 environment.
+      - CSF3 must load the environment's Conda C++ runtime before Torch; otherwise Torch loads the older system libstdc++ and subsequent SciPy imports fail.
 
   starling:
     conda_name: sbt-starling

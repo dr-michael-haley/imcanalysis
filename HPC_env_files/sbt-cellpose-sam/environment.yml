@@ -11,4 +11,5 @@ dependencies:
   - tqdm
   - pyyaml
   - pydantic>=2.4,<3
+  - libstdcxx-ng>=15
   - pip

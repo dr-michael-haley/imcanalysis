@@ -661,13 +661,16 @@ classification cohort versus selected populations, optional ROIs, and an
 expression source from `adata.X`, `adata.raw`, or `adata.layers`. Categorical
 ordering and `adata.uns["<obs>_colors"]` palettes are reused throughout. A live
 summary reports the selected cell and group counts before a plot can be opened.
+**Clear ROI selection** removes the optional ROI filter and returns the plot scope
+to every available ROI.
 
 The initial plot collection includes:
 
-- population-coloured views of any existing `adata.obsm` embedding, with selectable
-  components, display limits, point size, opacity, and optional centroid names;
-- marker mean heat maps, mean/fraction-positive dot plots, and marker-distribution
-  violins from a searchable marker list;
+- native `scanpy.pl.embedding` population views of any existing `adata.obsm`
+  embedding, with selectable components, display limits, point size, opacity, and
+  optional on-data population names;
+- native `scanpy.pl.matrixplot`, `scanpy.pl.dotplot`, and
+  `scanpy.pl.stacked_violin` expression views from a searchable marker list;
 - population counts or within-sample percentages as stacked bars or heat maps,
   grouped by ROI, patient, condition, or another observation;
 - old-versus-new label cross-tabulation heat maps using counts, row percentages,
@@ -676,10 +679,26 @@ The initial plot collection includes:
 Embedding previews use deterministic population-stratified downsampling above the
 configurable point limit. Expression code slices selected markers before making a
 dense working array, rather than expanding the complete AnnData matrix. Aggregated
-plots continue to use all selected cells.
+plots continue to use all selected cells. Matrix and dot-plot colours can use
+marker-wise z-scores, marker-wise 0–1 scaling, or stored means; stacked violins
+show the stored matrix values directly. Common native controls include colormap,
+axis swapping, and one optional side annotation: a dendrogram or population cell
+totals. Totals may retain population order or sort by abundance.
+
+When requested, a dendrogram is always recalculated from the currently selected
+cells and markers in the temporary marker-only AnnData. Correlation (Pearson,
+Spearman, or Kendall), linkage (complete, average, or single), and optimal leaf
+ordering are configurable. NapariSBT never reads, replaces, or writes a dendrogram
+stored in the source AnnData, so changing labels, populations, ROI scope, cohort,
+expression source, or markers cannot silently reuse stale hierarchy state.
 
 Each plot opens in a modeless resizable window. The Matplotlib canvas follows the
-window size and includes its standard zoom, pan, reset, and save toolbar. The
+window size. Matrix plots, dot plots, and stacked violins measure their rendered
+labels and Scanpy legend axes, reserve the necessary outer margins, and repeat that
+fit after the popup is resized; this avoids the clipping that ordinary Matplotlib
+tight layout can produce with Scanpy's nested plotting grids. The initial popup
+also retains the requested Scanpy figure width where the available screen permits.
+The window includes Matplotlib's standard zoom, pan, reset, and save toolbar. The
 underlying plotted points or aggregate values can be exported to CSV. The main tab
 tracks open windows and can focus, close, or close all of them. Plots are snapshots;
 when the live AnnData is reloaded or synchronized, open windows are visibly marked
