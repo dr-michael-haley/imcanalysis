@@ -301,6 +301,7 @@ class RegistryTests(EnvironmentFixture):
         self.assertEqual(conda_requirements["distributed"], "=2024.11.2")
         self.assertEqual(conda_requirements["dask-expr"], "=1.1.19")
         self.assertEqual(conda_requirements["numpy"], "=1.26.4")
+        self.assertEqual(conda_requirements["numba"], "=0.60.0")
         self.assertEqual(conda_requirements["numcodecs"], "=0.15.1")
         self.assertEqual(pip_requirements["setuptools"].version, "<81")
         self.assertEqual(pip_requirements["scikit-image"].version, "0.24.0")
@@ -308,6 +309,7 @@ class RegistryTests(EnvironmentFixture):
         self.assertEqual(
             pip_requirements["rapids-singlecell"].version, "0.12.0"
         )
+        self.assertEqual(pip_requirements["numba"].version, "0.60.0")
         self.assertEqual(pip_requirements["cellcharter"].version, "0.3.7")
         self.assertNotIn("scarches", pip_requirements)
         self.assertNotIn("biostarling", pip_requirements)

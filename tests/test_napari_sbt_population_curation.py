@@ -9,6 +9,7 @@ from SpatialBiologyToolkit.napari_sbt.population_curation import (
     apply_population_draft,
     component_tables_from_assignments,
     create_population_draft,
+    harmonize_merge_colours,
     import_base_mapping_csv,
     integrate_component_tables,
     list_population_drafts,
@@ -117,6 +118,72 @@ def test_draft_renaming_explicit_merge_and_apply(tmp_path):
         action="save_newer_revision",
     )
     assert population_draft_sync_state(data, newer) == "stale"
+
+
+def test_merge_groups_receive_shared_and_distinct_colours():
+    base = pd.DataFrame(
+        [
+            ["0", 10, "immune", "#111111", ""],
+            ["1", 8, "immune", "#222222", ""],
+            ["2", 7, "stromal", "#111111", ""],
+            ["3", 6, "stromal", "#333333", ""],
+            ["4", 5, "unmerged", "#abcdef", ""],
+        ],
+        columns=[
+            "source_value",
+            "cell_count",
+            "proposed_label",
+            "color",
+            "notes",
+        ],
+    )
+    components = pd.DataFrame(
+        [
+            [
+                "component-1",
+                "4",
+                "scanpy",
+                "run-1",
+                "0",
+                2,
+                "immune",
+                "#444444",
+                "",
+            ]
+        ],
+        columns=[
+            "component_id",
+            "parent_source_value",
+            "method",
+            "run_id",
+            "component_value",
+            "cell_count",
+            "proposed_label",
+            "color",
+            "notes",
+        ],
+    )
+
+    harmonized_base, harmonized_components, assignments = (
+        harmonize_merge_colours(base, components)
+    )
+
+    assert assignments["immune"] == "#111111"
+    assert assignments["stromal"] != assignments["immune"]
+    assert set(
+        harmonized_base.loc[
+            harmonized_base["proposed_label"].eq("immune"), "color"
+        ]
+    ) == {assignments["immune"]}
+    assert harmonized_components.loc[0, "color"] == assignments["immune"]
+    assert set(
+        harmonized_base.loc[
+            harmonized_base["proposed_label"].eq("stromal"), "color"
+        ]
+    ) == {assignments["stromal"]}
+    assert harmonized_base.loc[
+        harmonized_base["proposed_label"].eq("unmerged"), "color"
+    ].item() == "#abcdef"
 
 
 def test_source_labels_with_trailing_whitespace_use_one_canonical_mapping(tmp_path):

@@ -28,10 +28,21 @@ ExpressionColormap = Literal[
 ]
 CompositionMeasure = Literal["count", "percent"]
 ComparisonNormalisation = Literal["count", "row_percent", "column_percent"]
+TitleMode = Literal["automatic", "custom", "hidden"]
+BarSortDirection = Literal["none", "ascending", "descending"]
 SideAnnotation = Literal["none", "dendrogram", "totals"]
 TotalsSort = Literal["none", "ascending", "descending"]
 DendrogramCorrelation = Literal["pearson", "spearman", "kendall"]
 DendrogramLinkage = Literal["complete", "average", "single"]
+LegendLocation = Literal[
+    "right margin",
+    "on data",
+    "best",
+    "upper right",
+    "upper left",
+    "lower right",
+    "lower left",
+]
 
 
 PLOT_TYPE_LABELS: dict[str, str] = {
@@ -54,6 +65,8 @@ class ScanpyPlotRequest(BaseModel):
     selected_groups: list[str] = Field(default_factory=list)
     roi_obs: str | None = None
     selected_rois: list[str] = Field(default_factory=list)
+    metadata_filter_obs: str | None = None
+    metadata_filter_values: list[str] = Field(default_factory=list)
     matrix_source: MatrixSource = "X"
     markers: list[str] = Field(default_factory=list)
     expression_scale: ExpressionScale = "zscore_marker"
@@ -65,15 +78,41 @@ class ScanpyPlotRequest(BaseModel):
     dendrogram_linkage: DendrogramLinkage = "complete"
     dendrogram_optimal_ordering: bool = True
     swap_axes: bool = False
+    reorder_markers_by_expression: bool = False
+    show_population_colours: bool = False
+    population_colour_label_gap: float = Field(default=25.0, ge=0, le=100)
+    population_colour_box_width: float = Field(default=10.0, ge=1, le=50)
     embedding_key: str | None = None
+    embedding_markers: list[str] = Field(default_factory=list)
+    embedding_ncols: int = Field(default=3, ge=1, le=8)
+    embedding_colormap: ExpressionColormap = "viridis"
     x_component: int = Field(default=1, ge=1)
     y_component: int = Field(default=2, ge=1)
     point_limit: int = Field(default=50_000, ge=100)
     point_size: float = Field(default=3.0, gt=0, le=100)
     point_alpha: float = Field(default=0.75, gt=0, le=1)
     label_centroids: bool = False
+    show_legend: bool = True
+    legend_location: LegendLocation = "right margin"
+    show_x_axis_label: bool = True
+    show_y_axis_label: bool = True
+    show_x_ticks: bool = True
+    show_y_ticks: bool = True
+    title_mode: TitleMode = "automatic"
+    custom_title: str = ""
+    heatmap_colormap: str = "viridis"
+    edge_color: str = "#ffffff"
+    edge_width: float = Field(default=0.0, ge=0, le=10)
     composition_obs: str | None = None
     composition_measure: CompositionMeasure = "percent"
+    bar_width: float = Field(default=0.9, ge=0.05, le=1.0)
+    bar_start_padding: float = Field(default=0.25, ge=0, le=10)
+    bar_end_padding: float = Field(default=0.25, ge=0, le=10)
+    bar_sort_population: str | None = None
+    bar_sort_direction: BarSortDirection = "none"
+    bar_manual_y_limits: bool = False
+    bar_y_min: float = 0.0
+    bar_y_max: float = 100.0
     comparison_obs: str | None = None
     comparison_normalisation: ComparisonNormalisation = "row_percent"
 
@@ -86,7 +125,16 @@ class ScanpyPlotRequest(BaseModel):
         self.selected_rois = list(
             dict.fromkeys(str(value) for value in self.selected_rois)
         )
+        self.metadata_filter_obs = (
+            str(self.metadata_filter_obs).strip() if self.metadata_filter_obs else None
+        )
+        self.metadata_filter_values = list(
+            dict.fromkeys(str(value) for value in self.metadata_filter_values)
+        )
         self.markers = list(dict.fromkeys(str(value) for value in self.markers))
+        self.embedding_markers = list(
+            dict.fromkeys(str(value) for value in self.embedding_markers)
+        )
         if not self.groupby:
             raise ValueError("Choose a label column to group the plot.")
         if self.cell_scope == "selected_groups" and not self.selected_groups:
@@ -95,6 +143,22 @@ class ScanpyPlotRequest(BaseModel):
             )
         if self.x_component == self.y_component:
             raise ValueError("Embedding X and Y components must be different.")
+        self.custom_title = str(self.custom_title).strip()
+        if self.title_mode == "custom" and not self.custom_title:
+            raise ValueError("Enter a custom title or choose automatic/hidden title.")
+        self.heatmap_colormap = str(self.heatmap_colormap).strip()
+        self.edge_color = str(self.edge_color).strip()
+        self.bar_sort_population = (
+            str(self.bar_sort_population).strip() if self.bar_sort_population else None
+        )
+        if not self.heatmap_colormap:
+            raise ValueError("Choose a heatmap colour map.")
+        if self.edge_width > 0 and not self.edge_color:
+            raise ValueError("Choose an edge colour or set edge width to zero.")
+        if self.bar_manual_y_limits and self.bar_y_min >= self.bar_y_max:
+            raise ValueError(
+                "The manual bar Y-axis maximum must be greater than the minimum."
+            )
         return self
 
 
@@ -141,13 +205,56 @@ def groupable_obs_columns(adata, *, maximum_values: int = 200) -> list[str]:
     return columns
 
 
+def sample_level_obs_columns(
+    adata,
+    *,
+    roi_obs: str | None,
+    maximum_values: int = 200,
+) -> list[str]:
+    """Return filterable observations which are constant within each ROI."""
+
+    candidates = groupable_obs_columns(adata, maximum_values=maximum_values)
+    if not roi_obs or roi_obs not in adata.obs:
+        return candidates
+    result: list[str] = []
+    roi_values = adata.obs[roi_obs].astype("string").fillna("Unassigned")
+    for column in candidates:
+        values = adata.obs[column].astype("string").fillna("Unassigned")
+        counts = values.groupby(roi_values, observed=True).nunique(dropna=False)
+        if counts.empty or int(counts.max()) <= 1:
+            result.append(column)
+    return result
+
+
+def _metadata_filter_suffix(request: ScanpyPlotRequest) -> str:
+    if not request.metadata_filter_obs or not request.metadata_filter_values:
+        return ""
+    visible = request.metadata_filter_values[:4]
+    values = ", ".join(visible)
+    if len(request.metadata_filter_values) > len(visible):
+        values += f", +{len(request.metadata_filter_values) - len(visible)} more"
+    return f" — {request.metadata_filter_obs}: {values}"
+
+
+def _resolved_titles(
+    request: ScanpyPlotRequest,
+    automatic_title: str,
+) -> tuple[str, str]:
+    """Return a stable window title and independently hideable plot title."""
+
+    automatic = f"{automatic_title}{_metadata_filter_suffix(request)}"
+    window_title = request.custom_title if request.title_mode == "custom" else automatic
+    plot_title = "" if request.title_mode == "hidden" else window_title
+    return window_title, plot_title
+
+
 def matrix_source_choices(adata) -> list[str]:
     """Return expression matrices which share AnnData's observation identity."""
 
     choices = ["X"]
     if getattr(adata, "raw", None) is not None:
         choices.append("raw")
-    choices.extend(f"layer::{key}" for key in adata.layers.keys())
+    choices.extend(f"layer::{key}" for key in adata.layers)
     return choices
 
 
@@ -219,6 +326,29 @@ def resolve_plot_cell_mask(
             .fillna(False)
             .to_numpy(dtype=bool)
         )
+    if request.metadata_filter_values:
+        if (
+            not request.metadata_filter_obs
+            or request.metadata_filter_obs not in adata.obs
+        ):
+            raise ValueError(
+                "Additional metadata filtering requires a valid observation."
+            )
+        available = set(
+            ordered_obs_values(
+                adata.obs[request.metadata_filter_obs], include_missing=True
+            )
+        )
+        unknown = sorted(set(request.metadata_filter_values) - available)
+        if unknown:
+            raise ValueError(
+                "Selected metadata values are no longer available: "
+                + ", ".join(unknown[:10])
+            )
+        values = (
+            adata.obs[request.metadata_filter_obs].astype("string").fillna("Unassigned")
+        )
+        mask &= values.isin(request.metadata_filter_values).to_numpy(dtype=bool)
     if not bool(mask.any()):
         raise ValueError("The selected plotting scope contains no cells.")
     return mask
@@ -290,7 +420,7 @@ def deterministic_stratified_indices(
     for index, group in enumerate(groups):
         positions = np.flatnonzero(labels == group)
         groups_left = len(groups) - index
-        proportional = int(round(maximum * len(positions) / count))
+        proportional = round(maximum * len(positions) / count)
         take = max(1, proportional)
         take = min(take, len(positions), remaining - max(0, groups_left - 1))
         if take > 0:
@@ -365,7 +495,7 @@ def _expression_summary_from_values(
                     "mean": float(mean),
                     "median": float(median),
                     "fraction_positive": float(fraction),
-                    "cell_count": int(len(group_values)),
+                    "cell_count": len(group_values),
                 }
             )
     result = pd.DataFrame(rows)
@@ -373,7 +503,7 @@ def _expression_summary_from_values(
         raise ValueError("No expression summaries could be calculated.")
     result["display_value"] = result["mean"].astype(float)
     if request.expression_scale != "none":
-        for _marker, positions in result.groupby("marker", sort=False).groups.items():
+        for positions in result.groupby("marker", sort=False).groups.values():
             position_list = list(positions)
             marker_values = result.loc[position_list, "mean"].to_numpy(dtype=float)
             if request.expression_scale == "zscore_marker":
@@ -557,6 +687,54 @@ def _expression_colormap(request: ScanpyPlotRequest) -> str:
     return "coolwarm" if request.expression_scale == "zscore_marker" else "viridis"
 
 
+def _embedding_colormap(request: ScanpyPlotRequest) -> str:
+    return (
+        "viridis"
+        if request.embedding_colormap == "automatic"
+        else request.embedding_colormap
+    )
+
+
+def _apply_axis_display_options(axes, request: ScanpyPlotRequest) -> None:
+    """Apply common label and tick visibility to one or more primary axes."""
+
+    from matplotlib.ticker import AutoLocator
+
+    if not isinstance(axes, (list, tuple)):
+        axes = [axes]
+    for axis in axes:
+        if axis is None:
+            continue
+        if request.show_x_ticks and len(axis.get_xticks()) == 0 and axis.has_data():
+            axis.xaxis.set_major_locator(AutoLocator())
+        if request.show_y_ticks and len(axis.get_yticks()) == 0 and axis.has_data():
+            axis.yaxis.set_major_locator(AutoLocator())
+        if not request.show_x_axis_label:
+            axis.set_xlabel("")
+        if not request.show_y_axis_label:
+            axis.set_ylabel("")
+        axis.tick_params(
+            axis="x",
+            bottom=request.show_x_ticks,
+            top=False,
+            labelbottom=request.show_x_ticks,
+        )
+        axis.tick_params(
+            axis="y",
+            left=request.show_y_ticks,
+            right=False,
+            labelleft=request.show_y_ticks,
+        )
+
+
+def _matplotlib_legend_kwargs(location: LegendLocation) -> dict[str, object]:
+    if location == "right margin":
+        return {"loc": "upper left", "bbox_to_anchor": (1.02, 1)}
+    if location == "on data":
+        return {"loc": "best"}
+    return {"loc": location}
+
+
 def _configure_scanpy_baseplot(
     sc,
     plot_adata,
@@ -565,6 +743,9 @@ def _configure_scanpy_baseplot(
     groups: list[str],
 ) -> None:
     """Apply shared native options without consulting source-AnnData plot state."""
+
+    if not request.show_legend:
+        plot_object.legends_width = 0
 
     if request.side_annotation == "dendrogram":
         if len(request.markers) < 2:
@@ -588,7 +769,7 @@ def _configure_scanpy_baseplot(
                 key_added=dendrogram_key,
                 inplace=True,
             )
-        except Exception as error:  # noqa: BLE001 - provide an actionable GUI error
+        except Exception as error:
             raise ValueError(
                 "The fresh dendrogram could not be calculated from the currently "
                 "selected cells and markers. Try adding informative markers or "
@@ -619,14 +800,217 @@ def _expression_option_summary(request: ScanpyPlotRequest) -> str:
         options.append(f"population totals ({ordering})")
     if request.swap_axes:
         options.append("axes swapped")
+    if request.reorder_markers_by_expression:
+        options.append("markers clustered by expression")
+    if request.show_population_colours:
+        options.append(
+            "population colour strip "
+            f"({request.population_colour_box_width:g} pt boxes; "
+            f"{request.population_colour_label_gap:g} pt label gap)"
+        )
     options.append(f"{_expression_colormap(request)} colour map")
     return "; ".join(options)
 
 
-def _scanpy_baseplot_figure(plot_object):
+def _ordered_expression_markers(plot_adata, request: ScanpyPlotRequest) -> list[str]:
+    """Order selected markers from the current filtered plotting matrix."""
+
+    markers = list(request.markers)
+    if not request.reorder_markers_by_expression or len(markers) < 2:
+        return markers
+    try:
+        from SpatialBiologyToolkit.utils import reorder_vars_by_expression
+
+        return list(reorder_vars_by_expression(plot_adata, markers))
+    except Exception as error:
+        raise ValueError(
+            "The selected markers could not be ordered by expression similarity. "
+            "Check that their values are finite and variable in the selected cells."
+        ) from error
+
+
+def _add_population_colour_strip(
+    plot_object,
+    plot_adata,
+    request: ScanpyPlotRequest,
+) -> None:
+    """Add the live AnnData population colours beside the population axis."""
+
+    if not request.show_population_colours:
+        return
+    main_axis = plot_object.ax_dict.get("mainplot_ax")
+    if main_axis is None:
+        return
+    series = plot_adata.obs[request.groupby]
+    categories = (
+        series.cat.categories.astype(str).tolist()
+        if isinstance(series.dtype, pd.CategoricalDtype)
+        else list(dict.fromkeys(series.astype(str)))
+    )
+    colours = list(plot_adata.uns.get(f"{request.groupby}_colors", []))
+    colour_map = dict(zip(categories, colours, strict=False))
+    if not colour_map:
+        return
+
+    from matplotlib.lines import Line2D
+    from matplotlib.transforms import ScaledTranslation, blended_transform_factory
+
+    box_width = float(request.population_colour_box_width)
+    # Keep the strip four points from the plotting axis. Moving its centre by half
+    # the requested line width keeps the near edge fixed while box size changes.
+    box_offset = 4.0 + box_width / 2.0
+
+    def add_colour_box(x_values, y_values, *, transform, colour: str) -> None:
+        outline = Line2D(
+            x_values,
+            y_values,
+            transform=transform,
+            clip_on=False,
+            color="#111827",
+            linewidth=box_width + 0.8,
+            solid_capstyle="butt",
+            zorder=249,
+        )
+        colour_box = Line2D(
+            x_values,
+            y_values,
+            transform=transform,
+            clip_on=False,
+            color=colour,
+            linewidth=box_width,
+            solid_capstyle="butt",
+            zorder=250,
+        )
+        colour_box.set_gid("napari_sbt_population_colour")
+        main_axis.add_line(outline)
+        main_axis.add_line(colour_box)
+
+    if plot_object.are_axes_swapped:
+        # Reserve a dedicated band between the horizontal colour strip and the
+        # population tick labels. The responsive fitter then includes this added
+        # label extent when calculating the bottom margin.
+        main_axis.tick_params(axis="x", pad=request.population_colour_label_gap)
+        positions = np.asarray(main_axis.get_xticks(), dtype=float)
+        labels = [label.get_text() for label in main_axis.get_xticklabels()]
+        transform = blended_transform_factory(
+            main_axis.transData, main_axis.transAxes
+        ) + ScaledTranslation(
+            0,
+            -box_offset / 72.0,
+            main_axis.figure.dpi_scale_trans,
+        )
+        step = _minimum_tick_step(positions)
+        for position, label in zip(positions, labels, strict=False):
+            colour = colour_map.get(label)
+            if colour is None:
+                continue
+            add_colour_box(
+                [position - step / 2, position + step / 2],
+                [0, 0],
+                transform=transform,
+                colour=colour,
+            )
+    else:
+        # Match the generous label padding used by matrixplot_with_row_colors.
+        # Without this, long right-aligned names occupy the same narrow margin as
+        # the strip and the final characters are drawn over its colours.
+        main_axis.tick_params(axis="y", pad=request.population_colour_label_gap)
+        positions = np.asarray(main_axis.get_yticks(), dtype=float)
+        labels = [label.get_text() for label in main_axis.get_yticklabels()]
+        transform = blended_transform_factory(
+            main_axis.transAxes, main_axis.transData
+        ) + ScaledTranslation(
+            -box_offset / 72.0,
+            0,
+            main_axis.figure.dpi_scale_trans,
+        )
+        step = _minimum_tick_step(positions)
+        for position, label in zip(positions, labels, strict=False):
+            colour = colour_map.get(label)
+            if colour is None:
+                continue
+            add_colour_box(
+                [0, 0],
+                [position - step / 2, position + step / 2],
+                transform=transform,
+                colour=colour,
+            )
+
+
+def _minimum_tick_step(positions: np.ndarray) -> float:
+    unique = np.unique(positions[np.isfinite(positions)])
+    if len(unique) < 2:
+        return 1.0
+    differences = np.abs(np.diff(unique))
+    positive = differences[differences > 0]
+    return float(positive.min()) if len(positive) else 1.0
+
+
+def _add_matplotlib_population_colour_strip(
+    axis,
+    *,
+    labels: list[str],
+    colours: dict[str, str],
+    population_axis: Literal["x", "y"],
+    request: ScanpyPlotRequest,
+) -> None:
+    """Add fixed-size population colour boxes to a Matplotlib heatmap axis."""
+
+    if not request.show_population_colours or not labels:
+        return
+    from matplotlib.lines import Line2D
+    from matplotlib.transforms import ScaledTranslation, blended_transform_factory
+
+    width = float(request.population_colour_box_width)
+    offset = 4.0 + width / 2.0
+    ticks = np.asarray(
+        axis.get_xticks() if population_axis == "x" else axis.get_yticks(),
+        dtype=float,
+    )
+    step = _minimum_tick_step(ticks)
+    if population_axis == "x":
+        axis.tick_params(axis="x", pad=request.population_colour_label_gap)
+        transform = blended_transform_factory(axis.transData, axis.transAxes) + (
+            ScaledTranslation(0, -offset / 72.0, axis.figure.dpi_scale_trans)
+        )
+    else:
+        axis.tick_params(axis="y", pad=request.population_colour_label_gap)
+        transform = blended_transform_factory(axis.transAxes, axis.transData) + (
+            ScaledTranslation(-offset / 72.0, 0, axis.figure.dpi_scale_trans)
+        )
+    for position, label in zip(ticks, labels, strict=False):
+        colour = colours.get(str(label))
+        if not colour:
+            continue
+        coordinates = (
+            ([position - step / 2, position + step / 2], [0, 0])
+            if population_axis == "x"
+            else ([0, 0], [position - step / 2, position + step / 2])
+        )
+        line = Line2D(
+            *coordinates,
+            transform=transform,
+            clip_on=False,
+            color=colour,
+            linewidth=width,
+            solid_capstyle="butt",
+            zorder=250,
+        )
+        line.set_gid("napari_sbt_population_colour")
+        axis.add_line(line)
+
+
+def _scanpy_baseplot_figure(
+    plot_object,
+    *,
+    plot_adata,
+    request: ScanpyPlotRequest,
+):
     """Materialize and detach a Scanpy BasePlot figure for the managed Qt popup."""
 
     plot_object.make_figure()
+    _add_population_colour_strip(plot_object, plot_adata, request)
+    _apply_axis_display_options(plot_object.ax_dict.get("mainplot_ax"), request)
     figure = plot_object.fig
     if figure is None:
         raise RuntimeError("Scanpy did not create a Matplotlib figure.")
@@ -700,39 +1084,94 @@ def _build_embedding_plot(
         for group in _present_group_order(adata.obs[request.groupby], mask)
         if group in set(display_labels)
     ]
-    title = f"{request.groupby} on {request.embedding_key}"
+    expression_markers = list(request.embedding_markers)
+    expression_values = None
+    if expression_markers:
+        selected_values = _expression_values(
+            adata,
+            source=request.matrix_source,
+            markers=expression_markers,
+            mask=mask,
+        )
+        expression_values = np.asarray(selected_values[keep], dtype=float)
+        automatic_title = f"{request.embedding_key}: expression"
+    else:
+        automatic_title = f"{request.groupby} on {request.embedding_key}"
+    title, plot_title = _resolved_titles(request, automatic_title)
     sc, AnnData = _native_scanpy_modules()
-    plot_adata = AnnData(
-        X=np.empty((len(display_positions), 0), dtype=np.float32),
-        obs=_plot_obs(
+    plot_adata_kwargs: dict[str, object] = {
+        "X": (
+            expression_values
+            if expression_values is not None
+            else np.empty((len(display_positions), 0), dtype=np.float32)
+        ),
+        "obs": _plot_obs(
             display_labels,
             groups=groups,
             groupby=request.groupby,
             obs_names=adata.obs_names[display_positions].astype(str),
         ),
-    )
+    }
+    if expression_markers:
+        plot_adata_kwargs["var"] = pd.DataFrame(
+            index=pd.Index(expression_markers, dtype=str)
+        )
+    plot_adata = AnnData(**plot_adata_kwargs)
     plot_adata.obsm[request.embedding_key] = np.asarray(
         coordinates[display_positions], dtype=float
     )
     _apply_plot_palette(plot_adata, adata, request.groupby, groups)
-    figure = sc.pl.embedding(
-        plot_adata,
-        basis=request.embedding_key,
-        color=request.groupby,
-        dimensions=(x_position, y_position),
-        size=float(request.point_size),
-        alpha=float(request.point_alpha),
-        legend_loc="on data" if request.label_centroids else "right margin",
-        legend_fontsize=8,
-        legend_fontweight="bold",
-        frameon=True,
-        title=title,
-        return_fig=True,
-        show=False,
+    legend_location = (
+        "none"
+        if not request.show_legend
+        else ("on data" if request.label_centroids else request.legend_location)
     )
+    plot_kwargs = {
+        "basis": request.embedding_key,
+        "dimensions": (x_position, y_position),
+        "size": float(request.point_size),
+        "alpha": float(request.point_alpha),
+        "frameon": True,
+        "return_fig": True,
+        "show": False,
+    }
+    if expression_markers:
+        suffix = _metadata_filter_suffix(request)
+        if request.title_mode == "hidden":
+            panel_titles = [""] * len(expression_markers)
+        elif request.title_mode == "custom":
+            panel_titles = [
+                f"{request.custom_title}: {marker}" for marker in expression_markers
+            ]
+        else:
+            panel_titles = [f"{marker}{suffix}" for marker in expression_markers]
+        plot_kwargs.update(
+            color=expression_markers,
+            use_raw=False,
+            ncols=int(request.embedding_ncols),
+            cmap=_embedding_colormap(request),
+            colorbar_loc="right" if request.show_legend else None,
+            title=panel_titles,
+        )
+    else:
+        plot_kwargs.update(
+            color=request.groupby,
+            legend_loc=legend_location,
+            legend_fontsize=8,
+            legend_fontweight="bold",
+            title=plot_title,
+        )
+    figure = sc.pl.embedding(plot_adata, **plot_kwargs)
     if figure is None:
         raise RuntimeError("Scanpy did not create an embedding figure.")
-    figure.set_size_inches(9, 7, forward=True)
+    if not expression_markers:
+        figure.set_size_inches(9, 7, forward=True)
+    data_axes = [
+        axis
+        for axis in figure.axes
+        if bool(axis.get_xlabel()) and bool(axis.get_ylabel())
+    ]
+    _apply_axis_display_options(data_axes or figure.axes[:1], request)
     _enable_tight_layout(figure)
     from matplotlib import pyplot as plt
 
@@ -745,10 +1184,20 @@ def _build_embedding_plot(
             "y": coordinates[display_positions, y_position],
         }
     )
-    summary = (
-        f"{len(display_positions):,} displayed of {len(positions):,} selected cells; "
-        f"grouped by {request.groupby}; source {request.embedding_key}."
-    )
+    if expression_markers and expression_values is not None:
+        for marker_index, marker in enumerate(expression_markers):
+            table[marker] = expression_values[:, marker_index]
+        summary = (
+            f"{len(display_positions):,} displayed of {len(positions):,} selected "
+            f"cells; {len(expression_markers)} expression panels from "
+            f"{request.matrix_source} on {request.embedding_key}; "
+            f"{request.embedding_ncols} columns."
+        )
+    else:
+        summary = (
+            f"{len(display_positions):,} displayed of {len(positions):,} selected "
+            f"cells; grouped by {request.groupby}; source {request.embedding_key}."
+        )
     return ScanpyPlotArtifact(figure, title, table, len(positions), summary)
 
 
@@ -768,7 +1217,23 @@ def _build_expression_plot(
     groups = _present_group_order(adata.obs[request.groupby], mask)
     summary = _expression_summary_from_values(values, labels, groups, request)
     groups = list(dict.fromkeys(summary["population"].astype(str)))
-    markers = list(request.markers)
+    plot_adata = _expression_plot_adata(
+        adata,
+        request,
+        groups,
+        positions=positions,
+        labels=labels,
+        values=values,
+    )
+    markers = _ordered_expression_markers(plot_adata, request)
+    summary = summary.assign(
+        population=pd.Categorical(
+            summary["population"].astype(str), categories=groups, ordered=True
+        ),
+        marker=pd.Categorical(
+            summary["marker"].astype(str), categories=markers, ordered=True
+        ),
+    ).sort_values(["population", "marker"], ignore_index=True)
     displayed = _summary_matrix(
         summary,
         value="display_value",
@@ -784,18 +1249,12 @@ def _build_expression_plot(
     height = max(5, min(22, len(groups) * 0.32 + 3))
     colour_values = pd.DataFrame(displayed, index=groups, columns=markers)
     sc, _AnnData = _native_scanpy_modules()
-    plot_adata = _expression_plot_adata(
-        adata,
-        request,
-        groups,
-        positions=positions,
-        labels=labels,
-        values=values,
-    )
     cmap = _expression_colormap(request)
     option_summary = _expression_option_summary(request)
     if request.plot_type == "dotplot":
-        title = f"{request.groupby}: marker dot plot"
+        title, plot_title = _resolved_titles(
+            request, f"{request.groupby}: marker dot plot"
+        )
         plot_object = sc.pl.dotplot(
             plot_adata,
             markers,
@@ -804,7 +1263,7 @@ def _build_expression_plot(
             categories_order=groups,
             expression_cutoff=float(request.positivity_threshold),
             dot_color_df=colour_values,
-            title=title,
+            title=plot_title,
             colorbar_title=scale_label,
             size_title=(f"Fraction > {float(request.positivity_threshold):g}"),
             figsize=(width, height),
@@ -813,18 +1272,24 @@ def _build_expression_plot(
             show=False,
         )
         _configure_scanpy_baseplot(sc, plot_adata, plot_object, request, groups)
-        figure = _scanpy_baseplot_figure(plot_object)
+        figure = _scanpy_baseplot_figure(
+            plot_object,
+            plot_adata=plot_adata,
+            request=request,
+        )
     elif request.plot_type == "violin":
         if len(markers) > 12:
             raise ValueError("Select at most 12 markers for a distribution plot.")
-        title = f"{request.groupby}: marker distributions"
+        title, plot_title = _resolved_titles(
+            request, f"{request.groupby}: marker distributions"
+        )
         plot_object = sc.pl.stacked_violin(
             plot_adata,
             markers,
             groupby=request.groupby,
             use_raw=False,
             categories_order=groups,
-            title=title,
+            title=plot_title,
             colorbar_title="Median expression",
             figsize=(
                 max(9, min(24, len(groups) * 0.45 + 5)),
@@ -836,7 +1301,11 @@ def _build_expression_plot(
             show=False,
         )
         _configure_scanpy_baseplot(sc, plot_adata, plot_object, request, groups)
-        figure = _scanpy_baseplot_figure(plot_object)
+        figure = _scanpy_baseplot_figure(
+            plot_object,
+            plot_adata=plot_adata,
+            request=request,
+        )
         return ScanpyPlotArtifact(
             figure,
             title,
@@ -846,7 +1315,9 @@ def _build_expression_plot(
             f"{len(markers)} markers from {request.matrix_source}; {option_summary}.",
         )
     else:
-        title = f"{request.groupby}: population mean marker expression"
+        title, plot_title = _resolved_titles(
+            request, f"{request.groupby}: population mean marker expression"
+        )
         plot_object = sc.pl.matrixplot(
             plot_adata,
             markers,
@@ -854,15 +1325,24 @@ def _build_expression_plot(
             use_raw=False,
             categories_order=groups,
             values_df=colour_values,
-            title=title,
+            title=plot_title,
             colorbar_title=scale_label,
             figsize=(width, height),
             cmap=cmap,
             return_fig=True,
             show=False,
         )
+        plot_object.style(
+            cmap=cmap,
+            edge_color=request.edge_color,
+            edge_lw=float(request.edge_width),
+        )
         _configure_scanpy_baseplot(sc, plot_adata, plot_object, request, groups)
-        figure = _scanpy_baseplot_figure(plot_object)
+        figure = _scanpy_baseplot_figure(
+            plot_object,
+            plot_adata=plot_adata,
+            request=request,
+        )
     return ScanpyPlotArtifact(
         figure,
         title,
@@ -896,6 +1376,21 @@ def _build_composition_plot(
     else:
         plotted = counts.astype(float)
         value_label = "Cell count"
+    if (
+        request.plot_type == "composition_bar"
+        and request.bar_sort_direction != "none"
+        and request.bar_sort_population
+    ):
+        if request.bar_sort_population not in plotted.columns:
+            raise ValueError(
+                "The selected bar-sort population is not represented in this plot: "
+                f"{request.bar_sort_population!r}."
+            )
+        plotted = plotted.sort_values(
+            request.bar_sort_population,
+            ascending=request.bar_sort_direction == "ascending",
+            kind="stable",
+        )
     colours = categorical_colour_map(adata, request.groupby)
     from matplotlib.figure import Figure
 
@@ -913,27 +1408,64 @@ def _build_composition_plot(
                 bottom=bottom,
                 color=colours.get(population, "#9ca3af"),
                 label=population,
-                width=0.9,
+                width=float(request.bar_width),
+                edgecolor=(request.edge_color if request.edge_width > 0 else "none"),
+                linewidth=float(request.edge_width),
             )
             bottom += np.nan_to_num(values, nan=0.0)
         axis.set_xticks(
             np.arange(len(plotted)), labels=plotted.index.astype(str), rotation=90
         )
         axis.set_ylabel(value_label)
-        if len(population_order) <= 30:
-            axis.legend(bbox_to_anchor=(1.02, 1), loc="upper left", frameon=False)
-        title = f"{request.groupby} composition by {request.composition_obs}"
+        if request.show_legend:
+            axis.legend(
+                frameon=False,
+                **_matplotlib_legend_kwargs(request.legend_location),
+            )
+        if len(plotted):
+            axis.set_xlim(
+                -float(request.bar_width) / 2 - float(request.bar_start_padding),
+                len(plotted)
+                - 1
+                + float(request.bar_width) / 2
+                + float(request.bar_end_padding),
+            )
+        if request.bar_manual_y_limits:
+            axis.set_ylim(float(request.bar_y_min), float(request.bar_y_max))
+        title, plot_title = _resolved_titles(
+            request, f"{request.groupby} composition by {request.composition_obs}"
+        )
     else:
-        image = axis.imshow(
-            plotted.T.to_numpy(dtype=float), aspect="auto", cmap="viridis"
+        values = plotted.T.to_numpy(dtype=float)
+        image = axis.pcolormesh(
+            values,
+            cmap=request.heatmap_colormap,
+            shading="flat",
+            edgecolors=(request.edge_color if request.edge_width > 0 else "none"),
+            linewidth=float(request.edge_width),
         )
         axis.set_xticks(
-            np.arange(len(plotted.index)), labels=plotted.index.astype(str), rotation=90
+            np.arange(len(plotted.index)) + 0.5,
+            labels=plotted.index.astype(str),
+            rotation=90,
         )
-        axis.set_yticks(np.arange(len(population_order)), labels=population_order)
-        figure.colorbar(image, ax=axis, label=value_label)
-        title = f"{request.groupby} abundance across {request.composition_obs}"
-    axis.set_title(title)
+        axis.set_yticks(np.arange(len(population_order)) + 0.5, labels=population_order)
+        axis.set_xlim(0, values.shape[1])
+        axis.set_ylim(values.shape[0], 0)
+        _add_matplotlib_population_colour_strip(
+            axis,
+            labels=population_order,
+            colours=colours,
+            population_axis="y",
+            request=request,
+        )
+        if request.show_legend:
+            figure.colorbar(image, ax=axis, label=value_label)
+        title, plot_title = _resolved_titles(
+            request, f"{request.groupby} abundance across {request.composition_obs}"
+        )
+    axis.set_title(plot_title)
+    _apply_axis_display_options(axis, request)
     exported = (
         plotted.rename_axis(index=request.composition_obs, columns=request.groupby)
         .stack(dropna=False)
@@ -983,23 +1515,52 @@ def _build_label_comparison_plot(
     height = max(6, min(24, plotted.shape[0] * 0.36 + 4))
     figure = Figure(figsize=(width, height), constrained_layout=True)
     axis = figure.add_subplot(111)
-    image = axis.imshow(plotted.to_numpy(dtype=float), aspect="auto", cmap="magma")
-    axis.set_xticks(
-        np.arange(plotted.shape[1]), labels=plotted.columns.astype(str), rotation=90
+    values = plotted.to_numpy(dtype=float)
+    image = axis.pcolormesh(
+        values,
+        cmap=request.heatmap_colormap,
+        shading="flat",
+        edgecolors=(request.edge_color if request.edge_width > 0 else "none"),
+        linewidth=float(request.edge_width),
     )
-    axis.set_yticks(np.arange(plotted.shape[0]), labels=plotted.index.astype(str))
+    axis.set_xticks(
+        np.arange(plotted.shape[1]) + 0.5,
+        labels=plotted.columns.astype(str),
+        rotation=90,
+    )
+    axis.set_yticks(np.arange(plotted.shape[0]) + 0.5, labels=plotted.index.astype(str))
+    axis.set_xlim(0, plotted.shape[1])
+    axis.set_ylim(plotted.shape[0], 0)
+    _add_matplotlib_population_colour_strip(
+        axis,
+        labels=plotted.columns.astype(str).tolist(),
+        colours=categorical_colour_map(adata, request.groupby),
+        population_axis="x",
+        request=request,
+    )
     axis.set_xlabel(request.groupby)
     axis.set_ylabel(request.comparison_obs)
-    title = f"{request.comparison_obs} → {request.groupby} label mapping"
-    axis.set_title(title)
-    figure.colorbar(image, ax=axis, label=value_label)
+    title, plot_title = _resolved_titles(
+        request, f"{request.comparison_obs} → {request.groupby} label mapping"
+    )
+    axis.set_title(plot_title)
+    if request.show_legend:
+        figure.colorbar(image, ax=axis, label=value_label)
     if plotted.size <= 225:
         values = plotted.to_numpy(dtype=float)
         for row in range(values.shape[0]):
             for column in range(values.shape[1]):
                 value = values[row, column]
                 label = f"{value:.0f}" if np.isfinite(value) else ""
-                axis.text(column, row, label, ha="center", va="center", fontsize=7)
+                axis.text(
+                    column + 0.5,
+                    row + 0.5,
+                    label,
+                    ha="center",
+                    va="center",
+                    fontsize=7,
+                )
+    _apply_axis_display_options(axis, request)
     exported = (
         plotted.rename_axis(index=request.comparison_obs, columns=request.groupby)
         .stack(dropna=False)
@@ -1055,4 +1616,5 @@ __all__ = [
     "matrix_source_var_names",
     "ordered_obs_values",
     "resolve_plot_cell_mask",
+    "sample_level_obs_columns",
 ]

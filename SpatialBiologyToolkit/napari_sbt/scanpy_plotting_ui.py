@@ -14,6 +14,7 @@ from .scanpy_plotting import (
     matrix_source_var_names,
     ordered_obs_values,
     resolve_plot_cell_mask,
+    sample_level_obs_columns,
 )
 
 
@@ -101,6 +102,18 @@ class ScanpyPlottingPanel:
         )
         roi_actions_layout.addWidget(self.clear_rois_button)
         roi_actions_layout.addStretch(1)
+        self.metadata_filter_combo = QComboBox()
+        self.metadata_filter_values_list = QListWidget()
+        self.metadata_filter_values_list.setSelectionMode(
+            QAbstractItemView.ExtendedSelection
+        )
+        self.metadata_filter_values_list.setMaximumHeight(105)
+        metadata_actions = QWidget()
+        metadata_actions_layout = QHBoxLayout(metadata_actions)
+        metadata_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.clear_metadata_filter_button = QPushButton("Clear metadata selection")
+        metadata_actions_layout.addWidget(self.clear_metadata_filter_button)
+        metadata_actions_layout.addStretch(1)
         self.matrix_source_combo = QComboBox()
         self.data_summary_label = QLabel("Load AnnData to configure plotting.")
         self.data_summary_label.setWordWrap(True)
@@ -110,6 +123,13 @@ class ScanpyPlottingPanel:
         data_form.addRow("", group_actions)
         data_form.addRow("ROIs (none selected = all)", self.roi_list)
         data_form.addRow("", roi_actions)
+        data_form.addRow(
+            "Additional ROI/sample observation", self.metadata_filter_combo
+        )
+        data_form.addRow(
+            "Values (none selected = all)", self.metadata_filter_values_list
+        )
+        data_form.addRow("", metadata_actions)
         data_form.addRow("Expression matrix", self.matrix_source_combo)
         data_form.addRow("Selection summary", self.data_summary_label)
         layout.addWidget(data_group)
@@ -141,6 +161,39 @@ class ScanpyPlottingPanel:
         embedding_page = QWidget()
         embedding_form = QFormLayout(embedding_page)
         self.embedding_combo = QComboBox()
+        self.embedding_colour_mode_combo = QComboBox()
+        self.embedding_colour_mode_combo.addItem("Population labels", "labels")
+        self.embedding_colour_mode_combo.addItem("Expression variables", "expression")
+        self.embedding_marker_search_edit = QLineEdit()
+        self.embedding_marker_search_edit.setPlaceholderText(
+            "Type to filter expression variables…"
+        )
+        self.embedding_marker_list = QListWidget()
+        self.embedding_marker_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.embedding_marker_list.setMaximumHeight(150)
+        embedding_marker_actions = QWidget()
+        embedding_marker_actions_layout = QHBoxLayout(embedding_marker_actions)
+        embedding_marker_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.select_visible_embedding_markers_button = QPushButton("Select visible")
+        self.clear_embedding_markers_button = QPushButton("Clear")
+        embedding_marker_actions_layout.addWidget(
+            self.select_visible_embedding_markers_button
+        )
+        embedding_marker_actions_layout.addWidget(self.clear_embedding_markers_button)
+        embedding_marker_actions_layout.addStretch(1)
+        self.embedding_ncols_spin = QSpinBox()
+        self.embedding_ncols_spin.setRange(1, 8)
+        self.embedding_ncols_spin.setValue(3)
+        self.embedding_colormap_combo = QComboBox()
+        for label, value in (
+            ("Viridis", "viridis"),
+            ("Blue", "Blues"),
+            ("Red", "Reds"),
+            ("Magma", "magma"),
+            ("Plasma", "plasma"),
+            ("Diverging blue–red", "coolwarm"),
+        ):
+            self.embedding_colormap_combo.addItem(label, value)
         self.embedding_x_spin = QSpinBox()
         self.embedding_x_spin.setRange(1, 2)
         self.embedding_y_spin = QSpinBox()
@@ -159,14 +212,20 @@ class ScanpyPlottingPanel:
         self.point_alpha_spin.setRange(0.05, 1.0)
         self.point_alpha_spin.setSingleStep(0.05)
         self.point_alpha_spin.setValue(0.75)
-        self.centroid_labels_check = QCheckBox("Write population names at centroids")
         embedding_form.addRow("Embedding", self.embedding_combo)
+        embedding_form.addRow("Colour by", self.embedding_colour_mode_combo)
+        embedding_form.addRow(
+            "Find expression variable", self.embedding_marker_search_edit
+        )
+        embedding_form.addRow("Expression variables", self.embedding_marker_list)
+        embedding_form.addRow("", embedding_marker_actions)
+        embedding_form.addRow("Expression panel columns", self.embedding_ncols_spin)
+        embedding_form.addRow("Expression colour map", self.embedding_colormap_combo)
         embedding_form.addRow("Horizontal component", self.embedding_x_spin)
         embedding_form.addRow("Vertical component", self.embedding_y_spin)
         embedding_form.addRow("Maximum displayed points", self.point_limit_spin)
         embedding_form.addRow("Point size", self.point_size_spin)
         embedding_form.addRow("Point opacity", self.point_alpha_spin)
-        embedding_form.addRow("Labels", self.centroid_labels_check)
         self.options_stack.addWidget(embedding_page)
 
         expression_page = QWidget()
@@ -230,6 +289,34 @@ class ScanpyPlottingPanel:
         )
         self.dendrogram_optimal_ordering_check.setChecked(True)
         self.swap_axes_check = QCheckBox("Put populations on the horizontal axis")
+        self.reorder_markers_check = QCheckBox(
+            "Cluster selected markers by expression similarity"
+        )
+        self.reorder_markers_check.setToolTip(
+            "Uses SpatialBiologyToolkit.utils.reorder_vars_by_expression on the "
+            "currently selected cells, markers, and expression matrix."
+        )
+        self.population_colour_strip_check = QCheckBox(
+            "Show colours from the population labels"
+        )
+        self.population_colour_strip_check.setToolTip(
+            "Adds a narrow colour strip beside the population axis using the "
+            "current AnnData palette."
+        )
+        self.population_colour_gap_spin = QSpinBox()
+        self.population_colour_gap_spin.setRange(0, 100)
+        self.population_colour_gap_spin.setValue(25)
+        self.population_colour_gap_spin.setSuffix(" pt")
+        self.population_colour_gap_spin.setToolTip(
+            "Sets the space between population names and the colour strip."
+        )
+        self.population_colour_box_width_spin = QSpinBox()
+        self.population_colour_box_width_spin.setRange(1, 50)
+        self.population_colour_box_width_spin.setValue(10)
+        self.population_colour_box_width_spin.setSuffix(" pt")
+        self.population_colour_box_width_spin.setToolTip(
+            "Sets the thickness of each population-colour box."
+        )
         self.fresh_dendrogram_label = QLabel(
             "Fresh dendrograms use only the currently selected cells and markers. "
             "Any dendrogram stored in the source AnnData is ignored."
@@ -250,6 +337,12 @@ class ScanpyPlottingPanel:
         expression_form.addRow(
             "Dendrogram ordering", self.dendrogram_optimal_ordering_check
         )
+        expression_form.addRow("Marker ordering", self.reorder_markers_check)
+        expression_form.addRow("Population colours", self.population_colour_strip_check)
+        expression_form.addRow(
+            "Colour box width", self.population_colour_box_width_spin
+        )
+        expression_form.addRow("Colour/label gap", self.population_colour_gap_spin)
         expression_form.addRow("Axis arrangement", self.swap_axes_check)
         expression_form.addRow("", self.fresh_dendrogram_label)
         self.options_stack.addWidget(expression_page)
@@ -262,6 +355,35 @@ class ScanpyPlottingPanel:
             "Percentage within each sample", "percent"
         )
         self.composition_measure_combo.addItem("Cell count", "count")
+        self.bar_width_spin = QDoubleSpinBox()
+        self.bar_width_spin.setRange(0.05, 1.0)
+        self.bar_width_spin.setSingleStep(0.05)
+        self.bar_width_spin.setValue(0.9)
+        self.bar_start_padding_spin = QDoubleSpinBox()
+        self.bar_start_padding_spin.setRange(0.0, 10.0)
+        self.bar_start_padding_spin.setSingleStep(0.1)
+        self.bar_start_padding_spin.setValue(0.25)
+        self.bar_start_padding_spin.setSuffix(" bar units")
+        self.bar_end_padding_spin = QDoubleSpinBox()
+        self.bar_end_padding_spin.setRange(0.0, 10.0)
+        self.bar_end_padding_spin.setSingleStep(0.1)
+        self.bar_end_padding_spin.setValue(0.25)
+        self.bar_end_padding_spin.setSuffix(" bar units")
+        self.bar_sort_population_combo = QComboBox()
+        self.bar_sort_population_combo.addItem("Do not sort", "")
+        self.bar_sort_direction_combo = QComboBox()
+        self.bar_sort_direction_combo.addItem("No sorting", "none")
+        self.bar_sort_direction_combo.addItem("Smallest first", "ascending")
+        self.bar_sort_direction_combo.addItem("Largest first", "descending")
+        self.bar_manual_y_limits_check = QCheckBox("Set manually")
+        self.bar_y_min_spin = QDoubleSpinBox()
+        self.bar_y_min_spin.setRange(-1_000_000_000.0, 1_000_000_000.0)
+        self.bar_y_min_spin.setDecimals(3)
+        self.bar_y_min_spin.setValue(0.0)
+        self.bar_y_max_spin = QDoubleSpinBox()
+        self.bar_y_max_spin.setRange(-1_000_000_000.0, 1_000_000_000.0)
+        self.bar_y_max_spin.setDecimals(3)
+        self.bar_y_max_spin.setValue(100.0)
         composition_help = QLabel(
             "Use ROI, patient, condition, or another observation to compare how "
             "the selected populations are represented across samples."
@@ -269,6 +391,16 @@ class ScanpyPlottingPanel:
         composition_help.setWordWrap(True)
         composition_form.addRow("Samples / grouping", self.composition_obs_combo)
         composition_form.addRow("Values", self.composition_measure_combo)
+        composition_form.addRow("Bar width", self.bar_width_spin)
+        composition_form.addRow("Space before first bar", self.bar_start_padding_spin)
+        composition_form.addRow("Space after last bar", self.bar_end_padding_spin)
+        composition_form.addRow(
+            "Sort bars by population", self.bar_sort_population_combo
+        )
+        composition_form.addRow("Bar sorting", self.bar_sort_direction_combo)
+        composition_form.addRow("Y-axis limits", self.bar_manual_y_limits_check)
+        composition_form.addRow("Y-axis minimum", self.bar_y_min_spin)
+        composition_form.addRow("Y-axis maximum", self.bar_y_max_spin)
         composition_form.addRow("", composition_help)
         self.options_stack.addWidget(composition_page)
 
@@ -294,6 +426,95 @@ class ScanpyPlottingPanel:
         comparison_form.addRow("Display", self.comparison_normalisation_combo)
         comparison_form.addRow("", comparison_help)
         self.options_stack.addWidget(comparison_page)
+
+        common_options = QWidget()
+        common_form = QFormLayout(common_options)
+        common_form.setContentsMargins(0, 8, 0, 0)
+        self.show_legend_check = QCheckBox("Show legend or colour scale")
+        self.show_legend_check.setChecked(True)
+        self.legend_location_combo = QComboBox()
+        for label, value in (
+            ("Right margin", "right margin"),
+            ("On the data", "on data"),
+            ("Automatic / best", "best"),
+            ("Upper right", "upper right"),
+            ("Upper left", "upper left"),
+            ("Lower right", "lower right"),
+            ("Lower left", "lower left"),
+        ):
+            self.legend_location_combo.addItem(label, value)
+        self.legend_location_combo.setToolTip(
+            "Position applies to categorical embedding and stacked-bar legends. "
+            "Scanpy expression colour scales retain their native right-hand "
+            "position, but can be hidden."
+        )
+        axis_labels = QWidget()
+        axis_labels_layout = QHBoxLayout(axis_labels)
+        axis_labels_layout.setContentsMargins(0, 0, 0, 0)
+        self.show_x_axis_label_check = QCheckBox("X label")
+        self.show_y_axis_label_check = QCheckBox("Y label")
+        self.show_x_axis_label_check.setChecked(True)
+        self.show_y_axis_label_check.setChecked(True)
+        axis_labels_layout.addWidget(self.show_x_axis_label_check)
+        axis_labels_layout.addWidget(self.show_y_axis_label_check)
+        axis_labels_layout.addStretch(1)
+        axis_ticks = QWidget()
+        axis_ticks_layout = QHBoxLayout(axis_ticks)
+        axis_ticks_layout.setContentsMargins(0, 0, 0, 0)
+        self.show_x_ticks_check = QCheckBox("X ticks")
+        self.show_y_ticks_check = QCheckBox("Y ticks")
+        self.show_x_ticks_check.setChecked(True)
+        self.show_y_ticks_check.setChecked(True)
+        axis_ticks_layout.addWidget(self.show_x_ticks_check)
+        axis_ticks_layout.addWidget(self.show_y_ticks_check)
+        axis_ticks_layout.addStretch(1)
+        self.title_mode_combo = QComboBox()
+        self.title_mode_combo.addItem("Automatic", "automatic")
+        self.title_mode_combo.addItem("Custom", "custom")
+        self.title_mode_combo.addItem("Hidden", "hidden")
+        self.custom_title_edit = QLineEdit()
+        self.custom_title_edit.setPlaceholderText("Enter the plot title…")
+        self.heatmap_colormap_combo = QComboBox()
+        self.heatmap_colormap_combo.setEditable(True)
+        for label, value in (
+            ("Viridis", "viridis"),
+            ("Magma", "magma"),
+            ("Plasma", "plasma"),
+            ("Blue", "Blues"),
+            ("Red", "Reds"),
+            ("Diverging blue–red", "coolwarm"),
+        ):
+            self.heatmap_colormap_combo.addItem(label, value)
+        self.heatmap_population_colours_check = QCheckBox(
+            "Show population colour strip"
+        )
+        self.edge_colour_combo = QComboBox()
+        self.edge_colour_combo.setEditable(True)
+        for label, value in (
+            ("White", "#ffffff"),
+            ("Black", "#000000"),
+            ("Dark grey", "#374151"),
+            ("Light grey", "#d1d5db"),
+        ):
+            self.edge_colour_combo.addItem(label, value)
+        self.edge_width_spin = QDoubleSpinBox()
+        self.edge_width_spin.setRange(0.0, 10.0)
+        self.edge_width_spin.setSingleStep(0.1)
+        self.edge_width_spin.setValue(0.0)
+        self.edge_width_spin.setSuffix(" pt")
+        common_form.addRow("Legend", self.show_legend_check)
+        common_form.addRow("Legend position", self.legend_location_combo)
+        common_form.addRow("Axis labels", axis_labels)
+        common_form.addRow("Axis ticks", axis_ticks)
+        common_form.addRow("Title", self.title_mode_combo)
+        common_form.addRow("Custom title", self.custom_title_edit)
+        common_form.addRow("Heatmap colour map", self.heatmap_colormap_combo)
+        common_form.addRow(
+            "Heatmap population colours", self.heatmap_population_colours_check
+        )
+        common_form.addRow("Cell/bar edge colour", self.edge_colour_combo)
+        common_form.addRow("Cell/bar edge width", self.edge_width_spin)
+        options_layout.addWidget(common_options)
         layout.addWidget(options_group)
 
         generate_group = group_factory(
@@ -343,9 +564,31 @@ class ScanpyPlottingPanel:
         self.scope_combo.currentIndexChanged.connect(self._controls_changed)
         self.group_values_list.itemSelectionChanged.connect(self._controls_changed)
         self.roi_list.itemSelectionChanged.connect(self._controls_changed)
+        self.metadata_filter_combo.currentIndexChanged.connect(
+            self._metadata_filter_obs_changed
+        )
+        self.metadata_filter_values_list.itemSelectionChanged.connect(
+            self._controls_changed
+        )
+        self.clear_metadata_filter_button.clicked.connect(
+            self.metadata_filter_values_list.clearSelection
+        )
         self.matrix_source_combo.currentTextChanged.connect(self._matrix_source_changed)
         self.plot_type_combo.currentIndexChanged.connect(self._plot_type_changed)
         self.embedding_combo.currentTextChanged.connect(self._embedding_changed)
+        self.embedding_colour_mode_combo.currentIndexChanged.connect(
+            self._embedding_colour_mode_changed
+        )
+        self.embedding_marker_search_edit.textChanged.connect(
+            self._filter_embedding_markers
+        )
+        self.embedding_marker_list.itemSelectionChanged.connect(self._controls_changed)
+        self.select_visible_embedding_markers_button.clicked.connect(
+            self._select_visible_embedding_markers
+        )
+        self.clear_embedding_markers_button.clicked.connect(
+            self.embedding_marker_list.clearSelection
+        )
         self.marker_search_edit.textChanged.connect(self._filter_markers)
         self.marker_list.itemSelectionChanged.connect(self._controls_changed)
         self.select_visible_markers_button.clicked.connect(self._select_visible_markers)
@@ -359,7 +602,8 @@ class ScanpyPlottingPanel:
             self.point_limit_spin,
             self.point_size_spin,
             self.point_alpha_spin,
-            self.centroid_labels_check,
+            self.embedding_ncols_spin,
+            self.embedding_colormap_combo,
             self.expression_scale_combo,
             self.positivity_spin,
             self.expression_colormap_combo,
@@ -368,26 +612,72 @@ class ScanpyPlottingPanel:
             self.dendrogram_correlation_combo,
             self.dendrogram_linkage_combo,
             self.dendrogram_optimal_ordering_check,
+            self.reorder_markers_check,
+            self.population_colour_strip_check,
+            self.population_colour_box_width_spin,
+            self.population_colour_gap_spin,
             self.swap_axes_check,
             self.composition_obs_combo,
             self.composition_measure_combo,
+            self.bar_width_spin,
+            self.bar_start_padding_spin,
+            self.bar_end_padding_spin,
+            self.bar_sort_population_combo,
+            self.bar_sort_direction_combo,
+            self.bar_manual_y_limits_check,
+            self.bar_y_min_spin,
+            self.bar_y_max_spin,
             self.comparison_obs_combo,
             self.comparison_normalisation_combo,
+            self.show_legend_check,
+            self.legend_location_combo,
+            self.show_x_axis_label_check,
+            self.show_y_axis_label_check,
+            self.show_x_ticks_check,
+            self.show_y_ticks_check,
+            self.title_mode_combo,
+            self.heatmap_colormap_combo,
+            self.heatmap_population_colours_check,
+            self.edge_colour_combo,
+            self.edge_width_spin,
         ):
             signal = getattr(control, "valueChanged", None)
             if signal is None:
                 signal = getattr(control, "currentIndexChanged", None)
             if signal is None:
-                signal = getattr(control, "toggled")
+                signal = control.toggled
             signal.connect(self._controls_changed)
+        self.custom_title_edit.textChanged.connect(self._controls_changed)
+        self.heatmap_colormap_combo.editTextChanged.connect(self._controls_changed)
+        self.edge_colour_combo.editTextChanged.connect(self._controls_changed)
+        self.title_mode_combo.currentIndexChanged.connect(
+            self._common_plot_options_changed
+        )
+        self.bar_manual_y_limits_check.toggled.connect(
+            self._common_plot_options_changed
+        )
         self.side_annotation_combo.currentIndexChanged.connect(
             self._expression_annotation_changed
         )
+        self.population_colour_strip_check.toggled.connect(
+            self._expression_annotation_changed
+        )
+        self.show_legend_check.toggled.connect(self._legend_options_changed)
         self._plot_type_changed()
 
     @staticmethod
     def _selected_text(widget) -> list[str]:
         return [item.text() for item in widget.selectedItems()]
+
+    @staticmethod
+    def _editable_combo_value(widget) -> str:
+        """Return preset data or genuinely custom editable-combo text."""
+
+        index = widget.currentIndex()
+        text = widget.currentText().strip()
+        if index >= 0 and text == widget.itemText(index):
+            return str(widget.itemData(index) or text)
+        return text
 
     def _preferred_groupby(self, columns: list[str], requested: str | None) -> str:
         if requested in columns:
@@ -424,6 +714,17 @@ class ScanpyPlottingPanel:
         if target_groupby:
             self.groupby_combo.setCurrentText(target_groupby)
         self.groupby_combo.blockSignals(False)
+
+        current_filter = self.metadata_filter_combo.currentData()
+        sample_columns = sample_level_obs_columns(adata, roi_obs=self._roi_obs)
+        self.metadata_filter_combo.blockSignals(True)
+        self.metadata_filter_combo.clear()
+        self.metadata_filter_combo.addItem("No additional filter", "")
+        for column in sample_columns:
+            self.metadata_filter_combo.addItem(column, column)
+        filter_index = self.metadata_filter_combo.findData(current_filter)
+        self.metadata_filter_combo.setCurrentIndex(max(0, filter_index))
+        self.metadata_filter_combo.blockSignals(False)
 
         cohort_index = self.scope_combo.findData("cohort")
         cohort_item = self.scope_combo.model().item(cohort_index)
@@ -482,7 +783,9 @@ class ScanpyPlottingPanel:
             self.comparison_obs_combo.setCurrentText(comparison_default)
 
         self._refresh_group_values()
+        self._refresh_bar_sort_populations()
         self._refresh_rois()
+        self._metadata_filter_obs_changed()
         self._refresh_markers()
         self._embedding_changed()
         self._controls_changed()
@@ -497,6 +800,41 @@ class ScanpyPlottingPanel:
         for index in range(self.group_values_list.count()):
             item = self.group_values_list.item(index)
             item.setSelected(item.text() in selected)
+
+    def _refresh_bar_sort_populations(self) -> None:
+        current = self.bar_sort_population_combo.currentData()
+        self.bar_sort_population_combo.blockSignals(True)
+        self.bar_sort_population_combo.clear()
+        self.bar_sort_population_combo.addItem("Do not sort", "")
+        if (
+            self._adata is not None
+            and self.groupby_combo.currentText() in self._adata.obs
+        ):
+            for value in ordered_obs_values(
+                self._adata.obs[self.groupby_combo.currentText()]
+            ):
+                self.bar_sort_population_combo.addItem(value, value)
+        index = self.bar_sort_population_combo.findData(current)
+        self.bar_sort_population_combo.setCurrentIndex(max(0, index))
+        self.bar_sort_population_combo.blockSignals(False)
+
+    def _metadata_filter_obs_changed(self, *_args) -> None:
+        selected = set(self._selected_text(self.metadata_filter_values_list))
+        self.metadata_filter_values_list.clear()
+        observation = str(self.metadata_filter_combo.currentData() or "")
+        enabled = bool(
+            self._adata is not None and observation and observation in self._adata.obs
+        )
+        self.metadata_filter_values_list.setEnabled(enabled)
+        self.clear_metadata_filter_button.setEnabled(enabled)
+        if enabled:
+            self.metadata_filter_values_list.addItems(
+                ordered_obs_values(self._adata.obs[observation], include_missing=True)
+            )
+            for index in range(self.metadata_filter_values_list.count()):
+                item = self.metadata_filter_values_list.item(index)
+                item.setSelected(item.text() in selected)
+        self._controls_changed()
 
     def _refresh_rois(self) -> None:
         selected = set(self._selected_text(self.roi_list))
@@ -518,20 +856,29 @@ class ScanpyPlottingPanel:
 
     def _refresh_markers(self) -> None:
         selected = set(self._selected_text(self.marker_list))
+        selected_embedding = set(self._selected_text(self.embedding_marker_list))
         self.marker_list.clear()
+        self.embedding_marker_list.clear()
         if self._adata is None or not self.matrix_source_combo.currentText():
             return
         markers = matrix_source_var_names(
             self._adata, self.matrix_source_combo.currentText()
         ).tolist()
-        self.marker_list.addItems([str(marker) for marker in markers])
+        marker_names = [str(marker) for marker in markers]
+        self.marker_list.addItems(marker_names)
+        self.embedding_marker_list.addItems(marker_names)
         for index in range(self.marker_list.count()):
             item = self.marker_list.item(index)
             item.setSelected(item.text() in selected)
+        for index in range(self.embedding_marker_list.count()):
+            item = self.embedding_marker_list.item(index)
+            item.setSelected(item.text() in selected_embedding)
         self._filter_markers(self.marker_search_edit.text())
+        self._filter_embedding_markers(self.embedding_marker_search_edit.text())
 
     def _groupby_changed(self, *_args) -> None:
         self._refresh_group_values()
+        self._refresh_bar_sort_populations()
         if self.comparison_obs_combo.currentText() == self.groupby_combo.currentText():
             for index in range(self.comparison_obs_combo.count()):
                 if (
@@ -602,8 +949,67 @@ class ScanpyPlottingPanel:
         )
         self.positivity_spin.setEnabled(plot_type == "dotplot")
         self._expression_annotation_changed()
+        self._embedding_colour_mode_changed()
+        self._legend_options_changed()
+        self._common_plot_options_changed()
         self.plot_description_label.setText(description)
         self._controls_changed()
+
+    def _common_plot_options_changed(self, *_args) -> None:
+        plot_type = self.plot_type_combo.currentData()
+        heatmap = plot_type in {"heatmap", "composition_heatmap", "label_comparison"}
+        bar_plot = plot_type == "composition_bar"
+        self.custom_title_edit.setEnabled(
+            self.title_mode_combo.currentData() == "custom"
+        )
+        self.heatmap_colormap_combo.setEnabled(
+            plot_type in {"composition_heatmap", "label_comparison"}
+        )
+        self.heatmap_population_colours_check.setEnabled(
+            plot_type in {"composition_heatmap", "label_comparison"}
+        )
+        self.edge_colour_combo.setEnabled(heatmap or bar_plot)
+        self.edge_width_spin.setEnabled(heatmap or bar_plot)
+        for control in (
+            self.bar_width_spin,
+            self.bar_start_padding_spin,
+            self.bar_end_padding_spin,
+            self.bar_sort_population_combo,
+            self.bar_sort_direction_combo,
+            self.bar_manual_y_limits_check,
+        ):
+            control.setEnabled(bar_plot)
+        manual_y_limits = bar_plot and self.bar_manual_y_limits_check.isChecked()
+        self.bar_y_min_spin.setEnabled(manual_y_limits)
+        self.bar_y_max_spin.setEnabled(manual_y_limits)
+        self._controls_changed()
+
+    def _embedding_colour_mode_changed(self, *_args) -> None:
+        expression_mode = (
+            self.plot_type_combo.currentData() == "embedding"
+            and self.embedding_colour_mode_combo.currentData() == "expression"
+        )
+        for control in (
+            self.embedding_marker_search_edit,
+            self.embedding_marker_list,
+            self.select_visible_embedding_markers_button,
+            self.clear_embedding_markers_button,
+            self.embedding_ncols_spin,
+            self.embedding_colormap_combo,
+        ):
+            control.setEnabled(expression_mode)
+        self._legend_options_changed()
+        self._controls_changed()
+
+    def _legend_options_changed(self, *_args) -> None:
+        plot_type = self.plot_type_combo.currentData()
+        location_supported = plot_type == "composition_bar" or (
+            plot_type == "embedding"
+            and self.embedding_colour_mode_combo.currentData() == "labels"
+        )
+        self.legend_location_combo.setEnabled(
+            self.show_legend_check.isChecked() and location_supported
+        )
 
     def _expression_annotation_changed(self, *_args) -> None:
         plot_type = self.plot_type_combo.currentData()
@@ -619,6 +1025,14 @@ class ScanpyPlottingPanel:
         ):
             control.setEnabled(dendrogram)
         self.totals_sort_combo.setEnabled(totals)
+        self.reorder_markers_check.setEnabled(expression_plot)
+        self.population_colour_strip_check.setEnabled(expression_plot)
+        self.population_colour_gap_spin.setEnabled(
+            expression_plot and self.population_colour_strip_check.isChecked()
+        )
+        self.population_colour_box_width_spin.setEnabled(
+            expression_plot and self.population_colour_strip_check.isChecked()
+        )
 
     def _filter_markers(self, text: str) -> None:
         needle = str(text).strip().casefold()
@@ -632,16 +1046,47 @@ class ScanpyPlottingPanel:
             if not item.isHidden():
                 item.setSelected(True)
 
+    def _filter_embedding_markers(self, text: str) -> None:
+        needle = str(text).strip().casefold()
+        for index in range(self.embedding_marker_list.count()):
+            item = self.embedding_marker_list.item(index)
+            item.setHidden(bool(needle and needle not in item.text().casefold()))
+
+    def _select_visible_embedding_markers(self) -> None:
+        for index in range(self.embedding_marker_list.count()):
+            item = self.embedding_marker_list.item(index)
+            if not item.isHidden():
+                item.setSelected(True)
+
     def current_request(self) -> ScanpyPlotRequest:
         """Return the validated controls as a portable request."""
 
+        plot_type = str(self.plot_type_combo.currentData())
+        embedding_expression = (
+            self.embedding_colour_mode_combo.currentData() == "expression"
+        )
+        show_population_colours = (
+            self.population_colour_strip_check.isChecked()
+            if plot_type in {"heatmap", "dotplot", "violin"}
+            else self.heatmap_population_colours_check.isChecked()
+            if plot_type in {"composition_heatmap", "label_comparison"}
+            else False
+        )
         return ScanpyPlotRequest(
-            plot_type=str(self.plot_type_combo.currentData()),
+            plot_type=plot_type,
             groupby=self.groupby_combo.currentText(),
             cell_scope=str(self.scope_combo.currentData()),
             selected_groups=self._selected_text(self.group_values_list),
             roi_obs=self._roi_obs,
             selected_rois=self._selected_text(self.roi_list),
+            metadata_filter_obs=(
+                str(self.metadata_filter_combo.currentData())
+                if self.metadata_filter_combo.currentData()
+                else None
+            ),
+            metadata_filter_values=self._selected_text(
+                self.metadata_filter_values_list
+            ),
             matrix_source=self.matrix_source_combo.currentText() or "X",
             markers=self._selected_text(self.marker_list),
             expression_scale=str(self.expression_scale_combo.currentData()),
@@ -654,16 +1099,52 @@ class ScanpyPlottingPanel:
             dendrogram_optimal_ordering=bool(
                 self.dendrogram_optimal_ordering_check.isChecked()
             ),
+            reorder_markers_by_expression=bool(self.reorder_markers_check.isChecked()),
+            show_population_colours=bool(show_population_colours),
+            population_colour_label_gap=float(self.population_colour_gap_spin.value()),
+            population_colour_box_width=float(
+                self.population_colour_box_width_spin.value()
+            ),
             swap_axes=bool(self.swap_axes_check.isChecked()),
             embedding_key=self.embedding_combo.currentText() or None,
+            embedding_markers=(
+                self._selected_text(self.embedding_marker_list)
+                if embedding_expression
+                else []
+            ),
+            embedding_ncols=int(self.embedding_ncols_spin.value()),
+            embedding_colormap=str(self.embedding_colormap_combo.currentData()),
             x_component=int(self.embedding_x_spin.value()),
             y_component=int(self.embedding_y_spin.value()),
             point_limit=int(self.point_limit_spin.value()),
             point_size=float(self.point_size_spin.value()),
             point_alpha=float(self.point_alpha_spin.value()),
-            label_centroids=bool(self.centroid_labels_check.isChecked()),
+            label_centroids=False,
+            show_legend=bool(self.show_legend_check.isChecked()),
+            legend_location=str(self.legend_location_combo.currentData()),
+            show_x_axis_label=bool(self.show_x_axis_label_check.isChecked()),
+            show_y_axis_label=bool(self.show_y_axis_label_check.isChecked()),
+            show_x_ticks=bool(self.show_x_ticks_check.isChecked()),
+            show_y_ticks=bool(self.show_y_ticks_check.isChecked()),
+            title_mode=str(self.title_mode_combo.currentData()),
+            custom_title=self.custom_title_edit.text(),
+            heatmap_colormap=self._editable_combo_value(self.heatmap_colormap_combo),
+            edge_color=self._editable_combo_value(self.edge_colour_combo),
+            edge_width=float(self.edge_width_spin.value()),
             composition_obs=self.composition_obs_combo.currentText() or None,
             composition_measure=str(self.composition_measure_combo.currentData()),
+            bar_width=float(self.bar_width_spin.value()),
+            bar_start_padding=float(self.bar_start_padding_spin.value()),
+            bar_end_padding=float(self.bar_end_padding_spin.value()),
+            bar_sort_population=(
+                str(self.bar_sort_population_combo.currentData())
+                if self.bar_sort_population_combo.currentData()
+                else None
+            ),
+            bar_sort_direction=str(self.bar_sort_direction_combo.currentData()),
+            bar_manual_y_limits=bool(self.bar_manual_y_limits_check.isChecked()),
+            bar_y_min=float(self.bar_y_min_spin.value()),
+            bar_y_max=float(self.bar_y_max_spin.value()),
             comparison_obs=self.comparison_obs_combo.currentText() or None,
             comparison_normalisation=str(
                 self.comparison_normalisation_combo.currentData()
@@ -683,6 +1164,14 @@ class ScanpyPlottingPanel:
             )
             if request.plot_type == "embedding" and not request.embedding_key:
                 raise ValueError("Choose an existing embedding.")
+            if (
+                request.plot_type == "embedding"
+                and self.embedding_colour_mode_combo.currentData() == "expression"
+                and not request.embedding_markers
+            ):
+                raise ValueError(
+                    "Select at least one expression variable for the embedding."
+                )
             if request.plot_type in {"heatmap", "dotplot", "violin"}:
                 if not request.markers:
                     raise ValueError("Select at least one marker.")
@@ -707,9 +1196,17 @@ class ScanpyPlottingPanel:
                             "A dendrogram requires at least three represented "
                             "populations in the selected cells."
                         )
-            if request.plot_type.startswith("composition"):
-                if not request.composition_obs:
-                    raise ValueError("Choose a sample or ROI grouping.")
+            if (
+                request.plot_type.startswith("composition")
+                and not request.composition_obs
+            ):
+                raise ValueError("Choose a sample or ROI grouping.")
+            if (
+                request.plot_type == "composition_bar"
+                and request.bar_sort_direction != "none"
+                and not request.bar_sort_population
+            ):
+                raise ValueError("Choose a population to sort the bars by.")
             if request.plot_type == "label_comparison":
                 if not request.comparison_obs:
                     raise ValueError("Choose the original label column.")
@@ -727,16 +1224,36 @@ class ScanpyPlottingPanel:
             if request.selected_rois
             else " across all available ROIs"
         )
+        metadata_text = ""
+        if request.metadata_filter_obs and request.metadata_filter_values:
+            values = ", ".join(request.metadata_filter_values[:4])
+            if len(request.metadata_filter_values) > 4:
+                values += f", +{len(request.metadata_filter_values) - 4} more"
+            metadata_text = f"; {request.metadata_filter_obs}: {values}"
         annotation_text = ""
+        if request.plot_type == "embedding" and request.embedding_markers:
+            annotation_text = (
+                f"; {len(request.embedding_markers)} expression panel(s) in "
+                f"{request.embedding_ncols} columns"
+            )
         if request.plot_type in {"heatmap", "dotplot", "violin"}:
             annotation_text = {
                 "none": "",
                 "dendrogram": "; a fresh dendrogram will be recalculated",
                 "totals": "; population totals will be displayed",
             }[request.side_annotation]
+            if request.reorder_markers_by_expression:
+                annotation_text += "; markers will be ordered by expression"
+            if request.show_population_colours:
+                annotation_text += (
+                    "; population colours will be shown with a "
+                    f"{request.population_colour_box_width:g} pt box width and "
+                    f"{request.population_colour_label_gap:g} pt label gap"
+                )
         summary = (
             f"{int(mask.sum()):,} cells in {group_count:,} label groups{roi_text}; "
-            f"expression source {request.matrix_source}{annotation_text}."
+            f"expression source {request.matrix_source}{metadata_text}"
+            f"{annotation_text}."
         )
         self.data_summary_label.setText(summary)
         self._set_readiness(True, f"Ready — {summary}")

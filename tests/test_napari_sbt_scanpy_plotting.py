@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from types import SimpleNamespace
+import sys
+from types import ModuleType, SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -14,6 +15,7 @@ from SpatialBiologyToolkit.napari_sbt.scanpy_plotting import (
     expression_group_summary,
     matrix_source_choices,
     resolve_plot_cell_mask,
+    sample_level_obs_columns,
 )
 
 
@@ -94,6 +96,23 @@ def test_plot_scope_can_use_frozen_cohort_obs_names():
     )
 
     assert adata.obs_names[mask].tolist() == ["cell_1", "cell_4"]
+
+
+def test_sample_metadata_filter_combines_with_the_plot_scope():
+    adata = _adata()
+    assert "patient" in sample_level_obs_columns(adata, roi_obs="ROI")
+    assert "population_named" not in sample_level_obs_columns(adata, roi_obs="ROI")
+    request = ScanpyPlotRequest(
+        plot_type="composition_bar",
+        groupby="population_named",
+        composition_obs="ROI",
+        metadata_filter_obs="patient",
+        metadata_filter_values=["P2"],
+    )
+
+    mask = resolve_plot_cell_mask(adata, request)
+
+    assert adata.obs_names[mask].tolist() == ["cell_4", "cell_5"]
 
 
 def test_expression_summary_slices_selected_markers_and_scales_per_marker():
@@ -187,6 +206,83 @@ def test_embedding_leaves_rasterization_control_to_scanpy(monkeypatch):
     assert artifact.figure.get_layout_engine() is not None
 
 
+def test_embedding_can_render_multiple_expression_variables(monkeypatch):
+    captured: dict[str, object] = {}
+
+    class FakeAnnData:
+        def __init__(self, X, obs, var=None):
+            self.X = X
+            self.obs = obs
+            self.var = var
+            self.obsm: dict[str, object] = {}
+            self.uns: dict[str, object] = {}
+
+    def embedding(plot_adata, **kwargs):
+        from matplotlib.figure import Figure
+
+        captured.update(kwargs)
+        captured["X"] = np.asarray(plot_adata.X)
+        captured["var_names"] = list(plot_adata.var.index)
+        figure = Figure()
+        axis = figure.add_subplot(111)
+        axis.set_xlabel("UMAP1")
+        axis.set_ylabel("UMAP2")
+        return figure
+
+    fake_scanpy = SimpleNamespace(pl=SimpleNamespace(embedding=embedding))
+    monkeypatch.setattr(
+        plotting_module,
+        "_native_scanpy_modules",
+        lambda: (fake_scanpy, FakeAnnData),
+    )
+    adata = _adata()
+    request = ScanpyPlotRequest(
+        plot_type="embedding",
+        groupby="population_named",
+        embedding_key="X_umap",
+        embedding_markers=["CD3", "CD68"],
+        embedding_ncols=2,
+        embedding_colormap="magma",
+        show_legend=False,
+    )
+
+    artifact = build_scanpy_plot(adata, request)
+
+    assert captured["color"] == ["CD3", "CD68"]
+    assert captured["ncols"] == 2
+    assert captured["cmap"] == "magma"
+    assert captured["colorbar_loc"] is None
+    assert captured["var_names"] == ["CD3", "CD68"]
+    np.testing.assert_array_equal(captured["X"], adata.X[:, :2])
+    assert {"CD3", "CD68"}.issubset(artifact.data.columns)
+
+
+def test_common_axis_display_options_hide_labels_and_ticks():
+    from matplotlib.figure import Figure
+
+    figure = Figure()
+    axis = figure.add_subplot(111)
+    axis.plot([0, 1], [0, 1])
+    axis.set_xlabel("Embedding 1")
+    axis.set_ylabel("Embedding 2")
+    request = ScanpyPlotRequest(
+        plot_type="embedding",
+        groupby="population_named",
+        embedding_key="X_umap",
+        show_x_axis_label=False,
+        show_y_axis_label=False,
+        show_x_ticks=False,
+        show_y_ticks=False,
+    )
+
+    plotting_module._apply_axis_display_options(axis, request)
+
+    assert axis.get_xlabel() == ""
+    assert axis.get_ylabel() == ""
+    assert not any(label.get_visible() for label in axis.get_xticklabels())
+    assert not any(label.get_visible() for label in axis.get_yticklabels())
+
+
 def test_scanpy_layout_fitter_reserves_dynamic_space_for_long_labels():
     from matplotlib.backends.backend_agg import FigureCanvasAgg
     from matplotlib.figure import Figure
@@ -206,6 +302,68 @@ def test_scanpy_layout_fitter_reserves_dynamic_space_for_long_labels():
     assert figure.subplotpars.left > baseline[0]
     renderer = figure.canvas.get_renderer()
     assert axis.get_tightbbox(renderer).x0 >= 11.0
+
+
+def test_expression_marker_order_uses_shared_utility_on_plotting_data(monkeypatch):
+    calls: list[tuple[object, list[str]]] = []
+    fake_utils = ModuleType("SpatialBiologyToolkit.utils")
+
+    def reorder_vars_by_expression(adata, markers):
+        calls.append((adata, list(markers)))
+        return list(reversed(markers))
+
+    fake_utils.reorder_vars_by_expression = reorder_vars_by_expression
+    monkeypatch.setitem(sys.modules, fake_utils.__name__, fake_utils)
+    plotting_adata = SimpleNamespace()
+    request = ScanpyPlotRequest(
+        plot_type="heatmap",
+        groupby="population_named",
+        markers=["CD3", "CD68", "PanCK"],
+        reorder_markers_by_expression=True,
+    )
+
+    ordered = plotting_module._ordered_expression_markers(plotting_adata, request)
+
+    assert ordered == ["PanCK", "CD68", "CD3"]
+    assert calls == [(plotting_adata, ["CD3", "CD68", "PanCK"])]
+
+
+def test_population_colour_strip_uses_plotting_anndata_palette():
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+    from matplotlib.figure import Figure
+
+    figure = Figure(figsize=(4, 3), dpi=100)
+    FigureCanvasAgg(figure)
+    axis = figure.add_subplot(111)
+    axis.set_yticks([0.5, 1.5], labels=["T cell", "Tumour"])
+    plot_adata = SimpleNamespace(
+        obs=pd.DataFrame(
+            {
+                "population_named": pd.Categorical(
+                    ["T cell", "Tumour"], categories=["T cell", "Tumour"]
+                )
+            }
+        ),
+        uns={"population_named_colors": ["#112233", "#abcdef"]},
+    )
+    plot_object = SimpleNamespace(ax_dict={"mainplot_ax": axis}, are_axes_swapped=False)
+    request = ScanpyPlotRequest(
+        plot_type="heatmap",
+        groupby="population_named",
+        markers=["CD3"],
+        show_population_colours=True,
+        population_colour_label_gap=37,
+        population_colour_box_width=18,
+    )
+
+    plotting_module._add_population_colour_strip(plot_object, plot_adata, request)
+
+    colour_boxes = [
+        line for line in axis.lines if line.get_gid() == "napari_sbt_population_colour"
+    ]
+    assert len(colour_boxes) == 2
+    assert all(line.get_linewidth() == 18 for line in colour_boxes)
+    assert all(tick.get_pad() == 37 for tick in axis.yaxis.get_major_ticks())
 
 
 def test_fresh_dendrogram_uses_current_temporary_plot_data_only():
@@ -304,6 +462,69 @@ def test_building_label_comparison_returns_exportable_values_without_mutation():
         "normalisation",
     }
     pd.testing.assert_frame_equal(adata.obs, before)
+
+
+def test_composition_bar_sort_spacing_edges_and_filtered_autotitle():
+    request = ScanpyPlotRequest(
+        plot_type="composition_bar",
+        groupby="population_named",
+        composition_obs="ROI",
+        composition_measure="count",
+        metadata_filter_obs="patient",
+        metadata_filter_values=["P1", "P2"],
+        bar_sort_population="Tumour",
+        bar_sort_direction="descending",
+        bar_width=0.5,
+        bar_start_padding=0.75,
+        bar_end_padding=1.25,
+        edge_color="#123456",
+        edge_width=1.5,
+        bar_manual_y_limits=True,
+        bar_y_min=5.0,
+        bar_y_max=25.0,
+    )
+
+    artifact = build_scanpy_plot(_adata(), request)
+    axis = artifact.figure.axes[0]
+
+    assert "patient: P1, P2" in artifact.title
+    assert artifact.data["ROI"].iloc[0] == "C"
+    assert all(np.isclose(patch.get_width(), 0.5) for patch in axis.patches)
+    assert np.allclose(axis.get_xlim(), (-1.0, 3.5))
+    assert np.allclose(axis.get_ylim(), (5.0, 25.0))
+    assert all(np.isclose(patch.get_linewidth(), 1.5) for patch in axis.patches)
+
+
+def test_composition_heatmap_supports_colormap_edges_population_colours_and_no_title():
+    request = ScanpyPlotRequest(
+        plot_type="composition_heatmap",
+        groupby="population_named",
+        composition_obs="ROI",
+        heatmap_colormap="plasma",
+        edge_color="#111111",
+        edge_width=2.0,
+        show_population_colours=True,
+        title_mode="hidden",
+    )
+
+    artifact = build_scanpy_plot(_adata(), request)
+    axis = artifact.figure.axes[0]
+    mesh = axis.collections[0]
+
+    assert artifact.title == "population_named abundance across ROI"
+    assert axis.get_title() == ""
+    assert mesh.get_cmap().name == "plasma"
+    assert np.allclose(mesh.get_linewidths(), 2.0)
+    assert (
+        len(
+            [
+                line
+                for line in axis.lines
+                if line.get_gid() == "napari_sbt_population_colour"
+            ]
+        )
+        == 4
+    )
 
 
 def test_expression_sources_include_x_and_layers():

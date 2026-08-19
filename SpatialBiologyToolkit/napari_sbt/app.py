@@ -121,6 +121,7 @@ from .population_curation import (
     empty_components,
     empty_membership,
     ensure_population_workspace,
+    harmonize_merge_colours,
     import_base_mapping_csv,
     integrate_component_tables,
     list_population_drafts,
@@ -3418,10 +3419,10 @@ class NapariSBTController:
             self._guard(self._mark_population_draft_dirty)
         )
         self.population_base_table.itemChanged.connect(
-            self._guard(self._population_tables_changed)
+            self._guard(self._population_tables_changed, pass_signal_args=True)
         )
         self.population_components_table.itemChanged.connect(
-            self._guard(self._population_tables_changed)
+            self._guard(self._population_tables_changed, pass_signal_args=True)
         )
         self.name_selected_populations_button.clicked.connect(
             lambda: self._guard(lambda: self.name_selected_population_rows("base"))()
@@ -5661,11 +5662,22 @@ class NapariSBTController:
             pd.DataFrame(component_rows, columns=COMPONENT_COLUMNS),
         )
 
-    def _population_tables_changed(self) -> None:
+    def _population_tables_changed(self, changed_item=None) -> None:
         if self.population_draft is None:
             return
         self._mark_population_draft_dirty()
         try:
+            if changed_item is not None:
+                table = changed_item.tableWidget()
+                colour_column = (
+                    3 if table is self.population_base_table else 5
+                )
+                name_column = 2 if table is self.population_base_table else 4
+                if changed_item.column() == colour_column:
+                    colour = self.QColor(changed_item.text().strip())
+                    if colour.isValid():
+                        label = table.item(changed_item.row(), name_column).text()
+                        self._propagate_population_colour(label, colour.name())
             for table, colour_column in (
                 (self.population_base_table, 3),
                 (self.population_components_table, 5),
@@ -5684,6 +5696,25 @@ class NapariSBTController:
                 f"Finish the current edit to refresh the preview: {exc}"
             )
 
+    def _propagate_population_colour(self, proposed_label: str, colour: str) -> None:
+        """Apply an edited final-label colour across base and component rows."""
+
+        label = str(proposed_label).strip()
+        for table, name_column, colour_column in (
+            (self.population_base_table, 2, 3),
+            (self.population_components_table, 4, 5),
+        ):
+            blocked = table.blockSignals(True)
+            try:
+                for row in range(table.rowCount()):
+                    if table.item(row, name_column).text().strip() != label:
+                        continue
+                    item = table.item(row, colour_column)
+                    item.setText(colour)
+                    item.setBackground(self.QColor(colour))
+            finally:
+                table.blockSignals(blocked)
+
     def _refresh_population_merge_preview(self) -> None:
         if self.population_draft is None or self.adata is None:
             self.population_merge_preview.setPlainText(
@@ -5698,12 +5729,32 @@ class NapariSBTController:
             components=components,
             membership=self.population_membership,
         )
+        harmonized_base, harmonized_components, merge_colours = (
+            harmonize_merge_colours(
+                base,
+                components,
+                merge_labels=summary["merge_groups"],
+            )
+        )
+        colours_changed = not base["color"].astype(str).equals(
+            harmonized_base["color"].astype(str)
+        ) or not components["color"].astype(str).equals(
+            harmonized_components["color"].astype(str)
+        )
+        if colours_changed:
+            base = harmonized_base
+            components = harmonized_components
+            self._set_population_colour_columns(base, components)
+            self._mark_population_draft_dirty()
         counts = labels.value_counts(dropna=False)
         lines = [
             f"New label column: {self.curation_derived_obs_edit.text().strip()}",
-            f"{summary['label_count']:,} effective population(s) across "
-            f"{summary['cell_count']:,} cells; {summary['split_cell_count']:,} "
-            "cells currently use split-component assignments.",
+            (
+                f"{summary['label_count']:,} effective population(s) across "
+                f"{summary['cell_count']:,} cells; "
+                f"{summary['split_cell_count']:,} cells currently use "
+                "split-component assignments."
+            ),
             "",
             "Effective population counts:",
         ]
@@ -5715,7 +5766,11 @@ class NapariSBTController:
         if groups:
             lines.append("Explicit proposed merges (shared final name):")
             for label, contributors in groups.items():
-                lines.append(f"  • {label} ← {', '.join(contributors)}")
+                colour = merge_colours.get(str(label), "")
+                colour_text = f" [{colour}]" if colour else ""
+                lines.append(
+                    f"  • {label}{colour_text} ← {', '.join(contributors)}"
+                )
         else:
             lines.append("No explicit merges are currently proposed.")
         if summary["missing_source_cells"]:
@@ -5768,6 +5823,31 @@ class NapariSBTController:
                 name_item.setData(self.Qt.ForegroundRole, None)
         self.population_components_table.blockSignals(False)
 
+    def _set_population_colour_columns(
+        self,
+        base_mapping: pd.DataFrame,
+        components: pd.DataFrame,
+    ) -> None:
+        """Update editable colour cells without rebuilding either table."""
+
+        for table, frame, column in (
+            (self.population_base_table, base_mapping, 3),
+            (self.population_components_table, components, 5),
+        ):
+            blocked = table.blockSignals(True)
+            try:
+                for row, colour_text in enumerate(frame["color"].astype(str)):
+                    item = table.item(row, column)
+                    if item is None:
+                        continue
+                    item.setText(colour_text)
+                    colour = self.QColor(colour_text)
+                    item.setBackground(
+                        colour if colour.isValid() else self.QColor("#fecaca")
+                    )
+            finally:
+                table.blockSignals(blocked)
+
     def _save_current_population_draft(
         self,
         *,
@@ -5780,6 +5860,7 @@ class NapariSBTController:
             or self.adata is None
         ):
             raise RuntimeError("Create or load a population draft first.")
+        self._refresh_population_merge_preview()
         base, components = self._population_tables_to_frames()
         draft = self.population_draft.model_copy(
             update={

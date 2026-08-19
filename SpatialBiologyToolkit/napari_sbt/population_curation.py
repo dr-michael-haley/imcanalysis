@@ -792,6 +792,87 @@ def merge_groups(
     }
 
 
+def harmonize_merge_colours(
+    base_mapping: pd.DataFrame,
+    components: pd.DataFrame | None = None,
+    *,
+    merge_labels: Sequence[str] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, str]]:
+    """Give every contributor to one merge one distinct, shared colour.
+
+    Existing contributor colours are preferred in table order. If that colour is
+    already owned by another merge, another existing colour or the fallback
+    palette is used. Non-merge rows are never changed.
+    """
+
+    base = base_mapping.copy()
+    component_frame = (
+        components.copy() if components is not None else empty_components()
+    )
+    labels = list(
+        dict.fromkeys(
+            str(label)
+            for label in (
+                merge_labels
+                if merge_labels is not None
+                else merge_groups(base, component_frame)
+            )
+        )
+    )
+    assignments: dict[str, str] = {}
+    used_colours: set[str] = set()
+    palette_cursor = 0
+
+    for label in labels:
+        base_match = base["proposed_label"].astype(str).eq(label)
+        component_match = (
+            component_frame["proposed_label"].astype(str).eq(label)
+            if not component_frame.empty
+            else pd.Series(False, index=component_frame.index, dtype=bool)
+        )
+        existing = [
+            colour
+            for colour in dict.fromkeys(
+                [
+                    *base.loc[base_match, "color"].map(_clean_text).tolist(),
+                    *component_frame.loc[component_match, "color"]
+                    .map(_clean_text)
+                    .tolist(),
+                ]
+            )
+            if colour
+        ]
+        chosen = next(
+            (
+                colour
+                for colour in existing
+                if colour.casefold() not in used_colours
+            ),
+            None,
+        )
+        while chosen is None:
+            candidate = _FALLBACK_COLOURS[palette_cursor % len(_FALLBACK_COLOURS)]
+            palette_cursor += 1
+            if candidate.casefold() not in used_colours:
+                chosen = candidate
+            elif palette_cursor > len(_FALLBACK_COLOURS) * 2:
+                # More simultaneous merges than the standard categorical palette
+                # is unusual; deterministic RGB candidates still prevent reuse.
+                digest = hashlib.sha256(
+                    f"napari-sbt-merge-{label}-{palette_cursor}".encode()
+                ).hexdigest()
+                candidate = f"#{digest[:6]}"
+                if candidate.casefold() not in used_colours:
+                    chosen = candidate
+        assignments[label] = chosen
+        used_colours.add(chosen.casefold())
+        base.loc[base_match, "color"] = chosen
+        if not component_frame.empty:
+            component_frame.loc[component_match, "color"] = chosen
+
+    return base, component_frame, assignments
+
+
 def save_population_draft(
     workspace_paths: PopulationWorkspacePaths,
     draft: PopulationDraft,
@@ -830,6 +911,18 @@ def save_population_draft(
         membership,
         adata=adata,
         source_obs=draft.source_obs,
+    )
+    _labels, effective_summary = synthesize_population_labels(
+        adata,
+        source_obs=draft.source_obs,
+        base_mapping=base,
+        components=clean_components,
+        membership=clean_membership,
+    )
+    base, clean_components, _merge_colours = harmonize_merge_colours(
+        base,
+        clean_components,
+        merge_labels=effective_summary["merge_groups"],
     )
     paths = population_draft_paths(workspace_paths, draft)
     previous_draft = (
@@ -877,13 +970,6 @@ def save_population_draft(
     if updated.draft_id not in workspace.draft_ids:
         workspace.draft_ids.append(updated.draft_id)
     write_yaml(workspace_paths.manifest, workspace)
-    _labels, effective_summary = synthesize_population_labels(
-        adata,
-        source_obs=draft.source_obs,
-        base_mapping=base,
-        components=clean_components,
-        membership=clean_membership,
-    )
     payload = {
         "draft_revision": updated.revision,
         "draft_changes": draft_changes,
@@ -1309,13 +1395,20 @@ def apply_population_draft(
         components=components,
         membership=membership,
     )
+    harmonized_base, harmonized_components, _merge_colours = (
+        harmonize_merge_colours(
+            base_mapping,
+            components,
+            merge_labels=summary["merge_groups"],
+        )
+    )
     adata.obs[draft.derived_obs] = labels
 
     colour_rows = pd.concat(
         [
-            base_mapping[["proposed_label", "color"]],
-            components[["proposed_label", "color"]]
-            if not components.empty
+            harmonized_base[["proposed_label", "color"]],
+            harmonized_components[["proposed_label", "color"]]
+            if not harmonized_components.empty
             else pd.DataFrame(columns=["proposed_label", "color"]),
         ],
         ignore_index=True,
@@ -1342,14 +1435,14 @@ def apply_population_draft(
         "derived_obs": draft.derived_obs,
         "source_fingerprint": draft.source_fingerprint,
         "base_mapping_fingerprint": _mapping_fingerprint(
-            validate_base_mapping(base_mapping),
+            validate_base_mapping(harmonized_base),
             ["source_value", "proposed_label", "color"],
         ),
         "component_fingerprint": _mapping_fingerprint(
-            components,
+            harmonized_components,
             ["component_id", "parent_source_value", "proposed_label"],
         )
-        if not components.empty
+        if not harmonized_components.empty
         else hashlib.sha256(b"").hexdigest(),
         "membership_fingerprint": _mapping_fingerprint(
             membership, ["obs_name", "component_id"]
@@ -1442,6 +1535,7 @@ __all__ = [
     "empty_components",
     "empty_membership",
     "ensure_population_workspace",
+    "harmonize_merge_colours",
     "import_base_mapping_csv",
     "integrate_component_tables",
     "list_population_drafts",

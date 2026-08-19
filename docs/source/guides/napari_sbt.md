@@ -601,6 +601,12 @@ same source.
 The base table starts as an identity mapping. Editing **Proposed name** renames
 a cluster. Assigning the same final name to multiple rows is an explicit merge:
 all contributors are highlighted and listed in the effective-label preview.
+Contributors to one merge automatically receive one shared colour across both
+base and subcluster tables. Different merge groups receive distinct colours,
+preferring the first available contributor colour before using the fallback
+categorical palette. The selected merge colour is displayed in the preview and
+saved into the derived observation's Scanpy palette. Changing a final label's
+colour propagates that choice to every matching base and subcluster row.
 Preliminary mappings can be imported from CSV, including common source columns
 such as the selected obs name, `source_value`, `cluster`, or `leiden`, and label
 columns such as `proposed_label`, `final_population`, `label`, or `name`.
@@ -664,11 +670,18 @@ summary reports the selected cell and group counts before a plot can be opened.
 **Clear ROI selection** removes the optional ROI filter and returns the plot scope
 to every available ROI.
 
+An additional metadata filter lists observations that are constant within each
+ROI, such as patient, condition, tissue, treatment, or acquisition batch. Users can
+select one or more values without changing AnnData; the active filter is included
+in automatic plot titles. It is separate from composition grouping, so a plot can,
+for example, show per-ROI bars after first restricting the cells to one condition.
+
 The initial plot collection includes:
 
-- native `scanpy.pl.embedding` population views of any existing `adata.obsm`
-  embedding, with selectable components, display limits, point size, opacity, and
-  optional on-data population names;
+- native `scanpy.pl.embedding` views of any existing `adata.obsm` embedding,
+  coloured either by populations or by one or more expression variables from the
+  selected matrix source, with selectable components, display limits, point size,
+  opacity, expression colour map, and configurable multi-panel columns;
 - native `scanpy.pl.matrixplot`, `scanpy.pl.dotplot`, and
   `scanpy.pl.stacked_violin` expression views from a searchable marker list;
 - population counts or within-sample percentages as stacked bars or heat maps,
@@ -684,6 +697,34 @@ marker-wise z-scores, marker-wise 0–1 scaling, or stored means; stacked violin
 show the stored matrix values directly. Common native controls include colormap,
 axis swapping, and one optional side annotation: a dendrogram or population cell
 totals. Totals may retain population order or sort by abundance.
+
+Expression plots can optionally cluster the selected marker order using
+``SpatialBiologyToolkit.utils.reorder_vars_by_expression``. This operates on the
+temporary marker-only AnnData containing the current cell/ROI selection and chosen
+expression source, rather than mutating or reordering the source AnnData. Matrix,
+dot, and stacked-violin plots can also display a narrow population-colour strip
+using the live ``adata.uns["<observation>_colors"]`` mapping, following the visual
+convention used by ``matrixplot_with_row_colors``. The strip reserves a separate
+band from the population tick labels so long names do not overlap the colours.
+Users can adjust both the colour/label gap and colour-box width in points; these
+sizes remain stable when the plot window is resized.
+
+Every plot also has common presentation controls. Legends or continuous colour
+scales can be hidden; categorical embedding and stacked-bar legends can be placed
+in the margin, on the data, automatically, or at a chosen corner. X and Y axis
+titles and X and Y ticks can each be shown or hidden independently. For Scanpy
+matrix, dot, and violin plots, hiding ticks also hides the associated marker or
+population tick text. Expression embedding exports include every displayed
+variable alongside the plotted coordinates. Plot titles can be automatic, custom,
+or hidden while retaining a meaningful popup-window name.
+
+Native expression heat maps retain their expression colour-map, live population
+colour-strip, and fresh-dendrogram controls. Composition and label-comparison heat
+maps expose their own colour map and optional population-colour strip. Configurable
+edge colour and weight can outline heat-map cells or composition bars. Composition
+bars also expose bar width, independent padding before and after the bar sequence,
+optional fixed Y-axis minimum and maximum, and ascending or descending sorting by
+a selected population subgroup.
 
 When requested, a dendrogram is always recalculated from the currently selected
 cells and markers in the temporary marker-only AnnData. Correlation (Pearson,

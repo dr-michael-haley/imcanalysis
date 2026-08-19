@@ -14,6 +14,9 @@ pytorch-lightning==2.6.0
 # RAPIDS-singlecell release paired with RAPIDS 24.12. The RAPIDS/CuPy stack is
 # supplied by Conda above, so do not request the package's [rapids12] extra.
 rapids-singlecell==0.12.0
+# The omitted [rapids12] extra normally supplies this upper bound. Preserve it
+# explicitly so pip cannot replace Conda's compatible Numba during installation.
+numba==0.60.0
 
 # imc_segmentation requirements.
 cellpose==3.1.0

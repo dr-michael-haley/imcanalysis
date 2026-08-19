@@ -48,7 +48,10 @@ dependencies:
   - h5py>=3.14,<4
   - anndata>=0.10,<0.13
   - scanpy>=1.10,<1.12
-  - numba>=0.60,<0.64
+  # RAPIDS-singlecell 0.12.0's RAPIDS 24.12 extras require Numba <0.61.
+  # Pin the known compatible release so a future solve cannot select the
+  # unsupported Numba 0.61+ generation.
+  - numba=0.60.0
   # Zarr 2 imports public Blosc helpers removed in Numcodecs 0.16.
   - numcodecs=0.15.1
   - statsmodels>=0.14,<0.15

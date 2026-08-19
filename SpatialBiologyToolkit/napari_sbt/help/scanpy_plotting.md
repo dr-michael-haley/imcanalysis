@@ -34,6 +34,14 @@ available ROIs, or select one or more ROIs to restrict the plot. **Clear ROI
 selection** removes this filter and returns to all ROIs. The identity and row order
 of AnnData are never changed.
 
+**Additional ROI/sample observation** provides a further metadata filter. It lists
+observations that are constant within each ROI, such as patient, condition,
+treatment, tissue, or acquisition batch. Select one or more values to plot only
+those groups; leave the value list empty to include them all. The active filter is
+included in automatic plot titles. This filter is independent of the composition
+plot's **Group bars/columns by** setting, so—for example—you can restrict a plot to
+one treatment while still comparing its individual ROIs.
+
 **Expression matrix** chooses `adata.X`, `adata.raw`, or one of the matrices in
 `adata.layers`. Marker choices update to match the selected source. Embedding,
 composition, and label-comparison plots do not transform this matrix; the setting
@@ -60,11 +68,17 @@ Choose the biological question first; box 3 then shows only the relevant control
 ## Plot options
 
 For embeddings, select any `obsm` matrix with at least two components and choose
-the horizontal and vertical component numbers. Interactive previews default to a
-maximum of 50,000 points. Larger selections are deterministically and
-population-stratified downsampled so repeated plots are stable and small
-populations remain represented. Change the limit when a fuller view is needed.
-Point size, opacity, and optional centroid names affect display only.
+the horizontal and vertical component numbers. **Colour by** can show the selected
+population labels or expression values. In expression mode, choose one or more
+variables from the searchable list, set the number of panel columns, and choose a
+colour map. Values come from the expression matrix selected in box 1; the source
+embedding and AnnData are not recalculated. The exported plot-data CSV contains
+the displayed value for every selected variable.
+
+Interactive previews default to a maximum of 50,000 points. Larger selections are
+deterministically and population-stratified downsampled so repeated plots are
+stable and small populations remain represented. Change the limit when a fuller
+view is needed. Point size and opacity affect display only.
 
 Expression plots use only the markers selected in the searchable list. **Select
 visible** makes it easy to type a marker family and select the filtered results.
@@ -92,7 +106,37 @@ Native expression plots also provide common Scanpy display options:
   dendrogram in the source AnnData is ignored and the source object is not changed.
 - **Population cell totals** can preserve the current population order or sort
   populations from smallest to largest or largest to smallest.
+- **Marker ordering** can preserve the marker-list order or cluster the selected
+  markers by cell-level expression similarity using
+  `SpatialBiologyToolkit.utils.reorder_vars_by_expression`. Ordering is calculated
+  from the temporary plotting AnnData, so it follows the selected cells, ROIs,
+  expression source, and markers without changing the source AnnData.
+- **Population colours** adds a narrow strip beside the population axis. Colours
+  come from the current `adata.uns["<observation>_colors"]` palette when available,
+  using the same mapping as Population QC and `matrixplot_with_row_colors`. A
+  dedicated, editable **Colour/label gap** separates the strip from even long
+  population labels. **Colour box width** controls the strip thickness. Both values
+  use points and retain their physical size when the popup is resized.
 - **Axis arrangement** can swap the marker and population axes.
+
+Expression heat maps use the native expression **Colour map**, **Population
+colours**, and freshly recalculated **Dendrogram** controls above. Composition and
+label-comparison heat maps use the common heat-map colour map and population-colour
+controls below. **Cell/bar edge colour** and **Edge weight** can draw boundaries
+between heat-map cells or around bars; set the weight to zero for no edge.
+
+The common controls below the plot-specific options apply to every plot:
+
+- **Legend** shows or hides the categorical legend or continuous colour scale.
+  **Legend position** controls categorical embedding and stacked-bar legends;
+  native Scanpy expression colour scales retain their right-hand position.
+- **Axis labels** independently show or hide the X and Y axis titles.
+- **Axis ticks** independently show or hide X and Y tick marks and their text.
+  On matrix, dot, violin, composition, and comparison plots, the tick text often
+  contains the biologically meaningful population or marker names.
+- **Title** can use the descriptive automatic title, a custom title, or no visible
+  title. A hidden title does not remove the meaningful name used for the popup and
+  open-window list.
 
 A dendrogram requires at least two selected markers and three represented
 populations. A clear readiness message is shown before plotting when the current
@@ -100,7 +144,11 @@ settings do not satisfy those requirements.
 
 For composition plots, choose the observation that represents samples, ROIs,
 patients, conditions, or another grouping. Percentages are normalized within each
-grouping value; counts remain absolute. For label comparison, rows are the
+grouping value; counts remain absolute. Bar width changes the gap between bars,
+while start and end padding reserve independent space before the first and after
+the last bar. Enable **Y-axis limits** to enter a fixed minimum and maximum; leave
+it disabled to retain automatic scaling. Bars can be sorted ascending or descending
+by the count or percentage of one chosen population. For label comparison, rows are the
 original/comparison labels and columns are the primary labels from box 1. Row
 percentages are usually the clearest way to see how each original Leiden cluster
 was renamed, merged, or split.

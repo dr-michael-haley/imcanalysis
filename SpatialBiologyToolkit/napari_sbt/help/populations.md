@@ -25,12 +25,16 @@ Every original source value has one row and initially maps to itself. Edit
 **Proposed name** to assign a biological name. Select several rows and use
 **Give selected rows one name / merge** to make the proposed merge explicit.
 Rows participating in a shared final name are highlighted orange and listed in
-the Preview tab with all contributing source clusters.
+the Preview tab with all contributing source clusters. NapariSBT automatically
+gives every contributor to one merge the same colour. Separate merge groups are
+kept visually distinct; the first available contributor colour is retained where
+possible and propagated across base and subcluster rows. Editing the colour for
+one final label likewise updates every row carrying that proposed label.
 
 Colours are stored with the draft and written to Scanpy's
-`adata.uns["<obs>_colors"]` convention when the draft is applied. Select all
-contributors to a merge before setting their common colour if you want to avoid
-a colour-conflict warning.
+`adata.uns["<obs>_colors"]` convention when the draft is applied. The effective
+merge colour is shown beside its name in the Preview tab and is saved with the
+mapping.
 
 **Import preliminary names from CSV** accepts common layouts. It looks for the
 selected source-observation name (or `source_value`, `cluster`, or `leiden`) and

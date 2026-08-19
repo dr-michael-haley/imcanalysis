@@ -23,6 +23,7 @@ def main() -> None:
 
     expected = {
         "rapids-singlecell": "0.12.0",
+        "numba": "0.60.0",
         "dask": "2024.11.2",
         "distributed": "2024.11.2",
         "dask-expr": "1.1.19",
