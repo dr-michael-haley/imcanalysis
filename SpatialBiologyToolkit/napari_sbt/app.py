@@ -48,6 +48,21 @@ from .cohort import (
     save_cohort_snapshot,
     validate_mask_coverage,
 )
+from .dataset_maintenance import (
+    CellFilterRequest,
+    append_maintenance_audit,
+    apply_cell_filter,
+    apply_var_rename,
+    atomic_write_anndata,
+    copy_renamed_images,
+    dataset_readiness,
+    plan_image_renames,
+    preview_cell_filter,
+    preview_mask_rebuild,
+    preview_var_rename,
+    rebuild_masks_and_object_numbers,
+    remove_anndata_vars,
+)
 from .explore import (
     EXPLORE_RECIPE_FUNCTION_KEYS,
     EXPLORE_STATE_VERSION,
@@ -211,6 +226,10 @@ WORKFLOW_DESCRIPTIONS = {
         "Name, merge, subcluster, inspect, and export AnnData population observations "
         "with image-based Population QC and dedicated Scanpy plotting."
     ),
+    "dataset_maintenance": (
+        "Save or derive synchronized AnnData, channel-image, cell, ROI, and mask "
+        "assets with explicit previews and readiness checks."
+    ),
     "full_workspace": (
         "Show every NapariSBT tab. Use this when combining exploration, population "
         "curation, manual labeling, and classification in one session."
@@ -262,6 +281,11 @@ WORKFLOW_VISIBLE_TABS = {
         "regions_export",
         "layers_status",
     },
+    "dataset_maintenance": {
+        "setup",
+        "dataset_maintenance",
+        "layers_status",
+    },
     "full_workspace": {
         "setup",
         "feature_building",
@@ -270,6 +294,7 @@ WORKFLOW_VISIBLE_TABS = {
         "population_qc",
         "populations",
         "scanpy_plotting",
+        "dataset_maintenance",
         "classify",
         "labeler",
         "regions_export",
@@ -543,6 +568,9 @@ class NapariSBTController:
         self._applying_explore_recipe = False
         self._updating_recipe_layer_state = False
         self._updating_queue_controls = False
+        self.maintenance_dirty = False
+        self.maintenance_image_rename_plan = None
+        self.maintenance_last_filter_request: CellFilterRequest | None = None
         self.cell_picking_enabled = True
         self.classifier_display_dialog = None
         self.classifier_visibility_controls: dict[str, object] = {}
@@ -1978,9 +2006,7 @@ class NapariSBTController:
         self.create_population_draft_button = QPushButton(
             "Create new label draft"
         )
-        self.save_population_draft_button = QPushButton(
-            "Save and update Explore / Population QC"
-        )
+        self.save_population_draft_button = QPushButton("Save and Update")
         self.save_population_draft_button.setObjectName("sbtPrimaryActionButton")
         self.view_population_history_button = QPushButton("View history…")
         population_draft_actions = QWidget()
@@ -2284,6 +2310,380 @@ class NapariSBTController:
             "scanpy_plotting",
         )
         self.scanpy_plotting_tab_index = self.tabs.count() - 1
+
+        # Dataset Maintenance. File-system scans are deliberately explicit; the
+        # dashboard otherwise consumes the index produced by Setup validation.
+        maintenance = QWidget()
+        maintenance_layout = QVBoxLayout(maintenance)
+        maintenance_warning = QLabel(
+            "⚠ Dataset Maintenance can change the live AnnData and create aligned "
+            "image or mask assets. Changes remain in memory until AnnData is saved. "
+            "New output files/folders are the default; original disk assets are not "
+            "modified unless replacement is explicitly enabled."
+        )
+        maintenance_warning.setWordWrap(True)
+        maintenance_warning.setObjectName("sbtMaintenanceWarning")
+        maintenance_layout.addWidget(maintenance_warning)
+
+        maintenance_readiness_group = workflow_group(
+            "1. Dataset and synchronization readiness",
+            "dataset_maintenance",
+            "Dataset and synchronization readiness",
+        )
+        maintenance_readiness_layout = QVBoxLayout(maintenance_readiness_group)
+        maintenance_readiness_actions = QHBoxLayout()
+        self.refresh_maintenance_readiness_button = QPushButton(
+            "Refresh from current index"
+        )
+        self.reindex_maintenance_assets_button = QPushButton(
+            "Rebuild mask/image index now…"
+        )
+        self.reindex_maintenance_assets_button.setToolTip(
+            "Explicitly scan configured mask and image folders. This is never run "
+            "automatically when changing tabs."
+        )
+        maintenance_readiness_actions.addWidget(
+            self.refresh_maintenance_readiness_button
+        )
+        maintenance_readiness_actions.addWidget(self.reindex_maintenance_assets_button)
+        maintenance_readiness_actions.addStretch(1)
+        self.maintenance_unsaved_label = QLabel("No in-memory maintenance changes.")
+        self.maintenance_unsaved_label.setWordWrap(True)
+        self.maintenance_readiness_tree = QTreeWidget()
+        self.maintenance_readiness_tree.setHeaderLabels(
+            ["State", "Resource", "Details"]
+        )
+        self.maintenance_readiness_tree.setRootIsDecorated(False)
+        self.maintenance_readiness_tree.setAlternatingRowColors(False)
+        self.maintenance_readiness_tree.setMinimumHeight(145)
+        self.maintenance_readiness_tree.header().setSectionResizeMode(
+            0, QHeaderView.ResizeToContents
+        )
+        self.maintenance_readiness_tree.header().setSectionResizeMode(
+            1, QHeaderView.ResizeToContents
+        )
+        self.maintenance_readiness_tree.header().setSectionResizeMode(
+            2, QHeaderView.Stretch
+        )
+        maintenance_readiness_layout.addLayout(maintenance_readiness_actions)
+        maintenance_readiness_layout.addWidget(self.maintenance_unsaved_label)
+        maintenance_readiness_layout.addWidget(self.maintenance_readiness_tree)
+        maintenance_layout.addWidget(maintenance_readiness_group)
+
+        self.maintenance_tool_tabs = QTabWidget()
+
+        maintenance_save_page = QWidget()
+        maintenance_save_layout = QVBoxLayout(maintenance_save_page)
+        maintenance_save_group = workflow_group(
+            "2. Save the current in-memory AnnData",
+            "dataset_maintenance",
+            "Save current AnnData",
+        )
+        maintenance_save_form = QFormLayout(maintenance_save_group)
+        maintenance_save_destination = QWidget()
+        maintenance_save_destination_layout = QHBoxLayout(
+            maintenance_save_destination
+        )
+        maintenance_save_destination_layout.setContentsMargins(0, 0, 0, 0)
+        self.maintenance_anndata_path_edit = QLineEdit(
+            str(self.project_root / "napari_sbt_maintained.h5ad")
+        )
+        self.choose_maintenance_anndata_button = QPushButton("Choose…")
+        maintenance_save_destination_layout.addWidget(
+            self.maintenance_anndata_path_edit
+        )
+        maintenance_save_destination_layout.addWidget(
+            self.choose_maintenance_anndata_button
+        )
+        self.maintenance_overwrite_anndata_check = QCheckBox(
+            "Allow replacement of this exact existing .h5ad file"
+        )
+        self.save_maintenance_anndata_button = QPushButton("Save current AnnData")
+        self.save_maintenance_anndata_button.setObjectName("sbtPrimaryActionButton")
+        self.use_saved_maintenance_anndata_check = QCheckBox(
+            "Use the saved file as the Setup AnnData path"
+        )
+        self.use_saved_maintenance_anndata_check.setChecked(True)
+        self.maintenance_save_status_label = QLabel(
+            "Nothing is written until Save current AnnData is pressed."
+        )
+        self.maintenance_save_status_label.setWordWrap(True)
+        maintenance_save_form.addRow("Destination", maintenance_save_destination)
+        maintenance_save_form.addRow("", self.maintenance_overwrite_anndata_check)
+        maintenance_save_form.addRow("", self.use_saved_maintenance_anndata_check)
+        maintenance_save_form.addRow("", self.save_maintenance_anndata_button)
+        maintenance_save_form.addRow("Status", self.maintenance_save_status_label)
+        maintenance_save_layout.addWidget(maintenance_save_group)
+        maintenance_save_layout.addStretch(1)
+        self.maintenance_tool_tabs.addTab(maintenance_save_page, "Overview & Save")
+
+        maintenance_channels_page = QWidget()
+        maintenance_channels_layout = QVBoxLayout(maintenance_channels_page)
+        maintenance_rename_group = workflow_group(
+            "2. Rename variables and matching images",
+            "dataset_maintenance",
+            "Rename variables and images",
+        )
+        maintenance_rename_layout = QVBoxLayout(maintenance_rename_group)
+        maintenance_rename_help = QLabel(
+            "Enter only the new names you want to use. Preview uses the explicit "
+            "Setup image index; matched images can be copied into a new synchronized "
+            "folder without touching their sources."
+        )
+        maintenance_rename_help.setWordWrap(True)
+        self.maintenance_var_rename_table = QTableWidget(0, 3)
+        self.maintenance_var_rename_table.setHorizontalHeaderLabels(
+            ["Current variable", "New variable", "Indexed images"]
+        )
+        self.maintenance_var_rename_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.Stretch
+        )
+        self.maintenance_var_rename_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.Stretch
+        )
+        self.maintenance_var_rename_table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.ResizeToContents
+        )
+        self.maintenance_var_rename_table.setMinimumHeight(245)
+        self.maintenance_update_raw_names_check = QCheckBox(
+            "Apply the same exact renames to matching adata.raw variables"
+        )
+        maintenance_image_output = QWidget()
+        maintenance_image_output_layout = QHBoxLayout(maintenance_image_output)
+        maintenance_image_output_layout.setContentsMargins(0, 0, 0, 0)
+        self.maintenance_image_output_edit = QLineEdit(
+            str(self.project_root / "napari_sbt_renamed_images")
+        )
+        self.choose_maintenance_image_output_button = QPushButton("Choose…")
+        maintenance_image_output_layout.addWidget(self.maintenance_image_output_edit)
+        maintenance_image_output_layout.addWidget(
+            self.choose_maintenance_image_output_button
+        )
+        maintenance_rename_actions = QHBoxLayout()
+        self.preview_maintenance_var_rename_button = QPushButton("Preview rename")
+        self.apply_maintenance_var_rename_button = QPushButton(
+            "Rename variables in memory"
+        )
+        self.copy_maintenance_renamed_images_button = QPushButton(
+            "Copy matched images with new names"
+        )
+        maintenance_rename_actions.addWidget(
+            self.preview_maintenance_var_rename_button
+        )
+        maintenance_rename_actions.addWidget(
+            self.apply_maintenance_var_rename_button
+        )
+        maintenance_rename_actions.addWidget(
+            self.copy_maintenance_renamed_images_button
+        )
+        self.maintenance_var_rename_status = QLabel(
+            "Enter a new variable name, then preview the synchronized change."
+        )
+        self.maintenance_var_rename_status.setWordWrap(True)
+        maintenance_rename_layout.addWidget(maintenance_rename_help)
+        maintenance_rename_layout.addWidget(self.maintenance_var_rename_table)
+        maintenance_rename_layout.addWidget(self.maintenance_update_raw_names_check)
+        maintenance_rename_layout.addWidget(QLabel("Derived image output folder"))
+        maintenance_rename_layout.addWidget(maintenance_image_output)
+        maintenance_rename_layout.addLayout(maintenance_rename_actions)
+        maintenance_rename_layout.addWidget(self.maintenance_var_rename_status)
+        maintenance_channels_layout.addWidget(maintenance_rename_group)
+
+        maintenance_remove_vars_group = workflow_group(
+            "3. Remove variables from AnnData",
+            "dataset_maintenance",
+            "Remove variables",
+        )
+        maintenance_remove_vars_layout = QVBoxLayout(maintenance_remove_vars_group)
+        maintenance_remove_vars_help = QLabel(
+            "Selected variables are removed only from the live AnnData. Image files "
+            "are deliberately retained and reported as orphan channels."
+        )
+        maintenance_remove_vars_help.setWordWrap(True)
+        self.maintenance_remove_vars_list = QListWidget()
+        self.maintenance_remove_vars_list.setSelectionMode(
+            QAbstractItemView.ExtendedSelection
+        )
+        self.maintenance_remove_vars_list.setMaximumHeight(180)
+        self.maintenance_subset_raw_check = QCheckBox(
+            "Also subset adata.raw to variables retained in AnnData"
+        )
+        self.remove_maintenance_vars_button = QPushButton(
+            "Remove selected variables in memory"
+        )
+        maintenance_remove_vars_layout.addWidget(maintenance_remove_vars_help)
+        maintenance_remove_vars_layout.addWidget(self.maintenance_remove_vars_list)
+        maintenance_remove_vars_layout.addWidget(self.maintenance_subset_raw_check)
+        maintenance_remove_vars_layout.addWidget(self.remove_maintenance_vars_button)
+        maintenance_channels_layout.addWidget(maintenance_remove_vars_group)
+        maintenance_channels_layout.addStretch(1)
+        self.maintenance_tool_tabs.addTab(maintenance_channels_page, "Channels")
+
+        maintenance_cells_page = QWidget()
+        maintenance_cells_layout = QVBoxLayout(maintenance_cells_page)
+        maintenance_filter_group = workflow_group(
+            "2. Filter cells using an AnnData observation",
+            "dataset_maintenance",
+            "Filter cells",
+        )
+        maintenance_filter_form = QFormLayout(maintenance_filter_group)
+        self.maintenance_filter_obs_combo = QComboBox()
+        self.maintenance_filter_mode_combo = QComboBox()
+        for label, value in (
+            ("Keep selected values", "keep_values"),
+            ("Remove selected values", "remove_values"),
+            ("Keep numeric range", "keep_range"),
+            ("Remove numeric range", "remove_range"),
+            ("Keep only missing values", "keep_missing"),
+            ("Remove missing values", "remove_missing"),
+        ):
+            self.maintenance_filter_mode_combo.addItem(label, value)
+        self.maintenance_filter_values_list = QListWidget()
+        self.maintenance_filter_values_list.setSelectionMode(
+            QAbstractItemView.ExtendedSelection
+        )
+        self.maintenance_filter_values_list.setMaximumHeight(160)
+        maintenance_filter_range = QWidget()
+        maintenance_filter_range_layout = QHBoxLayout(maintenance_filter_range)
+        maintenance_filter_range_layout.setContentsMargins(0, 0, 0, 0)
+        self.maintenance_filter_lower_spin = QDoubleSpinBox()
+        self.maintenance_filter_lower_spin.setRange(-1e15, 1e15)
+        self.maintenance_filter_lower_spin.setDecimals(6)
+        self.maintenance_filter_upper_spin = QDoubleSpinBox()
+        self.maintenance_filter_upper_spin.setRange(-1e15, 1e15)
+        self.maintenance_filter_upper_spin.setDecimals(6)
+        maintenance_filter_range_layout.addWidget(QLabel("Minimum"))
+        maintenance_filter_range_layout.addWidget(
+            self.maintenance_filter_lower_spin
+        )
+        maintenance_filter_range_layout.addWidget(QLabel("Maximum"))
+        maintenance_filter_range_layout.addWidget(
+            self.maintenance_filter_upper_spin
+        )
+        maintenance_filter_actions = QWidget()
+        maintenance_filter_actions_layout = QHBoxLayout(maintenance_filter_actions)
+        maintenance_filter_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.preview_maintenance_filter_button = QPushButton("Preview filter")
+        self.apply_maintenance_filter_button = QPushButton(
+            "Apply cell filter in memory"
+        )
+        maintenance_filter_actions_layout.addWidget(
+            self.preview_maintenance_filter_button
+        )
+        maintenance_filter_actions_layout.addWidget(
+            self.apply_maintenance_filter_button
+        )
+        self.maintenance_filter_status = QLabel(
+            "Choose an observation and filter mode. Preview before applying."
+        )
+        self.maintenance_filter_status.setWordWrap(True)
+        maintenance_filter_form.addRow("Observation", self.maintenance_filter_obs_combo)
+        maintenance_filter_form.addRow("Filter", self.maintenance_filter_mode_combo)
+        maintenance_filter_form.addRow(
+            "Values", self.maintenance_filter_values_list
+        )
+        maintenance_filter_form.addRow("Numeric range", maintenance_filter_range)
+        maintenance_filter_form.addRow("", maintenance_filter_actions)
+        maintenance_filter_form.addRow("Preview", self.maintenance_filter_status)
+        maintenance_cells_layout.addWidget(maintenance_filter_group)
+
+        maintenance_masks_group = workflow_group(
+            "3. Rebuild masks and align ObjectNumbers",
+            "dataset_maintenance",
+            "Rebuild masks and ObjectNumbers",
+        )
+        maintenance_masks_form = QFormLayout(maintenance_masks_group)
+        maintenance_masks_explanation = QLabel(
+            "This explicitly reads every represented ROI mask. A new mask folder and "
+            "identity crosswalk are written. Existing masks are never modified."
+        )
+        maintenance_masks_explanation.setWordWrap(True)
+        self.maintenance_mask_mode_combo = QComboBox()
+        self.maintenance_mask_mode_combo.addItem(
+            "Preserve retained ObjectNumbers", "preserve"
+        )
+        self.maintenance_mask_mode_combo.addItem(
+            "Compact to 1…N within each ROI", "compact"
+        )
+        maintenance_mask_output = QWidget()
+        maintenance_mask_output_layout = QHBoxLayout(maintenance_mask_output)
+        maintenance_mask_output_layout.setContentsMargins(0, 0, 0, 0)
+        self.maintenance_mask_output_edit = QLineEdit(
+            str(self.project_root / "napari_sbt_rebuilt_masks")
+        )
+        self.choose_maintenance_mask_output_button = QPushButton("Choose…")
+        maintenance_mask_output_layout.addWidget(self.maintenance_mask_output_edit)
+        maintenance_mask_output_layout.addWidget(
+            self.choose_maintenance_mask_output_button
+        )
+        maintenance_mask_actions = QWidget()
+        maintenance_mask_actions_layout = QHBoxLayout(maintenance_mask_actions)
+        maintenance_mask_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.preview_maintenance_masks_button = QPushButton("Validate mask alignment")
+        self.apply_maintenance_masks_button = QPushButton(
+            "Write derived masks and update memory"
+        )
+        maintenance_mask_actions_layout.addWidget(
+            self.preview_maintenance_masks_button
+        )
+        maintenance_mask_actions_layout.addWidget(
+            self.apply_maintenance_masks_button
+        )
+        self.maintenance_mask_status = QLabel(
+            "Build or refresh the mask index, then validate alignment."
+        )
+        self.maintenance_mask_status.setWordWrap(True)
+        maintenance_masks_form.addRow(maintenance_masks_explanation)
+        maintenance_masks_form.addRow("ObjectNumber mode", self.maintenance_mask_mode_combo)
+        maintenance_masks_form.addRow("New mask folder", maintenance_mask_output)
+        maintenance_masks_form.addRow("", maintenance_mask_actions)
+        maintenance_masks_form.addRow("Readiness", self.maintenance_mask_status)
+        maintenance_cells_layout.addWidget(maintenance_masks_group)
+        maintenance_cells_layout.addStretch(1)
+        self.maintenance_tool_tabs.addTab(maintenance_cells_page, "Cells & Masks")
+
+        maintenance_obs_page = QWidget()
+        maintenance_obs_layout = QVBoxLayout(maintenance_obs_page)
+        maintenance_obs_group = workflow_group(
+            "2. Manage AnnData observation columns",
+            "dataset_maintenance",
+            "Manage observations",
+        )
+        maintenance_obs_form = QFormLayout(maintenance_obs_group)
+        self.maintenance_obs_combo = QComboBox()
+        self.maintenance_obs_new_name_edit = QLineEdit()
+        self.maintenance_obs_new_name_edit.setPlaceholderText(
+            "New observation name"
+        )
+        maintenance_obs_actions = QWidget()
+        maintenance_obs_actions_layout = QHBoxLayout(maintenance_obs_actions)
+        maintenance_obs_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.rename_maintenance_obs_button = QPushButton("Rename observation")
+        self.remove_maintenance_obs_button = QPushButton("Remove observation")
+        self.repair_maintenance_palette_button = QPushButton(
+            "Repair categorical colours"
+        )
+        maintenance_obs_actions_layout.addWidget(self.rename_maintenance_obs_button)
+        maintenance_obs_actions_layout.addWidget(self.remove_maintenance_obs_button)
+        maintenance_obs_actions_layout.addWidget(
+            self.repair_maintenance_palette_button
+        )
+        self.maintenance_obs_status = QLabel(
+            "Identity observations used for ROI and ObjectNumber are protected."
+        )
+        self.maintenance_obs_status.setWordWrap(True)
+        maintenance_obs_form.addRow("Observation", self.maintenance_obs_combo)
+        maintenance_obs_form.addRow("New name", self.maintenance_obs_new_name_edit)
+        maintenance_obs_form.addRow("", maintenance_obs_actions)
+        maintenance_obs_form.addRow("Status", self.maintenance_obs_status)
+        maintenance_obs_layout.addWidget(maintenance_obs_group)
+        maintenance_obs_layout.addStretch(1)
+        self.maintenance_tool_tabs.addTab(maintenance_obs_page, "Observations")
+
+        maintenance_layout.addWidget(self.maintenance_tool_tabs)
+        maintenance_layout.addStretch(1)
+        add_tab(maintenance, "🛠️ Dataset Maintenance", "dataset_maintenance")
+        self.dataset_maintenance_tab_index = self.tabs.count() - 1
 
         # Classify
         classify = QWidget()
@@ -2954,6 +3354,14 @@ class NapariSBTController:
                 padding: 8px;
                 font-weight: 800;
             }
+            QLabel#sbtMaintenanceWarning {
+                border: 2px solid #f59e0b;
+                border-radius: 7px;
+                background-color: #fef3c7;
+                color: #78350f;
+                padding: 9px;
+                font-weight: 800;
+            }
             QTabBar::tab {
                 color: #202124;
                 border: 1px solid #9aa0a6;
@@ -2972,6 +3380,7 @@ class NapariSBTController:
             QTabBar::tab:nth-child(9) { background: #ffedd5; }
             QTabBar::tab:nth-child(10) { background: #f3e8ff; }
             QTabBar::tab:nth-child(11) { background: #cffafe; }
+            QTabBar::tab:nth-child(12) { background: #fee2e2; }
             QTabBar::tab:selected {
                 font-weight: bold;
                 border: 2px solid #5f6368;
@@ -2995,6 +3404,7 @@ class NapariSBTController:
             "#c2410c",
             "#7e22ce",
             "#0e7490",
+            "#b91c1c",
         )
         for index, colour in enumerate(tab_text_colours):
             self.tabs.tabBar().setTabTextColor(index, self.QColor(colour))
@@ -3038,6 +3448,7 @@ class NapariSBTController:
         self._initialise_setup_controls()
         self._update_workflow_mode()
         self._refresh_population_naming_readiness()
+        self.refresh_maintenance_readiness()
         self._bind_viewer_cell_picking()
         for family, checkbox in self.feature_family_checks.items():
             self._feature_family_toggled(family, checkbox.isChecked())
@@ -3156,6 +3567,78 @@ class NapariSBTController:
         )
         self.save_normalization_button.clicked.connect(
             self._guard(self.save_normalization_to_experiment)
+        )
+        self.refresh_maintenance_readiness_button.clicked.connect(
+            self._guard(self.refresh_maintenance_readiness)
+        )
+        self.reindex_maintenance_assets_button.clicked.connect(
+            self._guard(self.rebuild_maintenance_asset_index)
+        )
+        self.choose_maintenance_anndata_button.clicked.connect(
+            self._guard(self.choose_maintenance_anndata_destination)
+        )
+        self.save_maintenance_anndata_button.clicked.connect(
+            self._guard(self.save_current_maintenance_anndata)
+        )
+        self.choose_maintenance_image_output_button.clicked.connect(
+            self._guard(self.choose_maintenance_image_output)
+        )
+        self.preview_maintenance_var_rename_button.clicked.connect(
+            self._guard(self.preview_maintenance_var_rename)
+        )
+        self.apply_maintenance_var_rename_button.clicked.connect(
+            self._guard(self.apply_maintenance_var_rename)
+        )
+        self.copy_maintenance_renamed_images_button.clicked.connect(
+            self._guard(self.copy_maintenance_renamed_images)
+        )
+        self.maintenance_var_rename_table.itemChanged.connect(
+            self._guard(
+                self._maintenance_var_mapping_changed,
+                pass_signal_args=True,
+            )
+        )
+        self.remove_maintenance_vars_button.clicked.connect(
+            self._guard(self.remove_selected_maintenance_vars)
+        )
+        self.maintenance_filter_obs_combo.currentTextChanged.connect(
+            self._guard(self.refresh_maintenance_filter_values)
+        )
+        self.maintenance_filter_mode_combo.currentIndexChanged.connect(
+            self._guard(self.update_maintenance_filter_controls)
+        )
+        self.maintenance_filter_values_list.itemSelectionChanged.connect(
+            self.update_maintenance_filter_controls
+        )
+        self.maintenance_filter_lower_spin.valueChanged.connect(
+            self.update_maintenance_filter_controls
+        )
+        self.maintenance_filter_upper_spin.valueChanged.connect(
+            self.update_maintenance_filter_controls
+        )
+        self.preview_maintenance_filter_button.clicked.connect(
+            self._guard(self.preview_maintenance_cell_filter)
+        )
+        self.apply_maintenance_filter_button.clicked.connect(
+            self._guard(self.apply_maintenance_cell_filter)
+        )
+        self.choose_maintenance_mask_output_button.clicked.connect(
+            self._guard(self.choose_maintenance_mask_output)
+        )
+        self.preview_maintenance_masks_button.clicked.connect(
+            self._guard(self.preview_maintenance_mask_rebuild)
+        )
+        self.apply_maintenance_masks_button.clicked.connect(
+            self._guard(self.apply_maintenance_mask_rebuild)
+        )
+        self.rename_maintenance_obs_button.clicked.connect(
+            self._guard(self.rename_maintenance_observation)
+        )
+        self.remove_maintenance_obs_button.clicked.connect(
+            self._guard(self.remove_maintenance_observation)
+        )
+        self.repair_maintenance_palette_button.clicked.connect(
+            self._guard(self.repair_maintenance_observation_palette)
         )
         for display_signal in (
             self.display_quantile_spin.valueChanged,
@@ -3811,6 +4294,20 @@ class NapariSBTController:
         layout = QVBoxLayout(dialog)
         browser = self.QTextBrowser(dialog)
         browser.setOpenExternalLinks(True)
+        help_font = browser.font()
+        current_size = help_font.pointSizeF()
+        help_font.setPointSizeF(max(13.0, current_size + 3.0))
+        dialog.setFont(help_font)
+        browser.setFont(help_font)
+        browser.document().setDefaultFont(help_font)
+        browser.document().setDefaultStyleSheet(
+            "body { line-height: 1.4; } "
+            "h1 { font-size: 21pt; margin-top: 8px; margin-bottom: 12px; } "
+            "h2 { font-size: 18pt; margin-top: 12px; margin-bottom: 8px; } "
+            "h3 { font-size: 15pt; margin-top: 10px; margin-bottom: 6px; } "
+            "li { margin-bottom: 5px; } "
+            "code, pre { font-size: 12pt; }"
+        )
         browser.setMarkdown(markdown)
         buttons = self.QDialogButtonBox(self.QDialogButtonBox.Close, parent=dialog)
         buttons.rejected.connect(dialog.reject)
@@ -5189,6 +5686,7 @@ class NapariSBTController:
         self.refresh_population_workspace()
         self.mark_scanpy_plots_stale()
         self.refresh_scanpy_plotting_choices()
+        self._refresh_maintenance_controls()
         self.refresh_setup_readiness()
         self.set_status(
             f"Loaded AnnData selectors for {self.adata.n_obs:,} cells from {source}."
@@ -5211,6 +5709,911 @@ class NapariSBTController:
         else:
             raise ValueError("Supply an AnnData path or launch with an AnnData object.")
         self._populate_anndata_selectors(source=source)
+
+    def _maintenance_identity_columns(self) -> tuple[str, str]:
+        roi_obs = (
+            self.manifest.roi_obs
+            if self.manifest is not None
+            else self.roi_obs_edit.text().strip()
+        )
+        object_obs = (
+            self.manifest.object_id_obs
+            if self.manifest is not None
+            else self.object_obs_edit.text().strip()
+        )
+        return roi_obs, object_obs
+
+    def _maintenance_input_path(self, value: str | Path) -> Path:
+        path = Path(value).expanduser()
+        if not path.is_absolute():
+            path = self.project_root / path
+        return path.resolve(strict=False)
+
+    def _maintenance_image_roots(self) -> list[Path]:
+        if self.manifest is not None:
+            values = [
+                *self.manifest.images_folders,
+                *self.manifest.extra_images_folders,
+            ]
+        else:
+            values = [
+                *_split_paths(self.images_edit.toPlainText()),
+                *_split_paths(self.extra_images_edit.toPlainText()),
+            ]
+        return [self._maintenance_input_path(value) for value in values]
+
+    def _maintenance_mask_folder(self) -> Path | None:
+        value = (
+            self.manifest.masks_folder
+            if self.manifest is not None
+            else self.masks_edit.text().strip()
+        )
+        return self._maintenance_input_path(value) if value else None
+
+    def _maintenance_audit_path(self) -> Path:
+        root = (
+            self.paths.root
+            if self.paths is not None
+            else self.project_root / "napari_sbt"
+        )
+        return root / "dataset_maintenance" / "audit.jsonl"
+
+    def _maintenance_audit(self, action: str, details: dict[str, object]) -> None:
+        append_maintenance_audit(
+            self._maintenance_audit_path(), action=action, details=details
+        )
+
+    def _set_maintenance_checks(self, checks, *, summary: str | None = None) -> None:
+        tree = self.maintenance_readiness_tree
+        tree.clear()
+        presentations = {
+            "ready": ("● Ready", "#22c55e"),
+            "warning": ("▲ Check", "#f59e0b"),
+            "blocked": ("✕ Blocked", "#ef4444"),
+            "optional": ("○ Optional", "#60a5fa"),
+        }
+        if summary:
+            summary_item = self.QTreeWidgetItem(["", "Current preview", summary])
+            summary_item.setForeground(2, self.QColor("#bfdbfe"))
+            tree.addTopLevelItem(summary_item)
+        for check in checks:
+            text, colour = presentations.get(
+                str(check.level), (str(check.level), "#d1d5db")
+            )
+            item = self.QTreeWidgetItem([text, check.label, check.detail])
+            item.setForeground(0, self.QColor(colour))
+            tree.addTopLevelItem(item)
+
+    def refresh_maintenance_readiness(self) -> None:
+        if self.adata is None:
+            self.maintenance_readiness_tree.clear()
+            self.maintenance_readiness_tree.addTopLevelItem(
+                self.QTreeWidgetItem(
+                    ["✕ Blocked", "Live AnnData", "Load AnnData in Setup first."]
+                )
+            )
+            return
+        roi_obs, object_obs = self._maintenance_identity_columns()
+        checks = dataset_readiness(
+            self.adata,
+            roi_obs=roi_obs,
+            object_obs=object_obs,
+            mask_paths=self._mask_path_index,
+            image_index=self._roi_image_path_index,
+            expect_masks=self._maintenance_mask_folder() is not None,
+            expect_images=bool(self._maintenance_image_roots()),
+        )
+        self._set_maintenance_checks(checks)
+        self.maintenance_unsaved_label.setText(
+            "● The live AnnData contains unsaved maintenance changes. Save it "
+            "from Overview & Save when ready."
+            if self.maintenance_dirty
+            else "No unsaved Dataset Maintenance changes are recorded."
+        )
+
+    def rebuild_maintenance_asset_index(self) -> None:
+        if self.adata is None:
+            raise ValueError("Load AnnData before indexing dataset assets.")
+        roi_obs, _object_obs = self._maintenance_identity_columns()
+        if roi_obs not in self.adata.obs:
+            raise ValueError(f"ROI observation is missing: {roi_obs!r}.")
+        rois = self.adata.obs[roi_obs].astype("string").dropna().astype(str).unique()
+        self._activity_begin(
+            "Indexing maintenance assets",
+            "Scanning configured mask and image folders once…",
+        )
+        try:
+            mask_folder = self._maintenance_mask_folder()
+            self._mask_path_index = (
+                discover_mask_files(mask_folder)
+                if mask_folder is not None and mask_folder.is_dir()
+                else {}
+            )
+            image_roots = self._maintenance_image_roots()
+            self._roi_image_path_index = discover_roi_image_index(
+                image_roots,
+                rois,
+                channel_aliases=self._channel_aliases(),
+            )
+            self._asset_index_signature = self._current_asset_index_signature()
+            self._refresh_maintenance_controls()
+            detail = (
+                f"Indexed {len(self._mask_path_index):,} masks and images for "
+                f"{sum(bool(value) for value in self._roi_image_path_index.values()):,} "
+                "ROIs."
+            )
+            self._activity_finish(True, detail)
+            self.set_status(detail)
+        except Exception:
+            self._activity_finish(False, "Dataset asset indexing failed.")
+            raise
+
+    def _refresh_maintenance_controls(self) -> None:
+        if not hasattr(self, "maintenance_var_rename_table"):
+            return
+        if self.adata is None:
+            for widget in (
+                self.maintenance_var_rename_table,
+                self.maintenance_remove_vars_list,
+                self.maintenance_filter_values_list,
+            ):
+                widget.clear()
+            self.maintenance_filter_obs_combo.clear()
+            self.maintenance_obs_combo.clear()
+            self.refresh_maintenance_readiness()
+            return
+        prior_mapping = self._maintenance_var_mapping(allow_empty=True)
+        image_counts: dict[str, int] = {}
+        for channels in self._roi_image_path_index.values():
+            for channel in channels:
+                logical = str(channel).split(" [", 1)[0]
+                image_counts[logical] = image_counts.get(logical, 0) + 1
+        self.maintenance_var_rename_table.blockSignals(True)
+        self.maintenance_var_rename_table.setRowCount(self.adata.n_vars)
+        for row, variable in enumerate(self.adata.var_names.astype(str)):
+            current_item = self.QTableWidgetItem(variable)
+            current_item.setFlags(current_item.flags() & ~self.Qt.ItemIsEditable)
+            renamed_item = self.QTableWidgetItem(prior_mapping.get(variable, ""))
+            count_item = self.QTableWidgetItem(f"{image_counts.get(variable, 0):,}")
+            count_item.setFlags(count_item.flags() & ~self.Qt.ItemIsEditable)
+            self.maintenance_var_rename_table.setItem(row, 0, current_item)
+            self.maintenance_var_rename_table.setItem(row, 1, renamed_item)
+            self.maintenance_var_rename_table.setItem(row, 2, count_item)
+        self.maintenance_var_rename_table.blockSignals(False)
+
+        selected_vars = {
+            item.text() for item in self.maintenance_remove_vars_list.selectedItems()
+        }
+        self.maintenance_remove_vars_list.clear()
+        self.maintenance_remove_vars_list.addItems(
+            self.adata.var_names.astype(str).tolist()
+        )
+        for index in range(self.maintenance_remove_vars_list.count()):
+            item = self.maintenance_remove_vars_list.item(index)
+            item.setSelected(item.text() in selected_vars)
+
+        columns = [str(column) for column in self.adata.obs.columns]
+        for combo in (self.maintenance_filter_obs_combo, self.maintenance_obs_combo):
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItems(columns)
+            if current in columns:
+                combo.setCurrentText(current)
+            combo.blockSignals(False)
+        self.refresh_maintenance_filter_values()
+        self.refresh_maintenance_readiness()
+
+    def _maintenance_var_mapping(self, *, allow_empty: bool = False) -> dict[str, str]:
+        mapping: dict[str, str] = {}
+        if not hasattr(self, "maintenance_var_rename_table"):
+            return mapping
+        for row in range(self.maintenance_var_rename_table.rowCount()):
+            source_item = self.maintenance_var_rename_table.item(row, 0)
+            destination_item = self.maintenance_var_rename_table.item(row, 1)
+            source = source_item.text().strip() if source_item else ""
+            destination = destination_item.text().strip() if destination_item else ""
+            if source and destination and source != destination:
+                mapping[source] = destination
+        if not mapping and not allow_empty:
+            raise ValueError("Enter at least one new variable name in the table.")
+        return mapping
+
+    def _maintenance_var_mapping_changed(self, *_args) -> None:
+        self.maintenance_image_rename_plan = None
+        self.maintenance_var_rename_status.setText(
+            "Variable mapping changed. Preview it before applying or copying images."
+        )
+
+    def choose_maintenance_anndata_destination(self) -> None:
+        selected, _filter = self.QFileDialog.getSaveFileName(
+            self.root,
+            "Save maintained AnnData",
+            self.maintenance_anndata_path_edit.text(),
+            "AnnData files (*.h5ad)",
+        )
+        if selected:
+            self.maintenance_anndata_path_edit.setText(selected)
+
+    def _choose_new_maintenance_folder(self, editor, title: str) -> None:
+        current = Path(editor.text()).expanduser()
+        parent = current.parent if current.parent.exists() else self.project_root
+        selected_parent = self.QFileDialog.getExistingDirectory(
+            self.root, title, str(parent)
+        )
+        if not selected_parent:
+            return
+        name, accepted = self.QInputDialog.getText(
+            self.root,
+            title,
+            "Name for the new output folder:",
+            text=current.name or "derived_assets",
+        )
+        if accepted and str(name).strip():
+            editor.setText(str(Path(selected_parent) / str(name).strip()))
+
+    def choose_maintenance_image_output(self) -> None:
+        self._choose_new_maintenance_folder(
+            self.maintenance_image_output_edit,
+            "Choose derived image output",
+        )
+
+    def choose_maintenance_mask_output(self) -> None:
+        self._choose_new_maintenance_folder(
+            self.maintenance_mask_output_edit,
+            "Choose derived mask output",
+        )
+
+    def _update_maintenance_manifest_sources(self, **changes) -> None:
+        if self.manifest is None or self.paths is None:
+            return
+        updated = self.manifest.model_copy(deep=True)
+        for field, value in changes.items():
+            setattr(updated, field, value)
+        save_experiment(
+            updated,
+            self.paths.root,
+            audit_action="dataset_maintenance_update_sources",
+        )
+        self.manifest = updated
+
+    def save_current_maintenance_anndata(self) -> None:
+        if self.adata is None:
+            raise ValueError("Load AnnData before saving it.")
+        destination = self._maintenance_input_path(
+            self.maintenance_anndata_path_edit.text()
+        )
+        if destination.exists():
+            if not self.maintenance_overwrite_anndata_check.isChecked():
+                raise FileExistsError(
+                    "The selected AnnData file already exists. Choose a new filename "
+                    "or explicitly allow replacement of this exact file."
+                )
+            reply = self.QMessageBox.question(
+                self.root,
+                "Replace the selected AnnData file?",
+                f"Replace this exact file with the current in-memory AnnData?\n\n"
+                f"{destination}\n\nThis cannot be undone from NapariSBT.",
+            )
+            if reply != self.QMessageBox.Yes:
+                return
+        self._activity_begin(
+            "Saving maintained AnnData",
+            f"Writing an atomic copy to {destination}…",
+        )
+        try:
+            saved = atomic_write_anndata(
+                self.adata,
+                destination,
+                overwrite=self.maintenance_overwrite_anndata_check.isChecked(),
+            )
+            if self.use_saved_maintenance_anndata_check.isChecked():
+                self.anndata_edit.setText(str(saved))
+                self._in_memory_adata = None
+                self._update_maintenance_manifest_sources(anndata_path=str(saved))
+            self.maintenance_dirty = False
+            self.maintenance_save_status_label.setText(
+                f"Saved {self.adata.n_obs:,} cells and {self.adata.n_vars:,} "
+                f"variables to {saved}."
+            )
+            self._maintenance_audit(
+                "save_anndata",
+                {
+                    "destination": str(saved),
+                    "cells": int(self.adata.n_obs),
+                    "variables": int(self.adata.n_vars),
+                    "replaced_existing": bool(
+                        self.maintenance_overwrite_anndata_check.isChecked()
+                    ),
+                },
+            )
+            self.refresh_maintenance_readiness()
+            self._activity_finish(True, f"Saved maintained AnnData to {saved}.")
+            self.set_status(f"Saved maintained AnnData to {saved}.")
+        except Exception:
+            self._activity_finish(False, "Maintained AnnData save failed.")
+            raise
+
+    def preview_maintenance_var_rename(self) -> None:
+        if self.adata is None:
+            raise ValueError("Load AnnData before renaming variables.")
+        mapping = self._maintenance_var_mapping()
+        preview = preview_var_rename(
+            self.adata,
+            mapping,
+            image_index=self._roi_image_path_index,
+        )
+        image_roots = self._maintenance_image_roots()
+        self.maintenance_image_rename_plan = (
+            plan_image_renames(
+                self._roi_image_path_index,
+                mapping,
+                image_roots=image_roots,
+                output_root=self._maintenance_input_path(
+                    self.maintenance_image_output_edit.text()
+                ),
+            )
+            if image_roots and self._roi_image_path_index
+            else None
+        )
+        if self.maintenance_image_rename_plan is not None:
+            plan = self.maintenance_image_rename_plan
+            preview.checks.append(
+                type(preview.checks[0])(
+                    key="image_copy_plan",
+                    label="Derived image collection",
+                    level=("ready" if plan.ready else "blocked"),
+                    detail=(
+                        f"{len(plan.items):,} images will be copied into a complete "
+                        "derived collection."
+                        if plan.ready
+                        else (
+                            f"{len(plan.unresolved):,} unmatched filename(s) and "
+                            f"{len(plan.collisions):,} collision(s) must be resolved."
+                        )
+                    ),
+                )
+            )
+        self._set_maintenance_checks(preview.checks, summary=preview.summary)
+        self.maintenance_var_rename_status.setText(
+            preview.summary
+            + (
+                " The image copy plan is ready."
+                if self.maintenance_image_rename_plan is not None
+                and self.maintenance_image_rename_plan.ready
+                else " Variable renaming is ready; image copying needs a complete index."
+            )
+        )
+
+    @staticmethod
+    def _rename_recipe_channels(recipe, mapping: dict[str, str]) -> None:
+        recipe.image_channels = [mapping.get(value, value) for value in recipe.image_channels]
+        recipe.marker_overlays = [mapping.get(value, value) for value in recipe.marker_overlays]
+        for attribute in (
+            "layer_colormaps",
+            "layer_colormap_specs",
+            "layer_visibility",
+            "layer_opacities",
+            "layer_contours",
+            "layer_contrast_limits",
+        ):
+            values = getattr(recipe, attribute)
+            setattr(
+                recipe,
+                attribute,
+                {mapping.get(str(key), str(key)): value for key, value in values.items()},
+            )
+
+    def _rename_live_channel_references(self, mapping: dict[str, str]) -> None:
+        renamed_normalization: dict[str, float] = {}
+        for key, value in self.display_normalization.items():
+            renamed_normalization[mapping.get(str(key), str(key))] = value
+        self.display_normalization = renamed_normalization
+        self._set_normalization_table(self.display_normalization)
+        self._rename_recipe_channels(self.explore_recipe, mapping)
+        for recipe in self.explore_review_state.population_recipes.values():
+            self._rename_recipe_channels(recipe, mapping)
+        for preset in self.explore_review_state.recipe_presets.values():
+            self._rename_recipe_channels(preset.recipe, mapping)
+        self._save_explore_review_state()
+        if self.manifest is not None and self.paths is not None:
+            updated = self.manifest.model_copy(deep=True)
+            updated.synthetic_features.channels = [
+                mapping.get(value, value)
+                for value in updated.synthetic_features.channels
+            ]
+            save_experiment(
+                updated,
+                self.paths.root,
+                audit_action="dataset_maintenance_rename_channels",
+            )
+            self.manifest = updated
+
+    def _after_maintenance_anndata_change(
+        self,
+        *,
+        action: str,
+        detail: str,
+        identity_changed: bool = False,
+        model_inputs_changed: bool = False,
+        audit_details: dict[str, object] | None = None,
+    ) -> None:
+        self.maintenance_dirty = True
+        if not self.anndata_edit.text().strip():
+            self._in_memory_adata = self.adata
+        if identity_changed:
+            if (
+                self.manifest is not None
+                and self.paths is not None
+                and self.manifest.workflow_mode == "dataset_maintenance"
+            ):
+                self._revise_maintenance_cohort()
+            else:
+                self.preview = None
+                self.cohort = pd.DataFrame()
+            self.labels = empty_labels()
+            self.scores = pd.DataFrame()
+            self.final_assignments = pd.DataFrame()
+            self._set_classification_enabled(False)
+        elif model_inputs_changed:
+            self.model_bundle = None
+            self.scores = pd.DataFrame()
+            self.final_assignments = pd.DataFrame()
+        self._populate_anndata_selectors(source="Dataset Maintenance in-memory result")
+        self._maintenance_audit(action, audit_details or {"detail": detail})
+        self.maintenance_unsaved_label.setText(
+            "● The live AnnData contains unsaved maintenance changes."
+        )
+        self.set_status(detail)
+
+    def _revise_maintenance_cohort(self) -> None:
+        """Keep an AnnData-maintenance workspace aligned after identity changes."""
+
+        if self.adata is None or self.manifest is None or self.paths is None:
+            return
+        revised_preview = resolve_cohort(
+            self.adata,
+            roi_obs=self.manifest.roi_obs,
+            object_id_obs=self.manifest.object_id_obs,
+            mode="all_cells",
+        )
+        revision = int(self.manifest.revision) + 1
+        relative_snapshot = Path("cohort") / f"eligible_cells_r{revision}.parquet"
+        save_cohort_snapshot(revised_preview, self.paths.root / relative_snapshot)
+        updated = self.manifest.model_copy(deep=True)
+        updated.revision = revision
+        updated.cell_scope = revised_preview.scope(
+            mode="all_cells",
+            obs_column=None,
+            obs_values=(),
+            snapshot_path=relative_snapshot.as_posix(),
+        )
+        updated.active_feature_set_id = None
+        updated.active_model_features = []
+        self.paths = save_experiment(
+            updated,
+            self.paths.root,
+            audit_action="dataset_maintenance_revise_identity",
+        )
+        self.manifest = updated
+        self.preview = revised_preview
+        self.cohort = revised_preview.eligible_cells.copy()
+        self._invalidate_population_qc_caches()
+        self._update_scope_text()
+
+    def apply_maintenance_var_rename(self) -> None:
+        if self.adata is None:
+            raise ValueError("Load AnnData before renaming variables.")
+        mapping = self._maintenance_var_mapping()
+        self.preview_maintenance_var_rename()
+        self.adata = apply_var_rename(
+            self.adata,
+            mapping,
+            update_raw=self.maintenance_update_raw_names_check.isChecked(),
+        )
+        self._rename_live_channel_references(mapping)
+        self._after_maintenance_anndata_change(
+            action="rename_variables",
+            detail=f"Renamed {len(mapping):,} variables in the live AnnData.",
+            model_inputs_changed=True,
+            audit_details={"mapping": mapping},
+        )
+
+    def copy_maintenance_renamed_images(self) -> None:
+        plan = self.maintenance_image_rename_plan
+        if plan is None:
+            self.preview_maintenance_var_rename()
+            plan = self.maintenance_image_rename_plan
+        if plan is None or not plan.ready:
+            raise ValueError(
+                "The derived image plan is not ready. Build the image index and "
+                "resolve the filename warnings shown by Preview rename."
+            )
+        self._activity_begin(
+            "Copying synchronized images",
+            f"Copying {len(plan.items):,} indexed images into {plan.output_root}…",
+        )
+        try:
+            output = copy_renamed_images(plan)
+            derived_roots = [path for path in sorted(output.iterdir()) if path.is_dir()]
+            self.images_edit.setPlainText("\n".join(map(str, derived_roots)))
+            self.extra_images_edit.clear()
+            self._roi_image_path_index.clear()
+            self._update_maintenance_manifest_sources(
+                images_folders=list(map(str, derived_roots)),
+                extra_images_folders=[],
+            )
+            self._maintenance_audit(
+                "copy_renamed_images",
+                {
+                    "output": str(output),
+                    "image_count": len(plan.items),
+                    "mapping": {
+                        item.channel_before: item.channel_after for item in plan.items
+                    },
+                },
+            )
+            detail = (
+                f"Copied {len(plan.items):,} synchronized images to {output}. "
+                "The Setup image folders now point to the derived collection."
+            )
+            self.maintenance_var_rename_status.setText(detail)
+            self._activity_finish(True, detail)
+            self.set_status(detail)
+            self.refresh_maintenance_readiness()
+        except Exception:
+            self._activity_finish(False, "Synchronized image copying failed.")
+            raise
+
+    def remove_selected_maintenance_vars(self) -> None:
+        if self.adata is None:
+            raise ValueError("Load AnnData before removing variables.")
+        selected = [
+            item.text() for item in self.maintenance_remove_vars_list.selectedItems()
+        ]
+        if not selected:
+            raise ValueError("Select at least one AnnData variable to remove.")
+        reply = self.QMessageBox.question(
+            self.root,
+            "Remove variables from the live AnnData?",
+            f"Remove {len(selected):,} selected variable(s) in memory? Image files "
+            "will remain untouched. Reload the source AnnData before saving if "
+            "you need to discard this change.",
+        )
+        if reply != self.QMessageBox.Yes:
+            return
+        self.adata = remove_anndata_vars(
+            self.adata,
+            selected,
+            subset_raw=self.maintenance_subset_raw_check.isChecked(),
+        )
+        self._after_maintenance_anndata_change(
+            action="remove_variables",
+            detail=(
+                f"Removed {len(selected):,} variables from the live AnnData; "
+                "image files were left intact."
+            ),
+            model_inputs_changed=True,
+            audit_details={
+                "removed_variables": selected,
+                "images_modified": False,
+                "subset_raw": self.maintenance_subset_raw_check.isChecked(),
+            },
+        )
+
+    def refresh_maintenance_filter_values(self) -> None:
+        if self.adata is None:
+            self.maintenance_filter_values_list.clear()
+            return
+        observation = self.maintenance_filter_obs_combo.currentText()
+        if observation not in self.adata.obs:
+            return
+        selected = {
+            item.text()
+            for item in self.maintenance_filter_values_list.selectedItems()
+        }
+        series = self.adata.obs[observation]
+        if isinstance(series.dtype, pd.CategoricalDtype):
+            values = series.cat.categories.astype(str).tolist()
+        else:
+            values = (
+                series.astype("string")
+                .dropna()
+                .drop_duplicates()
+                .astype(str)
+                .tolist()
+            )
+            values.sort(key=str.casefold)
+        self.maintenance_filter_values_list.clear()
+        self.maintenance_filter_values_list.addItems(values[:5000])
+        for index in range(self.maintenance_filter_values_list.count()):
+            item = self.maintenance_filter_values_list.item(index)
+            item.setSelected(item.text() in selected)
+        numeric = pd.to_numeric(series, errors="coerce").dropna()
+        if not numeric.empty:
+            self.maintenance_filter_lower_spin.setValue(float(numeric.min()))
+            self.maintenance_filter_upper_spin.setValue(float(numeric.max()))
+        self.update_maintenance_filter_controls()
+
+    def update_maintenance_filter_controls(self) -> None:
+        mode = str(self.maintenance_filter_mode_combo.currentData())
+        values_mode = mode in {"keep_values", "remove_values"}
+        range_mode = mode in {"keep_range", "remove_range"}
+        self.maintenance_filter_values_list.setEnabled(values_mode)
+        self.maintenance_filter_lower_spin.setEnabled(range_mode)
+        self.maintenance_filter_upper_spin.setEnabled(range_mode)
+        self.maintenance_last_filter_request = None
+        self.maintenance_filter_status.setText(
+            "Filter settings changed. Preview the retained cell and ROI counts."
+        )
+
+    def _current_maintenance_filter_request(self) -> CellFilterRequest:
+        return CellFilterRequest(
+            observation=self.maintenance_filter_obs_combo.currentText(),
+            mode=str(self.maintenance_filter_mode_combo.currentData()),
+            values=[
+                item.text()
+                for item in self.maintenance_filter_values_list.selectedItems()
+            ],
+            lower=float(self.maintenance_filter_lower_spin.value()),
+            upper=float(self.maintenance_filter_upper_spin.value()),
+        )
+
+    def preview_maintenance_cell_filter(self) -> None:
+        if self.adata is None:
+            raise ValueError("Load AnnData before filtering cells.")
+        request = self._current_maintenance_filter_request()
+        roi_obs, _object_obs = self._maintenance_identity_columns()
+        preview = preview_cell_filter(self.adata, request, roi_obs=roi_obs)
+        self.maintenance_last_filter_request = request
+        self._set_maintenance_checks(preview.checks, summary=preview.summary)
+        self.maintenance_filter_status.setText(preview.summary)
+
+    def apply_maintenance_cell_filter(self) -> None:
+        if self.adata is None:
+            raise ValueError("Load AnnData before filtering cells.")
+        request = self._current_maintenance_filter_request()
+        if (
+            self.maintenance_last_filter_request is None
+            or self.maintenance_last_filter_request.model_dump()
+            != request.model_dump()
+        ):
+            raise ValueError(
+                "Preview these exact filter settings before applying them."
+            )
+        roi_obs, _object_obs = self._maintenance_identity_columns()
+        preview = preview_cell_filter(self.adata, request, roi_obs=roi_obs)
+        if not preview.ready:
+            raise ValueError(preview.summary)
+        reply = self.QMessageBox.question(
+            self.root,
+            "Filter cells in the live AnnData?",
+            f"{preview.summary}\n\nThe source file and masks are unchanged until "
+            "you explicitly save AnnData or write derived masks.",
+        )
+        if reply != self.QMessageBox.Yes:
+            return
+        before = int(self.adata.n_obs)
+        self.adata = apply_cell_filter(self.adata, request)
+        removed = before - int(self.adata.n_obs)
+        self._after_maintenance_anndata_change(
+            action="filter_cells",
+            detail=(
+                f"Filtered the live AnnData to {self.adata.n_obs:,} cells; "
+                f"{removed:,} cells were removed. Rebuild masks before saving a "
+                "fully synchronized dataset."
+            ),
+            identity_changed=True,
+            model_inputs_changed=True,
+            audit_details={
+                "filter": request.model_dump(mode="json"),
+                "cells_before": before,
+                "cells_after": int(self.adata.n_obs),
+            },
+        )
+
+    def preview_maintenance_mask_rebuild(self) -> None:
+        if self.adata is None:
+            raise ValueError("Load AnnData before rebuilding masks.")
+        if not self._mask_path_index:
+            raise ValueError(
+                "No mask index is available. Press Rebuild mask/image index now first."
+            )
+        roi_obs, object_obs = self._maintenance_identity_columns()
+        mode = str(self.maintenance_mask_mode_combo.currentData())
+        self._activity_begin(
+            "Validating mask alignment",
+            "Reading represented masks and comparing ObjectNumbers…",
+        )
+        try:
+            preview = preview_mask_rebuild(
+                self.adata,
+                self._mask_path_index,
+                roi_obs=roi_obs,
+                object_obs=object_obs,
+                mode=mode,
+            )
+            self._set_maintenance_checks(preview.checks, summary=preview.summary)
+            self.maintenance_mask_status.setText(preview.summary)
+            self._activity_finish(preview.ready, preview.summary)
+        except Exception:
+            self._activity_finish(False, "Mask-alignment validation failed.")
+            raise
+
+    def apply_maintenance_mask_rebuild(self) -> None:
+        if self.adata is None:
+            raise ValueError("Load AnnData before rebuilding masks.")
+        if not self._mask_path_index:
+            raise ValueError("Build the mask index before rebuilding masks.")
+        roi_obs, object_obs = self._maintenance_identity_columns()
+        mode = str(self.maintenance_mask_mode_combo.currentData())
+        output = self._maintenance_input_path(self.maintenance_mask_output_edit.text())
+        self._activity_begin(
+            "Rebuilding synchronized masks",
+            f"Writing derived masks to {output}…",
+        )
+        try:
+            updated, crosswalk, written = rebuild_masks_and_object_numbers(
+                self.adata,
+                self._mask_path_index,
+                output,
+                roi_obs=roi_obs,
+                object_obs=object_obs,
+                mode=mode,
+            )
+            changed_ids = int(
+                crosswalk["ObjectNumber_before"]
+                .ne(crosswalk["ObjectNumber_after"])
+                .sum()
+            )
+            self.adata = updated
+            self.masks_edit.setText(str(written))
+            self._mask_path_index = discover_mask_files(written)
+            self._update_maintenance_manifest_sources(masks_folder=str(written))
+            self._after_maintenance_anndata_change(
+                action="rebuild_masks",
+                detail=(
+                    f"Wrote {len(self._mask_path_index):,} derived masks to {written}; "
+                    f"{changed_ids:,} ObjectNumbers changed. Setup now uses the "
+                    "derived mask folder."
+                ),
+                identity_changed=changed_ids > 0,
+                model_inputs_changed=changed_ids > 0,
+                audit_details={
+                    "output": str(written),
+                    "mode": mode,
+                    "cells": len(crosswalk),
+                    "changed_object_numbers": changed_ids,
+                },
+            )
+            self.maintenance_mask_status.setText(
+                f"Derived masks are active from {written}."
+            )
+            self._activity_finish(True, f"Derived masks written to {written}.")
+        except Exception:
+            self._activity_finish(False, "Mask rebuilding failed.")
+            raise
+
+    def _protected_maintenance_observations(self) -> set[str]:
+        roi_obs, object_obs = self._maintenance_identity_columns()
+        protected = {roi_obs, object_obs}
+        if self.manifest is not None and self.manifest.cell_scope.obs_column:
+            protected.add(self.manifest.cell_scope.obs_column)
+        if self.population_workspace is not None:
+            protected.add(self.population_workspace.source_obs)
+        if self.population_draft is not None:
+            protected.add(self.population_draft.derived_obs)
+        return {value for value in protected if value}
+
+    @staticmethod
+    def _rename_recipe_observation(recipe, source: str, destination: str) -> None:
+        if recipe.observation_overlay == source:
+            recipe.observation_overlay = destination
+        if recipe.population_observation == source:
+            recipe.population_observation = destination
+        old_obs_layer = f"obs::{source}"
+        new_obs_layer = f"obs::{destination}"
+        old_population_prefix = f"population::{source}::"
+        new_population_prefix = f"population::{destination}::"
+        for attribute in (
+            "layer_colormaps",
+            "layer_colormap_specs",
+            "layer_visibility",
+            "layer_opacities",
+            "layer_contours",
+            "layer_contrast_limits",
+        ):
+            renamed = {}
+            for key, value in getattr(recipe, attribute).items():
+                key = str(key)
+                if key == old_obs_layer:
+                    key = new_obs_layer
+                elif key.startswith(old_population_prefix):
+                    key = new_population_prefix + key[len(old_population_prefix) :]
+                renamed[key] = value
+            setattr(recipe, attribute, renamed)
+
+    def _rename_live_observation_references(
+        self, source: str, destination: str
+    ) -> None:
+        self._rename_recipe_observation(self.explore_recipe, source, destination)
+        for recipe in self.explore_review_state.population_recipes.values():
+            self._rename_recipe_observation(recipe, source, destination)
+        for preset in self.explore_review_state.recipe_presets.values():
+            self._rename_recipe_observation(preset.recipe, source, destination)
+        self._save_explore_review_state()
+
+    def rename_maintenance_observation(self) -> None:
+        if self.adata is None:
+            raise ValueError("Load AnnData before renaming an observation.")
+        source = self.maintenance_obs_combo.currentText().strip()
+        destination = self.maintenance_obs_new_name_edit.text().strip()
+        if source in self._protected_maintenance_observations():
+            raise ValueError(
+                f"Observation {source!r} defines dataset identity or a frozen cohort "
+                "and cannot be renamed here."
+            )
+        if not destination:
+            raise ValueError("Enter a new observation name.")
+        if destination in self.adata.obs:
+            raise ValueError(f"Observation already exists: {destination!r}.")
+        self.adata.obs.rename(columns={source: destination}, inplace=True)
+        colour_key = f"{source}_colors"
+        if colour_key in self.adata.uns:
+            self.adata.uns[f"{destination}_colors"] = self.adata.uns.pop(colour_key)
+        self._rename_live_observation_references(source, destination)
+        self._after_maintenance_anndata_change(
+            action="rename_observation",
+            detail=f"Renamed adata.obs[{source!r}] to {destination!r} in memory.",
+            audit_details={"source": source, "destination": destination},
+        )
+
+    def remove_maintenance_observation(self) -> None:
+        if self.adata is None:
+            raise ValueError("Load AnnData before removing an observation.")
+        observation = self.maintenance_obs_combo.currentText().strip()
+        if observation in self._protected_maintenance_observations():
+            raise ValueError(
+                f"Observation {observation!r} defines dataset identity or a frozen "
+                "cohort and cannot be removed."
+            )
+        reply = self.QMessageBox.question(
+            self.root,
+            "Remove observation from the live AnnData?",
+            f"Remove adata.obs[{observation!r}] in memory? Reload the source "
+            "AnnData before saving if you need to discard this change.",
+        )
+        if reply != self.QMessageBox.Yes:
+            return
+        self.adata.obs.drop(columns=[observation], inplace=True)
+        self.adata.uns.pop(f"{observation}_colors", None)
+        self._after_maintenance_anndata_change(
+            action="remove_observation",
+            detail=f"Removed adata.obs[{observation!r}] from the live AnnData.",
+            audit_details={"observation": observation},
+        )
+
+    def repair_maintenance_observation_palette(self) -> None:
+        if self.adata is None:
+            raise ValueError("Load AnnData before repairing a colour palette.")
+        observation = self.maintenance_obs_combo.currentText().strip()
+        series = self.adata.obs[observation]
+        if not isinstance(series.dtype, pd.CategoricalDtype):
+            series = series.astype("category")
+            self.adata.obs[observation] = series
+        colours = categorical_colour_map(self.adata, observation)
+        categories = self.adata.obs[observation].cat.categories.astype(str).tolist()
+        self.adata.uns[f"{observation}_colors"] = [
+            colours[category] for category in categories
+        ]
+        self._after_maintenance_anndata_change(
+            action="repair_observation_palette",
+            detail=(
+                f"Stored {len(categories):,} category colours in "
+                f"adata.uns[{observation + '_colors'!r}]."
+            ),
+            audit_details={"observation": observation, "categories": categories},
+        )
 
     def _population_curation_root(self) -> Path:
         if self.paths is not None:
@@ -7039,7 +8442,12 @@ class NapariSBTController:
                 else None,
                 obs_values=values,
             )
-        masks = discover_mask_files(self.masks_edit.text())
+        masks_folder = self.masks_edit.text().strip()
+        masks = (
+            discover_mask_files(masks_folder)
+            if masks_folder and Path(masks_folder).expanduser().is_dir()
+            else {}
+        )
         missing_masks: list[str] = []
         missing_ids = 0
         unmatched_ids = 0
@@ -8006,7 +9414,10 @@ class NapariSBTController:
         self.refresh_rois()
         self._set_classification_enabled(True)
         self._update_scope_text()
-        if self.roi_combo.count():
+        if (
+            self.roi_combo.count()
+            and self.manifest.workflow_mode != "dataset_maintenance"
+        ):
             self.load_roi(self.roi_combo.currentText())
         self.set_status(
             f"Loaded experiment {self.manifest.name!r}, revision "

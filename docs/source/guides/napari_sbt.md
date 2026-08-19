@@ -3,12 +3,15 @@
 `napari_sbt` combines the reusable parts of the IMC explorer and CellPose
 active-learning viewer in one experiment-driven Napari dock. Setup first asks
 whether the session is for data exploration, Population QC, classification,
-manual labeling, population curation, or the full workspace, then hides tabs that
-are irrelevant to that task.
+manual labeling, population curation, dataset maintenance, or the full workspace,
+then hides tabs that are irrelevant to that task.
 
-The original images, masks, and AnnData are read-only. An experiment freezes
-the eligible `(ROI, ObjectNumber)` identities before feature calculation,
-annotation, training, scoring, or export.
+Normal exploration and classification treat the original images, masks, and
+AnnData as read-only. Dataset Maintenance creates separate derived image/mask
+assets and changes AnnData in memory; replacing an existing AnnData file requires
+an explicit replacement option. An experiment freezes the eligible
+`(ROI, ObjectNumber)` identities before feature calculation, annotation, training,
+scoring, or export.
 
 ## Launch
 
@@ -745,6 +748,64 @@ tracks open windows and can focus, close, or close all of them. Plots are snapsh
 when the live AnnData is reloaded or synchronized, open windows are visibly marked
 out of date instead of being silently redrawn.
 
+## Dataset Maintenance
+
+The **Dataset Maintenance** workflow exposes Setup, Dataset Maintenance, and
+Layers & Status; the same tab is also available in the full workspace. It is a
+controlled place for deriving synchronized scientific assets rather than a
+general-purpose file browser.
+
+The readiness dashboard consumes the mask/image index already built in Setup.
+Opening the tab never scans dataset folders. **Rebuild mask/image index now** is an
+explicit potentially expensive scan and reports unique identities, mask coverage,
+and image coverage.
+
+The initial maintenance tools include:
+
+- atomic saving of the exact AnnData currently in memory, including newly created
+  observations, with existing-file replacement disabled by default;
+- validated `var_names` renaming, synchronized exact marker metadata,
+  normalization, Explore/Population QC recipes, synthetic-feature channel names,
+  and copy-on-write image filename changes;
+- removal of selected AnnData variables while deliberately retaining images, with
+  explicit `adata.raw` handling;
+- categorical, numeric-range, and missing-value cell filtering with retained-cell
+  and represented-ROI previews;
+- derived mask construction that either preserves retained ObjectNumbers or
+  compacts them to `1…N` within each ROI, updates the live AnnData, and writes an
+  identity crosswalk; and
+- protected observation-column rename/removal plus repair of conventional Scanpy
+  categorical colour palettes.
+
+Image copying produces a complete derived collection: unchanged indexed channels
+are copied alongside renamed channels. A requested rename is blocked if the old
+logical channel cannot be found unambiguously in its filename. Mask rebuilding
+reads every represented mask only after the user explicitly requests validation
+or execution. Original images and masks are never modified.
+
+Cell filters and compact ObjectNumber remapping invalidate a frozen classification
+universe. NapariSBT disables the current in-memory classifier state rather than
+silently adapting it; create a new experiment revision or workspace for subsequent
+classification. Completed operations append compact JSON-lines audit events under
+`dataset_maintenance/audit.jsonl`, while derived image and mask folders contain
+their own CSV crosswalks.
+
+The copy-on-write operations are also importable for scripted use:
+
+```python
+from SpatialBiologyToolkit.napari_sbt import (
+    CellFilterRequest,
+    apply_cell_filter,
+    apply_var_rename,
+    atomic_write_anndata,
+    rebuild_masks_and_object_numbers,
+    remove_anndata_vars,
+)
+```
+
+Each function returns a new AnnData object or a derived output path; callers must
+explicitly save or adopt the result.
+
 ## Experiment layout
 
 ```text
@@ -767,6 +828,7 @@ napari_sbt/<experiment>/
 ├── models/
 ├── scores/scores.parquet
 ├── annotations/
+├── dataset_maintenance/audit.jsonl
 ├── cohort_masks/
 └── exports/
 ```

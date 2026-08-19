@@ -57,6 +57,12 @@ WORKFLOW_PRESENTATIONS = (
         "Needs processed cell data, masks, and images for tissue review.",
     ),
     WorkflowPresentation(
+        "dataset_maintenance",
+        "Maintain or realign dataset assets",
+        "Save, filter, rename, and synchronize AnnData, image, and mask assets.",
+        "Needs AnnData; masks and images are required only for matching operations.",
+    ),
+    WorkflowPresentation(
         "full_workspace",
         "Show every tool",
         "Expose every NapariSBT tab for a combined advanced workflow.",
@@ -222,7 +228,11 @@ def discover_workspaces(
     candidates = _manifest_candidates(container)
     if explicit:
         candidate = Path(explicit).expanduser().resolve(strict=False)
-        manifest = candidate if candidate.name == "experiment.yaml" else candidate / "experiment.yaml"
+        manifest = (
+            candidate
+            if candidate.name == "experiment.yaml"
+            else candidate / "experiment.yaml"
+        )
         if manifest.is_file() and manifest not in candidates:
             candidates.insert(0, manifest)
 
@@ -244,9 +254,7 @@ def discover_workspaces(
                     eligible_cells=manifest.cell_scope.eligible_cell_count,
                     represented_rois=manifest.cell_scope.represented_roi_count,
                     modified_at=modified,
-                    warnings=_manifest_source_warnings(
-                        manifest, manifest_path.parent
-                    ),
+                    warnings=_manifest_source_warnings(manifest, manifest_path.parent),
                 )
             )
         except Exception as exc:  # noqa: BLE001 - broken entries remain visible
@@ -288,13 +296,17 @@ def path_check(
             key,
             label,
             "blocked" if required else "optional",
-            "Choose this item to continue." if required else "Optional; nothing selected.",
+            "Choose this item to continue."
+            if required
+            else "Optional; nothing selected.",
         )
     path = Path(text).expanduser()
     exists = path.is_file() if kind == "file" else path.is_dir()
     if not exists:
         expected = "file" if kind == "file" else "folder"
-        return SetupCheck(key, label, "blocked", f"The selected {expected} was not found.")
+        return SetupCheck(
+            key, label, "blocked", f"The selected {expected} was not found."
+        )
     return SetupCheck(key, label, "check", "Found; run the dataset integrity check.")
 
 
@@ -317,17 +329,40 @@ def setup_checks(
 
     checks: list[SetupCheck] = []
     name = workspace_name.strip()
-    destination = Path(workspace_path).expanduser() if str(workspace_path).strip() else None
+    destination = (
+        Path(workspace_path).expanduser() if str(workspace_path).strip() else None
+    )
     if not name:
-        checks.append(SetupCheck("workspace", "Workspace", "blocked", "Enter a workspace name."))
+        checks.append(
+            SetupCheck("workspace", "Workspace", "blocked", "Enter a workspace name.")
+        )
     elif destination is None:
-        checks.append(SetupCheck("workspace", "Workspace", "blocked", "Choose where the workspace will be stored."))
+        checks.append(
+            SetupCheck(
+                "workspace",
+                "Workspace",
+                "blocked",
+                "Choose where the workspace will be stored.",
+            )
+        )
     elif (destination / "experiment.yaml").exists():
-        checks.append(SetupCheck("workspace", "Workspace", "blocked", "A workspace already exists here; open it instead or choose another name."))
+        checks.append(
+            SetupCheck(
+                "workspace",
+                "Workspace",
+                "blocked",
+                "A workspace already exists here; open it instead or choose another name.",
+            )
+        )
     else:
-        checks.append(SetupCheck("workspace", "Workspace", "ready", f"New workspace: {destination.name}"))
+        checks.append(
+            SetupCheck(
+                "workspace", "Workspace", "ready", f"New workspace: {destination.name}"
+            )
+        )
 
     presentation = workflow_presentation(workflow_mode)
+    maintenance_only = workflow_mode == "dataset_maintenance"
     checks.append(
         SetupCheck(
             "workflow",
@@ -338,18 +373,61 @@ def setup_checks(
     )
 
     if has_in_memory_anndata:
-        checks.append(SetupCheck("anndata", "Processed cell data", "ready", "Using the AnnData object already loaded in the notebook."))
+        checks.append(
+            SetupCheck(
+                "anndata",
+                "Processed cell data",
+                "ready",
+                "Using the AnnData object already loaded in the notebook.",
+            )
+        )
     else:
-        checks.append(path_check("anndata", "Processed cell data", anndata_path, kind="file"))
-    checks.append(path_check("masks", "Cell masks", masks_folder, kind="directory"))
+        checks.append(
+            path_check("anndata", "Processed cell data", anndata_path, kind="file")
+        )
+    checks.append(
+        path_check(
+            "masks",
+            "Cell masks",
+            masks_folder,
+            kind="directory",
+            required=not maintenance_only,
+        )
+    )
 
     usable_images = [path for path in image_folders if Path(path).expanduser().is_dir()]
     if not image_folders:
-        checks.append(SetupCheck("images", "Staining images", "blocked", "Add at least one staining-image folder."))
+        checks.append(
+            SetupCheck(
+                "images",
+                "Staining images",
+                "optional" if maintenance_only else "blocked",
+                (
+                    "Optional for AnnData-only maintenance; add folders before "
+                    "renaming or validating images."
+                    if maintenance_only
+                    else "Add at least one staining-image folder."
+                ),
+            )
+        )
     elif len(usable_images) != len(image_folders):
-        checks.append(SetupCheck("images", "Staining images", "blocked", "One or more selected image folders were not found."))
+        checks.append(
+            SetupCheck(
+                "images",
+                "Staining images",
+                "blocked",
+                "One or more selected image folders were not found.",
+            )
+        )
     else:
-        checks.append(SetupCheck("images", "Staining images", "check", f"Found {len(usable_images)} folder(s); run the dataset integrity check."))
+        checks.append(
+            SetupCheck(
+                "images",
+                "Staining images",
+                "check",
+                f"Found {len(usable_images)} folder(s); run the dataset integrity check.",
+            )
+        )
 
     usable_extra = [
         path for path in extra_image_folders if Path(path).expanduser().is_dir()
@@ -410,9 +488,21 @@ def setup_checks(
     if integrity_current:
         for index, check in enumerate(checks):
             if check.key in {"anndata", "masks", "images"} and check.level == "check":
-                checks[index] = SetupCheck(check.key, check.label, "ready", "Validated for this workspace setup.")
+                checks[index] = SetupCheck(
+                    check.key,
+                    check.label,
+                    "ready",
+                    "Validated for this workspace setup.",
+                )
     else:
-        checks.append(SetupCheck("integrity", "Dataset integrity", "check", "Run the full check after selecting all required inputs."))
+        checks.append(
+            SetupCheck(
+                "integrity",
+                "Dataset integrity",
+                "check",
+                "Run the full check after selecting all required inputs.",
+            )
+        )
     return tuple(checks)
 
 
@@ -430,7 +520,7 @@ def setup_is_ready(checks: tuple[SetupCheck, ...]) -> bool:
     }
     return all(
         check.level != "blocked"
-        and (check.level == "ready" or check.key not in blocking_keys)
+        and (check.level in {"ready", "optional"} or check.key not in blocking_keys)
         for check in checks
     )
 

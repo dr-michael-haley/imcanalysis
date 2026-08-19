@@ -44,6 +44,7 @@ def test_workflow_presentations_cover_every_persisted_mode():
         "classification",
         "cell_labeling",
         "population_curation",
+        "dataset_maintenance",
         "full_workspace",
     }
     assert next(
@@ -98,6 +99,29 @@ def test_setup_readiness_requires_explicit_integrity_check(tmp_path: Path):
     assert next(item for item in checked if item.key == "normalization").level == (
         "optional"
     )
+
+
+def test_dataset_maintenance_allows_optional_mask_and_image_assets(tmp_path: Path):
+    adata = tmp_path / "cells.h5ad"
+    adata.touch()
+    checks = setup_checks(
+        workspace_name="Repair data",
+        workspace_path=workspace_destination(tmp_path / "napari_sbt", "Repair data"),
+        workflow_mode="dataset_maintenance",
+        anndata_path=adata,
+        has_in_memory_anndata=False,
+        masks_folder=None,
+        image_folders=[],
+        extra_image_folders=[],
+        roi_obs="ROI",
+        object_id_obs="ObjectNumber",
+        normalization_path=None,
+        integrity_current=True,
+    )
+
+    assert setup_is_ready(checks)
+    assert next(item for item in checks if item.key == "masks").level == "optional"
+    assert next(item for item in checks if item.key == "images").level == "optional"
 
 
 def test_identity_column_suggestions_use_conventional_names_only():

@@ -4,6 +4,7 @@
 from importlib import import_module
 
 _LAZY_EXPORTS = {
+    "CellFilterRequest": (".dataset_maintenance", "CellFilterRequest"),
     "ExperimentManifest": (".models", "ExperimentManifest"),
     "FeatureDiscoveryTrial": (".models", "FeatureDiscoveryTrial"),
     "ModelBundle": (".classifier", "ModelBundle"),
@@ -13,12 +14,20 @@ _LAZY_EXPORTS = {
         ".population_curation",
         "apply_population_draft",
     ),
+    "apply_cell_filter": (".dataset_maintenance", "apply_cell_filter"),
+    "apply_var_rename": (".dataset_maintenance", "apply_var_rename"),
+    "atomic_write_anndata": (".dataset_maintenance", "atomic_write_anndata"),
     "build_assignment_table": (".exports", "build_assignment_table"),
     "build_roi_features": (".features", "build_roi_features"),
     "cohort_mask": (".cohort", "cohort_mask"),
     "export_annotated_anndata": (".exports", "export_annotated_anndata"),
     "high_confidence_queue": (".classifier", "high_confidence_queue"),
     "refine_trial_features": (".feature_refinement", "refine_trial_features"),
+    "rebuild_masks_and_object_numbers": (
+        ".dataset_maintenance",
+        "rebuild_masks_and_object_numbers",
+    ),
+    "remove_anndata_vars": (".dataset_maintenance", "remove_anndata_vars"),
     "resolve_cohort": (".cohort", "resolve_cohort"),
     "score_cohort": (".classifier", "score_cohort"),
     "train_multiclass_classifier": (
@@ -56,12 +65,16 @@ def __getattr__(name: str):
 
 
 __all__ = [
+    "CellFilterRequest",
     "ExperimentManifest",
     "FeatureDiscoveryTrial",
     "ModelBundle",
     "PopulationDraft",
     "PopulationWorkspace",
+    "apply_cell_filter",
     "apply_population_draft",
+    "apply_var_rename",
+    "atomic_write_anndata",
     "build_assignment_table",
     "build_roi_features",
     "cohort_mask",
@@ -69,7 +82,9 @@ __all__ = [
     "high_confidence_queue",
     "launch",
     "launch_notebook",
+    "rebuild_masks_and_object_numbers",
     "refine_trial_features",
+    "remove_anndata_vars",
     "resolve_cohort",
     "score_cohort",
     "train_multiclass_classifier",

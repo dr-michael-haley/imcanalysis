@@ -27,6 +27,7 @@ WorkflowMode = Literal[
     "classification",
     "cell_labeling",
     "population_curation",
+    "dataset_maintenance",
     "full_workspace",
 ]
 
