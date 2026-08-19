@@ -42,6 +42,10 @@ class HyperstacConfigTests(unittest.TestCase):
         self.assertEqual(config.leiden_resolutions, [0.2, 0.25, 0.3, 0.35])
         self.assertFalse(config.write_spatial_cluster_maps)
         self.assertTrue(config.full_include_survival)
+        self.assertTrue(config.cluster_comparison_enabled)
+        self.assertEqual(config.cluster_comparison_silhouette_max_patches, 1000)
+        self.assertEqual(config.normalisation_preview_rois_per_channel, 1)
+        self.assertFalse(config.normalisation_fail_on_preflight_warning)
 
     def test_pipeline_registers_hyperstac_and_cox_sections(self):
         config = PipelineConfig()
@@ -80,7 +84,7 @@ class HyperstacFullTests(unittest.TestCase):
         permutation.assert_called_once_with()
         visualisation.assert_called_once_with()
         cox.assert_not_called()
-        stability.assert_not_called()
+        stability.assert_called_once_with(include_survival=False)
 
     def test_full_run_includes_survival_components_when_enabled(self):
         config = SimpleNamespace(
@@ -96,7 +100,7 @@ class HyperstacFullTests(unittest.TestCase):
             hyperstac_full.main()
 
         cox.assert_called_once_with()
-        stability.assert_called_once_with()
+        stability.assert_called_once_with(include_survival=True)
 
 
 class CoxMultiSourceTests(unittest.TestCase):
@@ -243,11 +247,11 @@ class HyperstacRegistryTests(unittest.TestCase):
         self.assertTrue(expected.issubset(STAGE_REGISTRY))
         self.assertEqual(
             STAGE_REGISTRY["hyperstac-stability"].depends_on,
-            ["hyperstac-visualise", "cox"],
+            ["hyperstac-visualise"],
         )
         self.assertEqual(
             set(STAGE_REGISTRY["hyperstac-stability"].required_executions),
-            {"hyperstac-visualise", "cox"},
+            {"hyperstac-visualise"},
         )
         self.assertEqual(
             MODE_REGISTRY["hyperstac"].stages[-2:],
@@ -306,17 +310,17 @@ class HyperstacRegistryTests(unittest.TestCase):
             self.assertFalse(explicit.ready)
             self.assertEqual(
                 explicit.resolved_stages[0].missing_executions,
-                ["hyperstac-visualise", "cox"],
+                ["hyperstac-visualise"],
             )
             self.assertTrue(asset_aware.ready, asset_aware.errors)
             self.assertEqual(
                 [stage.name for stage in asset_aware.resolved_stages],
-                ["hyperstac-visualise", "cox", "hyperstac-stability"],
+                ["hyperstac-visualise", "hyperstac-stability"],
             )
 
             records = preview_executions(
                 context,
-                ["hyperstac-visualise", "cox"],
+                ["hyperstac-visualise"],
                 workflow_run_id="prior-managed-reports",
             )
             write_execution_index(
@@ -327,10 +331,7 @@ class HyperstacRegistryTests(unittest.TestCase):
                     executions=records,
                 ),
             )
-            required_folders = (
-                (records[0], "files/hyperstac_visualisation"),
-                (records[1], "files/cox"),
-            )
+            required_folders = ((records[0], "files/hyperstac_visualisation"),)
             for record, relative in required_folders:
                 (execution_output_path(context, record) / relative).mkdir(
                     parents=True,

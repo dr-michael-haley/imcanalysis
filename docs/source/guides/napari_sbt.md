@@ -603,13 +603,24 @@ same source.
 
 The base table starts as an identity mapping. Editing **Proposed name** renames
 a cluster. Assigning the same final name to multiple rows is an explicit merge:
-all contributors are highlighted and listed in the effective-label preview.
+all contributors are listed in the effective-label preview. Proposed-name cells
+use their assigned population colour as their background, with automatically
+contrasting text, so the name and colour can be reviewed together.
 Contributors to one merge automatically receive one shared colour across both
 base and subcluster tables. Different merge groups receive distinct colours,
 preferring the first available contributor colour before using the fallback
 categorical palette. The selected merge colour is displayed in the preview and
 saved into the derived observation's Scanpy palette. Changing a final label's
-colour propagates that choice to every matching base and subcluster row.
+colour propagates that choice to every matching base and subcluster row. A colour
+used by two *different* final names is treated as an accidental collision, shown
+in the preview, and blocks saving; repeated rows belonging to one explicit merge
+remain valid.
+
+**Automatically colour…** opens the reusable Colour Helper. It previews common
+Scanpy and Matplotlib categorical palettes, starts with every palette colour
+enabled, allows individual colours to be excluded, and assigns distinct colours
+by abundance (forward or reverse) or alphabetically (forward or reverse). The
+exact population, count, and colour assignment is previewed before applying it.
 Preliminary mappings can be imported from CSV, including common source columns
 such as the selected obs name, `source_value`, `cluster`, or `leiden`, and label
 columns such as `proposed_label`, `final_population`, `label`, or `name`.
@@ -774,6 +785,9 @@ The initial maintenance tools include:
 - derived mask construction that either preserves retained ObjectNumbers or
   compacts them to `1…N` within each ROI, updates the live AnnData, and writes an
   identity crosswalk; and
+- observation remapping into a new or explicitly overwritten categorical `obs`,
+  including renames, merges, colour-matched name cells, collision checks, and the
+  shared Scanpy/Matplotlib Colour Helper; and
 - protected observation-column rename/removal plus repair of conventional Scanpy
   categorical colour palettes.
 

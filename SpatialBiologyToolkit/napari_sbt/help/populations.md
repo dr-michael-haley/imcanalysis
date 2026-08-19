@@ -24,12 +24,25 @@ available throughout the app.
 Every original source value has one row and initially maps to itself. Edit
 **Proposed name** to assign a biological name. Select several rows and use
 **Give selected rows one name / merge** to make the proposed merge explicit.
-Rows participating in a shared final name are highlighted orange and listed in
-the Preview tab with all contributing source clusters. NapariSBT automatically
-gives every contributor to one merge the same colour. Separate merge groups are
-kept visually distinct; the first available contributor colour is retained where
-possible and propagated across base and subcluster rows. Editing the colour for
-one final label likewise updates every row carrying that proposed label.
+The background of each Proposed name cell uses its assigned colour, with readable
+light or dark text, so names and colours can be checked together. Merges are also
+listed in the Preview tab with all contributing source clusters. NapariSBT
+automatically gives every contributor to one merge the same colour. Separate
+merge groups are kept visually distinct; the first available contributor colour
+is retained where possible and propagated across base and subcluster rows.
+Editing the colour for one final label likewise updates every row carrying that
+proposed label.
+
+**Automatically colour…** opens the shared Colour Helper. Choose a Scanpy or
+Matplotlib categorical palette, untick colours that should not be used, and
+assign the remaining colours by abundance (largest or smallest first) or name
+(A–Z or Z–A). The preview shows the exact category-to-colour assignment before it
+is applied. All rows carrying the same proposed name receive one colour.
+
+Sharing a colour is valid only when rows also share the same proposed name and
+therefore form an explicit merge. Reusing one colour for different final names is
+shown as a collision in the Preview and blocks saving until corrected. This
+prevents distinct tissue overlays from becoming visually indistinguishable.
 
 Colours are stored with the draft and written to Scanpy's
 `adata.uns["<obs>_colors"]` convention when the draft is applied. The effective

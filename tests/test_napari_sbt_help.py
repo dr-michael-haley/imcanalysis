@@ -43,6 +43,7 @@ BOX_HELP_SECTIONS = (
     ("dataset_maintenance", "Filter cells"),
     ("dataset_maintenance", "Rebuild masks and ObjectNumbers"),
     ("dataset_maintenance", "Manage observations"),
+    ("dataset_maintenance", "Observation column utilities"),
     ("classify", "Cell annotation"),
     ("classify", "Models and active-learning queues"),
     ("labeler", "Define labels"),

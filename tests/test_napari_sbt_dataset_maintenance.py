@@ -17,6 +17,7 @@ from SpatialBiologyToolkit.napari_sbt.dataset_maintenance import (
     preview_cell_filter,
     preview_mask_rebuild,
     rebuild_masks_and_object_numbers,
+    remap_categorical_observation,
     remove_anndata_vars,
 )
 
@@ -55,6 +56,46 @@ def test_variable_rename_and_removal_preserve_anndata_alignment():
 def test_variable_rename_rejects_collisions():
     with pytest.raises(ValueError, match="duplicate"):
         normalise_var_rename_mapping(_adata(), {"CD3": "CD20"})
+
+
+def test_observation_remap_supports_renaming_merging_and_scanpy_colours():
+    adata = _adata()
+
+    remapped = remap_categorical_observation(
+        adata,
+        "population",
+        "population_reviewed",
+        {"T": "Lymphoid", "B": "Lymphoid", "Myeloid": "Myeloid"},
+        {"Lymphoid": "#1f77b4", "Myeloid": "#ff7f0e"},
+    )
+
+    assert "population_reviewed" not in adata.obs
+    assert remapped.obs["population_reviewed"].tolist() == [
+        "Lymphoid",
+        "Lymphoid",
+        "Lymphoid",
+        "Myeloid",
+    ]
+    assert remapped.obs["population_reviewed"].cat.categories.tolist() == [
+        "Lymphoid",
+        "Myeloid",
+    ]
+    assert remapped.uns["population_reviewed_colors"] == ["#1f77b4", "#ff7f0e"]
+
+
+def test_observation_remap_blocks_unrelated_colour_collisions():
+    with pytest.raises(ValueError, match="cannot share one colour"):
+        remap_categorical_observation(
+            _adata(),
+            "population",
+            "population_reviewed",
+            {"T": "T cell", "B": "B cell", "Myeloid": "Myeloid"},
+            {
+                "T cell": "#1f77b4",
+                "B cell": "#1f77b4",
+                "Myeloid": "#ff7f0e",
+            },
+        )
 
 
 def test_cell_filter_previews_and_slices_selected_values():

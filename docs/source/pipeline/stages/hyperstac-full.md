@@ -2,7 +2,7 @@
 
 # `hyperstac-full`
 
-Run HyPERSTAC image analysis and optional Cox/stability components in one GPU job
+Run HyPERSTAC image analysis, normalization preflight, and clustering comparison with optional Cox overlays
 
 - Wrapper: [`job_hyperstac_full.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_hyperstac_full.sh)
 - Conda environment: `sbt-hyperstac`
@@ -14,7 +14,7 @@ Run HyPERSTAC image analysis and optional Cox/stability components in one GPU jo
 
 ## Outputs
 
-- reusable HyPERSTAC assets and managed visualisation, with optional Cox and stability reports
+- reusable HyPERSTAC assets, normalization QC, visualisation, clustering comparison, and optional Cox reports
 
 ## Configuration
 

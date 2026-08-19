@@ -21,7 +21,17 @@ def normalise_hex_colour(value: object) -> str:
     text = str(value).strip()
     if re.fullmatch(r"#[0-9a-fA-F]{3}", text):
         text = "#" + "".join(character * 2 for character in text[1:])
-    return text.lower() if _HEX_COLOUR.fullmatch(text) else ""
+    if re.fullmatch(r"#[0-9a-fA-F]{8}", text):
+        text = text[:7]
+    if _HEX_COLOUR.fullmatch(text):
+        return text.lower()
+    try:
+        from matplotlib.colors import to_hex
+
+        converted = to_hex(value, keep_alpha=False)
+    except (ImportError, TypeError, ValueError):
+        return ""
+    return converted.lower() if _HEX_COLOUR.fullmatch(converted) else ""
 
 
 def contrasting_text_colour(value: object) -> str:
@@ -65,10 +75,17 @@ def ordered_category_names(
 ) -> list[str]:
     """Return unique category names in one user-facing assignment order."""
 
-    names = list(dict.fromkeys(str(label).strip() for label in labels if str(label).strip()))
+    names = list(
+        dict.fromkeys(
+            str(label).strip() for label in labels if str(label).strip()
+        )
+    )
     abundance = {str(key): int(value) for key, value in (counts or {}).items()}
     if mode == "abundance_desc":
-        return sorted(names, key=lambda name: (-abundance.get(name, 0), name.casefold()))
+        return sorted(
+            names,
+            key=lambda name: (-abundance.get(name, 0), name.casefold()),
+        )
     if mode == "abundance_asc":
         return sorted(names, key=lambda name: (abundance.get(name, 0), name.casefold()))
     if mode == "alphabetical_desc":
@@ -102,7 +119,10 @@ def assign_categorical_colours(
             f"Select at least {len(names)} distinct colours for {len(names)} "
             f"populations; only {len(selected)} are currently enabled."
         )
-    return dict(zip(names, selected, strict=True))
+    # Palettes commonly contain many more colours than the current categories.
+    # Only the first required enabled colours are assigned; the remaining palette
+    # entries stay available if more categories are added later.
+    return dict(zip(names, selected[: len(names)], strict=True))
 
 
 def categorical_palette_catalog() -> OrderedDict[str, tuple[str, ...]]:
@@ -183,7 +203,11 @@ def categorical_palette_catalog() -> OrderedDict[str, tuple[str, ...]]:
             "#9edae5",
         )
 
-    combined = tuple(dict.fromkeys(colour for values in palettes.values() for colour in values))
+    combined = tuple(
+        dict.fromkeys(
+            colour for values in palettes.values() for colour in values
+        )
+    )
     palettes["All available categorical colours"] = combined
     palettes.move_to_end("All available categorical colours", last=False)
     return palettes

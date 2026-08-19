@@ -17,6 +17,8 @@ import numpy as np
 import pandas as pd
 from pydantic import BaseModel, Field, model_validator
 
+from .colour_helper import categorical_colour_collisions, normalise_hex_colour
+
 ReadinessLevel = Literal["ready", "warning", "blocked", "optional"]
 MaskRebuildMode = Literal["preserve", "compact"]
 CellFilterMode = Literal[
@@ -130,6 +132,86 @@ def atomic_write_anndata(
         if temporary.exists():
             temporary.unlink()
     return output
+
+
+def remap_categorical_observation(
+    adata,
+    source: str,
+    destination: str,
+    mapping: Mapping[str, str],
+    colours: Mapping[str, str],
+    *,
+    overwrite: bool = False,
+):
+    """Return a copy with a renamed/merged categorical observation and palette.
+
+    Source values are matched through their displayed string representation, as
+    they are in the Dataset Maintenance table. Missing values remain missing.
+    Repeating a proposed name is an explicit merge. Distinct output categories
+    may not silently share one colour.
+    """
+
+    source = str(source).strip()
+    destination = str(destination).strip()
+    if source not in adata.obs:
+        raise ValueError(f"Observation does not exist: {source!r}.")
+    if not destination:
+        raise ValueError("Enter an output observation name.")
+    if destination in adata.obs and not overwrite:
+        raise ValueError(
+            f"Observation already exists: {destination!r}. Enable overwrite only "
+            "when replacing that exact live column is intended."
+        )
+
+    source_values = adata.obs[source].astype("string")
+    available = source_values.dropna().astype(str).drop_duplicates().tolist()
+    cleaned_mapping = {
+        str(key).strip(): str(value).strip() for key, value in mapping.items()
+    }
+    missing = [value for value in available if value not in cleaned_mapping]
+    blank = [value for value in available if not cleaned_mapping.get(value, "")]
+    if missing or blank:
+        affected = list(dict.fromkeys([*missing, *blank]))
+        raise ValueError(
+            "Every source value needs a proposed name. Missing: "
+            + ", ".join(repr(value) for value in affected[:12])
+        )
+
+    category_order = list(
+        dict.fromkeys(cleaned_mapping[value] for value in available)
+    )
+    cleaned_colours = {
+        str(label).strip(): normalise_hex_colour(colour)
+        for label, colour in colours.items()
+    }
+    missing_colours = [
+        label for label in category_order if not cleaned_colours.get(label, "")
+    ]
+    if missing_colours:
+        raise ValueError(
+            "Every final population needs a valid #RRGGBB colour. Missing: "
+            + ", ".join(repr(value) for value in missing_colours[:12])
+        )
+    collisions = categorical_colour_collisions(
+        category_order,
+        [cleaned_colours[label] for label in category_order],
+    )
+    if collisions:
+        details = "; ".join(
+            f"{colour}: {', '.join(labels)}"
+            for colour, labels in collisions.items()
+        )
+        raise ValueError(
+            "Different final populations cannot share one colour. " + details
+        )
+
+    mapped = source_values.map(cleaned_mapping)
+    result = adata.copy()
+    result.obs[destination] = pd.Categorical(mapped, categories=category_order)
+    result.uns[f"{destination}_colors"] = [
+        cleaned_colours[label] for label in category_order
+    ]
+    return result
 
 
 def normalise_var_rename_mapping(

@@ -7,19 +7,21 @@ images, then uses Leiden clustering to discover recurrent spatial proteomic
 patterns. The SBT integration is based on the
 [HyPERSTAC preprint](https://www.biorxiv.org/content/10.1101/2025.10.16.682563v1.full)
 and retains the IMC adaptation's patch metrics, perturbation analysis, report
-galleries, survival integration, and cross-Leiden stability assessment.
+galleries, optional survival integration, and cross-Leiden stability assessment.
 
 The workflow is exposed as checkpoint jobs:
 
-1. `hyperstac-preprocess` - background correction and robust per-channel scaling.
+1. `hyperstac-preprocess` - background correction, robust per-channel scaling,
+   and an advisory normalization preflight.
 2. `hyperstac-model` - patch extraction, VICReg training, and representation
    AnnData creation.
 3. `hyperstac-permutation` - channel-zeroing and pixel-shuffling sensitivity.
 4. `hyperstac-visualise` - graph/UMAP/Leiden scans and interpretation reports.
 5. `cox` - the separate general-purpose survival stage described in the
    [Cox guide](cox_survival.md).
-6. `hyperstac-stability` - cross-reference recurrent marker environments,
-   perturbation effects, and Cox directions across Leiden settings.
+6. `hyperstac-stability` - compare every Leiden setting using assignment,
+   graph, cluster-support, and marker-environment evidence; overlay Cox
+   directions when a compatible managed Cox report exists.
 
 Submit the checkpointed workflow with:
 
@@ -38,18 +40,19 @@ run everything in one GPU allocation:
 sbt run hyperstac-full
 ```
 
-By default this includes Cox and cross-Leiden survival stability. For an
-image-only run that still keeps preprocessing, model training, permutation,
-and visualisation inside one GPU allocation, configure:
+By default this includes Cox and overlays survival evidence on the clustering
+comparison. For an image-only run that still keeps preprocessing, model
+training, permutation, visualisation, and parameter comparison inside one GPU
+allocation, configure:
 
 ```yaml
 hyperstac:
   full_include_survival: false
 ```
 
-The job then completes successfully after visualisation. The `cox` stage
-remains independently runnable if compatible survival metadata becomes
-available later.
+The job skips Cox but still runs the survival-independent clustering comparison
+after visualisation. The `cox` stage remains independently runnable if
+compatible survival metadata becomes available later.
 
 ## Why the analysis is performed
 
@@ -72,7 +75,7 @@ prevalence, and stability across clustering settings.
 - A consistent channel set and image shape within every ROI.
 - Optional explicit `hyperstac.channels`; an empty list infers the alphabetical
   channel order from the first ROI and validates it against every ROI.
-- For the optional Cox/stability portion, case outcomes and feature sources
+- For the optional Cox overlay, case outcomes and feature sources
   configured in the separate `cox` section.
 
 Images supplied directly to `hyperstac-model` must already be scaled to
@@ -104,14 +107,17 @@ representation AnnData with namespaced graph/UMAP state and columns such as
 
 Managed execution reports contain:
 
-- channel- and ROI-level normalization tables;
+- channel- and ROI-level normalization tables, an advisory preflight report,
+  and representative source/normalized image montages;
 - patch metadata and the resolved training/perturbation contracts;
 - perturbation condition and per-patch summaries;
 - UMAPs colored by Leiden labels, marker intensity, and perturbation scores;
 - cluster marker heatmaps, ROI composition tables, optional spatial maps, TIFF
   label masks, and patch galleries;
 - per-clustering visualisation summaries;
-- cross-Leiden environment/marker stability tables and heatmaps;
+- a ranked (not prescriptive) setting scorecard, all-setting ARI/NMI matrices,
+  adjacent-parameter stability, graph purity/conductance, cluster/ROI support,
+  sampled silhouette metrics, and recurrent marker-environment evidence;
 - CoxNet/Ridge direction comparisons, perturbation-survival overlays, and
   per-clustering HTML interpretation pages when compatible Cox output exists.
 
@@ -143,6 +149,15 @@ The former GBM-specific marker list is deliberately not a default. Configure an
 ordered list when channel order must be fixed across runs; otherwise inference
 is validated before patch creation.
 
+Normalization defaults are also assay-dependent. The preflight flags channels
+where the background is large relative to raw p99, normalized p99 is very low,
+saturation is high, or ROI presence is sparse. These are review prompts rather
+than proof of failure. `normalisation_preview_rois_per_channel` controls the
+representative montages (zero disables them). Set
+`normalisation_fail_on_preflight_warning=true` only when the heuristic cutoffs
+have been validated for the assay and the workflow should stop before model
+training.
+
 ## How to interpret the results
 
 Start with patch/ROI counts and the normalization QC. Next inspect the embedding
@@ -153,9 +168,16 @@ edges.
 
 Permutation cosine distance asks whether removing or rearranging a marker
 changes the learned representation. It is a sensitivity measure, not causal
-evidence. The stability stage is most useful when recurrent marker signatures,
-case support, CoxNet/Ridge directions, and perturbation evidence agree across
-several Leiden settings.
+evidence. The clustering comparison does not choose a biologically correct
+resolution automatically. Its review rank prioritizes non-dominated settings
+with stronger adjacent-setting agreement, matched-graph separation, cluster
+support, and ROI representation. Inspect the shortlist against marker heatmaps
+and patch galleries. When survival is available, CoxNet/Ridge direction is an
+additional overlay and is not part of the reference-free selection score.
+
+This parameter scan measures robustness to resolution, neighbour count, and
+PCA dimension. It is not seed stability, bootstrap stability, external-label
+validation, or proof that a cluster represents a biological compartment.
 
 Survival plots fitted and displayed on the same cases are optimistic. Prefer the
 held-out cross-validation summaries and risk-group plots produced by `cox`.
@@ -173,9 +195,9 @@ held-out cross-validation summaries and risk-group plots produced by `cox`.
   environment. CPU-only syntax or import checks do not validate GPU execution.
 - The clustering scan can create many graphs, UMAPs, and figures. Reduce the
   grid before increasing cohort size.
-- `hyperstac-stability` needs compatible managed visualisation and Cox reports.
-  It does not manufacture survival metadata or infer case identity from patch
-  names.
+- `hyperstac-stability` needs the clustered representation plus a compatible
+  managed visualisation report. Cox is optional; the stage does not manufacture
+  survival metadata or infer case identity from patch names.
 - The `sbt-hyperstac` environment is externally managed. Its intent
   specification is committed, but a Linux lock was not generated as part of
   this integration.

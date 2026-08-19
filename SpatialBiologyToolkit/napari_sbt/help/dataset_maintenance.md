@@ -92,11 +92,29 @@ new folder becomes the current Setup mask source. Original masks remain untouche
 
 ## Manage observations
 
-Observation columns can be renamed or removed in memory. ROI, ObjectNumber, the
-observation defining a frozen cohort, and active Population naming source/output
-columns are protected. A conventional
-`adata.uns["<obs>_colors"]` palette is moved with a renamed observation and removed
-with a deleted one.
+Choose a source observation to load every value, cell count, proposed name, and
+colour into an editable table. Change Proposed name to rename a value; give
+several rows the same name to make an explicit merge. The name background always
+shows its effective colour. Use the row-selection buttons for bulk names or a
+manual colour, or **Automatically colour…** to open the shared Colour Helper with
+Scanpy and Matplotlib categorical palettes, per-colour exclusions, and abundance
+or alphabetical assignment orders.
+
+Enter a new output name and use **Create / update observation in memory**. The
+source observation stays unchanged by default. Replacing an existing live column
+requires the explicit overwrite checkbox, and protected identity/frozen-cohort
+observations cannot be overwritten. Missing source values remain missing.
+Repeated final names share one colour by design; different final names sharing a
+colour are reported as a collision and cannot be applied. The result is written
+as categorical data with its matching conventional
+`adata.uns["<obs>_colors"]` palette.
+
+## Observation column utilities
+
+The currently selected source column can also be renamed or removed in memory.
+ROI, ObjectNumber, the observation defining a frozen cohort, and active Population
+naming source/output columns are protected. A conventional colour palette is
+moved with a renamed observation and removed with a deleted one.
 
 **Repair categorical colours** converts the selected observation to categorical
 when needed and stores one valid colour per category using the standard Scanpy

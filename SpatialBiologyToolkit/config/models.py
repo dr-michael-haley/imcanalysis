@@ -3410,11 +3410,11 @@ class HyperstacConfig(ConfigModel):
     )
     full_include_survival: bool = config_field(
         True,
-        description="Run Cox survival and cross-Leiden stability after visualisation in hyperstac-full.",
+        description="Run the optional Cox survival overlay after the always-on clustering comparison in hyperstac-full.",
         level="basic",
         stage="hyperstac",
         ui_group="Full workflow",
-        advice="Set false for an image-only full run that completes after visualisation in the same GPU allocation.",
+        advice="Set false for an image-only full run; normalization QC and clustering comparison still run.",
     )
     channels: List[str] = config_field(
         default_factory=list,
@@ -3500,6 +3500,21 @@ class HyperstacConfig(ConfigModel):
         stage="hyperstac",
         ui_group="Image normalization",
         ge=0,
+    )
+    normalisation_preview_rois_per_channel: int = config_field(
+        1,
+        description="Number of representative source/normalized ROI images shown per channel and signal quantile.",
+        stage="hyperstac",
+        ui_group="Image normalization",
+        ge=0,
+        advice="Set zero to suppress montage generation while retaining numerical preflight checks.",
+    )
+    normalisation_fail_on_preflight_warning: bool = config_field(
+        False,
+        description="Fail managed preprocessing before downstream modelling when any normalization preflight heuristic warns.",
+        stage="hyperstac",
+        ui_group="Image normalization",
+        advice="Warnings are deliberately advisory by default; enable this after reviewing suitable thresholds for the assay.",
     )
     tiff_compression: Optional[str] = config_field(
         None,
@@ -3861,6 +3876,34 @@ class HyperstacConfig(ConfigModel):
         stage="hyperstac",
         ui_group="Leiden stability",
         gt=0,
+    )
+    cluster_comparison_enabled: bool = config_field(
+        True,
+        description="Compare every Leiden parameter-scan result without requiring survival metadata.",
+        level="basic",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+    )
+    cluster_comparison_roi_obs: str = config_field(
+        "roi",
+        description="Observation column used to quantify ROI representation across clusters.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+    )
+    cluster_comparison_min_cluster_fraction: float = config_field(
+        0.01,
+        description="Minimum global patch fraction used when reporting well-supported clusters.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+        ge=0,
+        le=1,
+    )
+    cluster_comparison_silhouette_max_patches: int = config_field(
+        1000,
+        description="Maximum stratified patch sample used for each silhouette estimate.",
+        stage="hyperstac",
+        ui_group="Leiden stability",
+        ge=100,
     )
     stability_max_heatmap_markers: int = config_field(
         50,

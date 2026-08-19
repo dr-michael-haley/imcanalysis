@@ -2,7 +2,7 @@
 
 # `hyperstac-stability`
 
-Cross-reference HyPERSTAC Leiden marker environments, perturbation sensitivity, and Cox effects
+Compare HyPERSTAC Leiden parameter settings, with optional perturbation and Cox overlays
 
 - Wrapper: [`job_hyperstac_stability.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_hyperstac_stability.sh)
 - Conda environment: `sbt-hyperstac`
@@ -10,11 +10,11 @@ Cross-reference HyPERSTAC Leiden marker environments, perturbation sensitivity, 
 
 ## Inputs
 
-- latest managed hyperstac-visualise and cox execution reports
+- latest managed hyperstac-visualise report and reusable clustered representation; optional cox report
 
 ## Outputs
 
-- managed cross-Leiden stability tables, figures, Markdown, and per-clustering HTML reports
+- managed parameter scorecard, agreement/support tables, figures, Markdown, and optional survival reports
 
 ## Configuration
 

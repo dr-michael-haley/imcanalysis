@@ -27,6 +27,10 @@ _LAZY_EXPORTS = {
         ".dataset_maintenance",
         "rebuild_masks_and_object_numbers",
     ),
+    "remap_categorical_observation": (
+        ".dataset_maintenance",
+        "remap_categorical_observation",
+    ),
     "remove_anndata_vars": (".dataset_maintenance", "remove_anndata_vars"),
     "resolve_cohort": (".cohort", "resolve_cohort"),
     "score_cohort": (".classifier", "score_cohort"),
@@ -83,6 +87,7 @@ __all__ = [
     "launch",
     "launch_notebook",
     "rebuild_masks_and_object_numbers",
+    "remap_categorical_observation",
     "refine_trial_features",
     "remove_anndata_vars",
     "resolve_cohort",

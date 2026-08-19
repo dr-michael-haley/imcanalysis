@@ -18,6 +18,7 @@ from SpatialBiologyToolkit.napari_sbt.population_curation import (
     read_population_audit,
     save_population_draft,
     synthesize_population_labels,
+    validate_distinct_population_colours,
 )
 
 ad = pytest.importorskip("anndata")
@@ -184,6 +185,26 @@ def test_merge_groups_receive_shared_and_distinct_colours():
     assert harmonized_base.loc[
         harmonized_base["proposed_label"].eq("unmerged"), "color"
     ].item() == "#abcdef"
+
+
+def test_population_colours_allow_merges_but_reject_unrelated_reuse():
+    base = pd.DataFrame(
+        [
+            ["0", 10, "T cell", "#112233", ""],
+            ["1", 5, "T cell", "#112233", ""],
+            ["2", 4, "B cell", "#112233", ""],
+        ],
+        columns=[
+            "source_value",
+            "cell_count",
+            "proposed_label",
+            "color",
+            "notes",
+        ],
+    )
+
+    with pytest.raises(ValueError, match="cannot share one colour"):
+        validate_distinct_population_colours(base)
 
 
 def test_source_labels_with_trailing_whitespace_use_one_canonical_mapping(tmp_path):

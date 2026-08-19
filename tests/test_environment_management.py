@@ -361,6 +361,7 @@ class RegistryTests(EnvironmentFixture):
             "analysis": "sbt-analysis",
             "napari": "sbt-napari",
             "denoise": "sbt-denoise",
+            "tensorflow": "sbt-tensorflow",
             "cellposesam": "sbt-cellpose-sam",
             "starling": "sbt-starling",
             "scportrait": "sbt-scportrait",
@@ -371,6 +372,51 @@ class RegistryTests(EnvironmentFixture):
             {key: item.conda_name for key, item in central.environments.items()},
             expected_names,
         )
+
+    def test_joint_tensorflow_candidate_preserves_both_runtime_families(self):
+        root = Path(__file__).resolve().parents[1]
+        central = load_environment_registry(root)
+        definition = central.environments["tensorflow"]
+        specification = root / definition.specification_directory
+
+        self.assertEqual(definition.conda_name, "sbt-tensorflow")
+        self.assertTrue(definition.managed)
+        self.assertEqual(associated_stages(central, "tensorflow"), [])
+
+        conda_requirements = declared_conda_requirements(
+            specification / "environment.yml"
+        )
+        pip_requirements = declared_pip_requirements(
+            specification / "pip-extras.txt"
+        )
+        self.assertEqual(conda_requirements["python"], "=3.10")
+        self.assertEqual(conda_requirements["numpy"], "=1.26.4")
+        self.assertEqual(conda_requirements["scipy"], "=1.11.4")
+        self.assertEqual(conda_requirements["scikit-learn"], "=1.4.2")
+        tensorflow_requirements = [
+            item.requirement
+            for item in pip_requirements.values()
+            if item.requirement.startswith("tensorflow[")
+        ]
+        self.assertEqual(
+            tensorflow_requirements, ["tensorflow[and-cuda]==2.15.1"]
+        )
+        self.assertEqual(pip_requirements["imc-denoise"].source_type, "vcs")
+        self.assertEqual(
+            pip_requirements["imc-denoise"].requirement,
+            "IMC-Denoise @ git+https://github.com/couper-lab/"
+            "IMC_Denoise_Updated.git@"
+            "0a1c93626f2a7c2462e39baeb62d77dec20f54cb",
+        )
+
+        smoke_text = " ".join(
+            argument
+            for command in definition.smoke_tests
+            for argument in command
+        )
+        self.assertIn("SpatialBiologyToolkit.scripts.denoising", smoke_text)
+        self.assertIn("SpatialBiologyToolkit.scripts.hyperstac_full", smoke_text)
+        self.assertIn("HPC_env_files/sbt-tensorflow/smoke_test.py", smoke_text)
 
     def test_cellpose_sam_runtime_preserves_working_cuda_stack_and_cpp_runtime(self):
         root = Path(__file__).resolve().parents[1]

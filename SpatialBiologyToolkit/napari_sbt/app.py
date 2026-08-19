@@ -48,6 +48,12 @@ from .cohort import (
     save_cohort_snapshot,
     validate_mask_coverage,
 )
+from .colour_helper import (
+    assign_categorical_colours,
+    categorical_colour_collisions,
+    categorical_palette_catalog,
+    contrasting_text_colour,
+)
 from .dataset_maintenance import (
     CellFilterRequest,
     append_maintenance_audit,
@@ -61,6 +67,7 @@ from .dataset_maintenance import (
     preview_mask_rebuild,
     preview_var_rename,
     rebuild_masks_and_object_numbers,
+    remap_categorical_observation,
     remove_anndata_vars,
 )
 from .explore import (
@@ -537,6 +544,7 @@ class NapariSBTController:
         self.population_base_mapping = pd.DataFrame(columns=BASE_MAPPING_COLUMNS)
         self.population_components = pd.DataFrame(columns=COMPONENT_COLUMNS)
         self.population_membership = empty_membership()
+        self._maintenance_obs_default_output = ""
         self.scanpy_plot_windows: dict[str, dict[str, object]] = {}
         self.reviewed_rois: set[str] = set()
         self._class_shortcuts: list[str] = []
@@ -2081,6 +2089,7 @@ class NapariSBTController:
         self.colour_selected_populations_button = QPushButton(
             "Set selected rows' colour"
         )
+        self.auto_colour_populations_button = QPushButton("Automatically colour…")
         self.import_population_mapping_button = QPushButton(
             "Import preliminary names from CSV"
         )
@@ -2089,6 +2098,7 @@ class NapariSBTController:
         )
         base_mapping_actions.addWidget(self.name_selected_populations_button)
         base_mapping_actions.addWidget(self.colour_selected_populations_button)
+        base_mapping_actions.addWidget(self.auto_colour_populations_button)
         base_mapping_actions.addWidget(self.import_population_mapping_button)
         base_mapping_actions.addWidget(self.export_population_mapping_button)
         base_mapping_layout.addWidget(base_mapping_help)
@@ -2645,16 +2655,122 @@ class NapariSBTController:
         maintenance_obs_page = QWidget()
         maintenance_obs_layout = QVBoxLayout(maintenance_obs_page)
         maintenance_obs_group = workflow_group(
-            "2. Manage AnnData observation columns",
+            "2. Create or remap an observation",
             "dataset_maintenance",
             "Manage observations",
         )
-        maintenance_obs_form = QFormLayout(maintenance_obs_group)
-        self.maintenance_obs_combo = QComboBox()
-        self.maintenance_obs_new_name_edit = QLineEdit()
-        self.maintenance_obs_new_name_edit.setPlaceholderText(
-            "New observation name"
+        maintenance_obs_group_layout = QVBoxLayout(maintenance_obs_group)
+        maintenance_obs_explanation = QLabel(
+            "Create a new categorical obs by renaming or merging values from an "
+            "existing obs. The source stays unchanged unless overwrite is enabled."
         )
+        maintenance_obs_explanation.setWordWrap(True)
+        maintenance_obs_group_layout.addWidget(maintenance_obs_explanation)
+        maintenance_obs_form = QFormLayout()
+        self.maintenance_obs_combo = QComboBox()
+        self.maintenance_obs_output_edit = QLineEdit()
+        self.maintenance_obs_output_edit.setPlaceholderText(
+            "For example: population_reviewed"
+        )
+        self.maintenance_obs_overwrite_checkbox = QCheckBox(
+            "Allow replacing an existing observation in the live AnnData"
+        )
+        maintenance_obs_form.addRow(
+            "Source observation", self.maintenance_obs_combo
+        )
+        maintenance_obs_form.addRow(
+            "Output observation", self.maintenance_obs_output_edit
+        )
+        maintenance_obs_form.addRow("Advanced", self.maintenance_obs_overwrite_checkbox)
+        maintenance_obs_group_layout.addLayout(maintenance_obs_form)
+
+        self.maintenance_obs_mapping_table = QTableWidget(0, 4)
+        self.maintenance_obs_mapping_table.setHorizontalHeaderLabels(
+            ["Source value", "Cells", "Proposed name", "Colour"]
+        )
+        self.maintenance_obs_mapping_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.Stretch
+        )
+        self.maintenance_obs_mapping_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeToContents
+        )
+        self.maintenance_obs_mapping_table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.Stretch
+        )
+        self.maintenance_obs_mapping_table.horizontalHeader().setSectionResizeMode(
+            3, QHeaderView.ResizeToContents
+        )
+        self.maintenance_obs_mapping_table.setMinimumHeight(280)
+        self.maintenance_obs_mapping_table.setAlternatingRowColors(False)
+        self.maintenance_obs_mapping_table.setSelectionBehavior(
+            QAbstractItemView.SelectRows
+        )
+        self.maintenance_obs_mapping_table.setSelectionMode(
+            QAbstractItemView.ExtendedSelection
+        )
+        maintenance_obs_group_layout.addWidget(self.maintenance_obs_mapping_table)
+
+        maintenance_mapping_edit_actions = QWidget()
+        maintenance_mapping_edit_actions_layout = QHBoxLayout(
+            maintenance_mapping_edit_actions
+        )
+        maintenance_mapping_edit_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.name_selected_maintenance_obs_button = QPushButton(
+            "Give selected rows one name / merge"
+        )
+        self.colour_selected_maintenance_obs_button = QPushButton(
+            "Set selected rows' colour"
+        )
+        self.auto_colour_maintenance_obs_button = QPushButton("Automatically colour…")
+        maintenance_mapping_edit_actions_layout.addWidget(
+            self.name_selected_maintenance_obs_button
+        )
+        maintenance_mapping_edit_actions_layout.addWidget(
+            self.colour_selected_maintenance_obs_button
+        )
+        maintenance_mapping_edit_actions_layout.addWidget(
+            self.auto_colour_maintenance_obs_button
+        )
+        maintenance_obs_group_layout.addWidget(maintenance_mapping_edit_actions)
+
+        maintenance_mapping_actions = QWidget()
+        maintenance_mapping_actions_layout = QHBoxLayout(maintenance_mapping_actions)
+        maintenance_mapping_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.reset_maintenance_obs_mapping_button = QPushButton(
+            "Reset names and colours"
+        )
+        self.apply_maintenance_obs_mapping_button = QPushButton(
+            "Create / update observation in memory"
+        )
+        self.apply_maintenance_obs_mapping_button.setObjectName(
+            "sbtPrimaryActionButton"
+        )
+        maintenance_mapping_actions_layout.addWidget(
+            self.reset_maintenance_obs_mapping_button
+        )
+        maintenance_mapping_actions_layout.addWidget(
+            self.apply_maintenance_obs_mapping_button
+        )
+        maintenance_obs_group_layout.addWidget(maintenance_mapping_actions)
+
+        self.maintenance_obs_status = QLabel(
+            "Choose a source observation. Repeated proposed names are explicit merges."
+        )
+        self.maintenance_obs_status.setWordWrap(True)
+        maintenance_obs_group_layout.addWidget(self.maintenance_obs_status)
+        maintenance_obs_layout.addWidget(maintenance_obs_group)
+
+        maintenance_obs_utilities_group = workflow_group(
+            "3. Observation column utilities",
+            "dataset_maintenance",
+            "Observation column utilities",
+        )
+        maintenance_obs_utilities_form = QFormLayout(maintenance_obs_utilities_group)
+        self.maintenance_obs_utility_source_label = QLabel("No observation selected")
+        self.maintenance_obs_rename_edit = QLineEdit()
+        self.maintenance_obs_rename_edit.setPlaceholderText("New column name")
+        # Compatibility alias for callers which used the first implementation.
+        self.maintenance_obs_new_name_edit = self.maintenance_obs_rename_edit
         maintenance_obs_actions = QWidget()
         maintenance_obs_actions_layout = QHBoxLayout(maintenance_obs_actions)
         maintenance_obs_actions_layout.setContentsMargins(0, 0, 0, 0)
@@ -2668,15 +2784,14 @@ class NapariSBTController:
         maintenance_obs_actions_layout.addWidget(
             self.repair_maintenance_palette_button
         )
-        self.maintenance_obs_status = QLabel(
-            "Identity observations used for ROI and ObjectNumber are protected."
+        maintenance_obs_utilities_form.addRow(
+            "Selected source", self.maintenance_obs_utility_source_label
         )
-        self.maintenance_obs_status.setWordWrap(True)
-        maintenance_obs_form.addRow("Observation", self.maintenance_obs_combo)
-        maintenance_obs_form.addRow("New name", self.maintenance_obs_new_name_edit)
-        maintenance_obs_form.addRow("", maintenance_obs_actions)
-        maintenance_obs_form.addRow("Status", self.maintenance_obs_status)
-        maintenance_obs_layout.addWidget(maintenance_obs_group)
+        maintenance_obs_utilities_form.addRow(
+            "Rename column to", self.maintenance_obs_rename_edit
+        )
+        maintenance_obs_utilities_form.addRow("", maintenance_obs_actions)
+        maintenance_obs_layout.addWidget(maintenance_obs_utilities_group)
         maintenance_obs_layout.addStretch(1)
         self.maintenance_tool_tabs.addTab(maintenance_obs_page, "Observations")
 
@@ -3631,6 +3746,36 @@ class NapariSBTController:
         self.apply_maintenance_masks_button.clicked.connect(
             self._guard(self.apply_maintenance_mask_rebuild)
         )
+        self.maintenance_obs_combo.currentTextChanged.connect(
+            self._guard(self.refresh_maintenance_observation_mapping)
+        )
+        self.maintenance_obs_mapping_table.itemChanged.connect(
+            self._guard(
+                self._maintenance_observation_mapping_changed,
+                pass_signal_args=True,
+            )
+        )
+        self.reset_maintenance_obs_mapping_button.clicked.connect(
+            self._guard(self.refresh_maintenance_observation_mapping)
+        )
+        self.auto_colour_maintenance_obs_button.clicked.connect(
+            self._guard(self.auto_colour_maintenance_observation)
+        )
+        self.name_selected_maintenance_obs_button.clicked.connect(
+            self._guard(self.name_selected_maintenance_observation_rows)
+        )
+        self.colour_selected_maintenance_obs_button.clicked.connect(
+            self._guard(self.colour_selected_maintenance_observation_rows)
+        )
+        self.apply_maintenance_obs_mapping_button.clicked.connect(
+            self._guard(self.apply_maintenance_observation_mapping)
+        )
+        self.maintenance_obs_output_edit.textChanged.connect(
+            self._maintenance_observation_mapping_changed
+        )
+        self.maintenance_obs_overwrite_checkbox.stateChanged.connect(
+            self._maintenance_observation_mapping_changed
+        )
         self.rename_maintenance_obs_button.clicked.connect(
             self._guard(self.rename_maintenance_observation)
         )
@@ -3922,6 +4067,9 @@ class NapariSBTController:
             lambda: self._guard(
                 lambda: self.colour_selected_population_rows("components")
             )()
+        )
+        self.auto_colour_populations_button.clicked.connect(
+            self._guard(self.auto_colour_population_draft)
         )
         self.import_population_mapping_button.clicked.connect(
             self._guard(self.import_population_mapping)
@@ -5856,6 +6004,7 @@ class NapariSBTController:
                 self.maintenance_var_rename_table,
                 self.maintenance_remove_vars_list,
                 self.maintenance_filter_values_list,
+                self.maintenance_obs_mapping_table,
             ):
                 widget.clear()
             self.maintenance_filter_obs_combo.clear()
@@ -5902,6 +6051,7 @@ class NapariSBTController:
                 combo.setCurrentText(current)
             combo.blockSignals(False)
         self.refresh_maintenance_filter_values()
+        self.refresh_maintenance_observation_mapping()
         self.refresh_maintenance_readiness()
 
     def _maintenance_var_mapping(self, *, allow_empty: bool = False) -> dict[str, str]:
@@ -6494,6 +6644,236 @@ class NapariSBTController:
             self._activity_finish(False, "Mask rebuilding failed.")
             raise
 
+    def refresh_maintenance_observation_mapping(self) -> None:
+        """Load the selected observation into the editable remapping table."""
+
+        table = self.maintenance_obs_mapping_table
+        table.blockSignals(True)
+        table.setRowCount(0)
+        if self.adata is None:
+            table.blockSignals(False)
+            self.maintenance_obs_utility_source_label.setText(
+                "No observation selected"
+            )
+            return
+        observation = self.maintenance_obs_combo.currentText().strip()
+        if not observation or observation not in self.adata.obs:
+            table.blockSignals(False)
+            return
+
+        series = self.adata.obs[observation]
+        displayed = series.astype("string")
+        if isinstance(series.dtype, pd.CategoricalDtype):
+            values = [
+                str(value)
+                for value in series.cat.categories
+                if displayed.eq(str(value)).any()
+            ]
+        else:
+            values = sorted(displayed.dropna().astype(str).unique().tolist())
+        counts = displayed.value_counts(dropna=True).to_dict()
+        colours = categorical_colour_map(self.adata, observation)
+        table.setRowCount(len(values))
+        for row, value in enumerate(values):
+            table.setItem(row, 0, self._readonly_table_item(value))
+            table.setItem(
+                row,
+                1,
+                self._readonly_table_item(f"{int(counts.get(value, 0)):,}"),
+            )
+            table.setItem(row, 2, self.QTableWidgetItem(value))
+            table.setItem(
+                row,
+                3,
+                self.QTableWidgetItem(str(colours.get(value, "#808080"))),
+            )
+        table.blockSignals(False)
+        self._style_colour_mapping_table(table, name_column=2, colour_column=3)
+
+        default_output = f"{observation}_remapped"
+        current_output = self.maintenance_obs_output_edit.text().strip()
+        if not current_output or current_output == self._maintenance_obs_default_output:
+            blocked = self.maintenance_obs_output_edit.blockSignals(True)
+            self.maintenance_obs_output_edit.setText(default_output)
+            self.maintenance_obs_output_edit.blockSignals(blocked)
+        self._maintenance_obs_default_output = default_output
+        self.maintenance_obs_utility_source_label.setText(observation)
+        self._maintenance_observation_mapping_changed()
+
+    def _maintenance_observation_mapping_frames(
+        self,
+    ) -> tuple[dict[str, str], dict[str, str], dict[str, int]]:
+        mapping: dict[str, str] = {}
+        colours: dict[str, str] = {}
+        counts: dict[str, int] = {}
+        table = self.maintenance_obs_mapping_table
+        for row in range(table.rowCount()):
+            source = table.item(row, 0).text().strip()
+            proposed = table.item(row, 2).text().strip()
+            colour = table.item(row, 3).text().strip()
+            count = int(table.item(row, 1).text().replace(",", ""))
+            mapping[source] = proposed
+            counts[proposed] = counts.get(proposed, 0) + count
+            colours.setdefault(proposed, colour)
+        return mapping, colours, counts
+
+    def _maintenance_observation_mapping_changed(self, changed_item=None) -> None:
+        """Keep explicit merges synchronized and report colour/readiness issues."""
+
+        table = self.maintenance_obs_mapping_table
+        if table.rowCount() == 0:
+            return
+        if hasattr(changed_item, "column") and changed_item.column() in {2, 3}:
+            changed_row = changed_item.row()
+            label = table.item(changed_row, 2).text().strip()
+            if changed_item.column() == 2:
+                shared_colour = next(
+                    (
+                        table.item(row, 3).text().strip()
+                        for row in range(table.rowCount())
+                        if row != changed_row
+                        and table.item(row, 2).text().strip() == label
+                    ),
+                    table.item(changed_row, 3).text().strip(),
+                )
+            else:
+                shared_colour = changed_item.text().strip()
+            blocked = table.blockSignals(True)
+            try:
+                for row in range(table.rowCount()):
+                    if table.item(row, 2).text().strip() == label:
+                        table.item(row, 3).setText(shared_colour)
+            finally:
+                table.blockSignals(blocked)
+
+        collisions = self._style_colour_mapping_table(
+            table,
+            name_column=2,
+            colour_column=3,
+        )
+        mapping, _colours, counts = self._maintenance_observation_mapping_frames()
+        blank = [source for source, proposed in mapping.items() if not proposed]
+        merge_count = sum(
+            1
+            for label in set(mapping.values())
+            if label and list(mapping.values()).count(label) > 1
+        )
+        destination = self.maintenance_obs_output_edit.text().strip()
+        warnings = []
+        if blank:
+            warnings.append(f"{len(blank)} source value(s) have no proposed name")
+        if collisions:
+            warnings.append(f"{len(collisions)} colour collision(s)")
+        if self.adata is not None and destination in self.adata.obs:
+            if not self.maintenance_obs_overwrite_checkbox.isChecked():
+                warnings.append("the output obs already exists and overwrite is off")
+        if warnings:
+            self.maintenance_obs_status.setText(
+                "▲ Check before applying: " + "; ".join(warnings) + "."
+            )
+            return
+        self.maintenance_obs_status.setText(
+            f"● Ready: {len(counts):,} final population(s), {merge_count:,} explicit "
+            f"merge group(s), output adata.obs[{destination!r}]."
+        )
+
+    def name_selected_maintenance_observation_rows(self) -> None:
+        rows = self._selected_population_table_rows(
+            self.maintenance_obs_mapping_table
+        )
+        if not rows:
+            raise ValueError("Select one or more complete table rows first.")
+        initial = self.maintenance_obs_mapping_table.item(rows[0], 2).text()
+        value, accepted = self.QInputDialog.getText(
+            self.root,
+            "Name or merge observation values",
+            "Final population name:",
+            text=initial,
+        )
+        if not accepted:
+            return
+        value = value.strip()
+        if not value:
+            raise ValueError("Population names must not be blank.")
+        for row in rows:
+            self.maintenance_obs_mapping_table.item(row, 2).setText(value)
+        self._maintenance_observation_mapping_changed()
+
+    def colour_selected_maintenance_observation_rows(self) -> None:
+        rows = self._selected_population_table_rows(
+            self.maintenance_obs_mapping_table
+        )
+        if not rows:
+            raise ValueError("Select one or more complete table rows first.")
+        initial = self.QColor(
+            self.maintenance_obs_mapping_table.item(rows[0], 3).text()
+        )
+        colour = self.QColorDialog.getColor(initial, self.root)
+        if not colour.isValid():
+            return
+        for row in rows:
+            self.maintenance_obs_mapping_table.item(row, 3).setText(colour.name())
+        self._maintenance_observation_mapping_changed()
+
+    def auto_colour_maintenance_observation(self) -> None:
+        mapping, _colours, counts = self._maintenance_observation_mapping_frames()
+        assignment = self._choose_automatic_colours(
+            list(mapping.values()),
+            counts,
+            context="final observation categories",
+        )
+        if assignment is None:
+            return
+        table = self.maintenance_obs_mapping_table
+        blocked = table.blockSignals(True)
+        try:
+            for row in range(table.rowCount()):
+                proposed = table.item(row, 2).text().strip()
+                table.item(row, 3).setText(assignment[proposed])
+        finally:
+            table.blockSignals(blocked)
+        self._maintenance_observation_mapping_changed()
+
+    def apply_maintenance_observation_mapping(self) -> None:
+        if self.adata is None:
+            raise ValueError("Load AnnData before creating an observation.")
+        source = self.maintenance_obs_combo.currentText().strip()
+        destination = self.maintenance_obs_output_edit.text().strip()
+        overwrite = self.maintenance_obs_overwrite_checkbox.isChecked()
+        if (
+            source == destination
+            and source in self._protected_maintenance_observations()
+        ):
+            raise ValueError(
+                f"Observation {source!r} defines dataset identity or a frozen cohort "
+                "and cannot be overwritten here. Create a new output obs instead."
+            )
+        mapping, colours, _counts = self._maintenance_observation_mapping_frames()
+        result = remap_categorical_observation(
+            self.adata,
+            source,
+            destination,
+            mapping,
+            colours,
+            overwrite=overwrite,
+        )
+        category_count = len(result.obs[destination].cat.categories)
+        self.adata = result
+        self._after_maintenance_anndata_change(
+            action="remap_observation",
+            detail=(
+                f"Created adata.obs[{destination!r}] from {source!r} with "
+                f"{category_count:,} named categories and synchronized colours."
+            ),
+            audit_details={
+                "source": source,
+                "destination": destination,
+                "overwrite": overwrite,
+                "mapping": mapping,
+                "colours": colours,
+            },
+        )
+
     def _protected_maintenance_observations(self) -> set[str]:
         roi_obs, object_obs = self._maintenance_identity_columns()
         protected = {roi_obs, object_obs}
@@ -6966,6 +7346,221 @@ class NapariSBTController:
         item.setFlags(item.flags() & ~self.Qt.ItemIsEditable)
         return item
 
+    def _style_colour_mapping_table(
+        self,
+        table,
+        *,
+        name_column: int,
+        colour_column: int,
+    ) -> dict[str, list[str]]:
+        """Render name and colour cells as swatches and return label collisions."""
+
+        labels = []
+        colours = []
+        for row in range(table.rowCount()):
+            name_item = table.item(row, name_column)
+            colour_item = table.item(row, colour_column)
+            labels.append(name_item.text().strip() if name_item else "")
+            colours.append(colour_item.text().strip() if colour_item else "")
+        collisions = categorical_colour_collisions(labels, colours)
+
+        blocked = table.blockSignals(True)
+        try:
+            for row, (label, colour_text) in enumerate(
+                zip(labels, colours, strict=True)
+            ):
+                name_item = table.item(row, name_column)
+                colour_item = table.item(row, colour_column)
+                if name_item is None or colour_item is None:
+                    continue
+                colour = self.QColor(colour_text)
+                if colour.isValid():
+                    foreground = self.QColor(contrasting_text_colour(colour.name()))
+                    for item in (name_item, colour_item):
+                        item.setBackground(colour)
+                        item.setForeground(foreground)
+                else:
+                    for item in (name_item, colour_item):
+                        item.setBackground(self.QColor("#fecaca"))
+                        item.setForeground(self.QColor("#7f1d1d"))
+                canonical = colour.name().lower() if colour.isValid() else ""
+                if canonical in collisions:
+                    detail = (
+                        f"Colour collision: {canonical} is assigned to different "
+                        f"final populations: {', '.join(collisions[canonical])}."
+                    )
+                    name_item.setToolTip(detail)
+                    colour_item.setToolTip(detail)
+                else:
+                    name_item.setToolTip(
+                        "Rows with the same proposed name are an explicit merge and "
+                        "intentionally share this colour."
+                        if labels.count(label) > 1
+                        else ""
+                    )
+                    colour_item.setToolTip(name_item.toolTip())
+        finally:
+            table.blockSignals(blocked)
+        return collisions
+
+    def _choose_automatic_colours(
+        self,
+        labels: list[str],
+        counts: dict[str, int],
+        *,
+        context: str,
+    ) -> dict[str, str] | None:
+        """Show the reusable Colour Helper and return its chosen assignment."""
+
+        from qtpy.QtWidgets import (
+            QAbstractItemView,
+            QComboBox,
+            QDialogButtonBox,
+            QFormLayout,
+            QHBoxLayout,
+            QLabel,
+            QListWidget,
+            QListWidgetItem,
+            QPushButton,
+            QTableWidget,
+            QTableWidgetItem,
+            QVBoxLayout,
+        )
+
+        labels = list(dict.fromkeys(label.strip() for label in labels if label.strip()))
+        if not labels:
+            raise ValueError("There are no proposed population names to colour.")
+        palettes = categorical_palette_catalog()
+        dialog = self.QDialog(self.root)
+        dialog.setWindowTitle("Colour Helper")
+        dialog.resize(820, 680)
+        layout = QVBoxLayout(dialog)
+        introduction = QLabel(
+            f"Assign distinct categorical colours to {len(labels):,} {context}. "
+            "Choose a palette, untick colours you want to avoid, then choose how "
+            "population names should be matched to the palette order."
+        )
+        introduction.setWordWrap(True)
+        layout.addWidget(introduction)
+
+        controls = QFormLayout()
+        palette_combo = QComboBox()
+        palette_combo.addItems(list(palettes))
+        order_combo = QComboBox()
+        for text, value in (
+            ("Abundance — largest first", "abundance_desc"),
+            ("Abundance — smallest first", "abundance_asc"),
+            ("Alphabetical — A to Z", "alphabetical_asc"),
+            ("Alphabetical — Z to A", "alphabetical_desc"),
+        ):
+            order_combo.addItem(text, value)
+        controls.addRow("Categorical palette", palette_combo)
+        controls.addRow("Assign colours by", order_combo)
+        layout.addLayout(controls)
+
+        colour_list = QListWidget()
+        colour_list.setSelectionMode(QAbstractItemView.NoSelection)
+        colour_list.setMinimumHeight(190)
+        layout.addWidget(colour_list)
+        colour_actions = QHBoxLayout()
+        select_all_button = QPushButton("Use all colours")
+        select_none_button = QPushButton("Use none")
+        colour_actions.addWidget(select_all_button)
+        colour_actions.addWidget(select_none_button)
+        colour_actions.addStretch(1)
+        layout.addLayout(colour_actions)
+
+        preview = QTableWidget(0, 3)
+        preview.setHorizontalHeaderLabels(["Assignment order", "Cells", "Colour"])
+        preview.horizontalHeader().setStretchLastSection(True)
+        preview.setAlternatingRowColors(False)
+        layout.addWidget(preview)
+        status = QLabel()
+        status.setWordWrap(True)
+        layout.addWidget(status)
+        buttons = QDialogButtonBox(QDialogButtonBox.Apply | QDialogButtonBox.Cancel)
+        apply_button = buttons.button(QDialogButtonBox.Apply)
+        layout.addWidget(buttons)
+        result: dict[str, str] = {}
+
+        def selected_colours() -> list[str]:
+            return [
+                colour_list.item(index).data(self.Qt.UserRole)
+                for index in range(colour_list.count())
+                if colour_list.item(index).checkState() == self.Qt.Checked
+            ]
+
+        def update_preview(*_args) -> None:
+            nonlocal result
+            try:
+                result = assign_categorical_colours(
+                    labels,
+                    counts,
+                    selected_colours(),
+                    order=str(order_combo.currentData()),
+                )
+            except ValueError as exc:
+                result = {}
+                preview.setRowCount(0)
+                status.setText(f"⚠ {exc}")
+                apply_button.setEnabled(False)
+                return
+            preview.setRowCount(len(result))
+            for row, (label, colour_text) in enumerate(result.items()):
+                name_item = QTableWidgetItem(label)
+                count_item = QTableWidgetItem(f"{counts.get(label, 0):,}")
+                colour_item = QTableWidgetItem(colour_text)
+                for item in (name_item, count_item, colour_item):
+                    item.setFlags(item.flags() & ~self.Qt.ItemIsEditable)
+                colour = self.QColor(colour_text)
+                colour_item.setBackground(colour)
+                colour_item.setForeground(
+                    self.QColor(contrasting_text_colour(colour_text))
+                )
+                preview.setItem(row, 0, name_item)
+                preview.setItem(row, 1, count_item)
+                preview.setItem(row, 2, colour_item)
+            status.setText(
+                f"● Ready: {len(result):,} populations will receive distinct colours; "
+                f"{len(selected_colours()):,} palette colours are enabled."
+            )
+            apply_button.setEnabled(True)
+
+        def load_palette(*_args) -> None:
+            colour_list.blockSignals(True)
+            colour_list.clear()
+            for colour_text in palettes[palette_combo.currentText()]:
+                item = QListWidgetItem(colour_text)
+                item.setFlags(item.flags() | self.Qt.ItemIsUserCheckable)
+                item.setCheckState(self.Qt.Checked)
+                item.setData(self.Qt.UserRole, colour_text)
+                item.setBackground(self.QColor(colour_text))
+                item.setForeground(
+                    self.QColor(contrasting_text_colour(colour_text))
+                )
+                colour_list.addItem(item)
+            colour_list.blockSignals(False)
+            update_preview()
+
+        def set_all(check_state) -> None:
+            colour_list.blockSignals(True)
+            for index in range(colour_list.count()):
+                colour_list.item(index).setCheckState(check_state)
+            colour_list.blockSignals(False)
+            update_preview()
+
+        palette_combo.currentTextChanged.connect(load_palette)
+        order_combo.currentIndexChanged.connect(update_preview)
+        colour_list.itemChanged.connect(update_preview)
+        select_all_button.clicked.connect(lambda: set_all(self.Qt.Checked))
+        select_none_button.clicked.connect(lambda: set_all(self.Qt.Unchecked))
+        buttons.rejected.connect(dialog.reject)
+        apply_button.clicked.connect(dialog.accept)
+        load_palette()
+        if dialog.exec() != self.QDialog.Accepted:
+            return None
+        return result
+
     def _set_population_tables(
         self,
         base_mapping: pd.DataFrame,
@@ -7018,6 +7613,16 @@ class NapariSBTController:
                     colour
                 )
         self.population_components_table.blockSignals(False)
+        self._style_colour_mapping_table(
+            self.population_base_table,
+            name_column=2,
+            colour_column=3,
+        )
+        self._style_colour_mapping_table(
+            self.population_components_table,
+            name_column=4,
+            colour_column=5,
+        )
 
     def _population_tables_to_frames(
         self,
@@ -7081,18 +7686,6 @@ class NapariSBTController:
                     if colour.isValid():
                         label = table.item(changed_item.row(), name_column).text()
                         self._propagate_population_colour(label, colour.name())
-            for table, colour_column in (
-                (self.population_base_table, 3),
-                (self.population_components_table, 5),
-            ):
-                table.blockSignals(True)
-                for row in range(table.rowCount()):
-                    item = table.item(row, colour_column)
-                    colour = self.QColor(item.text().strip())
-                    item.setBackground(
-                        colour if colour.isValid() else self.QColor("#fecaca")
-                    )
-                table.blockSignals(False)
             self._refresh_population_merge_preview()
         except Exception as exc:  # allow temporarily incomplete table edits
             self.population_merge_preview.setPlainText(
@@ -7190,41 +7783,53 @@ class NapariSBTController:
             ],
             ignore_index=True,
         )
-        colour_conflicts = {
-            str(label): list(dict.fromkeys(group["color"].astype(str)))
-            for label, group in colour_rows.groupby("proposed_label", sort=False)
-            if group["color"].astype(str).nunique() > 1 and str(label) in groups
-        }
-        if colour_conflicts:
+        colour_collisions = categorical_colour_collisions(
+            colour_rows["proposed_label"].astype(str).tolist(),
+            colour_rows["color"].astype(str).tolist(),
+        )
+        if colour_collisions:
             lines.append("")
             lines.append(
-                "Colour conflicts (the first colour will be used when applied):"
+                "WARNING — different final populations share a colour. Change these "
+                "before saving:"
             )
-            for label, colours in colour_conflicts.items():
-                lines.append(f"  • {label}: {', '.join(colours)}")
+            for colour, names in colour_collisions.items():
+                lines.append(f"  • {colour}: {', '.join(names)}")
         self.population_merge_preview.setPlainText("\n".join(lines))
 
-        merged_names = set(groups)
-        self.population_base_table.blockSignals(True)
-        for row in range(self.population_base_table.rowCount()):
-            name_item = self.population_base_table.item(row, 2)
-            if name_item.text().strip() in merged_names:
-                name_item.setBackground(self.QColor("#fed7aa"))
-                name_item.setForeground(self.QColor("#7c2d12"))
-            else:
-                name_item.setData(self.Qt.BackgroundRole, None)
-                name_item.setData(self.Qt.ForegroundRole, None)
-        self.population_base_table.blockSignals(False)
-        self.population_components_table.blockSignals(True)
-        for row in range(self.population_components_table.rowCount()):
-            name_item = self.population_components_table.item(row, 4)
-            if name_item.text().strip() in merged_names:
-                name_item.setBackground(self.QColor("#fed7aa"))
-                name_item.setForeground(self.QColor("#7c2d12"))
-            else:
-                name_item.setData(self.Qt.BackgroundRole, None)
-                name_item.setData(self.Qt.ForegroundRole, None)
-        self.population_components_table.blockSignals(False)
+        for table, name_column, colour_column in (
+            (self.population_base_table, 2, 3),
+            (self.population_components_table, 4, 5),
+        ):
+            self._style_colour_mapping_table(
+                table,
+                name_column=name_column,
+                colour_column=colour_column,
+            )
+            for row in range(table.rowCount()):
+                colour_item = table.item(row, colour_column)
+                name_item = table.item(row, name_column)
+                colour = self.QColor(colour_item.text().strip())
+                canonical = colour.name().lower() if colour.isValid() else ""
+                if canonical not in colour_collisions:
+                    continue
+                warning = (
+                    f"Colour collision: {canonical} is assigned to different final "
+                    f"populations: {', '.join(colour_collisions[canonical])}."
+                )
+                name_item.setToolTip(warning)
+                colour_item.setToolTip(warning)
+        self._refresh_population_naming_readiness()
+        if colour_collisions:
+            self.population_naming_readiness_label.setText(
+                f"● Colour collision — {len(colour_collisions)} colour(s) are used "
+                "by different final population names. Resolve them before saving."
+            )
+            self.population_naming_readiness_label.setStyleSheet(
+                "background: #fee2e2; color: #991b1b; border: 1px solid #ef4444; "
+                "border-radius: 6px; padding: 7px; font-weight: 700;"
+            )
+            self.save_population_draft_button.setEnabled(False)
 
     def _set_population_colour_columns(
         self,
@@ -7250,6 +7855,16 @@ class NapariSBTController:
                     )
             finally:
                 table.blockSignals(blocked)
+        self._style_colour_mapping_table(
+            self.population_base_table,
+            name_column=2,
+            colour_column=3,
+        )
+        self._style_colour_mapping_table(
+            self.population_components_table,
+            name_column=4,
+            colour_column=5,
+        )
 
     def _save_current_population_draft(
         self,
@@ -7265,6 +7880,27 @@ class NapariSBTController:
             raise RuntimeError("Create or load a population draft first.")
         self._refresh_population_merge_preview()
         base, components = self._population_tables_to_frames()
+        colour_rows = pd.concat(
+            [
+                base[["proposed_label", "color"]],
+                components[["proposed_label", "color"]]
+                if not components.empty
+                else pd.DataFrame(columns=["proposed_label", "color"]),
+            ],
+            ignore_index=True,
+        )
+        colour_collisions = categorical_colour_collisions(
+            colour_rows["proposed_label"].astype(str).tolist(),
+            colour_rows["color"].astype(str).tolist(),
+        )
+        if colour_collisions:
+            detail = "; ".join(
+                f"{colour}: {', '.join(names)}"
+                for colour, names in colour_collisions.items()
+            )
+            raise ValueError(
+                "Different final populations cannot share one colour. " + detail
+            )
         draft = self.population_draft.model_copy(
             update={
                 "derived_obs": self.curation_derived_obs_edit.text().strip(),
@@ -7512,6 +8148,57 @@ class NapariSBTController:
             item.setText(value)
             item.setBackground(colour)
         self._refresh_population_merge_preview()
+
+    def auto_colour_population_draft(self) -> None:
+        """Assign one distinct Colour Helper colour per effective final label."""
+
+        if self.population_draft is None or self.adata is None:
+            raise RuntimeError("Create or load population naming work first.")
+        base, components = self._population_tables_to_frames()
+        effective, _summary = synthesize_population_labels(
+            self.adata,
+            source_obs=self.population_draft.source_obs,
+            base_mapping=base,
+            components=components,
+            membership=self.population_membership,
+        )
+        labels = list(
+            dict.fromkeys(
+                [
+                    *base["proposed_label"].astype(str).str.strip().tolist(),
+                    *components["proposed_label"].astype(str).str.strip().tolist(),
+                ]
+            )
+        )
+        counts = {
+            str(label): int(count)
+            for label, count in effective.value_counts(dropna=True).items()
+        }
+        assignment = self._choose_automatic_colours(
+            labels,
+            counts,
+            context="effective populations",
+        )
+        if assignment is None:
+            return
+        for table, name_column, colour_column in (
+            (self.population_base_table, 2, 3),
+            (self.population_components_table, 4, 5),
+        ):
+            blocked = table.blockSignals(True)
+            try:
+                for row in range(table.rowCount()):
+                    label = table.item(row, name_column).text().strip()
+                    colour = assignment.get(label)
+                    if colour:
+                        table.item(row, colour_column).setText(colour)
+            finally:
+                table.blockSignals(blocked)
+        self._mark_population_draft_dirty()
+        self._refresh_population_merge_preview()
+        self.set_status(
+            f"Colour Helper assigned {len(assignment):,} distinct population colours."
+        )
 
     def import_population_mapping(self) -> None:
         if self.population_draft is None:

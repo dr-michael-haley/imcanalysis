@@ -9,9 +9,9 @@
 
 set -e
 
-#@DESC: Cross-reference HyPERSTAC Leiden marker environments, perturbation sensitivity, and Cox effects
-#@IN:   latest managed hyperstac-visualise and cox execution reports
-#@OUT:  managed cross-Leiden stability tables, figures, Markdown, and per-clustering HTML reports
+#@DESC: Compare HyPERSTAC Leiden parameter settings, with optional perturbation and Cox overlays
+#@IN:   latest managed hyperstac-visualise report and reusable clustered representation; optional cox report
+#@OUT:  managed parameter scorecard, agreement/support tables, figures, Markdown, and optional survival reports
 #@ENV:  sbt-hyperstac
 #@MODULE:  SpatialBiologyToolkit.scripts.hyperstac_stability
 #@CONFIG: general, hyperstac, cox, logging

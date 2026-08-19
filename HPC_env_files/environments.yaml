@@ -53,6 +53,26 @@ environments:
       - [python, -c, "from SpatialBiologyToolkit.config import PipelineConfig; from SpatialBiologyToolkit.reporting import StageReporter; PipelineConfig()"]
       - [python, -c, "import IMC_Denoise, tensorflow, tifffile"]
 
+  tensorflow:
+    conda_name: sbt-tensorflow
+    specification_directory: HPC_env_files/sbt-tensorflow
+    managed: true
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
+      - [python, -c, "import sys; assert sys.version_info[:2] == (3, 10)"]
+      - [python, -c, "from importlib.metadata import version; assert version('tensorflow') == '2.15.1'; assert version('IMC-Denoise') == '1.1.0'; assert version('numpy') == '1.26.4'; assert version('scipy') == '1.11.4'; assert version('scikit-learn') == '1.4.2'"]
+      - [python, -c, "import IMC_Denoise, tensorflow, tifffile, psutil"]
+      - [python, -c, "import anndata, scanpy, lifelines, sksurv, seaborn"]
+      - [python, -c, "import SpatialBiologyToolkit.scripts.denoising"]
+      - [python, -c, "import SpatialBiologyToolkit.scripts.hyperstac_full"]
+      - [python, HPC_env_files/sbt-tensorflow/smoke_test.py]
+    notes:
+      - Candidate shared TensorFlow 2.15 runtime for the modernized IMC-Denoise and HyPERSTAC families.
+      - IMC-Denoise is pinned to compatibility-fork commit 0a1c93626f2a7c2462e39baeb62d77dec20f54cb; do not publish it in a public image without license clarification.
+      - Existing denoise and HyPERSTAC stage mappings remain unchanged until this candidate passes clean installation, GPU, representative workflow, and parity checks on CSF3.
+
   cellposesam:
     conda_name: sbt-cellpose-sam
     specification_directory: HPC_env_files/sbt-cellpose-sam

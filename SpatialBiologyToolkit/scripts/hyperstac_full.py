@@ -21,14 +21,15 @@ def main() -> None:
     run_model()
     run_permutation()
     run_visualisation()
-    if not config.hyperstac.full_include_survival:
+    include_survival = config.hyperstac.full_include_survival
+    if include_survival:
+        cox_survival.main()
+    else:
         logging.info(
-            "HyPERSTAC full workflow completed after visualisation because "
-            "hyperstac.full_include_survival is false."
+            "Skipping the optional Cox overlay because "
+            "hyperstac.full_include_survival is false; the clustering comparison still runs."
         )
-        return
-    cox_survival.main()
-    run_stability()
+    run_stability(include_survival=include_survival)
 
 
 if __name__ == "__main__":

@@ -4633,9 +4633,9 @@
           "ui_group": "Reusable assets"
         },
         "full_include_survival": {
-          "advice": "Set false for an image-only full run that completes after visualisation in the same GPU allocation.",
+          "advice": "Set false for an image-only full run; normalization QC and clustering comparison still run.",
           "default": true,
-          "description": "Run Cox survival and cross-Leiden stability after visualisation in hyperstac-full.",
+          "description": "Run the optional Cox survival overlay after the always-on clustering comparison in hyperstac-full.",
           "level": "basic",
           "stage": "hyperstac",
           "title": "Full Include Survival",
@@ -4775,6 +4775,27 @@
           "stage": "hyperstac",
           "title": "Scale Sample Pixels",
           "type": "integer",
+          "ui_group": "Image normalization"
+        },
+        "normalisation_preview_rois_per_channel": {
+          "advice": "Set zero to suppress montage generation while retaining numerical preflight checks.",
+          "default": 1,
+          "description": "Number of representative source/normalized ROI images shown per channel and signal quantile.",
+          "level": "advanced",
+          "minimum": 0,
+          "stage": "hyperstac",
+          "title": "Normalisation Preview Rois Per Channel",
+          "type": "integer",
+          "ui_group": "Image normalization"
+        },
+        "normalisation_fail_on_preflight_warning": {
+          "advice": "Warnings are deliberately advisory by default; enable this after reviewing suitable thresholds for the assay.",
+          "default": false,
+          "description": "Fail managed preprocessing before downstream modelling when any normalization preflight heuristic warns.",
+          "level": "advanced",
+          "stage": "hyperstac",
+          "title": "Normalisation Fail On Preflight Warning",
+          "type": "boolean",
           "ui_group": "Image normalization"
         },
         "tiff_compression": {
@@ -5409,6 +5430,49 @@
           "level": "advanced",
           "stage": "hyperstac",
           "title": "Stability Top Markers",
+          "type": "integer",
+          "ui_group": "Leiden stability"
+        },
+        "cluster_comparison_enabled": {
+          "advice": "",
+          "default": true,
+          "description": "Compare every Leiden parameter-scan result without requiring survival metadata.",
+          "level": "basic",
+          "stage": "hyperstac",
+          "title": "Cluster Comparison Enabled",
+          "type": "boolean",
+          "ui_group": "Leiden stability"
+        },
+        "cluster_comparison_roi_obs": {
+          "advice": "",
+          "default": "roi",
+          "description": "Observation column used to quantify ROI representation across clusters.",
+          "level": "advanced",
+          "stage": "hyperstac",
+          "title": "Cluster Comparison Roi Obs",
+          "type": "string",
+          "ui_group": "Leiden stability"
+        },
+        "cluster_comparison_min_cluster_fraction": {
+          "advice": "",
+          "default": 0.01,
+          "description": "Minimum global patch fraction used when reporting well-supported clusters.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "hyperstac",
+          "title": "Cluster Comparison Min Cluster Fraction",
+          "type": "number",
+          "ui_group": "Leiden stability"
+        },
+        "cluster_comparison_silhouette_max_patches": {
+          "advice": "",
+          "default": 1000,
+          "description": "Maximum stratified patch sample used for each silhouette estimate.",
+          "level": "advanced",
+          "minimum": 100,
+          "stage": "hyperstac",
+          "title": "Cluster Comparison Silhouette Max Patches",
           "type": "integer",
           "ui_group": "Leiden stability"
         },

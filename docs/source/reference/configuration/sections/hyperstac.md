@@ -14,7 +14,7 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
-| `full_include_survival` | `bool` | `True` | `basic` | Run Cox survival and cross-Leiden stability after visualisation in hyperstac-full. | Set false for an image-only full run that completes after visualisation in the same GPU allocation. |
+| `full_include_survival` | `bool` | `True` | `basic` | Run the optional Cox survival overlay after the always-on clustering comparison in hyperstac-full. | Set false for an image-only full run; normalization QC and clustering comparison still run. |
 
 ## Images
 
@@ -37,6 +37,8 @@
 | `scale_percentile` | `float` | `99.5` | `advanced` | Robust per-channel percentile mapped to one after background correction. | - |
 | `scale_present_only` | `bool` | `False` | `advanced` | Estimate scale only from presence-positive pixels. | - |
 | `scale_sample_pixels` | `int` | `0` | `advanced` | Maximum pixels sampled per ROI/channel for scale estimation; zero uses all pixels. | - |
+| `normalisation_preview_rois_per_channel` | `int` | `1` | `advanced` | Number of representative source/normalized ROI images shown per channel and signal quantile. | Set zero to suppress montage generation while retaining numerical preflight checks. |
+| `normalisation_fail_on_preflight_warning` | `bool` | `False` | `advanced` | Fail managed preprocessing before downstream modelling when any normalization preflight heuristic warns. | Warnings are deliberately advisory by default; enable this after reviewing suitable thresholds for the assay. |
 | `tiff_compression` | `Optional[str]` | `null` | `advanced` | Optional tifffile compression codec for normalized TIFF assets. | - |
 | `preprocess_overwrite` | `bool` | `True` | `advanced` | Replace existing normalized TIFF outputs after validating the target path. | - |
 
@@ -119,6 +121,10 @@
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
 | `stability_top_markers` | `int` | `5` | `advanced` | Top intensity markers retained per cluster in the cross-Leiden report. | - |
+| `cluster_comparison_enabled` | `bool` | `True` | `basic` | Compare every Leiden parameter-scan result without requiring survival metadata. | - |
+| `cluster_comparison_roi_obs` | `str` | `roi` | `advanced` | Observation column used to quantify ROI representation across clusters. | - |
+| `cluster_comparison_min_cluster_fraction` | `float` | `0.01` | `advanced` | Minimum global patch fraction used when reporting well-supported clusters. | - |
+| `cluster_comparison_silhouette_max_patches` | `int` | `1000` | `advanced` | Maximum stratified patch sample used for each silhouette estimate. | - |
 | `stability_max_heatmap_markers` | `int` | `50` | `advanced` | Maximum markers displayed in stability heatmaps. | - |
 | `stability_max_signature_markers` | `int` | `40` | `advanced` | Maximum markers used to match recurrent environments. | - |
 | `stability_environment_distance_threshold` | `float` | `0.45` | `advanced` | Signature distance threshold for grouping clusters into recurrent environments. | - |

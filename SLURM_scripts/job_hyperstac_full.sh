@@ -10,9 +10,9 @@
 
 set -e
 
-#@DESC: Run HyPERSTAC image analysis and optional Cox/stability components in one GPU job
+#@DESC: Run HyPERSTAC image analysis, normalization preflight, and clustering comparison with optional Cox overlays
 #@IN:   configured ROI/channel TIFFs; Cox feature sources and clinical survival metadata when enabled
-#@OUT:  reusable HyPERSTAC assets and managed visualisation, with optional Cox and stability reports
+#@OUT:  reusable HyPERSTAC assets, normalization QC, visualisation, clustering comparison, and optional Cox reports
 #@ENV:  sbt-hyperstac
 #@MODULE:  SpatialBiologyToolkit.scripts.hyperstac_full
 #@CONFIG: general, hyperstac, cox, logging

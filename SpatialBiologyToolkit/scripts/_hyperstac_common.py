@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import logging
 import os
 import shutil
@@ -135,6 +136,8 @@ def run_preprocess() -> None:
         str(hs.scale_percentile),
         "--scale-sample-pixels",
         str(hs.scale_sample_pixels),
+        "--preview-rois-per-channel",
+        str(hs.normalisation_preview_rois_per_channel),
         "--seed",
         str(hs.seed),
     ]
@@ -161,6 +164,7 @@ def run_preprocess() -> None:
     for name in (
         "normalisation_channel_report.csv",
         "normalisation_roi_channel_report.csv",
+        "normalisation_preflight_summary.csv",
     ):
         path = output_folder / name
         if path.is_file():
@@ -168,6 +172,32 @@ def run_preprocess() -> None:
     config_path = output_folder / "normalisation_config.json"
     if config_path.is_file():
         _copy_report_snapshot(config_path, "files")
+    preflight_report = output_folder / "normalisation_preflight.md"
+    if preflight_report.is_file():
+        _copy_report_snapshot(preflight_report, "summaries")
+    for preview in sorted(output_folder.glob("normalisation_preview_*.png")):
+        _copy_report_snapshot(preview, "figures")
+
+    warning_channels = 0
+    preflight_table = output_folder / "normalisation_preflight_summary.csv"
+    if preflight_table.is_file():
+        with preflight_table.open(newline="", encoding="utf-8") as handle:
+            warning_channels = sum(
+                int(row.get("warning_count", "0") or 0) > 0
+                for row in csv.DictReader(handle)
+            )
+    if reporter is not None:
+        reporter.add_metric("normalisation_preflight_warning_channels", warning_channels)
+        if warning_channels:
+            reporter.add_warning(
+                f"Normalization preflight flagged {warning_channels} channel(s) for review."
+            )
+    if hs.normalisation_fail_on_preflight_warning and warning_channels:
+        raise RuntimeError(
+            "HyPERSTAC normalization preflight warnings were found and "
+            "hyperstac.normalisation_fail_on_preflight_warning is true. "
+            f"Review {preflight_report}."
+        )
 
 
 def run_model() -> None:
@@ -416,14 +446,82 @@ def latest_stage_output(stage: str) -> Path:
     return execution_output_path(context, max(matches, key=lambda item: item.execution_id))
 
 
-def run_stability() -> None:
-    from SpatialBiologyToolkit.hyperstac.stability import main
+def run_stability(*, include_survival: bool | None = None) -> None:
+    from SpatialBiologyToolkit.hyperstac.cluster_comparison import main as comparison_main
+    from SpatialBiologyToolkit.hyperstac.stability import main as survival_main
 
     config = load_runtime("stability")
     hs = config.hyperstac
     visual_root = latest_stage_output("hyperstac-visualise") / "files" / "hyperstac_visualisation"
-    cox_root = latest_stage_output("cox") / "files" / "cox"
     output = category_output_path("files") / "hyperstac_stability"
+    representation = asset_root(config) / "imc_hyperstac_representations.h5ad"
+    comparison_output = output / "cluster_comparison"
+    if hs.cluster_comparison_enabled:
+        comparison_arguments = [
+            "--representation-adata",
+            str(representation),
+            "--visualisation-dir",
+            str(visual_root),
+            "--output-dir",
+            str(comparison_output),
+            "--roi-obs",
+            hs.cluster_comparison_roi_obs,
+            "--min-cluster-fraction",
+            str(hs.cluster_comparison_min_cluster_fraction),
+            "--silhouette-max-patches",
+            str(hs.cluster_comparison_silhouette_max_patches),
+            "--environment-distance-threshold",
+            str(hs.stability_environment_distance_threshold),
+            "--seed",
+            str(hs.seed),
+        ]
+        _run(
+            comparison_main,
+            "SpatialBiologyToolkit.hyperstac.cluster_comparison",
+            comparison_arguments,
+        )
+    else:
+        logging.info("HyPERSTAC clustering comparison is disabled by configuration.")
+
+    reporter = get_active_reporter()
+    if reporter is not None:
+        reporter.add_input(
+            "hyperstac_representation",
+            representation,
+            "Clustered patch representation containing the full parameter scan.",
+        )
+        reporter.add_input(
+            "hyperstac_visualisation",
+            visual_root,
+            "Matched Leiden visualisation reports.",
+        )
+        if hs.cluster_comparison_enabled:
+            reporter.add_file(
+                "file",
+                comparison_output,
+                "Reference-free parameter agreement, cluster support, and marker-environment comparison.",
+            )
+
+    cox_root: Path | None = None
+    if include_survival is not False:
+        try:
+            cox_root = latest_stage_output("cox") / "files" / "cox"
+        except FileNotFoundError:
+            if include_survival is True:
+                raise
+            logging.info(
+                "No managed Cox output was found; writing the reference-free clustering comparison only."
+            )
+    if cox_root is None:
+        if reporter is not None:
+            reporter.add_file(
+                "file",
+                output,
+                "Survival-independent HyPERSTAC clustering comparison report tree.",
+            )
+            reporter.add_note("No Cox overlay was requested or available.")
+        return
+
     arguments = [
         "--visualisation-dir",
         str(visual_root),
@@ -483,15 +581,13 @@ def run_stability() -> None:
         "per-clustering-html-reports",
         hs.stability_per_clustering_html,
     )
-    _run(main, "SpatialBiologyToolkit.hyperstac.stability", arguments)
-    reporter = get_active_reporter()
+    _run(survival_main, "SpatialBiologyToolkit.hyperstac.stability", arguments)
     if reporter is not None:
-        reporter.add_input("hyperstac_visualisation", visual_root, "Matched Leiden visualisation reports.")
         reporter.add_input("cox_reports", cox_root, "Matched case-level Cox reports.")
         reporter.add_file(
             "file",
             output,
-            "Cross-Leiden environment, marker, perturbation, and survival stability report tree.",
+            "Reference-free clustering comparison with optional marker, perturbation, and survival overlays.",
         )
 
 

@@ -254,7 +254,10 @@ def cluster_parameter_fields(cluster_col: object) -> dict[str, float]:
 def resolve_summary_path(value: object, base_dir: Path) -> Path:
     path = Path(str(value))
     if path.is_absolute():
-        return path
+        if path.exists():
+            return path
+        rebased = base_dir / path.name
+        return rebased if rebased.exists() else path
     return base_dir / path
 
 
@@ -469,7 +472,10 @@ def read_visual_data(pair: AnalysisPair, top_markers: int) -> tuple[pd.DataFrame
         zrow = zscore.loc[cluster] if cluster in zscore.index else pd.Series(dtype=float)
         irow = intensity.loc[cluster] if cluster in intensity.index else pd.Series(dtype=float)
         top_intensity = top_markers_from_series(zrow, top_markers)
-        gallery_path = pair.visual_dir / "galleries" / f"cluster_{safe_filename(cluster)}__patch_gallery.png"
+        gallery_name = f"cluster_{safe_filename(cluster)}__patch_gallery.png"
+        gallery_path = pair.visual_dir / "patch_galleries" / gallery_name
+        if not gallery_path.exists():
+            gallery_path = pair.visual_dir / "galleries" / gallery_name
         gallery_paths[cluster] = str(gallery_path) if gallery_path.exists() else ""
         cluster_rows.append(
             {

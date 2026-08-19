@@ -31,6 +31,7 @@ from SpatialBiologyToolkit.pipeline.manifests import (
     write_yaml,
 )
 
+from .colour_helper import categorical_colour_collisions, normalise_hex_colour
 from .models import slugify
 from .storage import dataframe_sha256, read_dataframe, write_dataframe
 
@@ -820,7 +821,21 @@ def harmonize_merge_colours(
         )
     )
     assignments: dict[str, str] = {}
-    used_colours: set[str] = set()
+    merge_label_set = set(labels)
+    non_merge_colours = [
+        *base.loc[
+            ~base["proposed_label"].astype(str).isin(merge_label_set), "color"
+        ].map(_clean_text),
+        *component_frame.loc[
+            ~component_frame["proposed_label"].astype(str).isin(merge_label_set),
+            "color",
+        ].map(_clean_text),
+    ]
+    # A newly harmonized merge must not inherit a colour already used by an
+    # unrelated population. Existing unrelated collisions are reported by the UI.
+    used_colours: set[str] = {
+        colour.casefold() for colour in non_merge_colours if colour
+    }
     palette_cursor = 0
 
     for label in labels:
@@ -871,6 +886,44 @@ def harmonize_merge_colours(
             component_frame.loc[component_match, "color"] = chosen
 
     return base, component_frame, assignments
+
+
+def validate_distinct_population_colours(
+    base_mapping: pd.DataFrame,
+    components: pd.DataFrame | None = None,
+) -> None:
+    """Reject invalid colours and reuse across different final populations."""
+
+    frames = [base_mapping[["proposed_label", "color"]]]
+    if components is not None and not components.empty:
+        frames.append(components[["proposed_label", "color"]])
+    rows = pd.concat(frames, ignore_index=True)
+    invalid = (
+        rows.loc[
+            rows["color"].map(normalise_hex_colour).eq(""),
+            "proposed_label",
+        ]
+        .astype(str)
+        .drop_duplicates()
+        .tolist()
+    )
+    if invalid:
+        raise ValueError(
+            "Every final population needs a valid #RRGGBB colour. Invalid for: "
+            + ", ".join(invalid[:12])
+        )
+    collisions = categorical_colour_collisions(
+        rows["proposed_label"].astype(str).tolist(),
+        rows["color"].astype(str).tolist(),
+    )
+    if collisions:
+        detail = "; ".join(
+            f"{colour}: {', '.join(labels)}"
+            for colour, labels in collisions.items()
+        )
+        raise ValueError(
+            "Different final populations cannot share one colour. " + detail
+        )
 
 
 def save_population_draft(
@@ -924,6 +977,7 @@ def save_population_draft(
         clean_components,
         merge_labels=effective_summary["merge_groups"],
     )
+    validate_distinct_population_colours(base, clean_components)
     paths = population_draft_paths(workspace_paths, draft)
     previous_draft = (
         read_model(paths.manifest, PopulationDraft)
@@ -1401,6 +1455,10 @@ def apply_population_draft(
             components,
             merge_labels=summary["merge_groups"],
         )
+    )
+    validate_distinct_population_colours(
+        harmonized_base,
+        harmonized_components,
     )
     adata.obs[draft.derived_obs] = labels
 

@@ -1,0 +1,2 @@
+tensorflow[and-cuda]==2.15.1
+IMC-Denoise @ git+https://github.com/couper-lab/IMC_Denoise_Updated.git@0a1c93626f2a7c2462e39baeb62d77dec20f54cb

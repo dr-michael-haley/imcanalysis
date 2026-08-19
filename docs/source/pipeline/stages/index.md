@@ -43,8 +43,8 @@ for ordering and usage guidance.
 | [`hyperstac-permutation`](hyperstac-permutation.md) | Quantify HyPERSTAC embedding sensitivity to channel zeroing and pixel shuffling | `sbt-hyperstac` | general, hyperstac, logging |
 | [`hyperstac-visualise`](hyperstac-visualise.md) | Run HyPERSTAC clustering scans and create embedding, marker, spatial, and gallery reports | `sbt-hyperstac` | general, hyperstac, logging |
 | [`cox`](cox.md) | Combine case-level features from one or more AnnData obs sources and compare Cox models | `sbt-hyperstac` | general, cox, logging |
-| [`hyperstac-stability`](hyperstac-stability.md) | Cross-reference HyPERSTAC Leiden marker environments, perturbation sensitivity, and Cox effects | `sbt-hyperstac` | general, hyperstac, cox, logging |
-| [`hyperstac-full`](hyperstac-full.md) | Run HyPERSTAC image analysis and optional Cox/stability components in one GPU job | `sbt-hyperstac` | general, hyperstac, cox, logging |
+| [`hyperstac-stability`](hyperstac-stability.md) | Compare HyPERSTAC Leiden parameter settings, with optional perturbation and Cox overlays | `sbt-hyperstac` | general, hyperstac, cox, logging |
+| [`hyperstac-full`](hyperstac-full.md) | Run HyPERSTAC image analysis, normalization preflight, and clustering comparison with optional Cox overlays | `sbt-hyperstac` | general, hyperstac, cox, logging |
 | [`cellfeat`](cellfeat.md) | Build resumable cohort-only IMC cell features using full-segmentation context | `sbt-analysis` | general, napari_sbt, logging |
 | [`maxfuse`](maxfuse.md) | Match one scRNA-seq reference to IMC cells with MaxFuse and generate transfer/QC assets | `sbt-maxfuse` | general, maxfuse, logging |
 | [`spatialdata`](spatialdata.md) | Discover or explicitly select spatial assets and optionally build a validated SpatialData Zarr | `sbt-analysis` | general, spatialdata, logging |

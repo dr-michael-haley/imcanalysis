@@ -23,6 +23,11 @@ import json
 import shutil
 from pathlib import Path
 
+import matplotlib
+
+matplotlib.use("Agg")
+
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import tifffile
@@ -128,6 +133,15 @@ def parse_args() -> argparse.Namespace:
         "--overwrite",
         action="store_true",
         help="Replace existing output ROI folders and report files.",
+    )
+    parser.add_argument(
+        "--preview-rois-per-channel",
+        type=int,
+        default=1,
+        help=(
+            "Number of deterministic low/median/high-signal ROI examples per channel "
+            "included in normalization preflight montages; zero disables previews."
+        ),
     )
     parser.add_argument("--seed", type=int, default=1, help="Random seed used for optional scaling samples.")
     return parser.parse_args()
@@ -349,7 +363,10 @@ def prepare_output_folder(output_folder: Path, rois: list[Path], args: argparse.
         output_folder / "normalisation_config.json",
         output_folder / "normalisation_channel_report.csv",
         output_folder / "normalisation_roi_channel_report.csv",
+        output_folder / "normalisation_preflight_summary.csv",
+        output_folder / "normalisation_preflight.md",
     ]
+    report_files.extend(output_folder.glob("normalisation_preview_*.png"))
     existing_roi_dirs = [output_folder / roi.name for roi in rois if (output_folder / roi.name).exists()]
     existing_reports = [path for path in report_files if path.exists()]
 
@@ -395,9 +412,157 @@ def write_normalised_images(
         updated["output_path"] = str(output_path)
         updated["scale_value"] = float(scale_lookup[row.channel])
         updated["output_blank_due_to_absence"] = not bool(row.present)
+        updated["corrected_positive_fraction"] = float(np.mean(corrected > 0))
+        updated["output_zero_fraction"] = float(np.mean(normalised <= 0))
+        updated["output_saturated_fraction"] = float(np.mean(normalised >= 0.999))
         updated.update(finite_stats(normalised, "output"))
         rows.append(updated)
     return pd.DataFrame(rows)
+
+
+def build_preflight_summary(roi_report: pd.DataFrame) -> pd.DataFrame:
+    """Summarise channel-wise normalization risks using transparent heuristics."""
+    records: list[dict[str, object]] = []
+    for channel, rows in roi_report.groupby("channel", sort=False):
+        raw_p99 = pd.to_numeric(rows["raw_p99"], errors="coerce")
+        background = pd.to_numeric(rows["background_value"], errors="coerce")
+        valid_ratio = raw_p99 > 0
+        ratios = background.loc[valid_ratio] / raw_p99.loc[valid_ratio]
+        output_p99 = pd.to_numeric(rows["output_p99"], errors="coerce")
+        saturation = pd.to_numeric(rows["output_saturated_fraction"], errors="coerce")
+        positive = pd.to_numeric(rows["corrected_positive_fraction"], errors="coerce")
+        present_fraction = float(rows["present"].astype(bool).mean())
+        background_ratio = float(ratios.median()) if len(ratios) else np.nan
+        output_p99_median = float(output_p99.median())
+        saturation_median = float(saturation.median())
+        warnings: list[str] = []
+        if np.isfinite(background_ratio) and background_ratio >= 0.5:
+            warnings.append("median background/raw p99 ratio is >=0.5")
+        if np.isfinite(output_p99_median) and output_p99_median <= 0.05:
+            warnings.append("median ROI output p99 is <=0.05")
+        if np.isfinite(saturation_median) and saturation_median >= 0.05:
+            warnings.append("median ROI has >=5% saturated pixels")
+        if present_fraction <= 0.25:
+            warnings.append("channel is present in <=25% of ROIs")
+        records.append(
+            {
+                "channel": str(channel),
+                "n_rois": int(rows["roi"].nunique()),
+                "present_roi_fraction": present_fraction,
+                "median_raw_p99": float(raw_p99.median()),
+                "median_background_value": float(background.median()),
+                "median_background_to_raw_p99": background_ratio,
+                "median_corrected_positive_fraction": float(positive.median()),
+                "median_output_p99": output_p99_median,
+                "median_output_saturated_fraction": saturation_median,
+                "warning_count": len(warnings),
+                "warnings": "; ".join(warnings),
+            }
+        )
+    return pd.DataFrame(records)
+
+
+def _preview_quantiles(count: int) -> list[float]:
+    if count <= 0:
+        return []
+    if count == 1:
+        return [0.5]
+    return np.linspace(0.1, 0.9, count).tolist()
+
+
+def write_preflight_previews(
+    roi_report: pd.DataFrame,
+    output_folder: Path,
+    previews_per_channel: int,
+) -> list[Path]:
+    """Write deterministic source/normalized montages for signal quantiles."""
+    paths: list[Path] = []
+    channels = list(dict.fromkeys(roi_report["channel"].astype(str)))
+    for quantile in _preview_quantiles(previews_per_channel):
+        figure, axes = plt.subplots(
+            len(channels),
+            2,
+            figsize=(10, max(3.0, 2.2 * len(channels))),
+            squeeze=False,
+        )
+        for row_index, channel in enumerate(channels):
+            candidates = roi_report.loc[roi_report["channel"].astype(str) == channel].copy()
+            candidates["_distance"] = (
+                pd.to_numeric(candidates["raw_p99"], errors="coerce")
+                - pd.to_numeric(candidates["raw_p99"], errors="coerce").quantile(quantile)
+            ).abs()
+            selected = candidates.sort_values(["_distance", "roi"]).iloc[0]
+            raw, _ = read_channel(Path(selected["input_path"]))
+            normalized, _ = read_channel(Path(selected["output_path"]))
+            raw_vmax = max(float(np.percentile(raw, 99.5)), np.finfo(float).eps)
+            axes[row_index, 0].imshow(raw, cmap="gray", vmin=0, vmax=raw_vmax)
+            axes[row_index, 1].imshow(normalized, cmap="gray", vmin=0, vmax=1)
+            axes[row_index, 0].set_ylabel(channel)
+            axes[row_index, 0].set_title(
+                f"{selected['roi']} source (p99.5 contrast)" if row_index == 0 else str(selected["roi"])
+            )
+            axes[row_index, 1].set_title(
+                "normalized [0, 1]" if row_index == 0 else f"bg={float(selected['background_value']):.3g}, scale={float(selected['scale_value']):.3g}"
+            )
+            for axis in axes[row_index]:
+                axis.set_xticks([])
+                axis.set_yticks([])
+        figure.suptitle(
+            f"HyPERSTAC normalization preflight: ROI signal quantile {quantile:.0%}",
+            y=0.999,
+        )
+        figure.tight_layout()
+        path = output_folder / f"normalisation_preview_q{int(round(100 * quantile)):02d}.png"
+        figure.savefig(path, dpi=160, bbox_inches="tight")
+        plt.close(figure)
+        paths.append(path)
+    return paths
+
+
+def write_preflight_report(summary: pd.DataFrame, output_folder: Path) -> Path:
+    """Write a deterministic Markdown normalization review with limitations."""
+    display_columns = [
+        "channel",
+        "present_roi_fraction",
+        "median_background_to_raw_p99",
+        "median_output_p99",
+        "median_output_saturated_fraction",
+        "warnings",
+    ]
+    table = summary[display_columns].copy()
+    for column in display_columns[1:-1]:
+        table[column] = pd.to_numeric(table[column], errors="coerce").round(3)
+    header = "| " + " | ".join(display_columns) + " |"
+    divider = "| " + " | ".join("---" for _ in display_columns) + " |"
+    rows = [
+        "| "
+        + " | ".join(str(value).replace("|", "\\|") for value in row)
+        + " |"
+        for row in table.itertuples(index=False, name=None)
+    ]
+    warning_count = int((summary["warning_count"] > 0).sum())
+    lines = [
+        "# HyPERSTAC normalization preflight",
+        "",
+        f"- Channels assessed: {len(summary)}",
+        f"- Channels with heuristic warnings: {warning_count}",
+        "",
+        "Warnings are review prompts, not automatic evidence that normalization is invalid. "
+        "Inspect the source/normalized montages; enable the managed preflight gate when warnings should stop model training.",
+        "",
+        "\n".join([header, divider, *rows]),
+        "",
+        "## Heuristics",
+        "",
+        "- median per-ROI background/raw p99 ratio >=0.5;",
+        "- median normalized p99 <=0.05;",
+        "- median ROI saturation >=5%;",
+        "- channel present in <=25% of ROIs.",
+        "",
+    ]
+    path = output_folder / "normalisation_preflight.md"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
 
 
 def write_config(args: argparse.Namespace, channels: list[str], rois: list[Path]) -> None:
@@ -420,6 +585,8 @@ def main() -> None:
         raise ValueError("--background-fixed-value must be >= 0.")
     if args.scale_sample_pixels < 0:
         raise ValueError("--scale-sample-pixels must be >= 0.")
+    if args.preview_rois_per_channel < 0:
+        raise ValueError("--preview-rois-per-channel must be >= 0.")
     if args.input_folder.resolve() == args.output_folder.resolve():
         raise ValueError("--input-folder and --output-folder must be different.")
 
@@ -451,11 +618,19 @@ def main() -> None:
 
     channel_report.to_csv(args.output_folder / "normalisation_channel_report.csv", index=False)
     roi_report.to_csv(args.output_folder / "normalisation_roi_channel_report.csv", index=False)
+    preflight_summary = build_preflight_summary(roi_report)
+    preflight_summary.to_csv(args.output_folder / "normalisation_preflight_summary.csv", index=False)
+    write_preflight_report(preflight_summary, args.output_folder)
+    write_preflight_previews(roi_report, args.output_folder, args.preview_rois_per_channel)
     write_config(args, channels, rois)
 
     n_absent = int((~roi_report["present"]).sum())
     print(f"Wrote normalised TIFFs to {args.output_folder}")
     print(f"Absent ROI/channel images set to zero: {n_absent}")
+    print(
+        "Normalization preflight warnings: "
+        f"{int((preflight_summary['warning_count'] > 0).sum())} channel(s)"
+    )
     print(f"Saved reports to {args.output_folder}")
 
 
