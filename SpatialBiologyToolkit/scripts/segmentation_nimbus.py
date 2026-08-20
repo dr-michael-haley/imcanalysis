@@ -24,6 +24,7 @@ import matplotlib.pyplot as plt
 from SpatialBiologyToolkit.nimbus_normalization import (
     PREFERRED_NORMALIZATION_FILENAME,
     load_normalization_file,
+    merge_computed_normalization_parameters,
     normalize_nimbus_image,
     resolve_normalization_input_path,
     resolve_normalization_parameters,
@@ -246,6 +247,7 @@ class ToolkitNimbusDataset(MultiplexDataset):
         normalization_jobs: int = 1,
         clip_values: Sequence[float] = (0.0, 2.0),
         normalization_min_value: float = 2.0,
+        normalization_lower_threshold: float = 0.0,
         mask_boundary_offset_pixels: int = 0,
         min_cell_area: Optional[int | float] = None,
         max_cell_area: Optional[int | float] = None,
@@ -258,13 +260,14 @@ class ToolkitNimbusDataset(MultiplexDataset):
         self.normalization_n_jobs = max(1, int(normalization_jobs))
         self.clip_values = tuple(clip_values)
         self.normalization_min_value = float(normalization_min_value)
+        self.normalization_lower_threshold = float(normalization_lower_threshold)
         self.mask_boundary_offset_pixels = int(mask_boundary_offset_pixels)
         self.min_cell_area = min_cell_area
         self.max_cell_area = max_cell_area
         self._suffix_match = suffix_match or suffix
         self._segmentation_cache: Dict[str, np.ndarray] = {}
         self.normalization_lower_thresholds: Dict[str, float] = {
-            channel: 0.0 for channel in self._channels
+            channel: self.normalization_lower_threshold for channel in self._channels
         }
 
         def _seg_lookup(fov_path: str) -> Path:
@@ -326,11 +329,14 @@ class ToolkitNimbusDataset(MultiplexDataset):
             vmax = float(np.quantile(image, 0.999))
             logging.warning(
                 "No saved Nimbus Vmax for channel %r; using this image's 0.999 "
-                "quantile %.4g with lower_threshold=0.",
+                "quantile %.4g with lower_threshold=%g.",
                 channel,
                 vmax,
+                self.normalization_lower_threshold,
             )
-        lower_threshold = self.normalization_lower_thresholds.get(channel, 0.0)
+        lower_threshold = self.normalization_lower_thresholds.get(
+            channel, self.normalization_lower_threshold
+        )
         return normalize_nimbus_image(
             image,
             vmax=float(vmax),
@@ -375,8 +381,9 @@ class ToolkitNimbusDataset(MultiplexDataset):
         An explicit normalization_file takes precedence and must use the preferred
         CSV format. Otherwise, if reuse_saved=True, normalization_dict.csv is
         preferred and a legacy normalization_dict.json remains readable. Legacy JSON
-        values receive a zero lower threshold and are migrated to CSV without deleting
-        the source JSON. QC plots are regenerated with the loaded values.
+        values retain their saved lower thresholds and are migrated to CSV without
+        deleting the source JSON. Newly computed rows use the configured default lower
+        threshold. QC plots are regenerated with the resolved values.
         """
         self.clip_values = tuple(clip_values)
         preferred_path = Path(self.output_dir) / PREFERRED_NORMALIZATION_FILENAME
@@ -406,29 +413,32 @@ class ToolkitNimbusDataset(MultiplexDataset):
                 self._channels,
                 require_all=False,
             )
-            self.normalization_dict = {
-                channel: entry.vmax for channel, entry in resolved.items()
-            }
-            self.normalization_lower_thresholds = {
-                channel: entry.lower_threshold for channel, entry in resolved.items()
-            }
             missing = [
-                channel for channel in self._channels if channel not in self.normalization_dict
+                channel for channel in self._channels if channel not in resolved
             ]
+            fallback_values: Dict[str, float] = {}
             if missing:
                 logging.warning(
                     "Saved Nimbus normalization table is missing channels; computing "
-                    "mask-aware cohort Vmax values with lower_threshold=0 for: %s",
+                    "mask-aware cohort Vmax values with lower_threshold=%g for: %s",
+                    self.normalization_lower_threshold,
                     missing,
                 )
                 fallback_values = self.compute_normalization_values(
                     quantile=quantile,
                     channels=missing,
                 )
-                self.normalization_dict.update(fallback_values)
-                self.normalization_lower_thresholds.update(
-                    {channel: 0.0 for channel in fallback_values}
-                )
+            merged = merge_computed_normalization_parameters(
+                fallback_values,
+                default_lower_threshold=self.normalization_lower_threshold,
+                saved_parameters=resolved,
+            )
+            self.normalization_dict = {
+                channel: entry.vmax for channel, entry in merged.items()
+            }
+            self.normalization_lower_thresholds = {
+                channel: entry.lower_threshold for channel, entry in merged.items()
+            }
             logging.info(
                 "Loaded %d channel normalization rows (manual values preserved).",
                 len(self.normalization_dict),
@@ -444,11 +454,18 @@ class ToolkitNimbusDataset(MultiplexDataset):
                 )
                 logging.info("Wrote resolved normalization values to: %s", preferred_path)
         else:
-            self.normalization_dict = self.compute_normalization_values(
+            computed_values = self.compute_normalization_values(
                 quantile=quantile
             )
+            computed = merge_computed_normalization_parameters(
+                computed_values,
+                default_lower_threshold=self.normalization_lower_threshold,
+            )
+            self.normalization_dict = {
+                channel: entry.vmax for channel, entry in computed.items()
+            }
             self.normalization_lower_thresholds = {
-                channel: 0.0 for channel in self.normalization_dict
+                channel: entry.lower_threshold for channel, entry in computed.items()
             }
             write_normalization_csv(
                 preferred_path,
@@ -509,7 +526,9 @@ class ToolkitNimbusDataset(MultiplexDataset):
             labels = mask.astype(np.int32)
             for ch in self._channels:
                 norm = self.normalization_dict.get(ch, 1.0) or 1.0
-                lower_threshold = self.normalization_lower_thresholds.get(ch, 0.0)
+                lower_threshold = self.normalization_lower_thresholds.get(
+                    ch, self.normalization_lower_threshold
+                )
                 img_raw = self.get_channel(fov, ch).astype(float)
                 foreground_quantile = _safe_quantile(img_raw[mask_bool], quantile)
                 if foreground_quantile is None:
@@ -569,7 +588,9 @@ class ToolkitNimbusDataset(MultiplexDataset):
             
             for ch in self._channels:
                 norm = self.normalization_dict.get(ch, 1.0) or 1.0
-                lower_threshold = self.normalization_lower_thresholds.get(ch, 0.0)
+                lower_threshold = self.normalization_lower_thresholds.get(
+                    ch, self.normalization_lower_threshold
+                )
                 
                 # Create figure with 4 columns (raw, normalized unmasked, normalized masked, clip diagnostic) and one row per FOV
                 fig, axs = plt.subplots(len(qc_fovs), 4, figsize=(20, 5 * len(qc_fovs)), dpi=100)
@@ -1546,6 +1567,7 @@ def main() -> None:
         normalization_jobs=nimbus_config.normalization_jobs,
         clip_values=clip_values,
         normalization_min_value=nimbus_config.normalization_min_value,
+        normalization_lower_threshold=nimbus_config.normalization_lower_threshold,
         mask_boundary_offset_pixels=nimbus_config.mask_boundary_offset_pixels,
         min_cell_area=min_cell_area,
         max_cell_area=max_cell_area,

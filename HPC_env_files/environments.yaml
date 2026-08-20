@@ -74,6 +74,8 @@ environments:
       - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
       - [python, -c, "from SpatialBiologyToolkit.config import PipelineConfig; from SpatialBiologyToolkit.reporting import StageReporter; PipelineConfig()"]
       - [python, -c, "import IMC_Denoise, tensorflow, tifffile"]
+    notes:
+      - Legacy repository-managed denoising runtime retained as an explicit rollback option; production denoising stages use the shared tensorflow key.
 
   tensorflow:
     conda_name: sbt-tensorflow
@@ -91,9 +93,9 @@ environments:
       - [python, -c, "import SpatialBiologyToolkit.scripts.hyperstac_full"]
       - [python, HPC_env_files/sbt-tensorflow/smoke_test.py]
     notes:
-      - Candidate shared TensorFlow 2.15 runtime for the modernized IMC-Denoise and HyPERSTAC families.
+      - Standard shared TensorFlow 2.15 runtime for the modernized IMC-Denoise and HyPERSTAC families.
       - IMC-Denoise is pinned to compatibility-fork commit 0a1c93626f2a7c2462e39baeb62d77dec20f54cb; do not publish it in a public image without license clarification.
-      - Existing denoise and HyPERSTAC stage mappings remain unchanged until this candidate passes clean installation, GPU, representative workflow, and parity checks on CSF3.
+      - Clean installation, registered CPU checks, and focused A100 GPU calculation passed on CSF3; representative scientific workflow and parity evidence remains required before legacy environments are retired.
 
   cellposesam:
     conda_name: sbt-cellpose-sam
@@ -138,7 +140,7 @@ environments:
       - [python, -c, "import SpatialBiologyToolkit, anndata, scanpy, tensorflow"]
       - [python, -c, "import lifelines, sksurv, tifffile, seaborn"]
     notes:
-      - External GPU environment adapted from the local HyPERSTAC IMC environment.
+      - Legacy external GPU environment adapted from the local HyPERSTAC IMC environment and retained as an explicit rollback option; production HyPERSTAC stages use the shared tensorflow key.
       - The intent specification is committed, but no platform lock was generated without explicit environment-mutation/lock authority.
 
   maxfuse:
@@ -172,9 +174,9 @@ stage_environments:
   subcl: [analysis]
   cchar: [analysis]
   starling: [starling]
-  dnqc: [denoise, analysis]
+  dnqc: [tensorflow, analysis]
   aiinter: [analysis]
-  denoise: [denoise]
+  denoise: [tensorflow]
   config: [analysis]
   cellpose: [cellposesam, analysis]
   reint: [analysis]
@@ -185,13 +187,13 @@ stage_environments:
   slogs: [analysis]
   rebuildmeta: [analysis]
   popqc: [analysis]
-  hyperstac-preprocess: [hyperstac]
-  hyperstac-model: [hyperstac]
-  hyperstac-permutation: [hyperstac]
-  hyperstac-visualise: [hyperstac]
-  cox: [hyperstac]
-  hyperstac-stability: [hyperstac]
-  hyperstac-full: [hyperstac]
+  hyperstac-preprocess: [tensorflow]
+  hyperstac-model: [tensorflow]
+  hyperstac-permutation: [tensorflow]
+  hyperstac-visualise: [tensorflow]
+  cox: [tensorflow]
+  hyperstac-stability: [tensorflow]
+  hyperstac-full: [tensorflow]
   cellfeat: [analysis]
   maxfuse: [maxfuse]
   spatialdata: [analysis]

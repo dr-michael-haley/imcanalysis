@@ -258,7 +258,7 @@ class HyperstacRegistryTests(unittest.TestCase):
             ["cox", "hyperstac-stability"],
         )
 
-    def test_all_stages_use_registered_hyperstac_environment(self):
+    def test_all_stages_use_registered_tensorflow_environment(self):
         registry = load_environment_registry()
         for stage in (
             "hyperstac-preprocess",
@@ -269,7 +269,7 @@ class HyperstacRegistryTests(unittest.TestCase):
             "hyperstac-stability",
             "hyperstac-full",
         ):
-            self.assertEqual(registry.stage_environments[stage], ["hyperstac"])
+            self.assertEqual(registry.stage_environments[stage], ["tensorflow"])
 
     def test_wrappers_and_docs_exist(self):
         root = Path(__file__).resolve().parents[1]

@@ -10,9 +10,11 @@ from SpatialBiologyToolkit.cellvision import load_normalization_dict
 from SpatialBiologyToolkit.config.models import NimbusConfig
 from SpatialBiologyToolkit.nimbus_normalization import (
     load_normalization_file,
+    merge_computed_normalization_parameters,
     normalize_nimbus_image,
     resolve_normalization_input_path,
     resolve_normalization_parameters,
+    validate_normalization_parameters,
     write_normalization_csv,
 )
 
@@ -95,6 +97,38 @@ def test_nimbus_config_accepts_an_explicit_normalization_csv_path():
     assert configured.normalization_dict_path == "metadata/reviewed_norm.csv"
     with pytest.raises(ValueError, match="must point to a .csv"):
         NimbusConfig(normalization_dict_path="metadata/legacy.json")
+
+
+def test_nimbus_config_has_a_validated_default_lower_threshold():
+    assert NimbusConfig().normalization_lower_threshold == 0.0
+    configured = NimbusConfig(normalization_lower_threshold=0.8)
+    assert configured.normalization_lower_threshold == 0.8
+    for value in (-0.1, np.inf, np.nan):
+        with pytest.raises(ValueError):
+            NimbusConfig(normalization_lower_threshold=value)
+
+
+def test_saved_lower_thresholds_override_the_computed_default():
+    saved = validate_normalization_parameters(
+        {"CD3": {"vmax": 20, "lower_threshold": 0.8}}
+    )
+    merged = merge_computed_normalization_parameters(
+        {"CD3": 10, "CD20": 8},
+        default_lower_threshold=0.4,
+        saved_parameters=saved,
+    )
+
+    assert merged["CD3"].vmax == 20
+    assert merged["CD3"].lower_threshold == pytest.approx(0.8)
+    assert merged["CD20"].vmax == 8
+    assert merged["CD20"].lower_threshold == pytest.approx(0.4)
+
+
+def test_computed_default_lower_threshold_must_be_below_vmax():
+    with pytest.raises(ValueError, match="must be below vmax"):
+        merge_computed_normalization_parameters(
+            {"CD3": 0.5}, default_lower_threshold=0.5
+        )
 
 
 def test_normalization_bounds_are_validated_and_case_insensitively_resolved(

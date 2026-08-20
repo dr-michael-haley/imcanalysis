@@ -461,7 +461,7 @@ class RegistryTests(EnvironmentFixture):
             expected_names,
         )
 
-    def test_joint_tensorflow_candidate_preserves_both_runtime_families(self):
+    def test_joint_tensorflow_runtime_owns_both_runtime_families(self):
         root = Path(__file__).resolve().parents[1]
         central = load_environment_registry(root)
         definition = central.environments["tensorflow"]
@@ -469,7 +469,22 @@ class RegistryTests(EnvironmentFixture):
 
         self.assertEqual(definition.conda_name, "sbt-tensorflow")
         self.assertTrue(definition.managed)
-        self.assertEqual(associated_stages(central, "tensorflow"), [])
+        self.assertEqual(
+            set(associated_stages(central, "tensorflow")),
+            {
+                "dnqc",
+                "denoise",
+                "hyperstac-preprocess",
+                "hyperstac-model",
+                "hyperstac-permutation",
+                "hyperstac-visualise",
+                "cox",
+                "hyperstac-stability",
+                "hyperstac-full",
+            },
+        )
+        self.assertEqual(central.stage_environments["dnqc"], ["tensorflow", "analysis"])
+        self.assertEqual(central.stage_environments["denoise"], ["tensorflow"])
 
         conda_requirements = declared_conda_requirements(
             specification / "environment.yml"
@@ -524,6 +539,25 @@ class RegistryTests(EnvironmentFixture):
         self.assertIn('with tf.device("/GPU:0")', gpu_smoke)
         self.assertIn("TENSORFLOW_GPU_SMOKE_PASS", gpu_smoke)
         self.assertNotIn('CUDA_VISIBLE_DEVICES"] = "-1"', gpu_smoke)
+
+        for wrapper_name in (
+            "job_denoising.sh",
+            "job_denoising_qc.sh",
+            "job_cox_survival.sh",
+            "job_hyperstac_preprocess.sh",
+            "job_hyperstac_model.sh",
+            "job_hyperstac_permutation.sh",
+            "job_hyperstac_visualise.sh",
+            "job_hyperstac_stability.sh",
+            "job_hyperstac_full.sh",
+        ):
+            wrapper = (root / "SLURM_scripts" / wrapper_name).read_text(
+                encoding="utf-8"
+            )
+            self.assertIn("#@ENV:  sbt-tensorflow", wrapper)
+            self.assertIn("SBT_CONDA_ENV_TENSORFLOW", wrapper)
+            self.assertNotIn("SBT_CONDA_ENV_DENOISE", wrapper)
+            self.assertNotIn("SBT_CONDA_ENV_HYPERSTAC", wrapper)
 
     def test_cellpose_sam_runtime_preserves_working_cuda_stack_and_cpp_runtime(self):
         root = Path(__file__).resolve().parents[1]

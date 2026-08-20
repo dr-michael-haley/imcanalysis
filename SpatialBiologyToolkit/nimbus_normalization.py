@@ -146,6 +146,22 @@ def build_normalization_parameters(
     return validate_normalization_parameters(payload)
 
 
+def merge_computed_normalization_parameters(
+    computed_vmax_values: Mapping[str, float],
+    *,
+    default_lower_threshold: float = 0.0,
+    saved_parameters: Mapping[str, NimbusNormalizationParameters] | None = None,
+) -> dict[str, NimbusNormalizationParameters]:
+    """Combine computed defaults with saved rows, with saved rows taking precedence."""
+
+    computed = build_normalization_parameters(
+        computed_vmax_values,
+        {marker: default_lower_threshold for marker in computed_vmax_values},
+    )
+    computed.update(saved_parameters or {})
+    return computed
+
+
 def _load_csv(path: Path) -> dict[str, NimbusNormalizationParameters]:
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)

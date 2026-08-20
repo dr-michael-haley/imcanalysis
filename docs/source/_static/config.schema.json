@@ -7897,6 +7897,17 @@
           "type": "number",
           "ui_group": "Nimbus"
         },
+        "normalization_lower_threshold": {
+          "advice": "",
+          "default": 0.0,
+          "description": "Default absolute lower threshold assigned to newly computed channel normalization rows. Marker-specific values loaded from a normalization CSV or legacy JSON take precedence.",
+          "level": "advanced",
+          "minimum": 0.0,
+          "stage": "nimbus",
+          "title": "Normalization Lower Threshold",
+          "type": "number",
+          "ui_group": "Nimbus"
+        },
         "reuse_saved_normalization": {
           "advice": "",
           "default": false,

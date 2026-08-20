@@ -12,10 +12,10 @@ set -e
 #@DESC: Compare HyPERSTAC Leiden parameter settings, with optional perturbation and Cox overlays
 #@IN:   latest managed hyperstac-visualise report and reusable clustered representation; optional cox report
 #@OUT:  managed parameter scorecard, agreement/support tables, figures, Markdown, and optional survival reports
-#@ENV:  sbt-hyperstac
+#@ENV:  sbt-tensorflow
 #@MODULE:  SpatialBiologyToolkit.scripts.hyperstac_stability
 #@CONFIG: general, hyperstac, cox, logging
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
-conda activate "${SBT_CONDA_ENV_HYPERSTAC:-sbt-hyperstac}"
+conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_TENSORFLOW:-sbt-tensorflow}}"
 python -m SpatialBiologyToolkit.scripts.hyperstac_stability

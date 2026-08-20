@@ -13,11 +13,11 @@ set -e
 #@DESC: Run HyPERSTAC image analysis, normalization preflight, and clustering comparison with optional Cox overlays
 #@IN:   configured ROI/channel TIFFs; Cox feature sources and clinical survival metadata when enabled
 #@OUT:  reusable HyPERSTAC assets, normalization QC, visualisation, clustering comparison, and optional Cox reports
-#@ENV:  sbt-hyperstac
+#@ENV:  sbt-tensorflow
 #@MODULE:  SpatialBiologyToolkit.scripts.hyperstac_full
 #@CONFIG: general, hyperstac, cox, logging
 
 source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
-conda activate "${SBT_CONDA_ENV_HYPERSTAC:-sbt-hyperstac}"
+conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_TENSORFLOW:-sbt-tensorflow}}"
 
 python -m SpatialBiologyToolkit.scripts.hyperstac_full

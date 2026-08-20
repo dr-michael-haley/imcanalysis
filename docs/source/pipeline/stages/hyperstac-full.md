@@ -5,7 +5,7 @@
 Run HyPERSTAC image analysis, normalization preflight, and clustering comparison with optional Cox overlays
 
 - Wrapper: [`job_hyperstac_full.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_hyperstac_full.sh)
-- Conda environment: `sbt-hyperstac`
+- Conda environment: `sbt-tensorflow`
 - Python module: `SpatialBiologyToolkit.scripts.hyperstac_full`
 
 ## Inputs

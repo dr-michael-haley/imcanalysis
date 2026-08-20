@@ -23,9 +23,9 @@ for ordering and usage guidance.
 | [`subcl`](subcl.md) | Run checkpointed population subclustering (template generation, subclustering QC, optional remap integration) | `sbt-analysis` | general, process, subclustering, logging |
 | [`cchar`](cchar.md) | Identify spatial neighborhoods with CellCharter from an existing embedding or optional TRVAE and save QC summaries | `sbt-analysis` | general, process, cellcharter, logging |
 | [`starling`](starling.md) | Run STARLING segmentation-aware probabilistic phenotyping from IMC AnnData marker expression | `sbt-starling` | general, starling, logging |
-| [`dnqc`](dnqc.md) | Generate denoising side-by-side QC and panel consistency checks | `sbt-denoise, sbt-analysis` | general, denoising, logging (plus check_panel_consistency defaults) |
+| [`dnqc`](dnqc.md) | Generate denoising side-by-side QC and panel consistency checks | `sbt-tensorflow, sbt-analysis` | general, denoising, logging (plus check_panel_consistency defaults) |
 | [`aiinter`](aiinter.md) | AI labeling of Leiden populations and writing *_AIlabel columns | `sbt-analysis` | general, visualization, process, logging |
-| [`denoise`](denoise.md) | Denoise channel TIFFs and compute denoising QC metrics | `sbt-denoise` | general, denoising, logging |
+| [`denoise`](denoise.md) | Denoise channel TIFFs and compute denoising QC metrics | `sbt-tensorflow` | general, denoising, logging |
 | [`config`](config.md) | Update config.yaml by syncing all default config sections/keys | `sbt-analysis` | all blocks (sync defaults): general, preprocess, denoising, createmasks, segmentation, nimbus, process, visualization, cellcharter, pairwise_spatial, networkx_spatial, remap_obs, subclustering, logging |
 | [`cellpose`](cellpose.md) | DNA preprocessing + CellPose-SAM mask generation | `sbt-analysis, sbt-cellpose-sam` | general, createmasks, logging |
 | [`reint`](reint.md) | Reintegrate markers previously removed from the processed AnnData | `sbt-analysis` | general, segmentation, logging |
@@ -38,13 +38,13 @@ for ordering and usage guidance.
 | [`slogs`](slogs.md) | Organize SLURM output files using AnnData pipeline run metadata and verify against recorded jobs | `sbt-analysis` | general, logging |
 | [`rebuildmeta`](rebuildmeta.md) | Rebuild metadata folder tables from an existing AnnData file | `sbt-analysis` | general, rebuild_metadata, logging |
 | [`popqc`](popqc.md) | Assess population support from existing graph, UMAP, PCA, and precomputed clustering-sweep state | `sbt-analysis` | general, population_embedding_qc, logging |
-| [`hyperstac-preprocess`](hyperstac-preprocess.md) | Background-correct and robustly scale ROI/channel TIFF images for HyPERSTAC | `sbt-hyperstac` | general, hyperstac, logging |
-| [`hyperstac-model`](hyperstac-model.md) | Tile normalized IMC images, train HyPERSTAC VICReg, and extract patch representations | `sbt-hyperstac` | general, hyperstac, logging |
-| [`hyperstac-permutation`](hyperstac-permutation.md) | Quantify HyPERSTAC embedding sensitivity to channel zeroing and pixel shuffling | `sbt-hyperstac` | general, hyperstac, logging |
-| [`hyperstac-visualise`](hyperstac-visualise.md) | Run HyPERSTAC clustering scans and create embedding, marker, spatial, and gallery reports | `sbt-hyperstac` | general, hyperstac, logging |
-| [`cox`](cox.md) | Combine case-level features from one or more AnnData obs sources and compare Cox models | `sbt-hyperstac` | general, cox, logging |
-| [`hyperstac-stability`](hyperstac-stability.md) | Compare HyPERSTAC Leiden parameter settings, with optional perturbation and Cox overlays | `sbt-hyperstac` | general, hyperstac, cox, logging |
-| [`hyperstac-full`](hyperstac-full.md) | Run HyPERSTAC image analysis, normalization preflight, and clustering comparison with optional Cox overlays | `sbt-hyperstac` | general, hyperstac, cox, logging |
+| [`hyperstac-preprocess`](hyperstac-preprocess.md) | Background-correct and robustly scale ROI/channel TIFF images for HyPERSTAC | `sbt-tensorflow` | general, hyperstac, logging |
+| [`hyperstac-model`](hyperstac-model.md) | Tile normalized IMC images, train HyPERSTAC VICReg, and extract patch representations | `sbt-tensorflow` | general, hyperstac, logging |
+| [`hyperstac-permutation`](hyperstac-permutation.md) | Quantify HyPERSTAC embedding sensitivity to channel zeroing and pixel shuffling | `sbt-tensorflow` | general, hyperstac, logging |
+| [`hyperstac-visualise`](hyperstac-visualise.md) | Run HyPERSTAC clustering scans and create embedding, marker, spatial, and gallery reports | `sbt-tensorflow` | general, hyperstac, logging |
+| [`cox`](cox.md) | Combine case-level features from one or more AnnData obs sources and compare Cox models | `sbt-tensorflow` | general, cox, logging |
+| [`hyperstac-stability`](hyperstac-stability.md) | Compare HyPERSTAC Leiden parameter settings, with optional perturbation and Cox overlays | `sbt-tensorflow` | general, hyperstac, cox, logging |
+| [`hyperstac-full`](hyperstac-full.md) | Run HyPERSTAC image analysis, normalization preflight, and clustering comparison with optional Cox overlays | `sbt-tensorflow` | general, hyperstac, cox, logging |
 | [`cellfeat`](cellfeat.md) | Build resumable cohort-only IMC cell features using full-segmentation context | `sbt-analysis` | general, napari_sbt, logging |
 | [`maxfuse`](maxfuse.md) | Match one scRNA-seq reference to IMC cells with MaxFuse and generate transfer/QC assets | `sbt-maxfuse` | general, maxfuse, logging |
 | [`spatialdata`](spatialdata.md) | Discover or explicitly select spatial assets and optionally build a validated SpatialData Zarr | `sbt-analysis` | general, spatialdata, logging |

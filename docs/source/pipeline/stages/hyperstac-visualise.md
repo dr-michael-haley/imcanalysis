@@ -5,7 +5,7 @@
 Run HyPERSTAC clustering scans and create embedding, marker, spatial, and gallery reports
 
 - Wrapper: [`job_hyperstac_visualise.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_hyperstac_visualise.sh)
-- Conda environment: `sbt-hyperstac`
+- Conda environment: `sbt-tensorflow`
 - Python module: `SpatialBiologyToolkit.scripts.hyperstac_visualise`
 
 ## Inputs

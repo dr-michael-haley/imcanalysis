@@ -5,7 +5,7 @@
 Generate denoising side-by-side QC and panel consistency checks
 
 - Wrapper: [`job_denoising_qc.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_denoising_qc.sh)
-- Conda environments: `sbt-denoise, sbt-analysis`
+- Conda environments: `sbt-tensorflow, sbt-analysis`
 - Python modules: `SpatialBiologyToolkit.scripts.denoising_qc, SpatialBiologyToolkit.scripts.check_panel_consistency`
 
 ## Inputs

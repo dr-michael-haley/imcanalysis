@@ -186,10 +186,10 @@ upstream helper. For each marker, it calculates the configured quantile using on
 pixels inside retained cell masks for each usable ROI, then averages those per-ROI
 values. The default quantile is 0.999, or the 99.9th percentile, and the computed
 Vmax is not allowed to fall below `normalization_min_value` (default 3.0).
-Computed dictionaries use a zero lower threshold; reviewed CSVs can set a
-marker-specific non-negative cutoff, commonly around 0.2–2 when low-level
-background needs removing. The shared two-bound transform clips the input to the
-range 0–1.
+Computed dictionary rows use `normalization_lower_threshold` (default 0.0) as
+their absolute lower threshold. Reviewed CSVs can override it per marker with a
+non-negative cutoff, commonly around 0.2–2 when low-level background needs
+removing. The shared two-bound transform clips the input to the range 0–1.
 
 This differs from the article's reported inference preprocessing, which used the
 channel-wide 99.99th percentile. The published validation therefore supports the
@@ -284,7 +284,9 @@ An explicit path takes precedence and does not require
 without modification when it is outside `nimbus.output_dir`. Nimbus writes the
 complete resolved table to
 `nimbus.output_dir/normalization_dict.csv`, filling any omitted selected markers
-with computed mask-aware Vmax values and a zero lower threshold.
+with computed mask-aware Vmax values and the configured
+`normalization_lower_threshold`. Values present in the supplied CSV always take
+precedence over this default.
 
 When `normalization_dict_path` is unset, `reuse_saved_normalization: true` loads
 the CSV already present in `nimbus.output_dir` and applies its reviewed bounds
@@ -403,6 +405,7 @@ nimbus:
 
   normalization_quantile: 0.999
   normalization_min_value: 3.0
+  normalization_lower_threshold: 0.0
   normalization_subset: 10
   normalization_dict_path: null
   reuse_saved_normalization: false

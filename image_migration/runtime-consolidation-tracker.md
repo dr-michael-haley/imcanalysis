@@ -32,17 +32,17 @@ The following runtimes are deliberately not part of this merger:
 | `sbt-cellpose-sam` | Requires Cellpose 4 while the shared runtime retains Cellpose 3. |
 | `sbt-starling` | Removed from this merger when RAPIDS became the higher-priority clustering runtime; retained separately. |
 | `rapids_singlecell` | Externally managed official RAPIDS 26.08 replacement for the native-crashing RAPIDS 24.12 stack currently retained in `sbt-analysis`. |
-| `sbt-tensorflow` | Candidate shared TensorFlow 2.15 runtime for the modernized IMC-Denoise and HyPERSTAC families; clean installation and registered CPU acceptance have passed, but it remains inactive pending GPU and representative workflow validation. |
-| `sbt-hyperstac` | Current HyPERSTAC rollback runtime, retained until `sbt-tensorflow` passes joint-runtime validation. |
-| `sbt-denoise` | Current denoising rollback runtime, retained until `sbt-tensorflow` passes joint-runtime and scientific parity validation. |
+| `sbt-tensorflow` | Active shared TensorFlow 2.15 runtime for the modernized IMC-Denoise and HyPERSTAC families; clean installation, registered CPU acceptance, and focused A100 GPU calculation have passed. |
+| `sbt-hyperstac` | Legacy HyPERSTAC rollback runtime retained while representative workflow validation is completed. |
+| `sbt-denoise` | Legacy denoising rollback runtime retained until representative workflow and scientific parity validation are complete. |
 | `sbt-napari` | Interactive GUI runtime, not a pipeline compute environment. |
 
-The inactive `tensorflow` / `sbt-tensorflow` candidate is deliberately not
-mapped to stages yet. It combines the existing HyPERSTAC Python 3.10 and
+The active `tensorflow` / `sbt-tensorflow` runtime is mapped to the denoising,
+HyPERSTAC, and Cox stages. It combines the existing HyPERSTAC Python 3.10 and
 TensorFlow 2.15 dependency spine with IMC-Denoise 1.1.0 pinned to compatibility
-fork commit `0a1c93626f2a7c2462e39baeb62d77dec20f54cb`. The existing `denoise` and
-`hyperstac` keys remain the operational rollback path until clean installation,
-GPU, representative workflow, and parity checks have passed.
+fork commit `0a1c93626f2a7c2462e39baeb62d77dec20f54cb`. The legacy `denoise` and
+`hyperstac` keys remain explicit rollback overrides until representative
+workflow and parity checks have passed.
 
 The `rapids` / `rapids_singlecell` environment is also deliberately unmapped.
 It is created from the immutable official RAPIDS-singlecell 26.08 CUDA 13
@@ -72,7 +72,8 @@ checks pass.
 | Modernize `IMC_Denoise_Updated` for a maintainable Python 3.10 runtime | complete | Migrated the package to TensorFlow 2.15.1 through `tf.keras`; added modern package metadata, explicit checkpoint handling, Python 3.10-3.11 constraints, compatibility tests, and README/migration documentation that distinguishes this fork from upstream. | Completed and published the migration, then approved creation of a clean joint TensorFlow candidate environment. Later, obtain license clarification before any public image containing IMC-Denoise is published. | 11 local tests passed and one TensorFlow-dependent test was skipped because TensorFlow was absent locally; 28 Python files parsed; 4 notebooks passed JSON validation; the lightweight package imported with Python 3.10; a version 1.1.0 wheel built with the expected metadata and package data. The clean repository `main` and `origin/main` both resolve to `0a1c93626f2a7c2462e39baeb62d77dec20f54cb`. | `IMC_Denoise_Updated` `0a1c936` | TensorFlow execution, model training/loading and representative denoising move to the joint candidate phase. The inherited research-only license appears to prohibit redistribution, so public OCI publication is not currently authorized. |
 | Define the joint `sbt-tensorflow` candidate | complete | Added an inactive repository-managed Python 3.10/TensorFlow 2.15.1 candidate based on the HyPERSTAC compatibility spine, pinned IMC-Denoise to immutable commit `0a1c936`, and registered version, import, stage-module, and CPU TensorFlow smoke tests. | Reviewed the candidate and approved Linux lock generation and a clean CSF3 install. | All 37 initial environment-management tests passed; the repository validator passed with zero warnings; the smoke script compiled; `git diff --check` passed. No stage mapping changed. | Candidate definition preceding lock `9d632d0b` | Existing `sbt-denoise` and `sbt-hyperstac` remain untouched rollback routes. |
 | Generate and clean-install `sbt-tensorflow` | complete | Defined and reviewed the resolved lock, diagnosed the login-node device-discovery failure, and made the registered calculation deterministically CPU-only before TensorFlow import. | Generated, installed, tested and published the accepted Linux lock from CSF3. | Linux lock SHA-256 `9d632d0b42fbbe88fb89fd6b901f5267d8d5c2e91ff08da49b3bcf6593c77860`. Conda, pip extras and the editable overlay installed successfully. On 2026-08-20 all eight registered checks passed: Python and exact package versions, IMC-Denoise/TensorFlow imports, the analysis and survival stack, SBT denoising and HyPERSTAC imports, and `TENSORFLOW_CPU_SMOKE_PASS 2.15.1`. | `8a99c22`, `5b7909d` | The duplicate CUDA factory, missing TensorRT and login-node `CUDA_ERROR_NO_DEVICE` diagnostics are non-fatal in the deliberately CPU-only test. GPU calculation and representative scientific workflows remain separate acceptance steps. |
-| Validate `sbt-tensorflow` GPU runtime | waiting for user | Added a focused GPU acceptance program that requires TensorFlow GPU discovery, disables silent CPU placement, runs a deterministic matrix multiplication, verifies its device and reports build/runtime details. | Publish and pull the smoke artifact, submit it to a CSF3 A100, and return the scheduler result and complete output. | The smoke program compiles; all 38 environment-management tests pass; repository validation and `git diff --check` pass. CSF3 GPU evidence is pending. | Current imcanalysis working tree | No stage mapping or scientific data changes. Failure leaves `sbt-denoise` and `sbt-hyperstac` as the unchanged production routes. The local pytest runner hung during collection, but the same complete unittest suite finished in 1.23 seconds. |
+| Validate `sbt-tensorflow` GPU runtime | complete | Added a focused GPU acceptance program that requires TensorFlow GPU discovery, disables silent CPU placement, runs a deterministic matrix multiplication, verifies its device and reports build/runtime details. | Published and pulled the smoke artifact, submitted it to a CSF3 A100, and returned the scheduler result and complete output. | CSF3 job `18977953` completed `0:0` on an NVIDIA A100-SXM4-80GB. TensorFlow 2.15.1 discovered GPU 0, performed the exact matrix calculation on `/device:GPU:0`, returned `matrix_sum=120.0`, and ended with `TENSORFLOW_GPU_SMOKE_PASS`. | `5f95612`; CSF3 logs `sbt-tensorflow-gpu-smoke-18977953-20260820-110848.out` and `.err` | Duplicate CUDA factory and missing TensorRT messages were non-fatal; TensorFlow created the A100 device successfully. Representative scientific workflow validation remains open. |
+| Activate `sbt-tensorflow` for IMC-Denoise and HyPERSTAC | complete | Remapped denoising, denoising QC, HyPERSTAC and Cox stages to the shared `tensorflow` key; aligned wrapper defaults, diagnostics, tests and documentation while retaining legacy registry entries for explicit rollback. | Approved activation after reviewing the successful CPU and A100 GPU acceptance evidence. | All 83 focused environment, HyPERSTAC/Cox and run-control tests passed; all nine affected wrappers passed shell validation; generated documentation is current; repository validation passed with the existing config-surface review warning; `git diff --check` passed. | Current working tree | No Conda environment was removed or modified. Representative workflow and parity evidence remains required before rollback runtimes are retired. |
 | Retire superseded Conda installations | not started | Provide a reviewed removal plan only after the standardized catalogue is deployed. | Approve and perform any HPC environment removal. | Pending. | Pending | Archived specifications provide rollback inputs; no HPC environment deletion is authorized. |
 
 ## Decision log
@@ -117,6 +118,7 @@ checks pass.
 | 2026-08-20 | Do not allow pip to silently make the official base inconsistent. | RAPIDS 26.08 requires Pandas 3 while the current released AnnData 0.12 metadata requires Pandas below 3. Registered exact-version assertions and `pip check` make any downgrade visible before an SBT overlay or stage mapping is approved. |
 | 2026-08-20 | Keep the official physical name `rapids_singlecell` and mark the environment external. | The non-`sbt-*` name communicates that scverse's recipe owns installation while SBT only adds a `--no-deps` source overlay, verifies the runtime and later selects it for jobs. This avoids a brittle permanent lock contract for a fast-moving mixed Conda/pip GPU stack. |
 | 2026-08-20 | Make the `sbt-tensorflow` login-node calculation deterministically CPU-only. | `tf.device('/CPU:0')` still initializes every visible device when TensorFlow creates its eager context. Hiding GPUs before importing TensorFlow tests CPU execution without mistaking scheduler-inaccessible login-node devices for a broken environment; GPU discovery remains an explicit SLURM test. |
+| 2026-08-20 | Activate `sbt-tensorflow` as the default denoising, HyPERSTAC and Cox runtime after CPU and focused A100 acceptance. | One shared registered runtime now contains both scientific families and has demonstrated real TensorFlow GPU execution. Keeping `denoise` and `hyperstac` registered as explicit overrides preserves rollback until representative workflows and denoising parity are established. |
 
 ## Current compatibility boundary
 
@@ -137,9 +139,7 @@ a failure there causes a narrow Nimbus split.
 - Run Cellpose-SAM model loading and representative small-image inference on a
   CSF3 GPU when practical, retaining mask/QC evidence and exact runtime
   provenance.
-- Run `sbt_tensorflow_gpu_smoke.py` in `sbt-tensorflow` on a CSF3 A100 and
-  retain its scheduler result, build/runtime details and pass marker. Then run
-  representative IMC-Denoise and HyPERSTAC workflows in `sbt-tensorflow`.
+- Run representative IMC-Denoise and HyPERSTAC workflows in `sbt-tensorflow`.
   Compare denoising outputs with the previous TensorFlow 2.6 runtime using an
   agreed numerical tolerance before retiring `sbt-denoise`.
 - Confirm that SpatialData 0.4 preserves the SBT builder behavior required by
@@ -166,14 +166,9 @@ a failure there causes a narrow Nimbus split.
   Windows checkouts may report a different working-tree byte hash when Git
   converts LF to CRLF; the committed blob and CSF3 file retain the canonical
   LF identity.
-- Regenerate and review `HPC_env_files/sbt-denoise/conda-linux-64.lock` in a
-  separate lock-maintenance phase after the Python 3.10/TensorFlow 2.15.1
-  source update passes clean-environment testing; the moved historical lock
-  still contains pip records that now belong in `pip-extras.txt`.
-- Create a clean Python 3.10 candidate with TensorFlow 2.15.1 and run the
-  TensorFlow compatibility tests, new and legacy checkpoint loading, a short
-  training step, DIMR/DeepSNiF smoke execution, and representative HPC
-  denoising before changing the active `sbt-denoise` specification.
+- Retain `sbt-denoise` unchanged as a rollback runtime while testing new and
+  legacy checkpoint loading, a short training step, DIMR/DeepSNiF execution,
+  representative HPC denoising, and numerical parity in `sbt-tensorflow`.
 - Obtain written clarification or a revised license from the upstream rights
   holder before publishing any public OCI image that contains IMC_Denoise.
 - Continue targeted managed-run acceptance after activation. Exhaustive

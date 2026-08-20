@@ -5,7 +5,7 @@
 Compare HyPERSTAC Leiden parameter settings, with optional perturbation and Cox overlays
 
 - Wrapper: [`job_hyperstac_stability.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_hyperstac_stability.sh)
-- Conda environment: `sbt-hyperstac`
+- Conda environment: `sbt-tensorflow`
 - Python module: `SpatialBiologyToolkit.scripts.hyperstac_stability`
 
 ## Inputs

@@ -1073,6 +1073,15 @@ class NimbusConfig(ConfigModel):
             "near-zero background estimates from amplifying noise."
         ),
     )
+    normalization_lower_threshold: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "Default absolute lower threshold assigned to newly computed channel normalization "
+            "rows. Marker-specific values loaded from a normalization CSV or legacy JSON take "
+            "precedence."
+        ),
+    )
     reuse_saved_normalization: bool = Field(
         default=False,
         description=(
@@ -1149,7 +1158,11 @@ class NimbusConfig(ConfigModel):
     )
 
     @model_validator(mode="after")
-    def validate_normalization_dict_path(self) -> "NimbusConfig":
+    def validate_normalization_settings(self) -> "NimbusConfig":
+        if not math.isfinite(self.normalization_lower_threshold):
+            raise ValueError(
+                "nimbus.normalization_lower_threshold must be finite and non-negative"
+            )
         if self.normalization_dict_path is None:
             return self
         path = str(self.normalization_dict_path).strip()

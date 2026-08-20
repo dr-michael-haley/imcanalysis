@@ -28,12 +28,14 @@ lightweight smoke tests.
 | Key | Fixed Conda name | Management |
 |---|---|---|
 | `analysis` | `sbt-analysis` | Repository-managed standard scientific runtime |
+| `rapids` | `rapids_singlecell` | External official RAPIDS-singlecell runtime |
 | `napari` | `sbt-napari` | Explicit interactive bootstrap; Linux lock pending |
-| `denoise` | `sbt-denoise` | Repository lock |
+| `denoise` | `sbt-denoise` | Legacy repository-managed rollback runtime |
+| `tensorflow` | `sbt-tensorflow` | Repository-managed shared IMC-Denoise/HyPERSTAC runtime |
 | `cellposesam` | `sbt-cellpose-sam` | Repository lock |
 | `starling` | `sbt-starling` | External/pre-existing |
 | `scportrait` | `sbt-scportrait` | External/pre-existing |
-| `hyperstac` | `sbt-hyperstac` | External/pre-existing |
+| `hyperstac` | `sbt-hyperstac` | Legacy external rollback runtime |
 | `maxfuse` | `sbt-maxfuse` | External/pre-existing |
 
 Commands accept either the logical key or fixed name. External environments
@@ -52,11 +54,10 @@ The stage mapping is also centralized:
 | Environment key | Pipeline stages |
 |---|---|
 | `analysis` | `prep`, `vis`, `nimbus`, `nimbus-scan`, `bint`, `rapids`, `cellvision-cluster`, `cellvision-full`, `bbn`, `subcl`, `cchar`, `dnqc`, `aiinter`, `config`, `cellpose`, `reint`, `pairsp`, `nxsp`, `remap`, `slogs`, `rebuildmeta`, `popqc`, `cellfeat`, `spatialdata`, `neighsig` |
-| `denoise` | `denoise`, `dnqc` |
+| `tensorflow` | `denoise`, `dnqc`, `hyperstac-preprocess`, `hyperstac-model`, `hyperstac-permutation`, `hyperstac-visualise`, `cox`, `hyperstac-stability`, `hyperstac-full` |
 | `cellposesam` | `cellpose` |
 | `starling` | `starling` |
 | `scportrait` | `scport`, `cellvision-extract`, `cellvision-embed`, `cellvision-plot`, `cellvision-full` |
-| `hyperstac` | `hyperstac-preprocess`, `hyperstac-model`, `hyperstac-permutation`, `hyperstac-visualise`, `cox`, `hyperstac-stability`, `hyperstac-full` |
 | `maxfuse` | `maxfuse` |
 
 `cellpose`, `dnqc`, and `cellvision-full` intentionally use two environments;
@@ -73,8 +74,8 @@ A registered environment can temporarily replace the default for one resolved,
 single-environment stage:
 
 ```bash
-sbt run hyperstac-model --environment hyperstac --dry-run
-sbt run hyperstac-model --environment sbt-hyperstac
+sbt run hyperstac-model --environment tensorflow --dry-run
+sbt run hyperstac-model --environment hyperstac
 ```
 
 The override is execution state, not project configuration: it does not alter
@@ -82,8 +83,9 @@ The override is execution state, not project configuration: it does not alter
 exports its logical key and fixed name to the wrapper, snapshots its committed
 specification, inspects its runtime, and identifies the override in the stage
 report. The selector must be a registered logical key or its current fixed
-name. It does not select retired names such as `hyperstac-imc`; managed
-HyPERSTAC runs now resolve `hyperstac` to `sbt-hyperstac`.
+name. It does not select retired names such as `hyperstac-imc`. Normal managed
+HyPERSTAC runs now resolve to `sbt-tensorflow`; the legacy `hyperstac` key can
+still be selected explicitly as a temporary rollback override.
 
 The current interface deliberately rejects a plan containing several stages,
 stages without an environment, and wrappers that switch between multiple

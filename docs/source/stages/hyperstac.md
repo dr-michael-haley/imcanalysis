@@ -198,6 +198,7 @@ held-out cross-validation summaries and risk-group plots produced by `cox`.
 - `hyperstac-stability` needs the clustered representation plus a compatible
   managed visualisation report. Cox is optional; the stage does not manufacture
   survival metadata or infer case identity from patch names.
-- The `sbt-hyperstac` environment is externally managed. Its intent
-  specification is committed, but a Linux lock was not generated as part of
-  this integration.
+- Normal managed runs use the shared, repository-managed `sbt-tensorflow`
+  environment. The external `sbt-hyperstac` environment remains registered
+  only as an explicit rollback option while representative workflow validation
+  is completed.

@@ -5,7 +5,7 @@
 Tile normalized IMC images, train HyPERSTAC VICReg, and extract patch representations
 
 - Wrapper: [`job_hyperstac_model.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_hyperstac_model.sh)
-- Conda environment: `sbt-hyperstac`
+- Conda environment: `sbt-tensorflow`
 - Python module: `SpatialBiologyToolkit.scripts.hyperstac_model`
 
 ## Inputs

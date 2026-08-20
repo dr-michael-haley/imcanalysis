@@ -11,7 +11,7 @@
 #@IN:   general.raw_images_folder + general.denoised_images_folder
 #@IN:   general.metadata_folder/panel.csv
 #@OUT:  outputs/<execution_id>_Denoising_QC/ figures and panel/pixel QC tables
-#@ENV:  sbt-denoise
+#@ENV:  sbt-tensorflow
 #@MODULE:  SpatialBiologyToolkit.scripts.denoising_qc
 #@ENV:  sbt-analysis
 #@MODULE:  SpatialBiologyToolkit.scripts.check_panel_consistency
@@ -21,7 +21,7 @@ source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
 
 echo "Job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 
-conda activate "${SBT_CONDA_ENV_DENOISE:-sbt-denoise}"
+conda activate "${SBT_CONDA_ENV_TENSORFLOW:-sbt-tensorflow}"
 python -m SpatialBiologyToolkit.scripts.denoising_qc
 
 conda activate "${SBT_CONDA_ENV_ANALYSIS:-sbt-analysis}"

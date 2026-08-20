@@ -60,32 +60,6 @@ sbt-cellpose-sam:
 - torch
 - tqdm
 - typing
-sbt-denoise:
-- IMC_Denoise
-- config_and_utils
-- denoising
-- glob
-- logging
-- matplotlib
-- mpl_toolkits
-- numpy
-- os
-- pandas
-- pathlib
-- psutil
-- re
-- shutil
-- tensorflow
-- tifffile
-sbt-hyperstac:
-- SpatialBiologyToolkit
-- __future__
-- argparse
-- logging
-- os
-- pathlib
-- re
-- typing
 sbt-maxfuse:
 - __future__
 - argparse
@@ -113,4 +87,25 @@ sbt-starling:
 - pathlib
 - re
 - sys
+- typing
+sbt-tensorflow:
+- IMC_Denoise
+- SpatialBiologyToolkit
+- __future__
+- argparse
+- config_and_utils
+- denoising
+- glob
+- logging
+- matplotlib
+- mpl_toolkits
+- numpy
+- os
+- pandas
+- pathlib
+- psutil
+- re
+- shutil
+- tensorflow
+- tifffile
 - typing

@@ -5,7 +5,7 @@
 Combine case-level features from one or more AnnData obs sources and compare Cox models
 
 - Wrapper: [`job_cox_survival.sh`](https://github.com/dr-michael-haley/imcanalysis/blob/main/SLURM_scripts/job_cox_survival.sh)
-- Conda environment: `sbt-hyperstac`
+- Conda environment: `sbt-tensorflow`
 - Python module: `SpatialBiologyToolkit.scripts.cox_survival`
 
 ## Inputs
