@@ -21,13 +21,34 @@ environments:
       - [python, -c, "import SpatialBiologyToolkit.scripts.segmentation_nimbus"]
       - [python, -c, "import SpatialBiologyToolkit.scripts.spatialdata_builder"]
     notes:
-      - Standard consolidated runtime for segmentation, BioBatchNet, CellCharter, RAPIDS, and SpatialData stages.
+      - Standard consolidated runtime for segmentation, BioBatchNet, CellCharter, and SpatialData stages; the older RAPIDS stack remains temporarily installed only while its dedicated replacement is validated.
       - CellCharter is supported through its default existing-embedding route; optional TRVAE/scArches mode is deliberately excluded from the standard runtime.
       - RAPIDS 24.12 and RAPIDS-singlecell 0.12.0 retain the shared Dask 2024.11 generation required by SpatialData 0.4 and Squidpy 1.6.5. This runtime supports original Harmony only; Harmony2 is outside the standard catalogue.
       - Numba 0.60.0 is required by RAPIDS-singlecell 0.12.0; newer Numba generations are outside this runtime's supported RAPIDS 24.12 dependency set.
       - Stage-module smoke tests use separate Python processes, matching SLURM execution; importing the RAPIDS/Scanpy and SpatialData 0.4 stacks sequentially in one interpreter can select incompatible Dask DataFrame backends.
+      - Direct cuGraph and RAPIDS-singlecell Leiden calls segfault in the native RAPIDS 24.12 UCX/CUDA path on CSF3. Production mappings remain here only as rollback state until the inactive sbt-rapids candidate passes GPU and representative workflow validation.
       - Nimbus is included on Python 3.11, within its documented Python 3.9 through 3.11 range.
       - STARLING, MaxFuse, scPortrait, Cellpose-SAM, HyPERSTAC, and denoising remain separate.
+
+  rapids:
+    conda_name: sbt-rapids
+    specification_directory: HPC_env_files/sbt-rapids
+    platform: linux-64
+    conda_channel_priority: flexible
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
+      - [python, -c, "import sys; assert sys.version_info[:2] == (3, 12)"]
+      - [python, -c, "import numpy, pandas, scipy, anndata, scanpy"]
+      - [python, -c, "import cupy, cudf, cuml, cugraph, cuvs, dask_cudf, rmm, rapids_singlecell"]
+      - [python, -c, "from importlib.metadata import version; assert version('rapids-singlecell') == '0.16.1'; assert version('cudf').startswith('26.08'); assert version('cuml').startswith('26.08'); assert version('cugraph').startswith('26.08'); assert version('numpy').split('.', 1)[0] == '2'; assert version('pandas').split('.', 1)[0] == '3'; assert version('cupy').split('.', 1)[0] == '14'"]
+      - [python, -c, "import SpatialBiologyToolkit.scripts.basic_process_rapids"]
+      - [python, HPC_env_files/sbt-rapids/smoke_test.py]
+    notes:
+      - Inactive dedicated RAPIDS candidate; no production stage uses it until CSF3 GPU and representative workflow validation pass.
+      - RAPIDS 26.08 and RAPIDS-singlecell 0.16.1 deliberately use the NumPy 2, Pandas 3, CuPy 14, Python 3.12, and current Dask generations outside the SpatialData 0.4 compatibility spine.
+      - CUDA 12.9 is selected for broad driver and future container portability; CSF3's NVIDIA 595 driver exceeds the documented minimum for this RAPIDS generation.
+      - The candidate must pass direct cuGraph Leiden and full RAPIDS-singlecell PCA, neighbors, UMAP, and Leiden tests before any stage mapping changes.
 
   napari:
     conda_name: sbt-napari

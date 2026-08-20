@@ -78,9 +78,11 @@ from .explore import (
     ExploreReviewState,
     ExploreViewRecipe,
     categorical_colour_map,
+    cell_level_observations,
     format_roi_metadata_value,
     identity_value_map,
     marker_values,
+    population_identity_map,
     population_recipe_key,
     recipe_layer_data_is_current,
     roi_level_metadata,
@@ -207,6 +209,7 @@ SELECTED_CELL_LAYER_NAME = "selected_cell_outline"
 NONCONTEXT_MASK_LAYER_NAME = "noncontext_mask"
 LABELER_LAYER_NAME = "labeler_assignments"
 LABELER_SELECTED_CELL_LAYER_NAME = "labeler_selected_cell_outline"
+CELL_PROPERTIES_SELECTED_LAYER_NAME = "cell_properties_selected_cell_outline"
 EXPLORE_DATA_CACHE_MAX_BYTES = 512 * 1024 * 1024
 EXPLORE_DATA_CACHE_MAX_ITEMS = 48
 
@@ -452,6 +455,7 @@ class NapariSBTController:
             QLabel,
             QLineEdit,
             QListWidget,
+            QListWidgetItem,
             QMessageBox,
             QProgressBar,
             QPushButton,
@@ -486,6 +490,7 @@ class NapariSBTController:
         self.QColor = QColor
         self.QIcon = QIcon
         self.QPixmap = QPixmap
+        self.QListWidgetItem = QListWidgetItem
         self.QTableWidgetItem = QTableWidgetItem
         self.QTextBrowser = QTextBrowser
         self.QTreeWidgetItem = QTreeWidgetItem
@@ -524,6 +529,7 @@ class NapariSBTController:
         self.current_mask_path: Path | None = None
         self.current_selected_object: int | None = None
         self.current_labeler_object: int | None = None
+        self.cell_properties_selected_object: int | None = None
         self.feature_process = None
         self.source_validation_process = None
         self.refinement_process = None
@@ -563,6 +569,8 @@ class NapariSBTController:
         self._population_qc_marker_cache: dict[tuple, list[str]] = {}
         self._population_qc_ranking_cache: dict[tuple, list[tuple[str, int]]] = {}
         self._adata_roi_positions: dict[str, np.ndarray] = {}
+        self._cell_properties_position_index: dict[str, dict[int, int]] = {}
+        self._cell_properties_colour_maps: dict[str, dict[str, str]] = {}
         self._roi_level_metadata: dict[str, dict[str, object]] | None = None
         self._cohort_ids_by_roi: dict[str, set[int]] = {}
         self._recipe_tracking_workflow: str | None = None
@@ -593,6 +601,7 @@ class NapariSBTController:
         self.activity_started_at: float | None = None
         self.activity_finished_at: float | None = None
         self.activity_waiting_for_process = False
+        self.cell_properties_settings_dialog = None
 
         self.root = QWidget()
         self.feature_health_timer = QTimer(self.root)
@@ -3550,6 +3559,55 @@ class NapariSBTController:
         activity_layout.addWidget(self.activity_title_label)
         activity_layout.addWidget(self.activity_detail_label)
         self.activity_widget.adjustSize()
+
+        # Passive cell inspection lives in a separate dock beside Readiness. It
+        # observes viewer clicks without taking ownership of classifier/Labeler
+        # selection state or their transient outline layers.
+        self.cell_properties_widget = QFrame()
+        self.cell_properties_dock = None
+        self.cell_properties_widget.setObjectName("sbtCellPropertiesPanel")
+        self.cell_properties_widget.setMinimumWidth(290)
+        self.cell_properties_widget.setMinimumHeight(150)
+        self.cell_properties_widget.setStyleSheet(
+            "QFrame#sbtCellPropertiesPanel { background: rgba(25, 31, 42, 235); "
+            "border: 2px solid #22c55e; border-radius: 8px; } "
+            "QLabel, QCheckBox { color: white; background: transparent; }"
+        )
+        cell_properties_layout = QVBoxLayout(self.cell_properties_widget)
+        cell_properties_layout.setContentsMargins(10, 7, 10, 7)
+        cell_properties_layout.setSpacing(4)
+        cell_properties_header = QHBoxLayout()
+        self.cell_properties_title_label = QLabel("Cell properties")
+        cell_properties_title_font = QFont(self.cell_properties_title_label.font())
+        cell_properties_title_font.setBold(True)
+        self.cell_properties_title_label.setFont(cell_properties_title_font)
+        self.cell_properties_tracking_check = QCheckBox("Track clicks")
+        self.cell_properties_tracking_check.setChecked(True)
+        self.cell_properties_settings_button = QPushButton("⚙ Settings")
+        self.cell_properties_settings_button.setToolTip(
+            "Choose cell-level AnnData observations and optional cell outlining."
+        )
+        cell_properties_header.addWidget(self.cell_properties_title_label)
+        cell_properties_header.addStretch(1)
+        cell_properties_header.addWidget(self.cell_properties_tracking_check)
+        cell_properties_header.addWidget(self.cell_properties_settings_button)
+        self.cell_properties_summary_label = QLabel(
+            "Load an ROI, then click a cell to inspect it."
+        )
+        self.cell_properties_summary_label.setWordWrap(True)
+        self.cell_properties_tree = QTreeWidget()
+        self.cell_properties_tree.setHeaderLabels(["Observation", "Value"])
+        self.cell_properties_tree.setRootIsDecorated(False)
+        self.cell_properties_tree.setAlternatingRowColors(False)
+        self.cell_properties_tree.header().setSectionResizeMode(
+            0, QHeaderView.ResizeToContents
+        )
+        self.cell_properties_tree.header().setSectionResizeMode(1, QHeaderView.Stretch)
+        cell_properties_layout.addLayout(cell_properties_header)
+        cell_properties_layout.addWidget(self.cell_properties_summary_label)
+        cell_properties_layout.addWidget(self.cell_properties_tree)
+        self.cell_properties_widget.adjustSize()
+
         self.activity_timer = QTimer(self.root)
         self.activity_timer.setInterval(1000)
         self.activity_timer.timeout.connect(self._update_activity_monitor)
@@ -4216,6 +4274,12 @@ class NapariSBTController:
         self.resize_button.clicked.connect(self._guard(self.resize_selected_layer))
         self.mask_layer_button.clicked.connect(self._guard(self.mask_selected_image))
         self.refresh_status_button.clicked.connect(self._guard(self.refresh_status))
+        self.cell_properties_settings_button.clicked.connect(
+            self.show_cell_properties_settings
+        )
+        self.cell_properties_tracking_check.toggled.connect(
+            self.set_cell_properties_tracking
+        )
         self._update_scope_widget_state()
         self._update_experiment_mode_state()
         self._update_population_neighbor_controls()
@@ -4321,6 +4385,25 @@ class NapariSBTController:
         self._position_readiness_dock()
         return self.activity_dock
 
+    def install_cell_properties_dock(self):
+        """Install passive cell inspection in its own movable Napari dock."""
+
+        if self.cell_properties_dock is not None:
+            return self.cell_properties_dock
+        add_dock_widget = getattr(
+            getattr(self.viewer, "window", None), "add_dock_widget", None
+        )
+        if not callable(add_dock_widget):
+            return None
+        self.cell_properties_dock = add_dock_widget(
+            self.cell_properties_widget,
+            name="NapariSBT Cell properties",
+            area="left",
+            add_vertical_stretch=False,
+            tabify=False,
+        )
+        return self.cell_properties_dock
+
     def _position_readiness_dock(self) -> None:
         """Prefer a compact slot directly beneath Napari's built-in Layers dock."""
 
@@ -4366,6 +4449,482 @@ class NapariSBTController:
             [10000, 130],
             orientation,
         )
+
+    def _position_auxiliary_docks(self) -> None:
+        """Place Readiness and Cell properties side-by-side beneath Layers."""
+
+        self._position_readiness_dock()
+        if self.activity_dock is None or self.cell_properties_dock is None:
+            return
+        qt_window = getattr(getattr(self.viewer, "window", None), "_qt_window", None)
+        if qt_window is None:
+            return
+        horizontal = getattr(getattr(self.Qt, "Orientation", self.Qt), "Horizontal")
+        qt_window.splitDockWidget(
+            self.activity_dock,
+            self.cell_properties_dock,
+            horizontal,
+        )
+        qt_window.resizeDocks(
+            [self.activity_dock, self.cell_properties_dock],
+            [260, 360],
+            horizontal,
+        )
+
+    def _cell_property_candidates(self) -> list[str]:
+        """Return cell-varying obs fields, excluding identity and ROI metadata."""
+
+        if self.adata is None:
+            return []
+        roi_obs, object_obs = self._maintenance_identity_columns()
+        if not roi_obs or not object_obs or roi_obs not in self.adata.obs:
+            return []
+        return cell_level_observations(
+            self.adata.obs,
+            roi_obs=roi_obs,
+            object_obs=object_obs,
+        )
+
+    def _default_cell_property_observations(
+        self, candidates: Iterable[str]
+    ) -> list[str]:
+        """Choose a compact, label-focused first view for non-technical users."""
+
+        candidates = list(candidates)
+        if self.adata is None:
+            return candidates[:8]
+        label_terms = (
+            "population",
+            "cell_type",
+            "celltype",
+            "phenotype",
+            "leiden",
+            "cluster",
+            "class",
+            "label",
+        )
+        ranked: list[tuple[int, int, str]] = []
+        for index, observation in enumerate(candidates):
+            series = self.adata.obs[observation]
+            name = observation.casefold()
+            term_rank = next(
+                (
+                    term_index
+                    for term_index, term in enumerate(label_terms)
+                    if term in name
+                ),
+                len(label_terms),
+            )
+            categorical = isinstance(series.dtype, pd.CategoricalDtype)
+            categorical = categorical or pd.api.types.is_bool_dtype(series.dtype)
+            priority = term_rank if term_rank < len(label_terms) else len(label_terms)
+            if not categorical and term_rank == len(label_terms):
+                priority += len(label_terms)
+            ranked.append((priority, index, observation))
+        return [observation for _priority, _index, observation in sorted(ranked)[:8]]
+
+    def _refresh_cell_properties_available_observations(self) -> None:
+        """Reconcile saved property choices with the live AnnData schema."""
+
+        if not hasattr(self, "cell_properties_tracking_check"):
+            return
+        candidates = self._cell_property_candidates()
+        if candidates and not self.explore_review_state.cell_properties_configured:
+            self.explore_review_state.cell_properties_observations = (
+                self._default_cell_property_observations(candidates)
+            )
+            self.explore_review_state.cell_properties_configured = True
+            self._save_explore_review_state()
+        self._cell_properties_colour_maps.clear()
+        self._sync_cell_properties_controls()
+        if self.cell_properties_settings_dialog is not None:
+            self._populate_cell_properties_settings_list()
+
+    def _sync_cell_properties_controls(self) -> None:
+        """Copy persisted inspection settings into any currently built widgets."""
+
+        if not hasattr(self, "cell_properties_tracking_check"):
+            return
+        blocked = self.cell_properties_tracking_check.blockSignals(True)
+        self.cell_properties_tracking_check.setChecked(
+            bool(self.explore_review_state.cell_properties_tracking_enabled)
+        )
+        self.cell_properties_tracking_check.blockSignals(blocked)
+        if self.cell_properties_settings_dialog is None:
+            return
+        self.cell_properties_settings_tracking.setChecked(
+            bool(self.explore_review_state.cell_properties_tracking_enabled)
+        )
+        self.cell_properties_settings_outline.setChecked(
+            bool(self.explore_review_state.cell_properties_outline_enabled)
+        )
+        self.cell_properties_settings_outline_width.setValue(
+            int(self.explore_review_state.cell_properties_outline_width)
+        )
+        self._set_cell_properties_colour_button(
+            self.explore_review_state.cell_properties_outline_colour
+        )
+
+    def _populate_cell_properties_settings_list(self) -> None:
+        candidates = self._cell_property_candidates()
+        selected = set(self.explore_review_state.cell_properties_observations)
+        self.cell_properties_settings_list.clear()
+        for observation in candidates:
+            item = self.QListWidgetItem(observation)
+            item.setFlags(item.flags() | self.Qt.ItemIsUserCheckable)
+            item.setCheckState(
+                self.Qt.Checked if observation in selected else self.Qt.Unchecked
+            )
+            item.setToolTip(f"adata.obs[{observation!r}]")
+            self.cell_properties_settings_list.addItem(item)
+        self.cell_properties_settings_count.setText(
+            f"{len(candidates):,} cell-level fields available. ROI-level fields and "
+            "identity columns are excluded automatically."
+        )
+
+    def show_cell_properties_settings(self) -> None:
+        """Show property selection, tracking, and optional outline controls."""
+
+        if self.cell_properties_settings_dialog is None:
+            from qtpy.QtWidgets import (
+                QCheckBox,
+                QDialogButtonBox,
+                QFormLayout,
+                QHBoxLayout,
+                QLabel,
+                QListWidget,
+                QPushButton,
+                QSpinBox,
+                QVBoxLayout,
+            )
+
+            dialog = self.QDialog(self.root)
+            dialog.setWindowTitle("Cell properties settings")
+            dialog.resize(560, 620)
+            layout = QVBoxLayout(dialog)
+            explanation = QLabel(
+                "Choose the cell-level AnnData observations shown after a tissue "
+                "click. This passive inspector does not replace classifier or "
+                "Labeler click actions."
+            )
+            explanation.setWordWrap(True)
+            self.cell_properties_settings_tracking = QCheckBox(
+                "Track left-clicked cells"
+            )
+            self.cell_properties_settings_outline = QCheckBox(
+                "Outline the inspected cell"
+            )
+            outline_form = QFormLayout()
+            self.cell_properties_settings_outline_colour = QPushButton()
+            self.cell_properties_settings_outline_colour.clicked.connect(
+                self._choose_cell_properties_outline_colour
+            )
+            self.cell_properties_settings_outline_width = QSpinBox()
+            self.cell_properties_settings_outline_width.setRange(1, 20)
+            self.cell_properties_settings_outline_width.setSuffix(" px")
+            outline_form.addRow(
+                "Outline colour", self.cell_properties_settings_outline_colour
+            )
+            outline_form.addRow(
+                "Outline width", self.cell_properties_settings_outline_width
+            )
+            self.cell_properties_settings_count = QLabel()
+            self.cell_properties_settings_count.setWordWrap(True)
+            self.cell_properties_settings_list = QListWidget()
+            list_actions = QHBoxLayout()
+            recommended_button = QPushButton("Recommended labels")
+            select_all_button = QPushButton("Select all")
+            clear_button = QPushButton("Clear selection")
+            recommended_button.clicked.connect(
+                self._select_recommended_cell_properties
+            )
+            select_all_button.clicked.connect(
+                lambda: self._set_all_cell_property_checks(True)
+            )
+            clear_button.clicked.connect(
+                lambda: self._set_all_cell_property_checks(False)
+            )
+            list_actions.addWidget(recommended_button)
+            list_actions.addWidget(select_all_button)
+            list_actions.addWidget(clear_button)
+            buttons = QDialogButtonBox(
+                QDialogButtonBox.Apply | QDialogButtonBox.Close
+            )
+            buttons.button(QDialogButtonBox.Apply).clicked.connect(
+                self.apply_cell_properties_settings
+            )
+            buttons.rejected.connect(dialog.close)
+            layout.addWidget(explanation)
+            layout.addWidget(self.cell_properties_settings_tracking)
+            layout.addWidget(self.cell_properties_settings_outline)
+            layout.addLayout(outline_form)
+            layout.addWidget(self.cell_properties_settings_count)
+            layout.addWidget(self.cell_properties_settings_list)
+            layout.addLayout(list_actions)
+            layout.addWidget(buttons)
+            self.cell_properties_settings_dialog = dialog
+        self._sync_cell_properties_controls()
+        self._populate_cell_properties_settings_list()
+        self.cell_properties_settings_dialog.show()
+        self.cell_properties_settings_dialog.raise_()
+        self.cell_properties_settings_dialog.activateWindow()
+
+    def _set_all_cell_property_checks(self, checked: bool) -> None:
+        state = self.Qt.Checked if checked else self.Qt.Unchecked
+        for index in range(self.cell_properties_settings_list.count()):
+            self.cell_properties_settings_list.item(index).setCheckState(state)
+
+    def _select_recommended_cell_properties(self) -> None:
+        recommended = set(
+            self._default_cell_property_observations(
+                self._cell_property_candidates()
+            )
+        )
+        for index in range(self.cell_properties_settings_list.count()):
+            item = self.cell_properties_settings_list.item(index)
+            item.setCheckState(
+                self.Qt.Checked if item.text() in recommended else self.Qt.Unchecked
+            )
+
+    def _set_cell_properties_colour_button(self, colour: str) -> None:
+        colour = self.QColor(str(colour))
+        if not colour.isValid():
+            colour = self.QColor("#facc15")
+        value = colour.name()
+        self.cell_properties_settings_outline_colour.setProperty("colour", value)
+        self.cell_properties_settings_outline_colour.setText(value)
+        self.cell_properties_settings_outline_colour.setStyleSheet(
+            f"background-color: {value}; color: {contrasting_text_colour(value)};"
+        )
+
+    def _choose_cell_properties_outline_colour(self) -> None:
+        current = self.cell_properties_settings_outline_colour.property("colour")
+        colour = self.QColorDialog.getColor(
+            self.QColor(str(current or "#facc15")),
+            self.root,
+            "Choose inspected-cell outline colour",
+        )
+        if colour.isValid():
+            self._set_cell_properties_colour_button(colour.name())
+
+    def apply_cell_properties_settings(self) -> None:
+        selected = [
+            self.cell_properties_settings_list.item(index).text()
+            for index in range(self.cell_properties_settings_list.count())
+            if self.cell_properties_settings_list.item(index).checkState()
+            == self.Qt.Checked
+        ]
+        payload = self.explore_review_state.model_dump(mode="json")
+        payload.update(
+            {
+                "cell_properties_configured": True,
+                "cell_properties_tracking_enabled": bool(
+                    self.cell_properties_settings_tracking.isChecked()
+                ),
+                "cell_properties_observations": selected,
+                "cell_properties_outline_enabled": bool(
+                    self.cell_properties_settings_outline.isChecked()
+                ),
+                "cell_properties_outline_colour": str(
+                    self.cell_properties_settings_outline_colour.property("colour")
+                    or "#facc15"
+                ),
+                "cell_properties_outline_width": int(
+                    self.cell_properties_settings_outline_width.value()
+                ),
+            }
+        )
+        self.explore_review_state = ExploreReviewState.model_validate(payload)
+        self._cell_properties_colour_maps.clear()
+        self._sync_cell_properties_controls()
+        self._save_explore_review_state()
+        if self.explore_review_state.cell_properties_tracking_enabled:
+            if self.cell_properties_selected_object is not None:
+                self._show_cell_properties_for_object(
+                    self.cell_properties_selected_object
+                )
+            else:
+                self.cell_properties_summary_label.setText(
+                    "Tracking enabled. Click a segmented cell to inspect it."
+                )
+        else:
+            self._remove_layers([CELL_PROPERTIES_SELECTED_LAYER_NAME])
+            self.cell_properties_summary_label.setText(
+                "Tracking paused. Enable Track clicks here or in Settings."
+            )
+        self.set_status(
+            f"Cell properties now tracks {len(selected):,} cell-level obs field(s)."
+        )
+
+    def set_cell_properties_tracking(self, enabled: bool) -> None:
+        """Enable or pause passive click inspection without changing other tools."""
+
+        payload = self.explore_review_state.model_dump(mode="json")
+        payload["cell_properties_configured"] = True
+        payload["cell_properties_tracking_enabled"] = bool(enabled)
+        self.explore_review_state = ExploreReviewState.model_validate(payload)
+        if self.cell_properties_settings_dialog is not None:
+            self.cell_properties_settings_tracking.setChecked(bool(enabled))
+        if enabled:
+            self.cell_properties_summary_label.setText(
+                "Tracking enabled. Click a segmented cell to inspect it."
+            )
+            if self.cell_properties_selected_object is not None:
+                self._show_cell_properties_for_object(
+                    self.cell_properties_selected_object
+                )
+        else:
+            self._remove_layers([CELL_PROPERTIES_SELECTED_LAYER_NAME])
+            self.cell_properties_summary_label.setText(
+                "Tracking paused. Enable Track clicks here or in Settings."
+            )
+        self._save_explore_review_state()
+
+    def _cell_property_position(self, object_id: int) -> int | None:
+        """Resolve one current-ROI mask ID to an AnnData integer position."""
+
+        if self.adata is None or self.current_roi is None:
+            return None
+        roi = str(self.current_roi)
+        cached = self._cell_properties_position_index.get(roi)
+        if cached is None:
+            roi_obs, object_obs = self._maintenance_identity_columns()
+            if roi_obs not in self.adata.obs or object_obs not in self.adata.obs:
+                return None
+            if not self._adata_roi_positions:
+                groups = self.adata.obs.groupby(
+                    self.adata.obs[roi_obs].astype(str),
+                    sort=False,
+                    observed=True,
+                ).indices
+                self._adata_roi_positions = {
+                    str(group_roi): np.asarray(positions, dtype=np.int64)
+                    for group_roi, positions in groups.items()
+                }
+            positions = self._adata_roi_positions.get(
+                roi, np.empty(0, dtype=np.int64)
+            )
+            object_ids = pd.to_numeric(
+                self.adata.obs.iloc[positions][object_obs], errors="coerce"
+            )
+            cached = {
+                int(value): int(position)
+                for position, value in zip(positions, object_ids)
+                if pd.notna(value) and int(value) > 0
+            }
+            self._cell_properties_position_index[roi] = cached
+        return cached.get(int(object_id))
+
+    def _cell_property_colour(self, observation: str, value) -> str | None:
+        if self.adata is None or observation not in self.adata.obs:
+            return None
+        try:
+            missing = pd.isna(value)
+        except (TypeError, ValueError):
+            missing = False
+        if not isinstance(missing, (bool, np.bool_)) or bool(missing):
+            return None
+        series = self.adata.obs[observation]
+        dtype = series.dtype
+        categorical = isinstance(dtype, pd.CategoricalDtype)
+        categorical = categorical or pd.api.types.is_bool_dtype(dtype)
+        categorical = categorical or pd.api.types.is_string_dtype(dtype)
+        categorical = categorical or pd.api.types.is_object_dtype(dtype)
+        if not categorical:
+            return None
+        if observation not in self._cell_properties_colour_maps:
+            self._cell_properties_colour_maps[observation] = categorical_colour_map(
+                self.adata, observation
+            )
+        return self._cell_properties_colour_maps[observation].get(str(value))
+
+    def _show_cell_properties_for_object(self, object_id: int) -> None:
+        """Display selected obs values and an optional independent cell outline."""
+
+        if not self.explore_review_state.cell_properties_tracking_enabled:
+            return
+        self.cell_properties_tree.clear()
+        if object_id <= 0:
+            self.cell_properties_selected_object = None
+            self._remove_layers([CELL_PROPERTIES_SELECTED_LAYER_NAME])
+            self.cell_properties_summary_label.setText(
+                "Background selected. Click inside a segmented cell."
+            )
+            return
+        self.cell_properties_selected_object = int(object_id)
+        self._refresh_cell_properties_outline()
+        position = self._cell_property_position(object_id)
+        if position is None:
+            self.cell_properties_summary_label.setText(
+                f"ROI {self.current_roi} / object {object_id}: no matching AnnData row."
+            )
+            return
+        row = self.adata.obs.iloc[position]
+        observations = [
+            observation
+            for observation in self.explore_review_state.cell_properties_observations
+            if observation in self.adata.obs
+        ]
+        self.cell_properties_summary_label.setText(
+            f"{self.current_roi} / object {object_id} / AnnData cell "
+            f"{self.adata.obs_names[position]}"
+        )
+        if not observations:
+            self.cell_properties_tree.addTopLevelItem(
+                self.QTreeWidgetItem(
+                    ["No fields selected", "Open Settings to choose cell-level obs"]
+                )
+            )
+            return
+        for observation in observations:
+            value = row[observation]
+            item = self.QTreeWidgetItem(
+                [observation, format_roi_metadata_value(value)]
+            )
+            colour = self._cell_property_colour(observation, value)
+            if colour:
+                item.setBackground(1, self.QColor(colour))
+                item.setForeground(
+                    1, self.QColor(contrasting_text_colour(colour))
+                )
+            self.cell_properties_tree.addTopLevelItem(item)
+
+    def _refresh_cell_properties_outline(self) -> None:
+        state = self.explore_review_state
+        if (
+            not state.cell_properties_tracking_enabled
+            or not state.cell_properties_outline_enabled
+            or self.current_mask is None
+            or self.cell_properties_selected_object is None
+        ):
+            self._remove_layers([CELL_PROPERTIES_SELECTED_LAYER_NAME])
+            return
+        selected = (
+            self.current_mask == int(self.cell_properties_selected_object)
+        ).astype(np.uint8)
+        active_layer = self.viewer.layers.selection.active
+        layer = self._replace_layer(
+            CELL_PROPERTIES_SELECTED_LAYER_NAME,
+            selected,
+            "labels",
+            colormap=self._direct_label_colormap(
+                {1: state.cell_properties_outline_colour}
+            ),
+            visible=True,
+            opacity=1.0,
+        )
+        if hasattr(layer, "contour"):
+            layer.contour = int(state.cell_properties_outline_width)
+        if hasattr(layer, "editable"):
+            layer.editable = False
+        source = self.viewer.layers.index(layer)
+        if source != len(self.viewer.layers) - 1:
+            self.viewer.layers.move(source, len(self.viewer.layers))
+        if (
+            active_layer is not None
+            and str(getattr(active_layer, "name", "")) in self.viewer.layers
+        ):
+            self.viewer.layers.selection.active = active_layer
 
     def _update_activity_monitor(self) -> None:
         if not hasattr(self, "activity_widget"):
@@ -5110,6 +5669,8 @@ class NapariSBTController:
         self._population_qc_marker_cache.clear()
         self._population_qc_ranking_cache.clear()
         self._adata_roi_positions.clear()
+        self._cell_properties_position_index.clear()
+        self._cell_properties_colour_maps.clear()
         self._roi_level_metadata = None
         self._cohort_ids_by_roi.clear()
 
@@ -5835,6 +6396,7 @@ class NapariSBTController:
         self.mark_scanpy_plots_stale()
         self.refresh_scanpy_plotting_choices()
         self._refresh_maintenance_controls()
+        self._refresh_cell_properties_available_observations()
         self.refresh_setup_readiness()
         self.set_status(
             f"Loaded AnnData selectors for {self.adata.n_obs:,} cells from {source}."
@@ -10610,6 +11172,7 @@ class NapariSBTController:
         path = self._explore_state_path()
         if path is None or not path.exists():
             self._sync_population_qc_contour_control()
+            self._sync_cell_properties_controls()
             self._bind_explore_recipe_shortcuts()
             self._refresh_recipe_preset_controls()
             self._refresh_reload_recipe_list()
@@ -10633,6 +11196,7 @@ class NapariSBTController:
                 f"Could not read Explore review state from {path.name}: {exc}"
             )
         self._sync_population_qc_contour_control()
+        self._sync_cell_properties_controls()
         self._bind_explore_recipe_shortcuts()
         self._refresh_recipe_preset_controls()
         self._refresh_reload_recipe_list()
@@ -11512,6 +12076,22 @@ class NapariSBTController:
         colormap = getattr(layer, "colormap", None)
         if colormap is None:
             return None
+        try:
+            from napari.utils.colormaps import CyclicLabelColormap
+        except ImportError:  # pragma: no cover - guarded by the GUI dependency
+            CyclicLabelColormap = ()
+        if isinstance(colormap, CyclicLabelColormap):
+            rgba = np.asarray(colormap.colors, dtype=float)
+            if (
+                rgba.ndim == 2
+                and rgba.shape[1] in {3, 4}
+                and np.isfinite(rgba).all()
+            ):
+                return {
+                    "kind": "cyclic_labels",
+                    "colours": rgba.tolist(),
+                    "background_value": int(colormap.background_value),
+                }
         color_dict = getattr(colormap, "color_dict", None)
         if isinstance(color_dict, dict):
             colours: dict[str, list[float]] = {}
@@ -11555,6 +12135,13 @@ class NapariSBTController:
                         label = None if key == "__default__" else int(key)
                         colour_dict[label] = colour
                     return DirectLabelColormap(color_dict=colour_dict)
+                if spec.get("kind") == "cyclic_labels":
+                    from napari.utils.colormaps import CyclicLabelColormap
+
+                    return CyclicLabelColormap(
+                        colors=spec["colours"],
+                        background_value=int(spec.get("background_value", 0)),
+                    )
                 if spec.get("kind") == "continuous":
                     from napari.utils.colormaps import Colormap
 
@@ -11568,6 +12155,58 @@ class NapariSBTController:
                 # A legacy or externally edited recipe should remain usable.
                 pass
         return self.explore_recipe.layer_colormaps.get(name, default)
+
+    def _single_colour_label_colormap(self, colour):
+        """Map every non-background label ID to one display colour."""
+
+        from napari.utils.colormaps import CyclicLabelColormap
+
+        if isinstance(colour, str):
+            colours = ["#00000000", colour]
+        else:
+            rgba = np.asarray(colour, dtype=float).reshape(-1)
+            if rgba.size == 3:
+                rgba = np.append(rgba, 1.0)
+            colours = [[0.0, 0.0, 0.0, 0.0], rgba.tolist()]
+        return CyclicLabelColormap(
+            colors=colours,
+            background_value=0,
+        )
+
+    def _population_layer_colormap(self, name: str, default_colour: str):
+        """Restore one population colour, including from legacy binary recipes."""
+
+        spec = self.explore_recipe.layer_colormap_specs.get(name)
+        if spec:
+            colours = spec.get("colours", {})
+            if spec.get("kind") == "direct_labels" and isinstance(colours, dict):
+                colour = colours.get("1")
+                if colour is None:
+                    colour = next(
+                        (
+                            value
+                            for key, value in colours.items()
+                            if key != "__default__"
+                        ),
+                        None,
+                    )
+                if colour is not None:
+                    return self._single_colour_label_colormap(colour)
+            if spec.get("kind") in {"cyclic_labels", "continuous"} and isinstance(
+                colours, list
+            ):
+                candidates = (
+                    colours[1:]
+                    if spec.get("kind") == "cyclic_labels"
+                    else colours
+                )
+                for colour in reversed(candidates):
+                    rgba = np.asarray(colour, dtype=float).reshape(-1)
+                    if rgba.size in {3, 4} and (
+                        rgba.size == 3 or float(rgba[3]) > 0
+                    ):
+                        return self._single_colour_label_colormap(colour)
+        return self._single_colour_label_colormap(default_colour)
 
     def _write_layer_display_state(self, payload: dict, layer) -> None:
         """Copy live display settings into a mutable recipe payload."""
@@ -12055,6 +12694,14 @@ class NapariSBTController:
                     np.allclose(current_colours[key], desired_colours[key])
                     for key in current_colours
                 )
+            if current["kind"] == "cyclic_labels":
+                return (
+                    int(current.get("background_value", 0))
+                    == int(desired.get("background_value", 0))
+                    and np.allclose(
+                        current.get("colours", []), desired.get("colours", [])
+                    )
+                )
             if current["kind"] == "continuous":
                 return (
                     str(current.get("interpolation", "linear"))
@@ -12408,10 +13055,21 @@ class NapariSBTController:
         self.current_mask_path = mask_path
         self.current_selected_object = None
         self.current_labeler_object = None
+        self.cell_properties_selected_object = None
         self.selected_cell_label.setText("No cohort cell selected")
         self.labeler_selected_cell_label.setText("No cohort cell selected")
+        self.cell_properties_tree.clear()
+        self.cell_properties_summary_label.setText(
+            "Tracking enabled. Click a segmented cell to inspect it."
+            if self.explore_review_state.cell_properties_tracking_enabled
+            else "Tracking paused. Enable Track clicks here or in Settings."
+        )
         self._remove_layers(
-            [SELECTED_CELL_LAYER_NAME, LABELER_SELECTED_CELL_LAYER_NAME]
+            [
+                SELECTED_CELL_LAYER_NAME,
+                LABELER_SELECTED_CELL_LAYER_NAME,
+                CELL_PROPERTIES_SELECTED_LAYER_NAME,
+            ]
         )
         if self.labeler_roi_combo.findText(roi) >= 0:
             self.labeler_roi_combo.blockSignals(True)
@@ -12720,12 +13378,9 @@ class NapariSBTController:
         active_tab = self.tabs.currentIndex()
         if (
             self.current_mask is None
-            or active_tab not in {self.classify_tab_index, self.labeler_tab_index}
             or event.type != "mouse_press"
             or getattr(event, "button", 1) != 1
         ):
-            return
-        if active_tab == self.classify_tab_index and not self.cell_picking_enabled:
             return
         position = event.position
         if len(position) < 2:
@@ -12740,6 +13395,16 @@ class NapariSBTController:
         ):
             return
         object_id = int(self.current_mask[row, column])
+        try:
+            self._show_cell_properties_for_object(object_id)
+        except Exception as error:  # noqa: BLE001 - inspector must stay non-blocking
+            self.cell_properties_summary_label.setText(
+                f"Could not inspect this cell: {type(error).__name__}: {error}"
+            )
+        if active_tab not in {self.classify_tab_index, self.labeler_tab_index}:
+            return
+        if active_tab == self.classify_tab_index and not self.cell_picking_enabled:
+            return
         if active_tab == self.labeler_tab_index:
             self._handle_clicked_labeler_object(object_id)
         else:
@@ -13427,10 +14092,7 @@ class NapariSBTController:
                 "population": population,
             }
             display_settings = {
-                "colormap": self._recipe_colormap(
-                    name,
-                    self._direct_label_colormap({1: colour}),
-                ),
+                "colormap": self._population_layer_colormap(name, colour),
                 "visible": self.explore_recipe.layer_visibility.get(name, True),
                 "opacity": self.explore_recipe.layer_opacities.get(name, 1.0),
             }
@@ -13456,13 +14118,9 @@ class NapariSBTController:
                 roi_data = (object_ids, selected, values)
             object_ids, selected, values = roi_data
             population_selected = selected & values.eq(str(population))
-            mapping = pd.Series(
-                np.ones(int(population_selected.sum()), dtype=np.int32),
-                index=object_ids[population_selected].astype(int),
-            )
-            overlay = identity_value_map(
+            overlay = population_identity_map(
                 self.current_mask,
-                mapping,
+                object_ids[population_selected],
                 dtype=np.int32,
             )
             layer = self._replace_explore_layer(
@@ -16738,12 +17396,13 @@ def launch(
         area="right",
     )
     controller.install_readiness_dock()
+    controller.install_cell_properties_dock()
     # Reapply the preferred split once Qt has completed this event-loop turn;
     # this keeps the compact readiness dock below Layers after Napari finishes
     # sizing all newly added docks.
     from qtpy.QtCore import QTimer
 
-    QTimer.singleShot(0, controller._position_readiness_dock)
+    QTimer.singleShot(0, controller._position_auxiliary_docks)
     return viewer, controller, dock
 
 

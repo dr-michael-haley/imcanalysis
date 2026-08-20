@@ -11,9 +11,11 @@ from SpatialBiologyToolkit.napari_sbt.explore import (
     ExploreReviewState,
     ExploreViewRecipe,
     categorical_colour_map,
+    cell_level_observations,
     format_roi_metadata_value,
     identity_value_map,
     marker_values,
+    population_identity_map,
     population_recipe_key,
     recipe_layer_data_is_current,
     roi_level_metadata,
@@ -39,6 +41,14 @@ def test_identity_value_map_supports_constant_population_masks():
     mapped = identity_value_map(mask, values, dtype=np.uint8)
 
     np.testing.assert_array_equal(mapped, [[0, 1, 0], [1, 0, 1]])
+
+
+def test_population_identity_map_keeps_touching_population_cells_distinct():
+    mask = np.asarray([[0, 2, 2], [9, 9, 5]], dtype=np.int32)
+
+    mapped = population_identity_map(mask, [2, 9])
+
+    np.testing.assert_array_equal(mapped, [[0, 2, 2], [9, 9, 0]])
 
 
 def test_identity_value_map_avoids_large_lookup_for_sparse_high_ids():
@@ -128,6 +138,26 @@ def test_roi_level_metadata_detects_constant_mixed_type_obs_fields():
     )
 
 
+def test_cell_level_observations_exclude_roi_metadata_and_identity_columns():
+    obs = pd.DataFrame(
+        {
+            "ROI": ["A", "A", "B", "B"],
+            "ObjectNumber": [1, 2, 1, 2],
+            "patient": ["P1", "P1", "P2", "P2"],
+            "population": pd.Categorical(["T", "B", "T", "T"]),
+            "intensity": [0.1, 0.5, 0.2, 0.8],
+        }
+    )
+
+    fields = cell_level_observations(
+        obs,
+        roi_obs="ROI",
+        object_obs="ObjectNumber",
+    )
+
+    assert fields == ["population", "intensity"]
+
+
 def test_explore_recipe_fingerprint_tracks_colour_assignment_order():
     red_green = ExploreViewRecipe(
         image_mode="six_colour",
@@ -213,6 +243,11 @@ def test_population_recipes_and_viewed_rois_round_trip():
         population_recipes={key: recipe},
         viewed_rois={recipe.fingerprint: ["ROI_1", "ROI_2"]},
         population_qc_contour_width=4,
+        cell_properties_configured=True,
+        cell_properties_observations=["population", "leiden"],
+        cell_properties_outline_enabled=True,
+        cell_properties_outline_colour="#abcdef",
+        cell_properties_outline_width=3,
     )
 
     restored = ExploreReviewState.model_validate(state.model_dump(mode="json"))
@@ -220,6 +255,9 @@ def test_population_recipes_and_viewed_rois_round_trip():
     assert restored.population_recipes[key] == recipe
     assert restored.viewed_rois[recipe.fingerprint] == ["ROI_1", "ROI_2"]
     assert restored.population_qc_contour_width == 4
+    assert restored.cell_properties_observations == ["population", "leiden"]
+    assert restored.cell_properties_outline_colour == "#abcdef"
+    assert restored.cell_properties_outline_width == 3
 
 
 def test_named_recipe_presets_and_function_keys_round_trip():
@@ -287,3 +325,5 @@ def test_legacy_explore_review_state_defaults_to_no_named_presets():
     assert restored.recipe_presets == {}
     assert restored.active_recipe_id is None
     assert restored.population_qc_contour_width == 1
+    assert restored.cell_properties_tracking_enabled
+    assert restored.cell_properties_observations == []

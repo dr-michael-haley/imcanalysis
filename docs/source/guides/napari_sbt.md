@@ -341,6 +341,16 @@ or failed state. It can be moved, floated, or hidden like any other Napari dock;
 hiding it is respected by subsequent heartbeat updates. The feature-building
 panel retains its more detailed per-ROI progress display.
 
+The adjacent **NapariSBT Cell properties** dock is a passive AnnData inspector.
+When tracking is enabled, a left-click on any identity-matched segmented cell
+shows the configured cell-level `adata.obs` values. Fields detected as ROI-level
+metadata, plus the ROI and object-ID columns, are excluded from its Settings
+list. Categorical values recover their AnnData colours where possible. An
+optional colour/width-controlled outline uses a separate non-editable transient
+layer and restores the previously active Napari layer, so classifier and Labeler
+click actions continue independently. These choices are stored with the Explore
+review state rather than in the source AnnData.
+
 For large datasets, configure the active experiment and run:
 
 ```bash
@@ -499,6 +509,11 @@ alternatives accepted) and otherwise use a stable fallback palette. Specific
 populations can be selected as individual contour layers. Variables in
 `adata.var_names` can also be loaded from cell-level `adata.X` values and
 mapped onto eligible mask objects as quantitative overlays.
+
+Population layers preserve the original mask ID of every displayed cell while
+using one colour for the selected population. Consequently, a non-zero contour
+width draws boundaries between adjacent cells even when both have the same
+population label; this changes only the display overlay and never the source mask.
 
 Observation overlays are cohort-restricted by default. Enable **Include cells
 outside the classification cohort** to map an observation over every

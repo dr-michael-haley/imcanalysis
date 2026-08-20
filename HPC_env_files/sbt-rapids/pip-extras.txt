@@ -1,0 +1,6 @@
+# RAPIDS, CUDA, CuPy, cuDF, cuML, cuGraph, cuVS, RMM, UCXX, and Dask are
+# supplied together by the locked Conda RAPIDS 26.08 transaction above.
+# Do not request the [rapids-cu12] extra here because that would install a
+# second pip-managed RAPIDS/CUDA layer over the Conda lock.
+rapids-singlecell==0.16.1
+

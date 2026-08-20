@@ -43,8 +43,11 @@ ranges when required.
 
 **Outline width for all populations** controls the contour of the
 selected-population label layer from 0 to 20 pixels. The default is 1 pixel; 0
-displays filled labels. This is one workspace-wide Population QC preference, so
-changing populations does not replace it. It is not stored in each population's
+displays filled labels. Original mask IDs are retained in this display layer, so
+a non-zero outline also separates touching cells assigned to the same population
+instead of presenting them as one merged object. This is one workspace-wide
+Population QC preference, so changing populations does not replace it. It is not
+stored in each population's
 RGB recipe or CSV row. The current global width still contributes to the effective
 view fingerprint, so changing it creates an appropriate new viewed-ROI context.
 

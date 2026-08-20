@@ -1,0 +1,58 @@
+# Inactive modern RAPIDS candidate. The production RAPIDS stage remains mapped
+# to sbt-analysis until this environment passes GPU and representative workflow
+# validation on CSF3.
+name: sbt-rapids
+channels:
+  - rapidsai
+  - nvidia
+  - conda-forge
+
+dependencies:
+  # RAPIDS-singlecell 0.16.1 requires Python 3.12 or newer. Python 3.12 keeps
+  # the candidate conservative while remaining within RAPIDS 26.08 support.
+  - python=3.12
+  - pip
+
+  # Use one coherent current RAPIDS generation. CUDA 12.9 retains wider HPC
+  # portability than CUDA 13 while remaining supported by the CSF3 driver.
+  - rapids=26.08
+  - cuda-version=12.9
+
+  # RAPIDS 26.08 intentionally moved to the NumPy 2, Pandas 3, and CuPy 14
+  # generation. Keep this environment independent from SpatialData 0.4/Zarr 2.
+  - numpy>=2,<3
+  - pandas>=3,<4
+  - cupy>=14,<15
+
+  # AnnData/Scanpy and the scientific dependencies used directly by the SBT
+  # RAPIDS stage and its optional Harmony and plotting paths.
+  - anndata>=0.12,<0.13
+  - scanpy>=1.11.5,<1.12
+  - scipy>=1.15,<2
+  - scikit-learn>=1.6,<2
+  - scikit-image>=0.25,<1
+  - scikit-misc
+  - statsmodels>=0.14,<1
+  - umap-learn>=0.5,<1
+  - harmonypy>=0.1,<1
+  - python-igraph>=0.11,<2
+  - leidenalg>=0.10,<1
+  - matplotlib>=3.10,<4
+  - seaborn>=0.13,<1
+  - h5py
+  - pyarrow
+  - shapely>=2,<3
+  - tifffile
+  - pillow
+  - ipython
+  - tqdm
+
+  # SBT configuration and runtime dependencies required inside compute jobs.
+  - pyyaml>=6
+  - pydantic>=2.4,<3
+  - typer>=0.12,<1
+
+  # Keep compiled extensions on the Conda C/C++ runtime on CSF3.
+  - libstdcxx-ng>=15
+  - libgcc-ng>=15
+

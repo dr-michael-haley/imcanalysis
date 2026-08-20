@@ -351,14 +351,72 @@ class RegistryTests(EnvironmentFixture):
             matching = [script for script in stage_smoke_scripts if module in script]
             self.assertEqual(matching, [f"import SpatialBiologyToolkit.scripts.{module}"])
 
-    def test_retired_environment_keys_are_absent_and_names_are_standardized(self):
+    def test_dedicated_rapids_candidate_is_inactive_and_modern(self):
+        root = Path(__file__).resolve().parents[1]
+        central = load_environment_registry(root)
+        definition = central.environments["rapids"]
+        specification = root / definition.specification_directory
+
+        self.assertEqual(definition.conda_name, "sbt-rapids")
+        self.assertTrue(definition.managed)
+        self.assertEqual(definition.conda_channel_priority, "flexible")
+        self.assertEqual(associated_stages(central, "rapids"), [])
+
+        conda_requirements = declared_conda_requirements(
+            specification / "environment.yml"
+        )
+        pip_requirements = declared_pip_requirements(
+            specification / "pip-extras.txt"
+        )
+        self.assertEqual(conda_requirements["python"], "=3.12")
+        self.assertEqual(conda_requirements["rapids"], "=26.08")
+        self.assertEqual(conda_requirements["cuda-version"], "=12.9")
+        self.assertEqual(conda_requirements["numpy"], ">=2,<3")
+        self.assertEqual(conda_requirements["pandas"], ">=3,<4")
+        self.assertEqual(conda_requirements["cupy"], ">=14,<15")
+        self.assertEqual(
+            pip_requirements["rapids-singlecell"].version, "0.16.1"
+        )
+        for excluded in (
+            "biobatchnet",
+            "cellcharter",
+            "spatialdata",
+            "tensorflow",
+            "torch",
+        ):
+            self.assertNotIn(excluded, pip_requirements)
+
+        smoke_text = " ".join(
+            argument
+            for command in definition.smoke_tests
+            for argument in command
+        )
+        self.assertIn("cugraph", smoke_text)
+        self.assertIn("cupy", smoke_text)
+        self.assertIn(
+            "SpatialBiologyToolkit.scripts.basic_process_rapids", smoke_text
+        )
+        self.assertIn("HPC_env_files/sbt-rapids/smoke_test.py", smoke_text)
+
+        gpu_smoke = (
+            root
+            / "image_migration"
+            / "smoke_tests"
+            / "sbt_rapids_2608_gpu_smoke.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("DIRECT_CUGRAPH_LEIDEN_PASS", gpu_smoke)
+        self.assertIn("RAPIDS_SINGLECELL_WORKFLOW_PASS", gpu_smoke)
+        self.assertIn("GPU_SMOKE_PASS", gpu_smoke)
+
+    def test_retired_source_environment_keys_are_absent_and_names_are_standardized(self):
         root = Path(__file__).resolve().parents[1]
         central = load_environment_registry(root)
 
-        for retired in ("segmentation", "biobatchnet", "cellcharter", "rapids"):
+        for retired in ("segmentation", "biobatchnet", "cellcharter"):
             self.assertNotIn(retired, central.environments)
         expected_names = {
             "analysis": "sbt-analysis",
+            "rapids": "sbt-rapids",
             "napari": "sbt-napari",
             "denoise": "sbt-denoise",
             "tensorflow": "sbt-tensorflow",

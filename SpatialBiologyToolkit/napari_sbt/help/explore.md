@@ -29,6 +29,21 @@ non-missing values within one ROI, is entirely missing, or stores unsupported
 non-scalar objects. Detection is cached for the loaded AnnData and is not repeated
 on ordinary Previous/Next navigation.
 
+## Cell properties dock
+
+The separate **NapariSBT Cell properties** dock passively follows left-clicks in
+the tissue and shows the chosen `adata.obs` values for the matching
+`(ROI, ObjectNumber)` cell. Categorical values use colours from
+`adata.uns["<observation>_colors"]` when available, with the same stable fallback
+palette used by Explore overlays. ROI-level metadata and the identity columns are
+never offered as cell properties because they are already represented elsewhere.
+
+Use **Settings** to choose the tracked observations, pause tracking, or add a
+configurable non-editable outline around the inspected cell. The inspector has
+its own transient selection state and layer: it does not change the classifier or
+Labeler selection, click mode, proposed/confirmed labels, or active Napari layer.
+Settings are retained in the experiment's Explore review state.
+
 **Hide all layers** and **Show all layers** change visibility without discarding
 the view. **Delete all layers** removes the displayed layers; saved reload-recipe
 entries can still reconstruct managed layers on the next ROI.

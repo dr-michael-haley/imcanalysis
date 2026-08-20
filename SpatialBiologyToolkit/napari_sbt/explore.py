@@ -101,6 +101,24 @@ def identity_value_map(
     return output
 
 
+def population_identity_map(
+    mask: np.ndarray,
+    object_ids,
+    *,
+    dtype=np.int32,
+) -> np.ndarray:
+    """Retain selected object IDs so touching population cells stay distinct."""
+
+    identities = pd.to_numeric(pd.Series(object_ids, copy=False), errors="coerce")
+    identities = identities.dropna().astype(np.int64)
+    identities = identities.loc[identities.gt(0)]
+    mapping = pd.Series(
+        identities.to_numpy(dtype=dtype, copy=False),
+        index=identities.to_numpy(dtype=np.int64, copy=False),
+    )
+    return identity_value_map(mask, mapping, dtype=dtype)
+
+
 def _colour_text(value: Any) -> str | None:
     """Normalize common Scanpy/Matplotlib colour representations."""
 
@@ -250,6 +268,32 @@ def roi_level_metadata(
     return result
 
 
+def cell_level_observations(
+    obs: pd.DataFrame,
+    *,
+    roi_obs: str,
+    object_obs: str,
+) -> list[str]:
+    """Return obs fields which vary within at least one represented ROI."""
+
+    metadata = roi_level_metadata(
+        obs,
+        roi_obs=roi_obs,
+        exclude_columns=(object_obs,),
+    )
+    roi_level = {
+        str(column)
+        for values in metadata.values()
+        for column in values
+    }
+    identity = {str(roi_obs), str(object_obs)}
+    return [
+        str(column)
+        for column in obs.columns
+        if str(column) not in identity and str(column) not in roi_level
+    ]
+
+
 def format_roi_metadata_value(value: Any) -> str:
     """Format common AnnData obs scalar types for compact read-only display."""
 
@@ -384,6 +428,33 @@ class ExploreReviewState(BaseModel):
     active_recipe_id: str | None = None
     viewed_rois: dict[str, list[str]] = Field(default_factory=dict)
     population_qc_contour_width: int = Field(default=1, ge=0, le=20)
+    cell_properties_configured: bool = False
+    cell_properties_tracking_enabled: bool = True
+    cell_properties_observations: list[str] = Field(default_factory=list)
+    cell_properties_outline_enabled: bool = False
+    cell_properties_outline_colour: str = "#facc15"
+    cell_properties_outline_width: int = Field(default=2, ge=1, le=20)
+
+    @field_validator("cell_properties_observations")
+    @classmethod
+    def _unique_cell_properties(cls, values: list[str]) -> list[str]:
+        return list(
+            dict.fromkeys(
+                text
+                for value in values
+                if (text := str(value).strip())
+            )
+        )
+
+    @field_validator("cell_properties_outline_colour")
+    @classmethod
+    def _valid_cell_outline_colour(cls, value: str) -> str:
+        text = str(value).strip()
+        try:
+            valid = len(text) == 7 and text.startswith("#") and int(text[1:], 16) >= 0
+        except ValueError:
+            valid = False
+        return text if valid else "#facc15"
 
     @model_validator(mode="after")
     def _validate_recipe_presets(self):
@@ -428,10 +499,12 @@ __all__ = [
     "ExploreViewRecipe",
     "SIX_COLOUR_COLORMAPS",
     "categorical_colour_map",
+    "cell_level_observations",
     "format_roi_metadata_value",
     "identity_value_map",
     "marker_values",
     "observation_categories",
+    "population_identity_map",
     "population_recipe_key",
     "recipe_layer_data_is_current",
     "roi_level_metadata",
