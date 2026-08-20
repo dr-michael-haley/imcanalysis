@@ -1,4 +1,4 @@
-"""CPU-safe API check for the inactive modern SBT RAPIDS candidate."""
+"""CPU-safe API check for the official RAPIDS 26.08 feasibility baseline."""
 
 from __future__ import annotations
 
@@ -28,11 +28,12 @@ def main() -> None:
 
     print(
         "RAPIDS_API_SMOKE_PASS "
-        f"rapids-singlecell={version('rapids-singlecell')} "
-        f"cugraph={version('cugraph')}"
+        f"rapids-singlecell-cu13={version('rapids-singlecell-cu13')} "
+        f"cugraph={version('cugraph')} "
+        f"anndata={version('anndata')} "
+        f"pandas={version('pandas')}"
     )
 
 
 if __name__ == "__main__":
     main()
-

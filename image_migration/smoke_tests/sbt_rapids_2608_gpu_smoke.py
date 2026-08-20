@@ -93,7 +93,7 @@ CASES = {
 
 def _run_all_cases() -> int:
     expected = {
-        "rapids-singlecell": "0.16.1",
+        "rapids-singlecell-cu13": "0.16.1",
         "cudf": "26.08",
         "cuml": "26.08",
         "cugraph": "26.08",
@@ -103,6 +103,7 @@ def _run_all_cases() -> int:
     }
     print("=== runtime ===")
     print(f"python={sys.version.split()[0]}")
+    assert sys.version_info[:2] == (3, 14), sys.version
     print(f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '<unset>')}")
     for package, prefix in expected.items():
         observed = version(package)

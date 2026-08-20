@@ -1,6 +1,8 @@
-# RAPIDS, CUDA, CuPy, cuDF, cuML, cuGraph, cuVS, RMM, UCXX, and Dask are
-# supplied together by the locked Conda RAPIDS 26.08 transaction above.
-# Do not request the [rapids-cu12] extra here because that would install a
-# second pip-managed RAPIDS/CUDA layer over the Conda lock.
-rapids-singlecell==0.16.1
-
+# These are the four pip packages in the official RAPIDS-singlecell 26.08
+# CUDA 13 recipe. Exact versions make the SBT feasibility run reproducible.
+# The precompiled wheel is intentionally installed without its [rapids] extra
+# because the coherent RAPIDS/CUDA stack is supplied by Conda.
+gdown==6.1.0
+wget==3.2
+scikit-misc==0.5.2
+rapids-singlecell-cu13==0.16.1

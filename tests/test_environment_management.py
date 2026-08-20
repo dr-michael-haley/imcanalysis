@@ -351,7 +351,7 @@ class RegistryTests(EnvironmentFixture):
             matching = [script for script in stage_smoke_scripts if module in script]
             self.assertEqual(matching, [f"import SpatialBiologyToolkit.scripts.{module}"])
 
-    def test_dedicated_rapids_candidate_is_inactive_and_modern(self):
+    def test_dedicated_rapids_candidate_matches_official_cuda13_baseline(self):
         root = Path(__file__).resolve().parents[1]
         central = load_environment_registry(root)
         definition = central.environments["rapids"]
@@ -360,23 +360,41 @@ class RegistryTests(EnvironmentFixture):
         self.assertEqual(definition.conda_name, "sbt-rapids")
         self.assertTrue(definition.managed)
         self.assertEqual(definition.conda_channel_priority, "flexible")
+        self.assertEqual(definition.toolkit_overlay, "none")
         self.assertEqual(associated_stages(central, "rapids"), [])
 
+        environment_yml = yaml.safe_load(
+            (specification / "environment.yml").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            environment_yml["channels"],
+            ["rapidsai", "nvidia", "conda-forge", "bioconda"],
+        )
         conda_requirements = declared_conda_requirements(
             specification / "environment.yml"
         )
         pip_requirements = declared_pip_requirements(
             specification / "pip-extras.txt"
         )
-        self.assertEqual(conda_requirements["python"], "=3.12")
+        self.assertEqual(conda_requirements["python"], "=3.14")
         self.assertEqual(conda_requirements["rapids"], "=26.08")
-        self.assertEqual(conda_requirements["cuda-version"], "=12.9")
-        self.assertEqual(conda_requirements["numpy"], ">=2,<3")
-        self.assertEqual(conda_requirements["pandas"], ">=3,<4")
-        self.assertEqual(conda_requirements["cupy"], ">=14,<15")
+        self.assertEqual(conda_requirements["cuda-version"], "=13.3")
+        for official_dependency in (
+            "cudnn",
+            "cutensor",
+            "cusparselt",
+            "jupyterlab",
+            "pip",
+        ):
+            self.assertIn(official_dependency, conda_requirements)
+        for transitive_dependency in ("numpy", "pandas", "cupy", "anndata"):
+            self.assertNotIn(transitive_dependency, conda_requirements)
         self.assertEqual(
-            pip_requirements["rapids-singlecell"].version, "0.16.1"
+            pip_requirements["rapids-singlecell-cu13"].version, "0.16.1"
         )
+        self.assertEqual(pip_requirements["gdown"].version, "6.1.0")
+        self.assertEqual(pip_requirements["wget"].version, "3.2")
+        self.assertEqual(pip_requirements["scikit-misc"].version, "0.5.2")
         for excluded in (
             "biobatchnet",
             "cellcharter",
@@ -393,10 +411,18 @@ class RegistryTests(EnvironmentFixture):
         )
         self.assertIn("cugraph", smoke_text)
         self.assertIn("cupy", smoke_text)
-        self.assertIn(
-            "SpatialBiologyToolkit.scripts.basic_process_rapids", smoke_text
-        )
+        self.assertIn("pip check", smoke_text)
+        self.assertNotIn("SpatialBiologyToolkit", smoke_text)
         self.assertIn("HPC_env_files/sbt-rapids/smoke_test.py", smoke_text)
+
+        upstream_snapshot = (
+            root
+            / "image_migration"
+            / "reference_specs"
+            / "rsc_rapids_26.08_cuda13.official.yml"
+        ).read_text(encoding="utf-8")
+        self.assertIn("eb8f5ae6f7cdf171a1014d9a40e0ed8c5a6b1b21", upstream_snapshot)
+        self.assertIn("rapids-singlecell-cu13", upstream_snapshot)
 
         gpu_smoke = (
             root
@@ -407,6 +433,7 @@ class RegistryTests(EnvironmentFixture):
         self.assertIn("DIRECT_CUGRAPH_LEIDEN_PASS", gpu_smoke)
         self.assertIn("RAPIDS_SINGLECELL_WORKFLOW_PASS", gpu_smoke)
         self.assertIn("GPU_SMOKE_PASS", gpu_smoke)
+        self.assertIn('"rapids-singlecell-cu13": "0.16.1"', gpu_smoke)
 
     def test_retired_source_environment_keys_are_absent_and_names_are_standardized(self):
         root = Path(__file__).resolve().parents[1]

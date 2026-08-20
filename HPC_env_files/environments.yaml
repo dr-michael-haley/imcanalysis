@@ -35,20 +35,19 @@ environments:
     specification_directory: HPC_env_files/sbt-rapids
     platform: linux-64
     conda_channel_priority: flexible
-    toolkit_overlay: editable-no-deps
+    toolkit_overlay: none
     smoke_tests:
-      - [python, -c, "import SpatialBiologyToolkit, pydantic, yaml"]
-      - [python, -c, "import sys; assert sys.version_info[:2] == (3, 12)"]
+      - [python, -c, "import sys; assert sys.version_info[:2] == (3, 14)"]
       - [python, -c, "import numpy, pandas, scipy, anndata, scanpy"]
       - [python, -c, "import cupy, cudf, cuml, cugraph, cuvs, dask_cudf, rmm, rapids_singlecell"]
-      - [python, -c, "from importlib.metadata import version; assert version('rapids-singlecell') == '0.16.1'; assert version('cudf').startswith('26.08'); assert version('cuml').startswith('26.08'); assert version('cugraph').startswith('26.08'); assert version('numpy').split('.', 1)[0] == '2'; assert version('pandas').split('.', 1)[0] == '3'; assert version('cupy').split('.', 1)[0] == '14'"]
-      - [python, -c, "import SpatialBiologyToolkit.scripts.basic_process_rapids"]
+      - [python, -c, "from importlib.metadata import version; assert version('rapids-singlecell-cu13') == '0.16.1'; assert version('cudf').startswith('26.08'); assert version('cuml').startswith('26.08'); assert version('cugraph').startswith('26.08'); assert version('numpy').split('.', 1)[0] == '2'; assert version('pandas').split('.', 1)[0] == '3'; assert version('cupy').split('.', 1)[0] == '14'"]
+      - [python, -m, pip, check]
       - [python, HPC_env_files/sbt-rapids/smoke_test.py]
     notes:
-      - Inactive dedicated RAPIDS candidate; no production stage uses it until CSF3 GPU and representative workflow validation pass.
-      - RAPIDS 26.08 and RAPIDS-singlecell 0.16.1 deliberately use the NumPy 2, Pandas 3, CuPy 14, Python 3.12, and current Dask generations outside the SpatialData 0.4 compatibility spine.
-      - CUDA 12.9 is selected for broad driver and future container portability; CSF3's NVIDIA 595 driver exceeds the documented minimum for this RAPIDS generation.
-      - The candidate must pass direct cuGraph Leiden and full RAPIDS-singlecell PCA, neighbors, UMAP, and Leiden tests before any stage mapping changes.
+      - Inactive official-baseline feasibility environment; no production stage uses it and the SBT source overlay is disabled until the upstream dependency set is coherent on CSF3.
+      - Adapted from scverse/rapids-singlecell commit eb8f5ae6f7cdf171a1014d9a40e0ed8c5a6b1b21 using RAPIDS 26.08, Python 3.14, CUDA 13.3 and the precompiled rapids-singlecell-cu13 0.16.1 wheel.
+      - Exact version assertions and pip check must detect any silent Pandas downgrade caused by the current released AnnData dependency boundary.
+      - After the official base passes, add the complete SBT RAPIDS-stage overlay in one reviewed transaction and then run direct cuGraph, full RAPIDS-singlecell and representative managed-job validation.
 
   napari:
     conda_name: sbt-napari

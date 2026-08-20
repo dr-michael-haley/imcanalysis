@@ -1,0 +1,24 @@
+# Upstream source:
+# https://github.com/scverse/rapids-singlecell/blob/eb8f5ae6f7cdf171a1014d9a40e0ed8c5a6b1b21/conda/rsc_rapids_26.08_cuda13.yml
+# Retrieved: 2026-08-20
+# This snapshot is reference evidence only; SBT uses HPC_env_files/sbt-rapids.
+name: rapids_singlecell
+channels:
+  - rapidsai
+  - nvidia
+  - conda-forge
+  - bioconda
+dependencies:
+  - rapids=26.08
+  - python=3.14
+  - cuda-version=13.3
+  - cudnn
+  - cutensor
+  - cusparselt
+  - jupyterlab
+  - pip
+  - pip:
+      - gdown
+      - wget
+      - scikit-misc
+      - rapids-singlecell-cu13
