@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+import os
+
+# This is deliberately a CPU-only login-node check. TensorFlow initializes all
+# visible devices when its eager context is created, even inside tf.device().
+# Hide scheduler-inaccessible GPU devices before TensorFlow is imported.
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
 import numpy as np
 import tensorflow as tf
 

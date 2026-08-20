@@ -476,6 +476,13 @@ class RegistryTests(EnvironmentFixture):
         self.assertIn("SpatialBiologyToolkit.scripts.hyperstac_full", smoke_text)
         self.assertIn("HPC_env_files/sbt-tensorflow/smoke_test.py", smoke_text)
 
+        cpu_smoke = (specification / "smoke_test.py").read_text(encoding="utf-8")
+        hide_gpu = cpu_smoke.index(
+            'os.environ["CUDA_VISIBLE_DEVICES"] = "-1"'
+        )
+        import_tensorflow = cpu_smoke.index("import tensorflow as tf")
+        self.assertLess(hide_gpu, import_tensorflow)
+
     def test_cellpose_sam_runtime_preserves_working_cuda_stack_and_cpp_runtime(self):
         root = Path(__file__).resolve().parents[1]
         central = load_environment_registry(root)
