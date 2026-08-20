@@ -1,4 +1,4 @@
-"""Subprocess-isolated GPU acceptance test for ``sbt-rapids``.
+"""Subprocess-isolated GPU acceptance test for ``rapids_singlecell``.
 
 The direct cuGraph and full RAPIDS-singlecell cases run in separate Python
 processes so a native CUDA/UCXX failure is reported without losing the other

@@ -351,31 +351,31 @@ class RegistryTests(EnvironmentFixture):
             matching = [script for script in stage_smoke_scripts if module in script]
             self.assertEqual(matching, [f"import SpatialBiologyToolkit.scripts.{module}"])
 
-    def test_dedicated_rapids_candidate_matches_official_cuda13_baseline(self):
+    def test_external_rapids_environment_matches_official_cuda13_baseline(self):
         root = Path(__file__).resolve().parents[1]
         central = load_environment_registry(root)
         definition = central.environments["rapids"]
-        specification = root / definition.specification_directory
 
-        self.assertEqual(definition.conda_name, "sbt-rapids")
-        self.assertTrue(definition.managed)
+        self.assertEqual(definition.conda_name, "rapids_singlecell")
+        self.assertFalse(definition.managed)
+        self.assertIsNone(definition.specification_directory)
         self.assertEqual(definition.conda_channel_priority, "flexible")
-        self.assertEqual(definition.toolkit_overlay, "none")
+        self.assertEqual(definition.toolkit_overlay, "editable-no-deps")
         self.assertEqual(associated_stages(central, "rapids"), [])
 
-        environment_yml = yaml.safe_load(
-            (specification / "environment.yml").read_text(encoding="utf-8")
+        upstream_path = (
+            root
+            / "image_migration"
+            / "reference_specs"
+            / "rsc_rapids_26.08_cuda13.official.yml"
         )
+        environment_yml = yaml.safe_load(upstream_path.read_text(encoding="utf-8"))
+        self.assertEqual(environment_yml["name"], "rapids_singlecell")
         self.assertEqual(
             environment_yml["channels"],
             ["rapidsai", "nvidia", "conda-forge", "bioconda"],
         )
-        conda_requirements = declared_conda_requirements(
-            specification / "environment.yml"
-        )
-        pip_requirements = declared_pip_requirements(
-            specification / "pip-extras.txt"
-        )
+        conda_requirements = declared_conda_requirements(upstream_path)
         self.assertEqual(conda_requirements["python"], "=3.14")
         self.assertEqual(conda_requirements["rapids"], "=26.08")
         self.assertEqual(conda_requirements["cuda-version"], "=13.3")
@@ -389,20 +389,15 @@ class RegistryTests(EnvironmentFixture):
             self.assertIn(official_dependency, conda_requirements)
         for transitive_dependency in ("numpy", "pandas", "cupy", "anndata"):
             self.assertNotIn(transitive_dependency, conda_requirements)
-        self.assertEqual(
-            pip_requirements["rapids-singlecell-cu13"].version, "0.16.1"
+        upstream_pip = next(
+            item["pip"]
+            for item in environment_yml["dependencies"]
+            if isinstance(item, dict) and "pip" in item
         )
-        self.assertEqual(pip_requirements["gdown"].version, "6.1.0")
-        self.assertEqual(pip_requirements["wget"].version, "3.2")
-        self.assertEqual(pip_requirements["scikit-misc"].version, "0.5.2")
-        for excluded in (
-            "biobatchnet",
-            "cellcharter",
-            "spatialdata",
-            "tensorflow",
-            "torch",
-        ):
-            self.assertNotIn(excluded, pip_requirements)
+        self.assertEqual(
+            upstream_pip,
+            ["gdown", "wget", "scikit-misc", "rapids-singlecell-cu13"],
+        )
 
         smoke_text = " ".join(
             argument
@@ -412,30 +407,38 @@ class RegistryTests(EnvironmentFixture):
         self.assertIn("cugraph", smoke_text)
         self.assertIn("cupy", smoke_text)
         self.assertIn("pip check", smoke_text)
-        self.assertNotIn("SpatialBiologyToolkit", smoke_text)
-        self.assertIn("HPC_env_files/sbt-rapids/smoke_test.py", smoke_text)
+        self.assertIn("SpatialBiologyToolkit", smoke_text)
+        self.assertIn(
+            "SpatialBiologyToolkit.scripts.basic_process_rapids", smoke_text
+        )
+        self.assertIn(
+            "image_migration/smoke_tests/rapids_singlecell_cpu_smoke.py",
+            smoke_text,
+        )
 
-        upstream_snapshot = (
-            root
-            / "image_migration"
-            / "reference_specs"
-            / "rsc_rapids_26.08_cuda13.official.yml"
-        ).read_text(encoding="utf-8")
+        upstream_snapshot = upstream_path.read_text(encoding="utf-8")
         self.assertIn("eb8f5ae6f7cdf171a1014d9a40e0ed8c5a6b1b21", upstream_snapshot)
         self.assertIn("rapids-singlecell-cu13", upstream_snapshot)
+
+        bootstrap = (
+            root / "image_migration" / "rapids-singlecell-external-bootstrap.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("rapids_singlecell", bootstrap)
+        self.assertIn("--no-deps", bootstrap)
+        self.assertIn("sbt env test rapids", bootstrap)
 
         gpu_smoke = (
             root
             / "image_migration"
             / "smoke_tests"
-            / "sbt_rapids_2608_gpu_smoke.py"
+            / "rapids_singlecell_2608_gpu_smoke.py"
         ).read_text(encoding="utf-8")
         self.assertIn("DIRECT_CUGRAPH_LEIDEN_PASS", gpu_smoke)
         self.assertIn("RAPIDS_SINGLECELL_WORKFLOW_PASS", gpu_smoke)
         self.assertIn("GPU_SMOKE_PASS", gpu_smoke)
         self.assertIn('"rapids-singlecell-cu13": "0.16.1"', gpu_smoke)
 
-    def test_retired_source_environment_keys_are_absent_and_names_are_standardized(self):
+    def test_environment_names_follow_their_ownership_convention(self):
         root = Path(__file__).resolve().parents[1]
         central = load_environment_registry(root)
 
@@ -443,7 +446,7 @@ class RegistryTests(EnvironmentFixture):
             self.assertNotIn(retired, central.environments)
         expected_names = {
             "analysis": "sbt-analysis",
-            "rapids": "sbt-rapids",
+            "rapids": "rapids_singlecell",
             "napari": "sbt-napari",
             "denoise": "sbt-denoise",
             "tensorflow": "sbt-tensorflow",

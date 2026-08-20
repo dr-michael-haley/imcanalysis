@@ -1,4 +1,4 @@
-"""CPU-safe API check for the official RAPIDS 26.08 feasibility baseline."""
+"""CPU-safe API check for the external official RAPIDS environment."""
 
 from __future__ import annotations
 

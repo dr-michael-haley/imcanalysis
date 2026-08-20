@@ -1,7 +1,8 @@
 # Upstream source:
 # https://github.com/scverse/rapids-singlecell/blob/eb8f5ae6f7cdf171a1014d9a40e0ed8c5a6b1b21/conda/rsc_rapids_26.08_cuda13.yml
 # Retrieved: 2026-08-20
-# This snapshot is reference evidence only; SBT uses HPC_env_files/sbt-rapids.
+# This immutable snapshot is the installation input for the externally managed
+# rapids_singlecell environment.
 name: rapids_singlecell
 channels:
   - rapidsai

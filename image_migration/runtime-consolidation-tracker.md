@@ -10,14 +10,14 @@ loads them.
 The `sbt-analysis` environment remains the operational registered runtime for
 the four stage families below, but only segmentation, BioBatchNet and
 CellCharter/SpatialData are accepted as permanent members. The RAPIDS mapping
-is transitional while the inactive `sbt-rapids` replacement is validated:
+is transitional while the external `rapids_singlecell` replacement is validated:
 
 | Retired environment key | Retired Conda name | Migrated stage mappings | Active destination |
 |---|---|---|---|
 | `segmentation` | `imc_segmentation` | `prep`, `vis`, `nimbus`, `subcl`, `dnqc` (second runtime), `aiinter`, `config`, `cellpose` (second runtime), `reint`, `remap`, `slogs`, `rebuildmeta`, `cellfeat`, `spatialdata`, `neighsig` | `analysis` / `sbt-analysis` |
 | `biobatchnet` | `imc_biobatchnet` | `bbn` | `analysis` / `sbt-analysis` |
 | `cellcharter` | `imc_cellcharter` | `bint`, `cchar`, `pairsp`, `nxsp`, `popqc` | `analysis` / `sbt-analysis` |
-| `rapids` | `rapids_singlecell` | `rapids`, `cellvision-cluster`, `cellvision-full` (middle runtime) | Transitional `analysis` / `sbt-analysis`; target `rapids` / `sbt-rapids` after acceptance |
+| `rapids` | `rapids_singlecell` | `rapids`, `cellvision-cluster`, `cellvision-full` (middle runtime) | Transitional `analysis` / `sbt-analysis`; target external `rapids` / `rapids_singlecell` after acceptance |
 
 The CellCharter migration covers the normal existing-embedding route used by
 default. Optional TRVAE/scArches mode is outside the supported consolidated
@@ -31,7 +31,7 @@ The following runtimes are deliberately not part of this merger:
 | `sbt-scportrait` | Its SpatialData, AnnData, and Cellpose constraints conflict with the shared baseline. |
 | `sbt-cellpose-sam` | Requires Cellpose 4 while the shared runtime retains Cellpose 3. |
 | `sbt-starling` | Removed from this merger when RAPIDS became the higher-priority clustering runtime; retained separately. |
-| `sbt-rapids` | Inactive RAPIDS 26.08 replacement for the native-crashing RAPIDS 24.12 stack currently retained in `sbt-analysis`. |
+| `rapids_singlecell` | Externally managed official RAPIDS 26.08 replacement for the native-crashing RAPIDS 24.12 stack currently retained in `sbt-analysis`. |
 | `sbt-tensorflow` | Candidate shared TensorFlow 2.15 runtime for the modernized IMC-Denoise and HyPERSTAC families; clean installation and registered CPU acceptance have passed, but it remains inactive pending GPU and representative workflow validation. |
 | `sbt-hyperstac` | Current HyPERSTAC rollback runtime, retained until `sbt-tensorflow` passes joint-runtime validation. |
 | `sbt-denoise` | Current denoising rollback runtime, retained until `sbt-tensorflow` passes joint-runtime and scientific parity validation. |
@@ -44,13 +44,13 @@ fork commit `0a1c93626f2a7c2462e39baeb62d77dec20f54cb`. The existing `denoise` a
 `hyperstac` keys remain the operational rollback path until clean installation,
 GPU, representative workflow, and parity checks have passed.
 
-The inactive `rapids` / `sbt-rapids` candidate is also deliberately unmapped.
-Its current phase is a faithful feasibility adaptation of the official
-RAPIDS-singlecell 26.08 CUDA 13 recipe: Python 3.14, CUDA 13.3 and the
-precompiled `rapids-singlecell-cu13` 0.16.1 wheel. The SBT source overlay is
-deliberately disabled while the upstream base is tested. Existing RAPIDS stage
-mappings remain on `analysis`; SBT dependencies and stage routing will be
-considered only after the base passes dependency, import and GPU checks.
+The `rapids` / `rapids_singlecell` environment is also deliberately unmapped.
+It is created from the immutable official RAPIDS-singlecell 26.08 CUDA 13
+recipe snapshot using its unchanged upstream physical name. SBT does not own a
+lock or installation contract for it; the current checkout is installed
+manually as an editable `--no-deps` overlay. Existing RAPIDS stage mappings
+remain on `analysis` until dependency, import, GPU and representative workflow
+checks pass.
 
 ## Phase tracker
 
@@ -65,7 +65,8 @@ considered only after the base passes dependency, import and GPU checks.
 | Correct RAPIDS-singlecell 0.12 Numba compatibility | complete | Pinned Numba 0.60.0 in both dependency layers, strengthened registered and GPU validation, and recorded the production failure without changing the RAPIDS algorithm or CUDA generation. | Archived the prior lock, generated and published the corrected Linux lock, applied the focused three-package repair on CSF3, and ran all registered non-GPU checks. | Production job `18823078` completed neighbours and UMAP for 1,279,364 cells but segfaulted when cuGraph Leiden initialized under unsupported Numba 0.63.1. The corrected lock has canonical Linux/Git-blob SHA-256 `ad6bc0bc0ddc9f35429dbc8102745c01be027f9c79df11292d6d40be5a6d1b53`; the in-place repair installed Numba 0.60.0, llvmlite 0.43.0 and libllvm14 14.0.6; `NUMBA_REPAIR_PASS` and all 12 registered non-GPU tests passed. | `af8731a`; CSF3 logs `sbt-analysis-numba60-repair-20260819.log` and `sbt-analysis-numba60-tests-20260819.log` | The focused GPU Leiden smoke result is deferred because of queue time. Michael explicitly accepted the corrected lock provisionally so unrelated consolidation work can continue. A later GPU failure reopens RAPIDS acceptance without invalidating the lock repair or other merged runtime families. |
 | Run targeted RAPIDS 24.12 end-to-end acceptance | complete | Kept the managed runtime stable while isolating the production and focused GPU failures into direct cuGraph and RAPIDS-singlecell cases. | Ran the focused GPU diagnostic on CSF3 and returned its complete scheduler and native backtrace evidence. | Production job `18868719` segfaulted in RAPIDS Leiden. Diagnostic job `18975876` proved cold cuGraph import and a pre-created CuPy context both work, while both a six-vertex direct cuGraph Leiden call and tiny RAPIDS-singlecell Leiden call exit 139 through the same `libucs -> libcuda -> cuCtxGetDevice_v2` path under Numba 0.60.0. | CSF3 jobs `18868719`, `18975876` | RAPIDS 24.12 acceptance failed. This rules out SBT orchestration, production data size, import order, and the earlier unsupported Numba version as sufficient explanations; the other `sbt-analysis` runtime families remain accepted. |
 | Define the initial dedicated RAPIDS 26.08 candidate | complete | Added an inactive `sbt-rapids` registry entry, a minimal modern dependency specification, CPU-safe API checks, and subprocess-isolated direct cuGraph/full RAPIDS-singlecell GPU smoke tests. | Attempted Linux lock generation on CSF3 and returned the complete solver result. | Local static validation passed, but CSF3 lock generation exited 2: the Python 3.12/CUDA 12.9 specification did not solve as written and its explicit Pandas 3 requirement conflicted with released AnnData 0.12. | `73dbfac`; CSF3 log `sbt-rapids-2608-lock-20260820-101946.log` | Superseded by the official CUDA 13 feasibility baseline below; no production mapping changed. |
-| Rebase `sbt-rapids` on the official CUDA 13 setup | waiting for user | Replaced the failed mixed specification with the official RAPIDS 26.08/Python 3.14/CUDA 13.3 spine, pinned its four pip additions, disabled the SBT overlay, preserved the exact upstream recipe snapshot, and added `pip check` plus exact-version guards. | Generate the Linux lock on CSF3, review it, then approve a clean baseline installation. | All 38 environment-management tests pass; both smoke programs compile; repository validation passes with zero warnings; `git diff --check` passes. Static specification validation reports only the intentionally missing Linux lock. CSF3 dependency, import and GPU evidence remain pending. | Current imcanalysis working tree | Released AnnData 0.12 currently declares Pandas below 3 while RAPIDS 26.08 requires Pandas 3. The feasibility tests must expose rather than conceal a pip downgrade. |
+| Rebase `sbt-rapids` on the official CUDA 13 setup | complete | Replaced the failed mixed specification with the official RAPIDS 26.08/Python 3.14/CUDA 13.3 spine, pinned its four pip additions, disabled the SBT overlay, preserved the exact upstream recipe snapshot, and added `pip check` plus exact-version guards. | Started the Conda-only Linux lock attempt, then chose the simpler official external-environment route while it ran. | All 38 environment-management tests passed and the lock process was retained as diagnostic evidence rather than an installation prerequisite. | `4b9855a`; CSF3 log `sbt-rapids-official-cuda13-lock-20260820-112430.log` | Superseded by the external `rapids_singlecell` ownership decision below. |
+| Register official `rapids_singlecell` as an external environment | waiting for user | Changed the physical name and ownership contract, archived the managed candidate, retained the immutable upstream recipe, added an exact manual bootstrap, and aligned CPU/GPU smoke tests and registry tests. | Review and publish the changes, allow the existing lock diagnostic to finish, then create the official environment and install the SBT `--no-deps` overlay in the next approved phase. | All 38 environment-management tests pass; both smoke programs compile; repository validation passes with zero warnings; `git diff --check` passes; and `sbt env validate-spec rapids` reports a valid external environment with no lock contract. No production stage mapping changed. | Current imcanalysis working tree | SBT can test and select this environment but cannot lock, sync, repair or remove it. |
 | Standardise environment names and archive superseded specifications | complete | Renamed all active physical environments to the `sbt-*` convention; removed retired registry keys; remapped their stages to `analysis`; updated wrappers, diagnostics, tests and docs; archived the three repository-managed retired specifications and a pre-change registry snapshot under `image_migration/archive/retired_hpc_environments/`. | Published and deployed the corrected `sbt-analysis` lock. Dedicated external environments can be recreated under their registered `sbt-*` names when next needed; an explicit per-run environment override remains available during that user-managed transition. | 66 environment/run-control tests and 8 affected stage integration tests passed; all active shell wrappers pass `bash -n`; generated docs are current; repository validator passes; `sbt env list` exposes exactly eight standardized names; no active orchestration reference uses a retired physical Conda name or `IMC_ENV_*` runtime override. The canonical analysis lock is now committed and deployed. | `eed29bb`, `af8731a` | Existing physical environments were not deleted or automatically renamed. The denoising and other dedicated runtime rebuilds remain separate reviewed phases. |
 | Repair `sbt-cellpose-sam` reproducibility | complete | Restored the exact exported Torch 2.9.1/CUDA 12.8 pip layer, required the Conda C++ runtime, strengthened model and stage imports, and made the SLURM wrapper select the environment C++ library after activation. | Archived the stale lock, regenerated and published the Linux lock, recreated `sbt-cellpose-sam`, and reran the registered acceptance checks on CSF3. | Canonical Linux/Git-blob lock SHA-256 `6e00103f5d3e3e48e461cf57b919f8d2df2264cec512d2ce18eb265847d88e35`. The recreated Python 3.10.20 environment contains Cellpose 4.0.7, Torch 2.9.1, Torchvision 0.24.1, CUDA runtime 12.8.90, Pydantic 2.13.4 and Conda libstdc++ 16.1.0. Lock generation, recreation, `cellpose.models`, the SBT stage import and all three registered tests passed. | `df578ff`, `ea55058`; CSF3 log `sbt-cellpose-sam-final-tests-20260819.log` | GPU model loading and representative image inference remain deferred scientific acceptance. A later failure there reopens Cellpose runtime/scientific validation without invalidating the reproducible environment installation. |
 | Modernize `IMC_Denoise_Updated` for a maintainable Python 3.10 runtime | complete | Migrated the package to TensorFlow 2.15.1 through `tf.keras`; added modern package metadata, explicit checkpoint handling, Python 3.10-3.11 constraints, compatibility tests, and README/migration documentation that distinguishes this fork from upstream. | Completed and published the migration, then approved creation of a clean joint TensorFlow candidate environment. Later, obtain license clarification before any public image containing IMC-Denoise is published. | 11 local tests passed and one TensorFlow-dependent test was skipped because TensorFlow was absent locally; 28 Python files parsed; 4 notebooks passed JSON validation; the lightweight package imported with Python 3.10; a version 1.1.0 wheel built with the expected metadata and package data. The clean repository `main` and `origin/main` both resolve to `0a1c93626f2a7c2462e39baeb62d77dec20f54cb`. | `IMC_Denoise_Updated` `0a1c936` | TensorFlow execution, model training/loading and representative denoising move to the joint candidate phase. The inherited research-only license appears to prohibit redistribution, so public OCI publication is not currently authorized. |
@@ -114,6 +115,7 @@ considered only after the base passes dependency, import and GPU checks.
 | 2026-08-20 | Create a dedicated inactive RAPIDS 26.08 candidate using Python 3.12 and CUDA 12.9. | Isolation permits the current NumPy 2, Pandas 3, CuPy 14 and Dask generations without destabilising the accepted SpatialData 0.4/NumPy 1 analysis spine. CUDA 12 retains wider HPC and future image portability while RAPIDS 26.08 replaces the retired UCX-Py generation. |
 | 2026-08-20 | Supersede the failed CUDA 12 candidate with a faithful official CUDA 13 feasibility baseline. | The upstream recipe uses RAPIDS 26.08, Python 3.14, CUDA 13.3, four channels, three explicit CUDA libraries and the precompiled `rapids-singlecell-cu13` wheel. Establishing that base independently prevents SBT-specific additions from obscuring an upstream dependency failure. |
 | 2026-08-20 | Do not allow pip to silently make the official base inconsistent. | RAPIDS 26.08 requires Pandas 3 while the current released AnnData 0.12 metadata requires Pandas below 3. Registered exact-version assertions and `pip check` make any downgrade visible before an SBT overlay or stage mapping is approved. |
+| 2026-08-20 | Keep the official physical name `rapids_singlecell` and mark the environment external. | The non-`sbt-*` name communicates that scverse's recipe owns installation while SBT only adds a `--no-deps` source overlay, verifies the runtime and later selects it for jobs. This avoids a brittle permanent lock contract for a fast-moving mixed Conda/pip GPU stack. |
 | 2026-08-20 | Make the `sbt-tensorflow` login-node calculation deterministically CPU-only. | `tf.device('/CPU:0')` still initializes every visible device when TensorFlow creates its eager context. Hiding GPUs before importing TensorFlow tests CPU execution without mistaking scheduler-inaccessible login-node devices for a broken environment; GPU discovery remains an explicit SLURM test. |
 
 ## Current compatibility boundary
@@ -145,14 +147,15 @@ a failure there causes a narrow Nimbus split.
   scientific or API parity.
 - Confirm that Nimbus imports and completes representative inference under
   Python 3.11; otherwise create a dedicated Nimbus runtime.
-- Generate and review the official-baseline `sbt-rapids` Linux lock on CSF3,
-  perform a clean installation, and require `pip check`, Pandas 3, AnnData,
-  RAPIDS and RAPIDS-singlecell imports to agree before adding SBT dependencies.
-- Run `sbt_rapids_2608_gpu_smoke.py` on a CSF3 A100. Require both the isolated
+- Create `rapids_singlecell` from the immutable official recipe snapshot, add
+  only the lightweight SBT bridge and editable `--no-deps` overlay, and require
+  `pip check`, Pandas 3, AnnData, RAPIDS, SBT and RAPIDS-singlecell imports to
+  agree.
+- Run `rapids_singlecell_2608_gpu_smoke.py` on a CSF3 A100. Require both the isolated
   direct cuGraph Leiden and complete RAPIDS-singlecell PCA/neighbors/UMAP/Leiden
   cases to pass before submitting a representative managed RAPIDS workflow.
 - After representative acceptance, remap `rapids`, `cellvision-cluster`, and
-  the middle runtime of `cellvision-full` to `sbt-rapids`; only then remove the
+  the middle runtime of `cellvision-full` to external `rapids_singlecell`; only then remove the
   obsolete RAPIDS packages and tests from `sbt-analysis` in a reviewed phase.
 - Align the Conda-lock plus pip-extras installation model and `sbt env compare`
   so that pip does not silently replace locked Conda packages and comparison

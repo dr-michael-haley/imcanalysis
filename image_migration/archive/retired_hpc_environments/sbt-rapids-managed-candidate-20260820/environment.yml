@@ -1,4 +1,4 @@
-# Inactive feasibility baseline adapted from the official RAPIDS-singlecell
+# Archived inactive feasibility baseline adapted from the official RAPIDS-singlecell
 # 26.08 CUDA 13 recipe. The production RAPIDS stage remains mapped to
 # sbt-analysis while this base is locked and tested independently on CSF3.
 name: sbt-rapids
