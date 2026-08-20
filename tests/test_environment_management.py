@@ -483,6 +483,18 @@ class RegistryTests(EnvironmentFixture):
         import_tensorflow = cpu_smoke.index("import tensorflow as tf")
         self.assertLess(hide_gpu, import_tensorflow)
 
+        gpu_smoke = (
+            root
+            / "image_migration"
+            / "smoke_tests"
+            / "sbt_tensorflow_gpu_smoke.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('list_physical_devices("GPU")', gpu_smoke)
+        self.assertIn("set_soft_device_placement(False)", gpu_smoke)
+        self.assertIn('with tf.device("/GPU:0")', gpu_smoke)
+        self.assertIn("TENSORFLOW_GPU_SMOKE_PASS", gpu_smoke)
+        self.assertNotIn('CUDA_VISIBLE_DEVICES"] = "-1"', gpu_smoke)
+
     def test_cellpose_sam_runtime_preserves_working_cuda_stack_and_cpp_runtime(self):
         root = Path(__file__).resolve().parents[1]
         central = load_environment_registry(root)
