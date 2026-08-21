@@ -11,6 +11,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 import numpy as np
 import tensorflow as tf
+from IMC_Denoise.checkpoints import validate_weights_name
 
 
 with tf.device("/CPU:0"):
@@ -19,4 +20,8 @@ with tf.device("/CPU:0"):
     result = tf.linalg.matmul(left, right).numpy()
 
 np.testing.assert_allclose(result, np.array([[4.0], [10.0]]))
+assert (
+    validate_weights_name("smoke.weights.h5", loading=False)
+    == "smoke.weights.h5"
+)
 print(f"TENSORFLOW_CPU_SMOKE_PASS {tf.__version__}")

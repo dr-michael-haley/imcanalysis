@@ -39,8 +39,10 @@ import psutil
 
 # Import shared utilities and configurations
 from .config_and_utils import *
+from ..denoising_contract import resolve_weights_name, validate_deepsnif_options
 
 # Import IMC_Denoise methods
+from IMC_Denoise.checkpoints import validate_weights_name
 from IMC_Denoise.DeepSNiF_utils.DeepSNiF_DataGenerator import DeepSNiF_DataGenerator
 from IMC_Denoise.IMC_Denoise_main.DIMR import DIMR
 from IMC_Denoise.IMC_Denoise_main.DeepSNiF import DeepSNiF
@@ -211,6 +213,7 @@ def denoise_batch(
         loss_function = denoise_config.loss_function
         loss_name = denoise_config.loss_name
         weights_save_directory = denoise_config.weights_save_directory
+        weights_name_template = denoise_config.weights_name_template
         is_load_weights = denoise_config.is_load_weights
         lambda_HF = denoise_config.lambda_HF
         n_neighbours = denoise_config.n_neighbours
@@ -223,6 +226,12 @@ def denoise_batch(
         for channel_name in channels:
             try:
                 logging.info(f'Starting processing for channel: {channel_name}')
+                if method == 'deep_snf':
+                    validate_deepsnif_options(loss_function, network_size)
+                    weights_name = resolve_weights_name(
+                        weights_name_template, channel_name
+                    )
+                    validate_weights_name(weights_name, loading=is_load_weights)
                 # Load images for the channel
                 img_collect, img_file_list, matched_folders = load_imgs_from_directory(raw_directory, channel_name)
                 logging.info(f'Loaded {len(img_collect)} images for channel {channel_name}')
@@ -285,7 +294,6 @@ def denoise_batch(
                                 f"Patch count {patch_count} below minimum ({min_patches}) — reducing patch_step_size and retrying.")
                             current_step -= 20
 
-                    weights_name = f"weights_{channel_name}.keras"
                     logging.info(f'Weights file name set to: {weights_name}')
 
                     # Print GPU and RAM availability

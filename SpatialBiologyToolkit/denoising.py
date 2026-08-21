@@ -30,9 +30,12 @@ from pathlib import Path
 import numpy as np
 import tifffile as tp
 
-from IMC_Denoise.DeepSNiF_utils import DeepSNiF_DataGenerator as DeepSNF_DataGenerator
-from IMC_Denoise.IMC_Denoise_main import DIMR
-from IMC_Denoise.IMC_Denoise_main import DeepSNiF as DeepSNF
+from IMC_Denoise.checkpoints import validate_weights_name
+from IMC_Denoise.DeepSNiF_utils.DeepSNiF_DataGenerator import DeepSNiF_DataGenerator as DeepSNF_DataGenerator
+from IMC_Denoise.IMC_Denoise_main.DIMR import DIMR
+from IMC_Denoise.IMC_Denoise_main.DeepSNiF import DeepSNiF as DeepSNF
+
+from .denoising_contract import resolve_weights_name, validate_deepsnif_options
 
 
 def setup_logging(log_file='denoising.log'):
@@ -267,8 +270,12 @@ def denoise_batch(
                 loss_function = kwargs.get('loss_function', 'I_divergence')
                 loss_name = kwargs.get('loss_name', None)
                 weights_save_directory = kwargs.get('weights_save_directory', None)
+                weights_name_template = kwargs.get(
+                    'weights_name_template', 'weights_{channel}.weights.h5'
+                )
                 is_load_weights = kwargs.get('is_load_weights', False)
                 lambda_HF = kwargs.get('lambda_HF', 3e-6)
+                network_size = kwargs.get('network_size', 'small')
                 n_neighbours = kwargs.get('n_neighbours', 4)
                 n_iter = kwargs.get('n_iter', 3)
                 window_size = kwargs.get('window_size', 3)
@@ -278,6 +285,9 @@ def denoise_batch(
                 # Training settings
                 row_step = patch_step_size
                 col_step = patch_step_size
+                validate_deepsnif_options(loss_function, network_size)
+                weights_name = resolve_weights_name(weights_name_template, channel_name)
+                validate_weights_name(weights_name, loading=is_load_weights)
 
                 # Generate patches and train model if not loading weights
                 if not is_load_weights:
@@ -297,7 +307,6 @@ def denoise_batch(
                     logging.info(f'Generated training patches with shape: {generated_patches.shape}')
                     print(f'The shape of the generated training set is {generated_patches.shape}.')
 
-                weights_name = f"weights_{channel_name}.hdf5"
                 logging.info(f'Weights file name set to: {weights_name}')
 
                 deepsnf = DeepSNF(
@@ -311,7 +320,8 @@ def denoise_batch(
                     loss_name=loss_name,
                     weights_dir=weights_save_directory,
                     is_load_weights=is_load_weights,
-                    lambda_HF=lambda_HF
+                    lambda_HF=lambda_HF,
+                    network_size=network_size,
                 )
 
                 if not is_load_weights:

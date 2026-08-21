@@ -17,6 +17,7 @@ This reference is split by module so the site navigation stays compact.
    correlate_outcomes
    cox_survival
    denoising
+   denoising_contract
    distance_analysis
    image_analysis
    imc_import_bodenmiller

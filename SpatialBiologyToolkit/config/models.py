@@ -13,6 +13,8 @@ from typing import Any, Dict, List, Literal, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from ..denoising_contract import resolve_weights_name
+
 
 class ConfigModel(BaseModel):
     """Shared compatibility behavior for all config sections."""
@@ -458,7 +460,7 @@ class DenoisingConfig(ConfigModel):
             "0.15 reserves 15%."
         ),
     )
-    loss_function: str = Field(
+    loss_function: Literal["I_divergence", "mse", "mse_relu"] = Field(
         default="I_divergence",
         description=(
             "Masked-pixel data-fidelity loss: 'I_divergence' gives the Poisson-aware "
@@ -475,14 +477,22 @@ class DenoisingConfig(ConfigModel):
     weights_save_directory: Optional[str] = Field(
         default=None,
         description=(
-            "Directory for per-channel .keras weights, normalization-range files, and optional "
+            "Directory for per-channel .weights.h5 weights, normalization-range files, and optional "
             "loss histories; when unset, use trained_weights under the working directory."
+        ),
+    )
+    weights_name_template: str = Field(
+        default="weights_{channel}.weights.h5",
+        description=(
+            "Per-channel DeepSNiF checkpoint filename template. It must contain "
+            "'{channel}'; new training requires the .weights.h5 suffix, while "
+            "is_load_weights also accepts legacy .hdf5 or .h5 weight-only files."
         ),
     )
     is_load_weights: bool = Field(
         default=False,
         description=(
-            "Load weights_<channel>.keras and its matching normalization-range file from the "
+            "Load weights_<channel>.weights.h5 and its matching normalization-range file from the "
             "weights directory instead of generating patches and training a new channel model."
         ),
     )
@@ -493,7 +503,7 @@ class DenoisingConfig(ConfigModel):
             "data fidelity against spatial continuity of the predicted biological signal."
         ),
     )
-    network_size: str = Field(
+    network_size: Literal["small", "normal"] = Field(
         default="small",
         description=(
             "DeepSNiF U-Net capacity: 'small' uses the compact, faster network, while 'normal' "
@@ -575,6 +585,12 @@ class DenoisingConfig(ConfigModel):
             "denoised ROI folder, rather than overwrite those channel outputs."
         ),
     )
+
+    @model_validator(mode="after")
+    def validate_weights_name_template(self) -> "DenoisingConfig":
+        if self.method == "deep_snf":
+            resolve_weights_name(self.weights_name_template, "example_channel")
+        return self
 
 @config_section("createmasks")
 class CreateMasksConfig(ConfigModel):

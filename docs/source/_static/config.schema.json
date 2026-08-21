@@ -4033,6 +4033,11 @@
           "advice": "",
           "default": "I_divergence",
           "description": "Masked-pixel data-fidelity loss: 'I_divergence' gives the Poisson-aware DeepSNiF objective; 'mse' and 'mse_relu' select the library's Noise2Void-style variants.",
+          "enum": [
+            "I_divergence",
+            "mse",
+            "mse_relu"
+          ],
           "level": "advanced",
           "stage": "denoising",
           "title": "Loss Function",
@@ -4067,16 +4072,26 @@
             }
           ],
           "default": null,
-          "description": "Directory for per-channel .keras weights, normalization-range files, and optional loss histories; when unset, use trained_weights under the working directory.",
+          "description": "Directory for per-channel .weights.h5 weights, normalization-range files, and optional loss histories; when unset, use trained_weights under the working directory.",
           "level": "advanced",
           "stage": "denoising",
           "title": "Weights Save Directory",
           "ui_group": "Denoising"
         },
+        "weights_name_template": {
+          "advice": "",
+          "default": "weights_{channel}.weights.h5",
+          "description": "Per-channel DeepSNiF checkpoint filename template. It must contain '{channel}'; new training requires the .weights.h5 suffix, while is_load_weights also accepts legacy .hdf5 or .h5 weight-only files.",
+          "level": "advanced",
+          "stage": "denoising",
+          "title": "Weights Name Template",
+          "type": "string",
+          "ui_group": "Denoising"
+        },
         "is_load_weights": {
           "advice": "",
           "default": false,
-          "description": "Load weights_<channel>.keras and its matching normalization-range file from the weights directory instead of generating patches and training a new channel model.",
+          "description": "Load weights_<channel>.weights.h5 and its matching normalization-range file from the weights directory instead of generating patches and training a new channel model.",
           "level": "advanced",
           "stage": "denoising",
           "title": "Is Load Weights",
@@ -4097,6 +4112,10 @@
           "advice": "",
           "default": "small",
           "description": "DeepSNiF U-Net capacity: 'small' uses the compact, faster network, while 'normal' uses the original larger residual U-Net.",
+          "enum": [
+            "small",
+            "normal"
+          ],
           "level": "advanced",
           "stage": "denoising",
           "title": "Network Size",

@@ -150,11 +150,18 @@ scans instead create sibling folders named
 `<denoised_images_folder>_<scan_parameter>_<scan_value>`.
 
 DeepSNiF also writes per-channel model files named
-`weights_<channel>.keras` and matching normalization-range files. They are
+`weights_<channel>.weights.h5` and matching normalization-range files. They are
 stored below `denoising.weights_save_directory`, or `trained_weights` in the
 working directory when that setting is null. These files are required together
 when `is_load_weights` is used; weights without the training normalization range
 do not define a complete inference model.
+
+`denoising.weights_name_template` controls the filename and must contain
+`{channel}`. New training uses the default `.weights.h5` suffix. When loading,
+the updated IMC-Denoise package also accepts historical weight-only `.hdf5` and
+`.h5` files by setting that template accordingly. Historical `.keras` artifacts
+must be explicitly converted with the matching model configuration or retrained;
+they must not merely be renamed.
 
 ## Human-facing outputs produced
 
