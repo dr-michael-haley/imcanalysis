@@ -460,6 +460,13 @@ sbt summary
 sbt summary --stage cellpose
 sbt summary --status failed
 sbt summary --format json
+sbt summary --no-refresh
+
+sbt refresh
+sbt refresh --format json
+sbt cleanup --dry-run
+sbt cleanup
+sbt cleanup --yes
 
 sbt status latest
 sbt status 003
@@ -474,13 +481,27 @@ sbt logs 003 --path-only
 sbt report 003
 ```
 
+`sbt summary` refreshes every active project workflow before reading the
+execution index. Use `--no-refresh` only for an offline snapshot that must not
+contact SLURM. `sbt refresh` performs the same project-wide reconciliation
+without printing the full execution table. Job IDs are queried in bounded
+batches rather than once per workflow.
+
 Status combines active `squeue` data with `sacct` history. Missing accounting,
 unknown jobs, and incomplete records are reported as uncertainty rather than
-guessed states. A pending `afterok` job is recorded as `blocked` when its
-upstream job has failed or been cancelled, including SLURM's
-`DependencyNeverSatisfied` state. The result is written to `status.yaml` and
-the project execution index, so a subsequent `sbt summary` shows the refreshed
-state.
+guessed states. A verified terminal state is retained when an old job has aged
+out of scheduler accounting. A dependent `afterok` job is recorded as
+`blocked` when its upstream job has failed or been cancelled, including jobs
+that SLURM reports as cancelled after `DependencyNeverSatisfied`. Results are
+written to each workflow's `status.yaml` and the project execution index.
+
+`sbt cleanup` always performs this refresh first, then offers to remove all
+visible `failed` and `blocked` executions in one operation. `--dry-run` queries
+SLURM and previews the selection without changing project state; `--yes`
+accepts the consolidated confirmation non-interactively. Cleanup removes
+human-facing output folders and renumbers remaining executions once. It does
+not call `scancel`, remove reusable scientific assets, or delete technical run
+records, configuration snapshots, provenance, or logs under `.sbt/`.
 
 Logs are resolved from recorded paths and tailed from the end of each file;
 large directory trees are not scanned.

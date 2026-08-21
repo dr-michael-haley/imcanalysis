@@ -575,123 +575,205 @@ def remove_execution(
             raise FileNotFoundError(
                 f"Execution {execution_label(execution_id)} is not active."
             ) from exc
-        if removed.status in {"allocated", "pending", "running"}:
-            raise ExecutionLayoutError(
-                "Cannot remove an allocated, pending, or running execution. Cancel or "
-                "finish it first, then refresh status."
-            )
+        return _remove_selected_executions(
+            context,
+            index,
+            [removed],
+            reason=reason,
+            confirmation_mode=confirmation_mode,
+            asset_cleanup_by_technical_id={removed.technical_run_id: asset_cleanup},
+        )[0]
 
-        audit_id = f"{utc_now().strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
-        old_paths = {
-            record.technical_run_id: execution_output_path(context, record)
+
+def remove_executions(
+    context: ProjectContext,
+    technical_run_ids: list[str],
+    *,
+    reason: str | None,
+    confirmation_mode: Literal["interactive", "non_interactive", "system"],
+) -> list[RemovalAudit]:
+    """Remove several terminal executions under one lock and one renumber pass."""
+    requested = list(dict.fromkeys(technical_run_ids))
+    if not requested:
+        return []
+    with execution_lock(context):
+        index = load_execution_index(context, require_exists=True)
+        errors = validate_index_sequence(context, index)
+        if errors:
+            raise ExecutionLayoutError(" ".join(errors))
+        requested_set = set(requested)
+        removed = [
+            record
             for record in index.executions
-        }
-        remaining: list[ExecutionRecord] = []
-        mappings: list[RenumberRecord] = []
-        for new_id, record in enumerate(
-            (item for item in index.executions if item.technical_run_id != removed.technical_run_id),
-            start=1,
-        ):
-            new_output = outputs_root(context) / execution_folder_name(new_id, record.stage)
-            updated = record.model_copy(
-                update={
-                    "execution_id": new_id,
-                    "execution_label": execution_label(new_id),
-                    "output_folder": _stored_path(context, new_output),
-                }
+            if record.technical_run_id in requested_set
+        ]
+        missing = requested_set - {record.technical_run_id for record in removed}
+        if missing:
+            raise FileNotFoundError(
+                "Technical execution IDs are not active: " + ", ".join(sorted(missing))
             )
-            remaining.append(updated)
-            if record.execution_id != new_id:
-                mappings.append(
-                    RenumberRecord(
-                        technical_run_id=record.technical_run_id,
-                        stage=record.stage,
-                        previous_execution_id=record.execution_id,
-                        new_execution_id=new_id,
-                        previous_output_folder=record.output_folder,
-                        new_output_folder=updated.output_folder,
-                    )
+        return _remove_selected_executions(
+            context,
+            index,
+            removed,
+            reason=reason,
+            confirmation_mode=confirmation_mode,
+        )
+
+
+def _remove_selected_executions(
+    context: ProjectContext,
+    index: ExecutionIndex,
+    removed: list[ExecutionRecord],
+    *,
+    reason: str | None,
+    confirmation_mode: Literal["interactive", "non_interactive", "system"],
+    asset_cleanup_by_technical_id: dict[str, AssetCleanupAudit | None] | None = None,
+) -> list[RemovalAudit]:
+    active = [
+        record
+        for record in removed
+        if record.status in {"allocated", "pending", "running"}
+    ]
+    if active:
+        labels = ", ".join(record.execution_label for record in active)
+        raise ExecutionLayoutError(
+            "Cannot remove allocated, pending, or running executions: "
+            f"{labels}. Cancel or finish them first, then refresh status."
+        )
+
+    removed_ids = {record.technical_run_id for record in removed}
+    operation_id = f"{utc_now().strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
+    old_paths = {
+        record.technical_run_id: execution_output_path(context, record)
+        for record in index.executions
+    }
+    remaining: list[ExecutionRecord] = []
+    mappings: list[RenumberRecord] = []
+    for new_id, record in enumerate(
+        (item for item in index.executions if item.technical_run_id not in removed_ids),
+        start=1,
+    ):
+        new_output = outputs_root(context) / execution_folder_name(new_id, record.stage)
+        updated = record.model_copy(
+            update={
+                "execution_id": new_id,
+                "execution_label": execution_label(new_id),
+                "output_folder": _stored_path(context, new_output),
+            }
+        )
+        remaining.append(updated)
+        if record.execution_id != new_id:
+            mappings.append(
+                RenumberRecord(
+                    technical_run_id=record.technical_run_id,
+                    stage=record.stage,
+                    previous_execution_id=record.execution_id,
+                    new_execution_id=new_id,
+                    previous_output_folder=record.output_folder,
+                    new_output_folder=updated.output_folder,
                 )
+            )
 
-        output = outputs_root(context)
-        staged_removed = context.root / REMOVAL_AUDIT_DIRECTORY / f".{audit_id}.output"
-        temporary: dict[str, Path] = {}
-        moved_to_new: dict[str, Path] = {}
-        removed_path = old_paths[removed.technical_run_id]
-        audit_path = context.root / REMOVAL_AUDIT_DIRECTORY / f"{audit_id}.yaml"
-        old_index = index
-        try:
-            staged_removed.parent.mkdir(parents=True, exist_ok=True)
-            if removed_path.exists():
-                removed_path.replace(staged_removed)
-            for mapping in mappings:
-                old = old_paths[mapping.technical_run_id]
-                if not old.exists():
-                    continue
-                temp = output / f".sbt-renumber-{audit_id}-{mapping.technical_run_id}"
-                old.replace(temp)
-                temporary[mapping.technical_run_id] = temp
-            for mapping in mappings:
-                staged_path = temporary.get(mapping.technical_run_id)
-                if staged_path is None:
-                    continue
-                new = context.root / mapping.new_output_folder
-                new.parent.mkdir(parents=True, exist_ok=True)
-                staged_path.replace(new)
-                moved_to_new[mapping.technical_run_id] = new
+    output = outputs_root(context)
+    audit_root = context.root / REMOVAL_AUDIT_DIRECTORY
+    staged_removed = {
+        record.technical_run_id: audit_root / f".{operation_id}-{position:03d}.output"
+        for position, record in enumerate(removed, start=1)
+    }
+    temporary: dict[str, Path] = {}
+    moved_to_new: dict[str, Path] = {}
+    audit_paths: list[Path] = []
+    audits: list[RemovalAudit] = []
+    old_index = index
+    try:
+        audit_root.mkdir(parents=True, exist_ok=True)
+        for record in removed:
+            old = old_paths[record.technical_run_id]
+            staged = staged_removed[record.technical_run_id]
+            if old.exists():
+                old.replace(staged)
+        for mapping in mappings:
+            old = old_paths[mapping.technical_run_id]
+            if not old.exists():
+                continue
+            temp = output / (f".sbt-renumber-{operation_id}-{mapping.technical_run_id}")
+            old.replace(temp)
+            temporary[mapping.technical_run_id] = temp
+        for mapping in mappings:
+            staged_path = temporary.get(mapping.technical_run_id)
+            if staged_path is None:
+                continue
+            new = context.root / mapping.new_output_folder
+            new.parent.mkdir(parents=True, exist_ok=True)
+            staged_path.replace(new)
+            moved_to_new[mapping.technical_run_id] = new
 
-            new_index = index.model_copy(update={"executions": remaining})
-            write_execution_index(context, new_index)
-            rewrite_execution_records(context, remaining, old_paths)
+        write_execution_index(
+            context,
+            index.model_copy(update={"executions": remaining}),
+        )
+        rewrite_execution_records(context, remaining, old_paths)
+        removed_at = utc_now()
+        asset_cleanup_by_technical_id = asset_cleanup_by_technical_id or {}
+        for position, record in enumerate(removed, start=1):
+            audit_id = f"{operation_id}-{position:03d}"
             audit = RemovalAudit(
                 audit_id=audit_id,
-                removed_at=utc_now(),
+                removed_at=removed_at,
                 removed_by=getpass.getuser(),
-                previous_execution=removed,
-                previous_execution_id=removed.execution_id,
-                technical_run_id=removed.technical_run_id,
-                stage=removed.stage,
-                previous_output_folder=removed.output_folder,
-                asset_effect=removed.asset_effect,
+                previous_execution=record,
+                previous_execution_id=record.execution_id,
+                technical_run_id=record.technical_run_id,
+                stage=record.stage,
+                previous_output_folder=record.output_folder,
+                asset_effect=record.asset_effect,
                 confirmation_mode=confirmation_mode,
                 reason=reason,
                 renumbered=mappings,
-                asset_cleanup=asset_cleanup,
+                asset_cleanup=asset_cleanup_by_technical_id.get(
+                    record.technical_run_id
+                ),
             )
+            audit_path = audit_root / f"{audit_id}.yaml"
             write_yaml(audit_path, audit)
-            if staged_removed.is_dir():
-                shutil.rmtree(staged_removed)
-            elif staged_removed.exists():
-                staged_removed.unlink()
-            return audit
-        except Exception:
-            write_execution_index(context, old_index)
-            rollback_sources = dict(old_paths)
-            for mapping in mappings:
-                rollback_sources[mapping.technical_run_id] = (
-                    context.root / mapping.new_output_folder
-                )
-            for mapping in reversed(mappings):
-                old = old_paths[mapping.technical_run_id]
-                rollback_new = moved_to_new.get(mapping.technical_run_id)
-                rollback_temp = temporary.get(mapping.technical_run_id)
-                current = (
-                    rollback_new
-                    if rollback_new is not None and rollback_new.exists()
-                    else rollback_temp
-                )
-                if current is not None and current.exists() and not old.exists():
-                    current.replace(old)
-            if staged_removed.exists() and not removed_path.exists():
-                staged_removed.replace(removed_path)
+            audits.append(audit)
+            audit_paths.append(audit_path)
+    except Exception:
+        write_execution_index(context, old_index)
+        rollback_sources = dict(old_paths)
+        for mapping in mappings:
+            rollback_sources[mapping.technical_run_id] = (
+                context.root / mapping.new_output_folder
+            )
+        for mapping in reversed(mappings):
+            old = old_paths[mapping.technical_run_id]
+            rollback_new = moved_to_new.get(mapping.technical_run_id)
+            rollback_temp = temporary.get(mapping.technical_run_id)
+            current = (
+                rollback_new
+                if rollback_new is not None and rollback_new.exists()
+                else rollback_temp
+            )
+            if current is not None and current.exists() and not old.exists():
+                current.replace(old)
+        for record in removed:
+            staged = staged_removed[record.technical_run_id]
+            old = old_paths[record.technical_run_id]
+            if staged.exists() and not old.exists():
+                staged.replace(old)
+        for audit_path in audit_paths:
             if audit_path.exists():
                 audit_path.unlink()
-            rewrite_execution_records(
-                context,
-                index.executions,
-                rollback_sources,
-            )
-            raise
+        rewrite_execution_records(context, index.executions, rollback_sources)
+        raise
+
+    for staged in staged_removed.values():
+        if staged.is_dir():
+            shutil.rmtree(staged)
+        elif staged.exists():
+            staged.unlink()
+    return audits
 
 
 __all__ = [
@@ -712,6 +794,7 @@ __all__ = [
     "outputs_root",
     "preview_executions",
     "remove_execution",
+    "remove_executions",
     "rewrite_execution_records",
     "resolve_execution",
     "resolve_technical_execution",

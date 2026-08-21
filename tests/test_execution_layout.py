@@ -25,9 +25,15 @@ from SpatialBiologyToolkit.pipeline.executions import (
     load_execution_index,
     resolve_execution,
     update_execution,
+    remove_executions,
     write_execution_index,
 )
 from SpatialBiologyToolkit.pipeline.manifests import read_model, read_yaml, write_yaml
+from SpatialBiologyToolkit.pipeline.models import (
+    ProjectStatusRefresh,
+    RunStatus,
+    StageStatus,
+)
 from SpatialBiologyToolkit.pipeline.migration import (
     LEGACY_STAGE_FOLDERS,
     apply_execution_layout_migration,
@@ -285,6 +291,230 @@ class ExecutionLayoutTests(unittest.TestCase):
                 ],
             )
             self.assertIn("Environment Diagnostics", removed.stdout)
+
+    def test_bulk_remove_compacts_once_and_preserves_each_audit(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = self._project(temp_dir)
+            first_run, _ = self._submit(context, ["debug"], ["711"])
+            second_run, _ = self._submit(context, ["config"], ["712"])
+            third_run, _ = self._submit(context, ["debug"], ["713"])
+            first, second, third = load_execution_index(context).executions
+            update_execution(context, first.technical_run_id, status="failed")
+            update_execution(context, second.technical_run_id, status="blocked")
+            update_execution(context, third.technical_run_id, status="completed")
+
+            audits = remove_executions(
+                context,
+                [first.technical_run_id, second.technical_run_id],
+                reason="test cleanup",
+                confirmation_mode="system",
+            )
+
+            self.assertEqual(len(audits), 2)
+            remaining = load_execution_index(context).executions
+            self.assertEqual(len(remaining), 1)
+            self.assertEqual(remaining[0].technical_run_id, third.technical_run_id)
+            self.assertEqual(remaining[0].execution_label, "001")
+            self.assertEqual(len(audits[0].renumbered), 1)
+            self.assertEqual(len(audits[1].renumbered), 1)
+            self.assertTrue(first_run.run_dir.is_dir())
+            self.assertTrue(second_run.run_dir.is_dir())
+            self.assertTrue(third_run.run_dir.is_dir())
+            audit_paths = list(
+                (context.root / ".sbt" / "audit" / "removals").glob("*.yaml")
+            )
+            self.assertEqual(len(audit_paths), 2)
+
+    def test_cleanup_refreshes_then_removes_failed_and_blocked(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = self._project(temp_dir)
+            self._submit(context, ["debug"], ["721"])
+            self._submit(context, ["config"], ["722"])
+            self._submit(context, ["debug"], ["723"])
+            records = load_execution_index(context).executions
+            target_statuses = ["failed", "blocked", "completed"]
+
+            def fake_refresh(selected_context, *, persist=True):
+                reports = []
+                for record, status in zip(records, target_statuses):
+                    if persist:
+                        update_execution(
+                            selected_context,
+                            record.technical_run_id,
+                            status=status,
+                        )
+                    reports.append(
+                        RunStatus(
+                            run_id=record.workflow_run_id,
+                            workflow_run_id=record.workflow_run_id,
+                            project_id=selected_context.project_metadata.project_id,
+                            checked_at=datetime.now(timezone.utc),
+                            overall_status=status,
+                            stages=[
+                                StageStatus(
+                                    stage=record.stage,
+                                    execution_id=record.execution_id,
+                                    technical_run_id=record.technical_run_id,
+                                    job_id=record.slurm_job_id,
+                                    status=status,
+                                    source="test",
+                                )
+                            ],
+                        )
+                    )
+                return ProjectStatusRefresh(
+                    project_id=selected_context.project_metadata.project_id,
+                    checked_at=datetime.now(timezone.utc),
+                    workflow_count=3,
+                    execution_count=3,
+                    reports=reports,
+                )
+
+            with patch(
+                "SpatialBiologyToolkit.cli.main.refresh_project_status",
+                side_effect=fake_refresh,
+            ) as refresh:
+                result = CliRunner().invoke(
+                    app,
+                    ["cleanup", "--project", str(context.root), "--yes"],
+                )
+
+            self.assertEqual(result.exit_code, 0, result.stdout)
+            self.assertEqual(refresh.call_count, 1)
+            self.assertTrue(refresh.call_args.kwargs["persist"])
+            remaining = load_execution_index(context).executions
+            self.assertEqual(len(remaining), 1)
+            self.assertEqual(remaining[0].technical_run_id, records[2].technical_run_id)
+            self.assertIn("Removed 2 execution(s)", result.stdout)
+
+    def test_cleanup_dry_run_refreshes_without_mutating_project_state(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = self._project(temp_dir)
+            self._submit(context, ["debug"], ["731"])
+            record = load_execution_index(context).executions[0]
+
+            def fake_refresh(selected_context, *, persist=True):
+                self.assertFalse(persist)
+                return ProjectStatusRefresh(
+                    project_id=selected_context.project_metadata.project_id,
+                    checked_at=datetime.now(timezone.utc),
+                    workflow_count=1,
+                    execution_count=1,
+                    reports=[
+                        RunStatus(
+                            run_id=record.workflow_run_id,
+                            workflow_run_id=record.workflow_run_id,
+                            project_id=selected_context.project_metadata.project_id,
+                            checked_at=datetime.now(timezone.utc),
+                            overall_status="failed",
+                            stages=[
+                                StageStatus(
+                                    stage=record.stage,
+                                    execution_id=record.execution_id,
+                                    technical_run_id=record.technical_run_id,
+                                    job_id=record.slurm_job_id,
+                                    status="failed",
+                                    source="test",
+                                )
+                            ],
+                        )
+                    ],
+                )
+
+            with patch(
+                "SpatialBiologyToolkit.cli.main.refresh_project_status",
+                side_effect=fake_refresh,
+            ) as refresh:
+                result = CliRunner().invoke(
+                    app,
+                    [
+                        "cleanup",
+                        "--project",
+                        str(context.root),
+                        "--dry-run",
+                    ],
+                )
+
+            self.assertEqual(result.exit_code, 0, result.stdout)
+            self.assertEqual(refresh.call_count, 1)
+            current = load_execution_index(context).executions
+            self.assertEqual(current, [record])
+            self.assertFalse(
+                (context.root / ".sbt" / "audit" / "removals").exists()
+            )
+            self.assertIn("Dry run only", result.stdout)
+
+    def test_bulk_remove_rolls_back_index_and_outputs_on_rewrite_failure(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = self._project(temp_dir)
+            self._submit(context, ["debug"], ["741"])
+            self._submit(context, ["config"], ["742"])
+            before = load_execution_index(context)
+            first, second = before.executions
+            update_execution(context, first.technical_run_id, status="failed")
+            update_execution(context, second.technical_run_id, status="completed")
+            before = load_execution_index(context)
+            old_paths = [
+                execution_output_path(context, record)
+                for record in before.executions
+            ]
+            from SpatialBiologyToolkit.pipeline import executions as execution_module
+
+            original_rewrite = execution_module.rewrite_execution_records
+            call_count = 0
+
+            def flaky_rewrite(*args, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    raise OSError("interrupted rewrite")
+                return original_rewrite(*args, **kwargs)
+
+            with patch(
+                "SpatialBiologyToolkit.pipeline.executions.rewrite_execution_records",
+                side_effect=flaky_rewrite,
+            ):
+                with self.assertRaisesRegex(OSError, "interrupted rewrite"):
+                    remove_executions(
+                        context,
+                        [first.technical_run_id],
+                        reason="rollback test",
+                        confirmation_mode="system",
+                    )
+
+            self.assertEqual(load_execution_index(context).executions, before.executions)
+            self.assertTrue(all(path.exists() for path in old_paths))
+            audit_root = context.root / ".sbt" / "audit" / "removals"
+            self.assertEqual(list(audit_root.glob("*.yaml")), [])
+
+    def test_summary_refreshes_by_default_with_offline_opt_out(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = self._project(temp_dir)
+            refreshed = ProjectStatusRefresh(
+                project_id=context.project_metadata.project_id,
+                checked_at=datetime.now(timezone.utc),
+            )
+            with patch(
+                "SpatialBiologyToolkit.cli.main.refresh_project_status",
+                return_value=refreshed,
+            ) as refresh:
+                default = CliRunner().invoke(
+                    app,
+                    ["summary", "--project", str(context.root)],
+                )
+                offline = CliRunner().invoke(
+                    app,
+                    [
+                        "summary",
+                        "--project",
+                        str(context.root),
+                        "--no-refresh",
+                    ],
+                )
+
+            self.assertEqual(default.exit_code, 0, default.stdout)
+            self.assertEqual(offline.exit_code, 0, offline.stdout)
+            self.assertEqual(refresh.call_count, 1)
 
     def test_unknown_asset_effect_requires_explicit_noninteractive_risk_flag(self):
         with tempfile.TemporaryDirectory() as temp_dir:

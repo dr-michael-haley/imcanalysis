@@ -4,17 +4,43 @@ from __future__ import annotations
 
 import subprocess
 from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
 from .manifests import utc_now, write_yaml
-from .executions import resolve_technical_execution, update_execution
-from .models import RunStatus, StageStatus, SubmittedJobs
+from .executions import (
+    load_execution_index,
+    resolve_technical_execution,
+    update_execution,
+)
+from .models import (
+    ExecutionRecord,
+    ProjectStatusChange,
+    ProjectStatusRefresh,
+    RunStatus,
+    StageStatus,
+    SubmittedJobs,
+)
 from .project import ProjectContext
-from .runs import STATUS_FILE, load_run_manifest, load_submitted_jobs
+from .runs import (
+    STATUS_FILE,
+    load_run_manifest,
+    load_submitted_jobs,
+    resolve_run_directory,
+)
 
 
 Runner = Callable[..., subprocess.CompletedProcess[str]]
+SCHEDULER_QUERY_CHUNK_SIZE = 200
+TERMINAL_EXECUTION_STATUSES = {"completed", "failed", "cancelled", "blocked"}
+
+
+@dataclass(frozen=True)
+class _SchedulerSnapshot:
+    queue_states: dict[str, tuple[str, str, str]]
+    accounting_states: dict[str, tuple[str, str, str]]
+    warnings: list[str]
 
 
 def _run_command(
@@ -68,6 +94,62 @@ def _parse_sacct(output: str, job_ids: set[str]) -> dict[str, tuple[str, str, st
     return states
 
 
+def _chunks(values: list[str], size: int) -> list[list[str]]:
+    return [
+        values[position : position + size] for position in range(0, len(values), size)
+    ]
+
+
+def _query_scheduler(
+    job_ids: set[str],
+    *,
+    runner: Runner,
+) -> _SchedulerSnapshot:
+    queue_states: dict[str, tuple[str, str, str]] = {}
+    accounting_states: dict[str, tuple[str, str, str]] = {}
+    warnings: list[str] = []
+    ordered_ids = sorted(job_ids)
+
+    for chunk in _chunks(ordered_ids, SCHEDULER_QUERY_CHUNK_SIZE):
+        selected = set(chunk)
+        queue, queue_error = _run_command(
+            [
+                "squeue",
+                "--noheader",
+                "--jobs",
+                ",".join(chunk),
+                "--format=%i|%T|%j|%r",
+            ],
+            runner=runner,
+        )
+        if queue and not queue_error:
+            queue_states.update(_parse_squeue(queue.stdout))
+        elif queue_error:
+            warnings.append(f"squeue unavailable or failed: {queue_error}")
+
+        accounting, accounting_error = _run_command(
+            [
+                "sacct",
+                "--noheader",
+                "--parsable2",
+                "--jobs",
+                ",".join(chunk),
+                "--format=JobIDRaw,State,JobName,ExitCode",
+            ],
+            runner=runner,
+        )
+        if accounting and not accounting_error:
+            accounting_states.update(_parse_sacct(accounting.stdout, selected))
+        elif accounting_error:
+            warnings.append(f"sacct unavailable or failed: {accounting_error}")
+
+    return _SchedulerSnapshot(
+        queue_states=queue_states,
+        accounting_states=accounting_states,
+        warnings=list(dict.fromkeys(warnings)),
+    )
+
+
 def _normalize_state(
     raw_state: str,
 ) -> Literal["pending", "running", "completed", "failed", "cancelled", "unknown"]:
@@ -119,7 +201,7 @@ def _resolve_blocked_dependencies(
             if (dependency := by_job_id.get(dependency_id)) is not None
             and dependency.status in {"failed", "cancelled", "not_submitted", "blocked"}
         ]
-        if stage.status == "pending" and failed_dependencies:
+        if stage.status in {"pending", "cancelled"} and failed_dependencies:
             dependency = failed_dependencies[0]
             dependency_detail = (
                 f"afterok dependency job {dependency.job_id} ended "
@@ -169,45 +251,28 @@ def inspect_run_status(
     *,
     runner: Runner = subprocess.run,
 ) -> RunStatus:
+    """Refresh one workflow from a bounded scheduler snapshot."""
     directory = Path(run_dir)
-    manifest = load_run_manifest(directory)
     submitted = load_submitted_jobs(directory)
     job_ids = {job.job_id for job in submitted.jobs if job.job_id}
-    warnings: list[str] = []
-    queue_states: dict[str, tuple[str, str, str]] = {}
-    accounting_states: dict[str, tuple[str, str, str]] = {}
+    snapshot = _query_scheduler(job_ids, runner=runner)
+    existing = {
+        record.technical_run_id: record
+        for record in load_execution_index(context).executions
+    }
+    return _inspect_run_with_snapshot(context, directory, snapshot, existing)
 
-    if job_ids:
-        queue, queue_error = _run_command(
-            [
-                "squeue",
-                "--noheader",
-                "--jobs",
-                ",".join(sorted(job_ids)),
-                "--format=%i|%T|%j|%r",
-            ],
-            runner=runner,
-        )
-        if queue and not queue_error:
-            queue_states = _parse_squeue(queue.stdout)
-        elif queue_error:
-            warnings.append(f"squeue unavailable or failed: {queue_error}")
 
-        accounting, accounting_error = _run_command(
-            [
-                "sacct",
-                "--noheader",
-                "--parsable2",
-                "--jobs",
-                ",".join(sorted(job_ids)),
-                "--format=JobIDRaw,State,JobName,ExitCode",
-            ],
-            runner=runner,
-        )
-        if accounting and not accounting_error:
-            accounting_states = _parse_sacct(accounting.stdout, job_ids)
-        elif accounting_error:
-            warnings.append(f"sacct unavailable or failed: {accounting_error}")
+def _inspect_run_with_snapshot(
+    context: ProjectContext,
+    directory: Path,
+    snapshot: _SchedulerSnapshot,
+    existing: dict[str, ExecutionRecord],
+    *,
+    persist: bool = True,
+) -> RunStatus:
+    manifest = load_run_manifest(directory)
+    submitted = load_submitted_jobs(directory)
 
     stage_statuses: list[StageStatus] = []
     for job in submitted.jobs:
@@ -224,8 +289,8 @@ def inspect_run_status(
                 )
             )
             continue
-        if job.job_id in queue_states:
-            raw_state, job_name, reason = queue_states[job.job_id]
+        if job.job_id in snapshot.queue_states:
+            raw_state, job_name, reason = snapshot.queue_states[job.job_id]
             detail = ", ".join(part for part in (job_name, reason) if part)
             status = _normalize_state(raw_state)
             if status == "pending" and _dependency_cannot_be_satisfied(reason):
@@ -242,8 +307,8 @@ def inspect_run_status(
                 )
             )
             continue
-        if job.job_id in accounting_states:
-            raw_state, job_name, exit_code = accounting_states[job.job_id]
+        if job.job_id in snapshot.accounting_states:
+            raw_state, job_name, exit_code = snapshot.accounting_states[job.job_id]
             detail = ", ".join(
                 part
                 for part in (
@@ -262,6 +327,23 @@ def inspect_run_status(
                     status=_normalize_state(raw_state),
                     source="sacct",
                     detail=detail or None,
+                )
+            )
+            continue
+        current = existing.get(job.technical_run_id or "")
+        if current is not None and current.status in TERMINAL_EXECUTION_STATUSES:
+            stage_statuses.append(
+                StageStatus(
+                    stage=job.stage,
+                    execution_id=job.execution_id,
+                    technical_run_id=job.technical_run_id,
+                    job_id=job.job_id,
+                    status=current.status,
+                    source="recorded terminal state",
+                    detail=(
+                        "Job was not found in current squeue or sacct output; "
+                        "the previously verified terminal state was retained."
+                    ),
                 )
             )
             continue
@@ -285,8 +367,10 @@ def inspect_run_status(
         checked_at=utc_now(),
         overall_status=_overall_status(stage_statuses, submitted),
         stages=stage_statuses,
-        warnings=warnings,
+        warnings=snapshot.warnings,
     )
+    if not persist:
+        return report
     write_yaml(directory / STATUS_FILE, report)
     for stage in report.stages:
         if not stage.technical_run_id:
@@ -312,4 +396,109 @@ def inspect_run_status(
     return report
 
 
-__all__ = ["inspect_run_status"]
+def refresh_project_status(
+    context: ProjectContext,
+    *,
+    runner: Runner = subprocess.run,
+    persist: bool = True,
+) -> ProjectStatusRefresh:
+    """Reconcile every active project workflow with one scheduler snapshot."""
+    before = load_execution_index(context, require_exists=True).executions
+    existing = {record.technical_run_id: record for record in before}
+    active_workflows = list(dict.fromkeys(record.workflow_run_id for record in before))
+    selected_runs: list[Path] = []
+    job_ids: set[str] = set()
+    warnings: list[str] = []
+
+    for workflow_run_id in active_workflows:
+        try:
+            run_dir = resolve_run_directory(context, workflow_run_id)
+        except (OSError, ValueError) as exc:
+            warnings.append(
+                f"Technical run record is unavailable for workflow "
+                f"{workflow_run_id}: {exc}"
+            )
+            continue
+        try:
+            submitted = load_submitted_jobs(run_dir)
+        except (OSError, ValueError) as exc:
+            warnings.append(f"Could not read workflow {workflow_run_id}: {exc}")
+            continue
+        selected_runs.append(run_dir)
+        job_ids.update(job.job_id for job in submitted.jobs if job.job_id)
+
+    snapshot = _query_scheduler(job_ids, runner=runner)
+    warnings.extend(snapshot.warnings)
+    reports: list[RunStatus] = []
+    for run_dir in selected_runs:
+        try:
+            reports.append(
+                _inspect_run_with_snapshot(
+                    context,
+                    run_dir,
+                    snapshot,
+                    existing,
+                    persist=persist,
+                )
+            )
+        except (OSError, ValueError) as exc:
+            warnings.append(f"Could not refresh workflow {run_dir.name}: {exc}")
+
+    after = (
+        load_execution_index(context, require_exists=True).executions
+        if persist
+        else before
+    )
+    projected_statuses = {
+        stage.technical_run_id: (
+            "failed" if stage.status == "not_submitted" else stage.status
+        )
+        for report in reports
+        for stage in report.stages
+        if stage.technical_run_id in existing
+    }
+    previous_by_id = {record.technical_run_id: record for record in before}
+    changes = [
+        ProjectStatusChange(
+            execution_id=record.execution_id,
+            execution_label=record.execution_label,
+            technical_run_id=record.technical_run_id,
+            workflow_run_id=record.workflow_run_id,
+            stage=record.stage,
+            previous_status=previous_by_id[record.technical_run_id].status,
+            current_status=(
+                record.status
+                if persist
+                else projected_statuses.get(record.technical_run_id, record.status)
+            ),
+        )
+        for record in after
+        if record.technical_run_id in previous_by_id
+        and (
+            record.status
+            if persist
+            else projected_statuses.get(record.technical_run_id, record.status)
+        )
+        != previous_by_id[record.technical_run_id].status
+    ]
+    current_statuses = [
+        (
+            record.status
+            if persist
+            else projected_statuses.get(record.technical_run_id, record.status)
+        )
+        for record in after
+    ]
+    return ProjectStatusRefresh(
+        project_id=context.project_metadata.project_id,
+        checked_at=utc_now(),
+        workflow_count=len(selected_runs),
+        execution_count=len(after),
+        unknown_count=sum(status == "unknown" for status in current_statuses),
+        changes=changes,
+        reports=reports,
+        warnings=list(dict.fromkeys(warnings)),
+    )
+
+
+__all__ = ["inspect_run_status", "refresh_project_status"]

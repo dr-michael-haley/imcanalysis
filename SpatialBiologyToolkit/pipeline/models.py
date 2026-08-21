@@ -404,6 +404,28 @@ class RunStatus(PipelineModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class ProjectStatusChange(PipelineModel):
+    execution_id: int
+    execution_label: str
+    technical_run_id: str
+    workflow_run_id: str
+    stage: str
+    previous_status: ExecutionStatus
+    current_status: ExecutionStatus
+
+
+class ProjectStatusRefresh(PipelineModel):
+    schema_version: Literal[1] = 1
+    project_id: str
+    checked_at: datetime
+    workflow_count: int = 0
+    execution_count: int = 0
+    unknown_count: int = 0
+    changes: list[ProjectStatusChange] = Field(default_factory=list)
+    reports: list[RunStatus] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
 class LogRecord(PipelineModel):
     stage: str
     job_id: str | None
@@ -445,6 +467,8 @@ __all__ = [
     "RunManifest",
     "RunPlan",
     "RunStatus",
+    "ProjectStatusChange",
+    "ProjectStatusRefresh",
     "StageSpec",
     "StageStatus",
     "SubmissionRecord",

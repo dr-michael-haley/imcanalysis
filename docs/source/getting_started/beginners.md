@@ -124,7 +124,7 @@ The usual rhythm is:
 ```bash
 sbt run segmentation --dry-run  # preview only
 sbt run segmentation            # check environments, then submit
-sbt status latest               # ask what SLURM reports
+sbt summary                     # refresh and show all project jobs
 sbt logs latest                 # inspect recent log output
 ```
 

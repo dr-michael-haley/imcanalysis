@@ -231,14 +231,16 @@ Use these commands to see how the analysis is progressing:
 
 ```bash
 sbt status latest
+sbt refresh
 sbt logs latest
 sbt summary
 sbt report latest
 ```
 
-- `status` asks SLURM whether the latest job is waiting, running, or finished.
+- `status` asks SLURM about the latest execution's workflow.
+- `refresh` synchronizes every project execution with SLURM.
 - `logs` shows the latest messages from the job.
-- `summary` lists the analyses recorded in this project.
+- `summary` refreshes and lists all analyses recorded in this project.
 - `report` displays the human-readable report for an analysis.
 
 ## 11. Find other stages and workflows

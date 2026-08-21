@@ -62,10 +62,15 @@ from SpatialBiologyToolkit.pipeline.executions import (
     execution_summaries,
     load_execution_index,
     remove_execution,
+    remove_executions,
     resolve_execution,
     resolve_technical_execution,
 )
-from SpatialBiologyToolkit.pipeline.models import ExternalDependency, model_data
+from SpatialBiologyToolkit.pipeline.models import (
+    ExternalDependency,
+    ProjectStatusRefresh,
+    model_data,
+)
 from SpatialBiologyToolkit.pipeline.migration import (
     apply_execution_layout_migration,
     plan_execution_layout_migration,
@@ -115,7 +120,10 @@ from SpatialBiologyToolkit.pipeline.scheduler import (
     list_user_jobs,
     preview_cancellation,
 )
-from SpatialBiologyToolkit.pipeline.status import inspect_run_status
+from SpatialBiologyToolkit.pipeline.status import (
+    inspect_run_status,
+    refresh_project_status,
+)
 from SpatialBiologyToolkit.pipeline.transfers import (
     commit_upload,
     list_backups,
@@ -2585,9 +2593,50 @@ def cancel_command(
         typer.echo(f"Job {payload['job_id']}: {payload['outcome']}")
 
 
+def _print_project_refresh(result: ProjectStatusRefresh) -> None:
+    typer.echo(
+        f"Refreshed {result.workflow_count} workflow(s) and "
+        f"{result.execution_count} execution(s)."
+    )
+    if result.changes:
+        for change in result.changes:
+            typer.echo(
+                f"  {change.execution_label} {change.stage}: "
+                f"{change.previous_status} -> {change.current_status}"
+            )
+    else:
+        typer.echo("  No status changes.")
+    if result.unknown_count:
+        typer.echo(f"  Unknown scheduler state: {result.unknown_count} execution(s).")
+    for warning in result.warnings:
+        typer.echo(f"Warning: {warning}")
+
+
+@app.command(
+    "refresh",
+    help="Refresh scheduler status for every active execution in the project.",
+)
+def refresh_command(
+    project: Path | None = typer.Option(None, "--project"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+) -> None:
+    try:
+        context = _project(project)
+        result = refresh_project_status(context)
+    except Exception as exc:
+        _fail(exc)
+    if output_format != OutputFormat.text:
+        _emit_machine(result, output_format)
+        return
+    _print_project_refresh(result)
+
+
 @app.command(
     "status",
-    help="Refresh and show scheduler status for one project execution.",
+    help=(
+        "Refresh and show scheduler status for one project execution; use "
+        "'sbt refresh' for the whole project."
+    ),
 )
 def status_command(
     execution: str = typer.Argument("latest", help="Execution ID or 'latest'."),
@@ -2776,10 +2825,16 @@ def summary_command(
     details: bool = typer.Option(False, "--details"),
     assets: bool = typer.Option(False, "--assets"),
     include_removed: bool = typer.Option(False, "--include-removed"),
+    refresh: bool = typer.Option(
+        True,
+        "--refresh/--no-refresh",
+        help="Refresh all active execution statuses from SLURM before summarizing.",
+    ),
     output_format: SummaryFormat = typer.Option(SummaryFormat.table, "--format"),
 ) -> None:
     try:
         context = _project(project)
+        refresh_result = refresh_project_status(context) if refresh else None
         records = execution_summaries(context, include_removed=include_removed)
         if stage:
             alias = resolve_stage_selector(stage).name
@@ -2795,16 +2850,26 @@ def summary_command(
         data = {
             "schema_version": 1,
             "project_id": context.project_metadata.project_id,
+            "refresh": (
+                refresh_result.model_dump(mode="json")
+                if refresh_result is not None
+                else None
+            ),
             "executions": [item.model_dump(mode="json") for item in records],
         }
         _emit_machine(
             data,
-            OutputFormat.json
-            if output_format == SummaryFormat.json
-            else OutputFormat.yaml,
+            (
+                OutputFormat.json
+                if output_format == SummaryFormat.json
+                else OutputFormat.yaml
+            ),
         )
         return
 
+    if refresh_result is not None:
+        _print_project_refresh(refresh_result)
+        typer.echo("")
     typer.echo(
         f"{'ID':<6} {'STAGE':<28} {'STATUS':<11} {'STARTED':<17} "
         f"{'DONE/DURATION':<17} {'ASSETS':<9} OUTPUT"
@@ -2837,6 +2902,109 @@ def summary_command(
         typer.echo("No executions match the selection.")
     if include_removed and any(item.removed for item in records):
         typer.echo("* removed execution from the hidden technical audit")
+
+
+@app.command(
+    "cleanup",
+    help="Refresh SLURM status, then remove failed and dependency-blocked executions.",
+)
+def cleanup_command(
+    project: Path | None = typer.Option(None, "--project"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    yes: bool = typer.Option(False, "--yes"),
+    reason: str | None = typer.Option(None, "--reason"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+) -> None:
+    if output_format != OutputFormat.text and not (dry_run or yes):
+        _fail("Machine-readable cleanup requires --dry-run or --yes.")
+    try:
+        context = _project(project)
+        refresh_result = refresh_project_status(context, persist=not dry_run)
+        records = load_execution_index(context, require_exists=True).executions
+        projected_statuses = {
+            stage.technical_run_id: (
+                "failed" if stage.status == "not_submitted" else stage.status
+            )
+            for report in refresh_result.reports
+            for stage in report.stages
+            if stage.technical_run_id is not None
+        }
+        candidates = [
+            record.model_copy(
+                update={
+                    "status": projected_statuses.get(
+                        record.technical_run_id,
+                        record.status,
+                    )
+                }
+            )
+            for record in records
+            if projected_statuses.get(record.technical_run_id, record.status)
+            in {"failed", "blocked"}
+        ]
+    except Exception as exc:
+        _fail(exc)
+
+    preview = {
+        "schema_version": 1,
+        "project_id": context.project_metadata.project_id,
+        "dry_run": dry_run,
+        "refresh": refresh_result.model_dump(mode="json"),
+        "candidates": [record.model_dump(mode="json") for record in candidates],
+        "removed": [],
+    }
+    if output_format == OutputFormat.text:
+        _print_project_refresh(refresh_result)
+        typer.echo("")
+        if candidates:
+            typer.echo(
+                f"Cleanup will remove {len(candidates)} failed or blocked "
+                "execution(s):"
+            )
+            for record in candidates:
+                typer.echo(
+                    f"  {record.execution_label} {record.stage_display_name} "
+                    f"({record.status}, assets={record.asset_effect})"
+                )
+            typer.echo("")
+            typer.echo(
+                "Visible output folders will be removed and later IDs renumbered. "
+                "Technical run records and logs under .sbt/ are retained; reusable "
+                "project assets are not deleted or restored."
+            )
+        else:
+            typer.echo("No failed or dependency-blocked executions need cleanup.")
+
+    if dry_run or not candidates:
+        if output_format != OutputFormat.text:
+            _emit_machine(preview, output_format)
+        elif dry_run and candidates:
+            typer.echo("Dry run only; no execution records or outputs were removed.")
+        return
+
+    if not yes and not typer.confirm("Continue with cleanup?", default=False):
+        raise typer.Abort()
+    try:
+        audits = remove_executions(
+            context,
+            [record.technical_run_id for record in candidates],
+            reason=(
+                reason or "Bulk cleanup after project-wide SLURM status reconciliation"
+            ),
+            confirmation_mode="non_interactive" if yes else "interactive",
+        )
+    except Exception as exc:
+        _fail(exc)
+    preview["removed"] = [audit.model_dump(mode="json") for audit in audits]
+    if output_format != OutputFormat.text:
+        _emit_machine(preview, output_format)
+        return
+    renumbered = len(audits[0].renumbered) if audits else 0
+    typer.echo(
+        f"Removed {len(audits)} execution(s); renumbered {renumbered} "
+        "remaining execution(s)."
+    )
+    typer.echo("Reusable project assets were not deleted or restored.")
 
 
 @app.command(

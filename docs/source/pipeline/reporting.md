@@ -97,10 +97,21 @@ sbt summary --status failed
 sbt summary --latest
 sbt summary --details
 sbt summary --format json
+sbt summary --no-refresh
+sbt refresh
+sbt cleanup --dry-run
+sbt cleanup
 ```
 
-The summary and `outputs/README.md` are generated from `.sbt/executions.yaml`,
-not inferred from README prose.
+By default, `sbt summary` first refreshes all active project workflows from
+`squeue` and `sacct`, then reads `.sbt/executions.yaml`. Use `--no-refresh` for
+an offline snapshot. `outputs/README.md` is also generated from the execution
+index rather than inferred from README prose.
+
+`sbt cleanup` performs the same refresh, then removes visible `failed` and
+dependency-`blocked` executions after one confirmation. It compacts later IDs
+once and retains each removed execution in the technical audit. Cleanup never
+deletes or restores reusable scientific assets.
 
 `sbt remove 003` removes an execution from the visible workflow, removes its
 human-facing folder, and compacts later execution numbers. Temporary names and

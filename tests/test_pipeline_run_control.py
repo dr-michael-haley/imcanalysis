@@ -18,7 +18,11 @@ from SpatialBiologyToolkit.pipeline.dependencies import (
 from SpatialBiologyToolkit.pipeline.environment_selection import (
     apply_environment_override,
 )
-from SpatialBiologyToolkit.pipeline.executions import execution_summaries
+from SpatialBiologyToolkit.pipeline.executions import (
+    execution_summaries,
+    load_execution_index,
+    update_execution,
+)
 from SpatialBiologyToolkit.pipeline.logs import resolve_run_logs, tail_text
 from SpatialBiologyToolkit.pipeline.manifests import read_yaml
 from SpatialBiologyToolkit.pipeline.planner import build_run_plan
@@ -39,7 +43,10 @@ from SpatialBiologyToolkit.pipeline.slurm import (
     sbt_environment,
     submit_run,
 )
-from SpatialBiologyToolkit.pipeline.status import inspect_run_status
+from SpatialBiologyToolkit.pipeline.status import (
+    inspect_run_status,
+    refresh_project_status,
+)
 from SpatialBiologyToolkit.scripts.config_and_utils import parse_arguments
 
 
@@ -460,6 +467,106 @@ class RunControlTests(unittest.TestCase):
                 completed_at,
             )
 
+    def test_project_refresh_batches_all_active_workflows(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context, first_plan = self._project_and_plan(temp_dir, ["debug"])
+            first = create_run_record(context, first_plan, command="sbt run debug")
+            submit_run(context, first_plan, first, runner=FakeSbatchRunner(["301"]))
+            second_plan = build_run_plan(context, ["config"])
+            second = create_run_record(
+                context,
+                second_plan,
+                command="sbt run config",
+            )
+            submit_run(
+                context,
+                second_plan,
+                second,
+                runner=FakeSbatchRunner(["302"]),
+            )
+            calls = []
+
+            def status_runner(arguments, **_kwargs):
+                calls.append(arguments)
+                if arguments[0] == "squeue":
+                    return subprocess.CompletedProcess(
+                        arguments,
+                        0,
+                        stdout="301|RUNNING|debug|None\n",
+                        stderr="",
+                    )
+                return subprocess.CompletedProcess(
+                    arguments,
+                    0,
+                    stdout="302|COMPLETED|config|0:0\n",
+                    stderr="",
+                )
+
+            refreshed = refresh_project_status(context, runner=status_runner)
+
+            self.assertEqual(refreshed.workflow_count, 2)
+            self.assertEqual(refreshed.execution_count, 2)
+            self.assertEqual([call[0] for call in calls], ["squeue", "sacct"])
+            self.assertIn("301,302", calls[0])
+            self.assertEqual(
+                [record.status for record in load_execution_index(context).executions],
+                ["running", "completed"],
+            )
+
+    def test_project_refresh_retains_verified_terminal_state_missing_from_slurm(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context, plan = self._project_and_plan(temp_dir, ["debug"])
+            run = create_run_record(context, plan, command="sbt run debug")
+            submit_run(context, plan, run, runner=FakeSbatchRunner(["401"]))
+            record = load_execution_index(context).executions[0]
+            update_execution(context, record.technical_run_id, status="failed")
+
+            def empty_runner(arguments, **_kwargs):
+                return subprocess.CompletedProcess(
+                    arguments,
+                    0,
+                    stdout="",
+                    stderr="",
+                )
+
+            refreshed = refresh_project_status(context, runner=empty_runner)
+
+            self.assertEqual(
+                load_execution_index(context).executions[0].status,
+                "failed",
+            )
+            self.assertEqual(
+                refreshed.reports[0].stages[0].source,
+                "recorded terminal state",
+            )
+
+    def test_project_refresh_reports_unavailable_scheduler_as_unknown(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context, plan = self._project_and_plan(temp_dir, ["debug"])
+            run = create_run_record(context, plan, command="sbt run debug")
+            submit_run(context, plan, run, runner=FakeSbatchRunner(["402"]))
+
+            def unavailable_runner(arguments, **_kwargs):
+                raise FileNotFoundError(arguments[0])
+
+            refreshed = refresh_project_status(
+                context,
+                runner=unavailable_runner,
+            )
+
+            self.assertEqual(refreshed.unknown_count, 1)
+            self.assertEqual(
+                load_execution_index(context).executions[0].status,
+                "unknown",
+            )
+            self.assertEqual(len(refreshed.warnings), 2)
+            self.assertTrue(
+                any("squeue unavailable" in warning for warning in refreshed.warnings)
+            )
+            self.assertTrue(
+                any("sacct unavailable" in warning for warning in refreshed.warnings)
+            )
+
     def test_failed_afterok_dependency_marks_pending_stage_blocked(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             context, plan = self._project_and_plan(temp_dir, ["debug", "config"])
@@ -528,8 +635,8 @@ class RunControlTests(unittest.TestCase):
                 run.run_dir,
                 runner=cancelled_runner,
             )
-            self.assertEqual(cancelled_report.stages[1].status, "cancelled")
-            self.assertEqual(execution_summaries(context)[1].status, "cancelled")
+            self.assertEqual(cancelled_report.stages[1].status, "blocked")
+            self.assertEqual(execution_summaries(context)[1].status, "blocked")
 
     def test_failed_member_of_multi_job_dependency_marks_stage_blocked(self):
         with tempfile.TemporaryDirectory() as temp_dir:
