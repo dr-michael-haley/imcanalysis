@@ -94,6 +94,8 @@ def discover_scan_settings(adata: Any) -> list[ScanSetting]:
     configured_columns = (
         stored.get("cluster_columns", []) if isinstance(stored, dict) else []
     )
+    if isinstance(configured_columns, np.ndarray):
+        configured_columns = configured_columns.reshape(-1).tolist()
     if configured_columns:
         columns = [str(column) for column in configured_columns]
     else:

@@ -10,6 +10,7 @@ import pandas as pd
 from scipy import sparse
 
 from SpatialBiologyToolkit.hyperstac.cluster_comparison import (
+    discover_scan_settings,
     run_cluster_comparison,
 )
 from SpatialBiologyToolkit.hyperstac.preprocessing import (
@@ -80,6 +81,21 @@ def _scan_adata() -> ad.AnnData:
 
 
 class ClusterComparisonTests(unittest.TestCase):
+    def test_discovers_scan_columns_after_h5ad_round_trip(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "clustered.h5ad"
+            adata = _scan_adata()
+            expected = [setting.column for setting in discover_scan_settings(adata)]
+            adata.write_h5ad(path)
+
+            restored = ad.read_h5ad(path)
+            settings = discover_scan_settings(restored)
+
+            self.assertIsInstance(
+                restored.uns["cluster_scan"]["cluster_columns"], np.ndarray
+            )
+            self.assertEqual([setting.column for setting in settings], expected)
+
     def test_compares_complete_scan_without_survival(self):
         with tempfile.TemporaryDirectory() as temporary:
             output = Path(temporary)
