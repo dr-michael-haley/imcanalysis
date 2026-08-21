@@ -31,6 +31,7 @@ import matplotlib.patches as mpatches
 
 # Import shared utilities and configurations
 from .config_and_utils import *
+from ._visualization_paths import prepare_visualization_report_paths
 
 # Try to import plotting utilities for tissue visualization
 try:
@@ -2579,17 +2580,17 @@ if __name__ == "__main__":
         raise FileNotFoundError(f"AnnData could not be loaded for visualization stage: {adata_path}")
     logging.info('AnnData loaded successfully.')
 
-    # Set up output folder
-    qc_base = Path(general_config.outputs_folder)
-    
-    # Set up output directories
-    qc_umap_dir = qc_base / 'UMAPs'
-    qc_matrix_dir = qc_base / 'Matrixplots'
-    qc_legend_dir = qc_base / 'Color_legends'
-    qc_pop_dir = qc_base / 'Population_images'
-    
-    for p in [qc_umap_dir, qc_matrix_dir, qc_legend_dir, qc_pop_dir]:
-        p.mkdir(parents=True, exist_ok=True)
+    # Route human-facing visualisations into the active execution report. The
+    # fallback preserves the historical direct/helper location when no reporting
+    # context is active.
+    report_paths = prepare_visualization_report_paths(
+        Path(general_config.qc_folder) / 'BasicProcess_QC'
+    )
+    qc_base = report_paths.root
+    qc_umap_dir = report_paths.umaps
+    qc_matrix_dir = report_paths.matrixplots
+    qc_legend_dir = report_paths.color_legends
+    qc_pop_dir = report_paths.population_images
 
     # Resolve population columns (visualization/general resolved config > auto-detect)
     if viz_config.population_columns is not None:

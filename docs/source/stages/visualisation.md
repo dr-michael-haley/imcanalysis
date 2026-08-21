@@ -125,7 +125,11 @@ Bar plots summarise the distribution; strip or swarm plots show individual ROI o
 
 ## Output organisation
 
-Outputs are written beneath the configured visualisation output root, including:
+For an `sbt run`, outputs are written beneath the active execution's `figures`
+directory (for example, `outputs/007_Visualisation/figures/`). Direct reported
+runs use their corresponding `outputs/direct/.../figures/` directory. Calls made
+without any reporting context retain the legacy `QC/BasicProcess_QC` fallback.
+The organised output tree includes:
 
 - `UMAPs` for categorical, highlighted, marker, and layer-specific views;
 - `Matrixplots` for scaled, unscaled, and marker-filtered summaries;
