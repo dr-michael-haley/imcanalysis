@@ -18,6 +18,8 @@ from SpatialBiologyToolkit.environments.models import (
     CondaEnvironmentRecord,
     EnvironmentCaptureTarget,
     EnvironmentRegistry,
+    OverlayRefreshReport,
+    OverlayRefreshResult,
 )
 from SpatialBiologyToolkit.environments.provenance import (
     snapshot_stage_environment_specifications,
@@ -774,6 +776,41 @@ class ComparisonAndSyncTests(EnvironmentFixture):
         with self.assertRaisesRegex(RuntimeError, "--recreate"):
             manager.sync("test")
 
+    def test_refresh_overlays_reinstalls_existing_editable_environments(self):
+        manager, runner = self.manager()
+
+        report = manager.refresh_overlays()
+
+        self.assertTrue(report.passed)
+        self.assertEqual(report.results[0].status, "updated")
+        overlay = next(
+            call
+            for call in runner.calls
+            if call[:7] == [
+                "conda",
+                "run",
+                "-n",
+                "test_env",
+                "python",
+                "-m",
+                "pip",
+            ]
+            and "-e" in call
+        )
+        self.assertEqual(
+            overlay[-3:],
+            [str(self.root), "--no-deps", "--no-build-isolation"],
+        )
+
+    def test_refresh_overlays_skips_missing_environments_without_creating_them(self):
+        manager, runner = self.manager(exists=False)
+
+        report = manager.refresh_overlays(existing_only=True)
+
+        self.assertTrue(report.passed)
+        self.assertEqual(report.results[0].status, "skipped")
+        self.assertFalse(any("pip" in call for call in runner.calls))
+
 
 class CaptureAndProvenanceTests(EnvironmentFixture):
     def test_capture_is_deterministic_and_excludes_toolkit(self):
@@ -1002,6 +1039,36 @@ class EnvironmentCliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0, result.output)
         payload = json.loads(result.output)
         self.assertIn("analysis", {item["key"] for item in payload})
+
+    def test_refresh_overlays_supports_machine_output(self):
+        manager = Mock()
+        manager.refresh_overlays.return_value = OverlayRefreshReport(
+            repository_root=Path("/toolkit"),
+            results=[
+                OverlayRefreshResult(
+                    environment_key="analysis",
+                    conda_name="sbt-analysis",
+                    status="updated",
+                    message="Refreshed the editable SpatialBiologyToolkit overlay.",
+                )
+            ],
+        )
+        with patch(
+            "SpatialBiologyToolkit.cli.main._env_manager", return_value=manager
+        ):
+            result = CliRunner().invoke(
+                app, ["env", "refresh-overlays", "--format", "json"]
+            )
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        payload = json.loads(result.output)
+        self.assertTrue(payload["passed"])
+        self.assertEqual(payload["results"][0]["status"], "updated")
+        manager.refresh_overlays.assert_called_once_with(
+            existing_only=True,
+            dry_run=False,
+            verbose=False,
+        )
 
     def test_capture_all_continues_after_failure_and_summarizes(self):
         manager = Mock()

@@ -28,6 +28,8 @@ from .models import (
     EnvironmentRegistry,
     EnvironmentSummary,
     EnvironmentTestReport,
+    OverlayRefreshReport,
+    OverlayRefreshResult,
     SmokeTestResult,
     SpecificationValidation,
     SyncPlan,
@@ -1086,6 +1088,101 @@ class EnvironmentManager:
         )
         self._write_state_snapshot(snapshot)
         return plan
+
+    def refresh_overlays(
+        self,
+        *,
+        existing_only: bool = True,
+        dry_run: bool = False,
+        verbose: bool = False,
+    ) -> OverlayRefreshReport:
+        """Refresh editable toolkit installs without changing environment dependencies."""
+
+        if not self.conda:
+            raise RuntimeError("Conda executable was not found on PATH.")
+        inventory = self._environment_inventory()
+        results: list[OverlayRefreshResult] = []
+        for key, definition in self.registry.environments.items():
+            if definition.toolkit_overlay != "editable-no-deps":
+                results.append(
+                    OverlayRefreshResult(
+                        environment_key=key,
+                        conda_name=definition.conda_name,
+                        status="skipped",
+                        message="The environment does not use an editable toolkit overlay.",
+                    )
+                )
+                continue
+            if definition.conda_name not in inventory:
+                results.append(
+                    OverlayRefreshResult(
+                        environment_key=key,
+                        conda_name=definition.conda_name,
+                        status="skipped" if existing_only else "failed",
+                        message=(
+                            "The registered Conda environment is not installed."
+                            if existing_only
+                            else "The required registered Conda environment is not installed."
+                        ),
+                    )
+                )
+                continue
+
+            command = [
+                self.conda,
+                "run",
+                "-n",
+                definition.conda_name,
+                "python",
+                "-m",
+                "pip",
+                "install",
+                "-e",
+                str(self.repository_root),
+                "--no-deps",
+                "--no-build-isolation",
+            ]
+            if dry_run:
+                results.append(
+                    OverlayRefreshResult(
+                        environment_key=key,
+                        conda_name=definition.conda_name,
+                        status="planned",
+                        message="Would refresh the editable SpatialBiologyToolkit overlay.",
+                    )
+                )
+                continue
+            if verbose:
+                print(f"Running: {command_text(command)}")
+            started = time.monotonic()
+            try:
+                run_checked(command, runner=self.runner, cwd=self.repository_root)
+            except (OSError, subprocess.SubprocessError, RuntimeError) as exc:
+                results.append(
+                    OverlayRefreshResult(
+                        environment_key=key,
+                        conda_name=definition.conda_name,
+                        status="failed",
+                        duration_seconds=time.monotonic() - started,
+                        message=str(exc),
+                    )
+                )
+            else:
+                results.append(
+                    OverlayRefreshResult(
+                        environment_key=key,
+                        conda_name=definition.conda_name,
+                        status="updated",
+                        duration_seconds=time.monotonic() - started,
+                        message="Refreshed the editable SpatialBiologyToolkit overlay.",
+                    )
+                )
+        return OverlayRefreshReport(
+            repository_root=self.repository_root,
+            dry_run=dry_run,
+            existing_only=existing_only,
+            results=results,
+        )
 
     def test(self, selector: str, *, verbose: bool = False) -> EnvironmentTestReport:
         key, definition = self.resolve(selector)

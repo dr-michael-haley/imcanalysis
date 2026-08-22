@@ -19,7 +19,9 @@ It:
 - requires an existing `conda` command;
 - uses the environment name `sbt-cli`, or `SBT_LAUNCHER_ENV` when explicitly set;
 - creates that environment from `Local_envs/sbt_cli_env.yml` when absent;
-- installs the repository in editable mode with `--no-deps`;
+- includes the setuptools, wheel, and hatchling build backends used by the two
+  editable SBT repositories;
+- installs the repository in editable mode with `--no-deps --no-build-isolation`;
 - leaves scientific environment management to `sbt env`.
 
 It does not modify shell startup files, install `conda-lock`, create scientific
@@ -70,6 +72,13 @@ lockfiles, synchronization logic, safeguards, and smoke tests live behind
 algorithm. This intentionally installs every repository-managed environment
 and is retained for legacy or administrative use; beginners should let
 `sbt run` offer only the environments needed by their selected workflow.
+
+After a fast-forward code update, refresh only the existing editable toolkit
+overlays without changing dependency stacks:
+
+```bash
+sbt env refresh-overlays --existing-only
+```
 
 ## `make update`
 

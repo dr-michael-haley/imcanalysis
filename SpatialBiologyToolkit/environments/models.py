@@ -226,6 +226,27 @@ class SyncPlan(EnvironmentModel):
     smoke_tests: list[list[str]] = Field(default_factory=list)
 
 
+class OverlayRefreshResult(EnvironmentModel):
+    environment_key: str
+    conda_name: str
+    status: Literal["updated", "planned", "skipped", "failed"]
+    duration_seconds: float = 0.0
+    message: str
+
+
+class OverlayRefreshReport(EnvironmentModel):
+    schema_version: Literal[1] = 1
+    repository_root: Path
+    dry_run: bool = False
+    existing_only: bool = True
+    results: list[OverlayRefreshResult] = Field(default_factory=list)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def passed(self) -> bool:
+        return not any(item.status == "failed" for item in self.results)
+
+
 class CapturePlan(EnvironmentModel):
     schema_version: Literal[1] = 1
     environment_key: str

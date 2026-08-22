@@ -6,4 +6,7 @@ dependencies:
   - pydantic>=2.4,<3
   - pyyaml>=6
   - typer>=0.12,<1
+  - setuptools>=68
+  - wheel>=0.45
+  - hatchling>=1.27,<2
   - pip

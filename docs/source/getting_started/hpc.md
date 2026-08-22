@@ -94,8 +94,9 @@ bash install/bootstrap_sbt.sh
 
 This creates a small Conda environment called `sbt-cli`. It contains the
 lightweight `sbt` command used to set up projects, check files, submit jobs, and
-view results. It does not contain all the scientific software used by the
-pipeline.
+view results, together with the packaging backends needed to refresh editable
+imcanalysis and sbt-tools checkouts. It does not contain all the scientific
+software used by the pipeline.
 
 Activate it and check that `sbt` is available:
 

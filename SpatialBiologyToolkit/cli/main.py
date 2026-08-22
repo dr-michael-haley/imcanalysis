@@ -1495,6 +1495,46 @@ def env_sync(
         _fail(exc)
 
 
+@env_app.command("refresh-overlays")
+def env_refresh_overlays(
+    existing_only: bool = typer.Option(
+        True,
+        "--existing-only/--require-all",
+        help=(
+            "Skip registered environments which are not installed instead of treating "
+            "them as failures."
+        ),
+    ),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+    output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
+    verbose: bool = typer.Option(False, "--verbose"),
+    toolkit: Path | None = typer.Option(None, "--toolkit-root"),
+) -> None:
+    """Refresh editable toolkit installs in existing registered environments."""
+
+    try:
+        report = _env_manager(toolkit).refresh_overlays(
+            existing_only=existing_only,
+            dry_run=dry_run,
+            verbose=verbose,
+        )
+    except Exception as exc:
+        _fail(exc)
+    if output_format != OutputFormat.text:
+        _emit_machine(report, output_format)
+    else:
+        for result in report.results:
+            typer.echo(
+                f"{result.environment_key} ({result.conda_name}): "
+                f"{result.status.upper()} - {result.message}"
+            )
+        typer.echo(
+            "Overlay refresh: " + ("complete" if report.passed else "completed with failures")
+        )
+    if not report.passed:
+        raise typer.Exit(1)
+
+
 @env_app.command("capture")
 def env_capture(
     environment: str | None = typer.Argument(
@@ -1658,6 +1698,11 @@ def gateway_capabilities_command(
     payload = {
         "schema_version": 1,
         "protocol_version": "0.2",
+        "protocol_compatibility": {
+            "minimum": "0.1",
+            "maximum": "0.9",
+            "mode": "capability-negotiated",
+        },
         "operations": [
             "list_projects",
             "describe_project",
@@ -1687,6 +1732,7 @@ def gateway_capabilities_command(
             "restore_backup",
             "zip",
         ],
+        "maintenance_operations": ["refresh_environment_overlays"],
         "invariants": {
             "project_registry_resolution": True,
             "structured_json": True,

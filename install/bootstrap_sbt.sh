@@ -15,7 +15,7 @@ if ! conda env list | awk '{print $1}' | grep -Fxq "$LAUNCHER_ENV"; then
 fi
 
 conda run -n "$LAUNCHER_ENV" python -m pip install \
-    -e "$REPOSITORY_ROOT" --no-deps
+    -e "$REPOSITORY_ROOT" --no-deps --no-build-isolation
 
 echo "Installed the sbt launcher in fixed environment '$LAUNCHER_ENV'."
 echo "Next: conda run -n '$LAUNCHER_ENV' sbt env list"

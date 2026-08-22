@@ -143,7 +143,7 @@ For an absent environment, synchronisation performs:
 
 1. `conda run -n base conda-lock install --name <fixed-name> <lockfile>`;
 2. `conda run -n <fixed-name> python -m pip install -r pip-extras.txt`;
-3. `conda run -n <fixed-name> python -m pip install -e <repo> --no-deps`;
+3. `conda run -n <fixed-name> python -m pip install -e <repo> --no-deps --no-build-isolation`;
 4. registered login-node-safe smoke tests;
 5. an observed snapshot in the user's SBT state directory.
 
@@ -160,6 +160,28 @@ Before removal, the live environment is written beneath
 `${SBT_STATE_HOME:-${XDG_STATE_HOME:-~/.local/state}/sbt}/environment_history/`.
 The resolved fixed name is checked again after removal. Missing or invalid
 locks stop synchronisation; there is no silent unlocked solve.
+
+### Refresh editable overlays after a code update
+
+Updating the imcanalysis checkout does not require recreating scientific
+environments. Refresh the editable SpatialBiologyToolkit installation in every
+registered environment which already exists with:
+
+```bash
+sbt env refresh-overlays --existing-only
+sbt env refresh-overlays --existing-only --format json
+```
+
+The command runs `pip install -e <repo> --no-deps --no-build-isolation` through
+each existing environment. It includes externally managed environments whose
+registry entry requests the editable overlay, but it never creates, removes,
+solves, upgrades, or recreates an environment. Missing environments are reported
+as skipped by default; use `--require-all` when their absence should make the
+command fail. `--dry-run` returns the same structured plan without installing.
+
+This fast path is suitable for automated checkout synchronization. Dependency
+or lockfile changes remain the responsibility of the explicit `sbt env sync`
+and drift-review workflow above.
 
 ## Drift comparison
 
