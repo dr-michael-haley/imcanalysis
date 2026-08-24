@@ -61,8 +61,24 @@ def test_ambiguous_panel_alias_is_not_assigned_to_the_wrong_variable():
     aliases = build_image_channel_aliases(var.index, var)
 
     assert "shared" not in aliases
-    assert aliases["marker_a"] == "marker_a"
-    assert aliases["marker_b"] == "marker_b"
+    assert aliases["markera"] == "marker_a"
+    assert aliases["markerb"] == "marker_b"
+
+
+def test_isotope_prefixed_nested_images_match_marker_only_var_names(tmp_path: Path):
+    images = tmp_path / "images"
+    ly6g = _touch(images / "r1" / "141Pr_Ly6G.tiff")
+    b220 = _touch(images / "r1" / "115In_B220.tiff")
+    hla_dr = _touch(images / "r1" / "Nd143_HLA_DR.tiff")
+    aliases = build_image_channel_aliases(["Ly6G", "B220", "HLA-DR"])
+
+    discovered = discover_roi_images(images, "r1", channel_aliases=aliases)
+
+    assert discovered == {
+        "B220": b220,
+        "Ly6G": ly6g,
+        "HLA-DR": hla_dr,
+    }
 
 
 def test_integrity_index_scans_nested_and_flat_images_once(tmp_path: Path):

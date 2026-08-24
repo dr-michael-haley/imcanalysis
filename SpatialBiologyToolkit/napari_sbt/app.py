@@ -8,6 +8,7 @@ import sys
 import time
 from collections import OrderedDict
 from collections.abc import Iterable
+from datetime import datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -181,6 +182,7 @@ from .scanpy_plotting import (
 from .setup import (
     WORKFLOW_PRESENTATIONS,
     WorkspaceSummary,
+    discover_dataset_assets,
     discover_workspaces,
     setup_checks,
     setup_is_ready,
@@ -212,6 +214,63 @@ LABELER_SELECTED_CELL_LAYER_NAME = "labeler_selected_cell_outline"
 CELL_PROPERTIES_SELECTED_LAYER_NAME = "cell_properties_selected_cell_outline"
 EXPLORE_DATA_CACHE_MAX_BYTES = 512 * 1024 * 1024
 EXPLORE_DATA_CACHE_MAX_ITEMS = 48
+ASSET_INDEX_SCHEMA_VERSION = 2
+
+_POPULATION_OBSERVATION_HINTS = (
+    "population",
+    "cell_type",
+    "celltype",
+    "phenotype",
+    "leiden",
+    "cluster",
+    "class",
+    "label",
+)
+
+
+def _population_observation_columns(
+    columns: Iterable[str],
+    *,
+    roi_obs: str,
+    object_obs: str,
+) -> list[str]:
+    """Exclude cell-identity fields from population-oriented selectors."""
+
+    identity_columns = {str(roi_obs), str(object_obs)}
+    return [str(column) for column in columns if str(column) not in identity_columns]
+
+
+def _preferred_population_observation(
+    obs: pd.DataFrame,
+    candidates: Iterable[str],
+    *,
+    prefer_leiden: bool = False,
+) -> str | None:
+    """Choose a sensible population label without selecting identity columns."""
+
+    candidates = [str(column) for column in candidates]
+    if not candidates:
+        return None
+    categorical = [
+        column
+        for column in candidates
+        if isinstance(obs[column].dtype, pd.CategoricalDtype)
+        or pd.api.types.is_bool_dtype(obs[column].dtype)
+    ]
+    pool = categorical or candidates
+    hints = (
+        ("leiden", *_POPULATION_OBSERVATION_HINTS)
+        if prefer_leiden
+        else _POPULATION_OBSERVATION_HINTS
+    )
+    for hint in hints:
+        match = next(
+            (column for column in pool if hint in column.casefold()),
+            None,
+        )
+        if match is not None:
+            return match
+    return pool[0]
 
 WORKFLOW_DESCRIPTIONS = {
     "data_exploration": (
@@ -505,6 +564,7 @@ class NapariSBTController:
         self._launch_experiment = (
             Path(experiment).expanduser().resolve(strict=False) if experiment else None
         )
+        self._launch_experiment_was_explicit = experiment is not None
         self._setup_status_labels: dict[str, object] = {}
         self._workflow_radios: dict[str, object] = {}
         self._updating_setup_controls = False
@@ -600,7 +660,9 @@ class NapariSBTController:
         self.activity_detail = "No active operation."
         self.activity_started_at: float | None = None
         self.activity_finished_at: float | None = None
+        self.activity_state_changed_at = datetime.now().astimezone()
         self.activity_waiting_for_process = False
+        self._activity_styled_state: str | None = None
         self.cell_properties_settings_dialog = None
 
         self.root = QWidget()
@@ -966,6 +1028,14 @@ class NapariSBTController:
         self.validate_integrity_button = QPushButton(
             "Check dataset integrity and build the fast image index"
         )
+        self.detect_dataset_inputs_button = QPushButton(
+            "Automatically detect missing inputs"
+        )
+        self.detect_dataset_inputs_button.setToolTip(
+            "Look only at the project root and conventional immediate folders. "
+            "This does not scan image or mask contents and does not replace the "
+            "dataset integrity check."
+        )
         self.reload_all_inputs_button = QPushButton("Reload all selected components")
         self.integrity_status_label = QLabel(
             "Not validated in this session. Normal navigation uses direct, "
@@ -973,6 +1043,7 @@ class NapariSBTController:
         )
         self.integrity_status_label.setWordWrap(True)
         input_actions = QHBoxLayout()
+        input_actions.addWidget(self.detect_dataset_inputs_button)
         input_actions.addWidget(self.reload_all_inputs_button)
         input_actions.addWidget(self.validate_integrity_button)
         input_actions.addStretch(1)
@@ -1797,6 +1868,16 @@ class NapariSBTController:
         )
         population_qc_intro.setWordWrap(True)
         population_qc_layout.addWidget(population_qc_intro)
+        self.population_qc_scope_banner = QLabel(
+            "Open a workspace to show the Population QC cell scope."
+        )
+        self.population_qc_scope_banner.setWordWrap(True)
+        self.population_qc_scope_banner.setObjectName("sbtPopulationQCScope")
+        self.population_qc_scope_banner.setStyleSheet(
+            "background: #e0f2fe; color: #075985; border: 2px solid #38bdf8; "
+            "border-radius: 7px; padding: 9px; font-weight: 800;"
+        )
+        population_qc_layout.addWidget(self.population_qc_scope_banner)
 
         population_qc_selection_group = workflow_group(
             "1. Population to review",
@@ -3540,23 +3621,50 @@ class NapariSBTController:
         self.activity_dock = None
         self.activity_widget.setObjectName("sbtActivityPanel")
         self.activity_widget.setMinimumWidth(240)
-        self.activity_widget.setMinimumHeight(82)
+        self.activity_widget.setMinimumHeight(165)
         self.activity_widget.setStyleSheet(
             "QFrame#sbtActivityPanel { background: rgba(25, 31, 42, 235); "
-            "border: 2px solid #60a5fa; border-radius: 8px; } "
+            "border: 3px solid #22c55e; border-radius: 8px; } "
             "QLabel { color: white; background: transparent; }"
         )
         activity_layout = QVBoxLayout(self.activity_widget)
-        activity_layout.setContentsMargins(10, 7, 10, 7)
-        activity_layout.setSpacing(2)
-        self.activity_title_label = QLabel("● Ready")
+        activity_layout.setContentsMargins(10, 8, 10, 8)
+        activity_layout.setSpacing(3)
+        self.activity_title_label = QLabel("✅ Ready")
+        self.activity_title_label.setObjectName("sbtActivityTitle")
         self.activity_title_label.setWordWrap(True)
         activity_title_font = QFont(self.activity_title_label.font())
         activity_title_font.setBold(True)
+        point_size = activity_title_font.pointSizeF()
+        if point_size > 0:
+            scaled_point_size = point_size * 2.5
+            activity_title_font.setPointSizeF(scaled_point_size)
+            self._activity_title_css_size = f"{scaled_point_size:.1f}pt"
+        else:
+            pixel_size = activity_title_font.pixelSize()
+            scaled_pixel_size = round(pixel_size * 2.5) if pixel_size > 0 else 24
+            activity_title_font.setPixelSize(scaled_pixel_size)
+            self._activity_title_css_size = f"{scaled_pixel_size}px"
         self.activity_title_label.setFont(activity_title_font)
+        self.activity_title_label.setStyleSheet(
+            f"color: #86efac; font-size: {self._activity_title_css_size}; "
+            "font-weight: 900;"
+        )
+        self.activity_title_label.setMinimumHeight(
+            max(40, self.activity_title_label.sizeHint().height() + 6)
+        )
+        self.activity_action_label = QLabel("Ready for the next action.")
+        self.activity_action_label.setWordWrap(True)
+        activity_action_font = QFont(self.activity_action_label.font())
+        activity_action_font.setBold(True)
+        self.activity_action_label.setFont(activity_action_font)
+        self.activity_timestamp_label = QLabel()
+        self.activity_timestamp_label.setWordWrap(True)
         self.activity_detail_label = QLabel("No active operation.")
         self.activity_detail_label.setWordWrap(True)
         activity_layout.addWidget(self.activity_title_label)
+        activity_layout.addWidget(self.activity_action_label)
+        activity_layout.addWidget(self.activity_timestamp_label)
         activity_layout.addWidget(self.activity_detail_label)
         self.activity_widget.adjustSize()
 
@@ -3677,6 +3785,9 @@ class NapariSBTController:
         )
         self.validate_integrity_button.clicked.connect(
             self._guard(self.preview_cohort)
+        )
+        self.detect_dataset_inputs_button.clicked.connect(
+            self._guard(self.detect_dataset_inputs)
         )
         for signal in (
             self.masks_edit.textChanged,
@@ -4350,6 +4461,7 @@ class NapariSBTController:
         self.activity_detail = str(detail)
         self.activity_started_at = time.monotonic()
         self.activity_finished_at = None
+        self.activity_state_changed_at = datetime.now().astimezone()
         self.activity_waiting_for_process = False
         self._update_activity_monitor()
         self.QApplication.processEvents()
@@ -4362,6 +4474,7 @@ class NapariSBTController:
         self.activity_state = "complete" if success else "error"
         self.activity_detail = str(detail)
         self.activity_finished_at = time.monotonic()
+        self.activity_state_changed_at = datetime.now().astimezone()
         self.activity_waiting_for_process = False
         self._update_activity_monitor()
 
@@ -4446,7 +4559,7 @@ class NapariSBTController:
         qt_window.splitDockWidget(layer_dock, self.activity_dock, orientation)
         qt_window.resizeDocks(
             [layer_dock, self.activity_dock],
-            [10000, 130],
+            [10000, 190],
             orientation,
         )
 
@@ -4937,6 +5050,32 @@ class NapariSBTController:
         ):
             self._activity_finish(True, "Background computation finished.")
             return
+        state_presentation = {
+            "idle": ("✅ Ready", "#86efac", "#22c55e", "Ready since"),
+            "running": ("⏳ Working", "#fde047", "#f59e0b", "Started"),
+            "complete": ("🏁 Finished", "#93c5fd", "#3b82f6", "Finished"),
+            "error": ("❌ Failed", "#fca5a5", "#ef4444", "Failed"),
+        }
+        title, title_colour, border_colour, timestamp_prefix = state_presentation.get(
+            self.activity_state, state_presentation["idle"]
+        )
+        if self._activity_styled_state != self.activity_state:
+            self.activity_widget.setStyleSheet(
+                "QFrame#sbtActivityPanel { background: rgba(25, 31, 42, 235); "
+                f"border: 3px solid {border_colour}; border-radius: 8px; }} "
+                "QLabel { color: white; background: transparent; }"
+            )
+            self._activity_styled_state = self.activity_state
+        self.activity_title_label.setText(title)
+        self.activity_title_label.setStyleSheet(
+            f"color: {title_colour}; font-size: {self._activity_title_css_size}; "
+            "font-weight: 900;"
+        )
+        timestamp = self.activity_state_changed_at.strftime(
+            "%Y-%m-%d %H:%M:%S %Z"
+        )
+        self.activity_timestamp_label.setText(f"{timestamp_prefix}: {timestamp}")
+        self.activity_timestamp_label.setStyleSheet("color: #cbd5e1;")
         elapsed = (
             max(0.0, time.monotonic() - self.activity_started_at)
             if self.activity_started_at is not None
@@ -4956,29 +5095,32 @@ class NapariSBTController:
                         pids.append(str(pid))
                 pid_text = f"; PID {', '.join(pids)}" if pids else ""
                 process_text = f"\nLive: {names}{pid_text}"
-            self.activity_title_label.setText(
-                f"● Working — {self.activity_action} ({elapsed:.0f}s)"
+            self.activity_action_label.setText(
+                f"{self.activity_action} — elapsed {elapsed:.0f}s"
             )
-            self.activity_title_label.setStyleSheet("color: #93c5fd;")
             self.activity_detail_label.setText(
                 f"{self.activity_detail}{process_text}\nHeartbeat: live"
             )
         elif self.activity_state == "error":
-            self.activity_title_label.setText(f"● Failed — {self.activity_action}")
-            self.activity_title_label.setStyleSheet("color: #fca5a5;")
+            self.activity_action_label.setText(self.activity_action)
             self.activity_detail_label.setText(self.activity_detail)
         elif self.activity_state == "complete":
-            self.activity_title_label.setText(f"● Finished — {self.activity_action}")
-            self.activity_title_label.setStyleSheet("color: #86efac;")
+            self.activity_action_label.setText(self.activity_action)
             self.activity_detail_label.setText(self.activity_detail)
             if (
                 self.activity_finished_at is not None
                 and time.monotonic() - self.activity_finished_at > 8
             ):
                 self.activity_state = "idle"
+                self.activity_action = "Ready"
+                self.activity_detail = "No active operation."
+                self.activity_started_at = None
+                self.activity_finished_at = None
+                self.activity_state_changed_at = datetime.now().astimezone()
+                self._update_activity_monitor()
+                return
         else:
-            self.activity_title_label.setText("● Ready")
-            self.activity_title_label.setStyleSheet("color: #cbd5e1;")
+            self.activity_action_label.setText("Ready for the next action.")
             self.activity_detail_label.setText("No active operation.")
         self.activity_widget.adjustSize()
 
@@ -5081,6 +5223,17 @@ class NapariSBTController:
             raise FileNotFoundError(f"Project or dataset folder not found: {root}")
         self.project_root = root
         self.project_edit.setText(str(root))
+        if replace_inputs:
+            self._updating_setup_controls = True
+            try:
+                if self._in_memory_adata is None:
+                    self.anndata_edit.clear()
+                self.masks_edit.clear()
+                self.images_edit.clear()
+                self.extra_images_edit.clear()
+                self.normalization_edit.clear()
+            finally:
+                self._updating_setup_controls = False
         experiment_folder = "napari_sbt"
         context = None
         try:
@@ -5093,6 +5246,7 @@ class NapariSBTController:
         self._workspace_container = workspace_folder(root, experiment_folder)
         if replace_inputs:
             self._launch_experiment = None
+            self._launch_experiment_was_explicit = False
         if context is not None and self._launch_experiment is None:
             active = context.config.napari_sbt.active_experiment
             if active:
@@ -5146,11 +5300,99 @@ class NapariSBTController:
                 self._updating_setup_controls = False
         if normalization_to_load is not None and normalization_to_load.is_file():
             self.load_normalization_json()
+        self._invalidate_dataset_indexes()
+        if not self._launch_experiment_was_explicit:
+            self.detect_dataset_inputs(announce=False)
         self._loaded_workspace_root = None
         if replace_inputs or self._launch_experiment is None:
             self._update_suggested_workspace_path(force=True)
-        self._invalidate_dataset_indexes()
         self.refresh_workspace_choices()
+
+    def detect_dataset_inputs(self, *, announce: bool = True) -> None:
+        """Fill missing Setup inputs using a shallow, convention-based lookup."""
+
+        suggestions = discover_dataset_assets(self.project_root)
+        updates: list[str] = []
+        notices: list[str] = []
+
+        current_anndata = self.anndata_edit.text().strip()
+        anndata_is_usable = bool(
+            self._in_memory_adata is not None
+            or (current_anndata and Path(current_anndata).expanduser().is_file())
+        )
+        if not anndata_is_usable and suggestions.anndata_candidates:
+            selected_anndata: Path | None = None
+            if len(suggestions.anndata_candidates) == 1:
+                selected_anndata = suggestions.anndata_candidates[0]
+            else:
+                display_to_path: dict[str, Path] = {}
+                for path in suggestions.anndata_candidates:
+                    try:
+                        display = str(path.relative_to(self.project_root))
+                    except ValueError:
+                        display = str(path)
+                    display_to_path[display] = path
+                selected, accepted = self.QInputDialog.getItem(
+                    self.root,
+                    "Choose processed cell data",
+                    (
+                        f"NapariSBT found {len(display_to_path)} AnnData files. "
+                        "Select the one to use:"
+                    ),
+                    list(display_to_path),
+                    0,
+                    False,
+                )
+                if accepted and selected:
+                    selected_anndata = display_to_path[str(selected)]
+                else:
+                    notices.append(
+                        f"{len(display_to_path)} AnnData files found; selection is required"
+                    )
+            if selected_anndata is not None:
+                self.anndata_edit.setText(str(selected_anndata))
+                updates.append(f"AnnData: {selected_anndata.name}")
+
+        current_masks = self.masks_edit.text().strip()
+        masks_are_usable = bool(
+            current_masks and Path(current_masks).expanduser().is_dir()
+        )
+        if not masks_are_usable:
+            if len(suggestions.masks_candidates) == 1:
+                selected_masks = suggestions.masks_candidates[0]
+                self.masks_edit.setText(str(selected_masks))
+                updates.append(f"masks: {selected_masks.name}")
+            elif len(suggestions.masks_candidates) > 1:
+                notices.append(
+                    f"{len(suggestions.masks_candidates)} possible mask folders found; choose one"
+                )
+
+        current_images = _split_paths(self.images_edit.toPlainText())
+        images_are_usable = bool(
+            current_images
+            and all(Path(path).expanduser().is_dir() for path in current_images)
+        )
+        if not images_are_usable and suggestions.image_candidates:
+            self.images_edit.setPlainText(
+                "\n".join(map(str, suggestions.image_candidates))
+            )
+            updates.append(
+                f"{len(suggestions.image_candidates)} staining image folder(s)"
+            )
+
+        if updates or notices:
+            message = "Automatic detection: " + "; ".join([*updates, *notices]) + "."
+        else:
+            message = (
+                "Automatic detection found no missing conventional dataset inputs."
+            )
+        self.integrity_status_label.setText(
+            message
+            + " Review the choices, then run the explicit dataset integrity check."
+        )
+        self.refresh_setup_readiness()
+        if announce:
+            self.set_status(message)
 
     def use_selected_registered_project(self) -> None:
         path = self.registered_project_combo.currentData()
@@ -5312,12 +5554,14 @@ class NapariSBTController:
         self.current_roi = None
         self.current_mask = None
         self.current_mask_path = None
+        self.current_image_paths.clear()
         self._invalidate_population_qc_caches()
         self._refresh_roi_metadata_display()
         self._integrity_signature = None
         self._asset_index_signature = None
         self._mask_path_index.clear()
         self._roi_image_path_index.clear()
+        self.channel_list.clear()
         self._clear_explore_layers()
         self._remove_layers(
             [
@@ -5332,8 +5576,23 @@ class NapariSBTController:
         )
         self.explore_recipe = ExploreViewRecipe()
         self.explore_review_state = ExploreReviewState()
+        scope_index = self.scope_combo.findData("all_cells")
+        self.scope_combo.blockSignals(True)
+        self.scope_combo.setCurrentIndex(max(0, scope_index))
+        self.scope_combo.blockSignals(False)
+        self.value_list.blockSignals(True)
+        self.value_list.clearSelection()
+        self.value_list.blockSignals(False)
+        self._update_scope_widget_state()
+        self.preview_text.clear()
+        self.integrity_status_label.setText(
+            "Not yet checked for this new workspace. Run the dataset integrity "
+            "check after reviewing the inputs and cell scope."
+        )
         self._sync_population_qc_contour_control()
         self._sync_population_qc_contrast_defaults(force=True)
+        self.refresh_population_qc_populations()
+        self._refresh_population_qc_scope_banner()
         self._set_classification_enabled(False)
         self.scope_label.setText(
             "No workflow workspace: complete Setup, then create it."
@@ -5358,6 +5617,7 @@ class NapariSBTController:
         self.images_edit.setReadOnly(not editable)
         self.extra_images_edit.setReadOnly(not editable)
         for button in (
+            self.detect_dataset_inputs_button,
             self.choose_anndata_button,
             self.choose_masks_button,
             self.add_images_folder_button,
@@ -5772,6 +6032,7 @@ class NapariSBTController:
             )
 
         payload = {
+            "schema_version": ASSET_INDEX_SCHEMA_VERSION,
             "masks_folder": resolved(self.masks_edit.text().strip()),
             "images_folders": [
                 resolved(path) for path in _split_paths(self.images_edit.toPlainText())
@@ -5807,7 +6068,7 @@ class NapariSBTController:
         write_json(
             self._integrity_index_path(root),
             {
-                "schema_version": 1,
+                "schema_version": ASSET_INDEX_SCHEMA_VERSION,
                 "asset_signature": self._asset_index_signature,
                 "masks": {
                     roi: str(path.expanduser().resolve(strict=False))
@@ -5832,6 +6093,8 @@ class NapariSBTController:
         try:
             payload = json.loads(source.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
+            return False
+        if payload.get("schema_version") != ASSET_INDEX_SCHEMA_VERSION:
             return False
         signature = self._current_asset_index_signature()
         if payload.get("asset_signature") != signature:
@@ -5954,6 +6217,7 @@ class NapariSBTController:
                 f"Workflow view set to {self.workflow_combo.currentText()!r}. "
                 "The workspace still uses the same experiment-backed data model."
             )
+        self._refresh_population_qc_scope_banner()
         self.refresh_setup_readiness()
 
     def _normalization_from_editor(self) -> dict[str, float]:
@@ -6033,13 +6297,32 @@ class NapariSBTController:
 
     def load_normalization_json(self) -> None:
         source = Path(self.normalization_edit.text().strip()).expanduser()
-        self.display_normalization = load_normalization_mapping(source)
+        try:
+            self.display_normalization = load_normalization_mapping(source)
+        except ValueError:
+            # Early Setup workspaces persisted an empty editor as
+            # {"normalization_dict": {}} and then failed while reopening it.
+            # Treat only that known, valid NapariSBT placeholder as "not set";
+            # malformed or empty user-supplied normalization files still fail.
+            try:
+                payload = json.loads(source.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                raise
+            if payload != {"normalization_dict": {}}:
+                raise
+            self.display_normalization = {}
         self._set_normalization_table(self.display_normalization)
         self._clear_explore_layer_data_cache()
-        self.normalization_status_label.setText(
-            f"Loaded {len(self.display_normalization):,} channel maxima from "
-            f"{source}. Save the workspace to create an experiment-backed copy."
-        )
+        if self.display_normalization:
+            self.normalization_status_label.setText(
+                f"Loaded {len(self.display_normalization):,} channel maxima from "
+                f"{source}. Save the workspace to create an experiment-backed copy."
+            )
+        else:
+            self.normalization_status_label.setText(
+                "No channel-specific normalization is stored; images use the "
+                "configured fallback quantile and display defaults."
+            )
         self._refresh_feature_normalization_summary()
 
     def validate_normalization_editor(self) -> None:
@@ -6066,6 +6349,9 @@ class NapariSBTController:
 
     def _write_experiment_normalization(self, root: Path) -> str | None:
         self.display_normalization = self._normalization_from_editor()
+        if not self.display_normalization:
+            self.normalization_edit.clear()
+            return None
         destination = root / "display" / "normalization.json"
         write_json(
             destination,
@@ -6343,38 +6629,38 @@ class NapariSBTController:
             self.population_qc_obs_combo,
             self.curation_source_combo,
         )
+        roi_obs, object_obs = self._maintenance_identity_columns()
+        population_columns = _population_observation_columns(
+            columns,
+            roi_obs=roi_obs,
+            object_obs=object_obs,
+        )
+        choices_by_combo = {
+            id(self.obs_combo): columns,
+            id(self.overlay_obs_combo): columns,
+            id(self.population_obs_combo): population_columns,
+            id(self.population_qc_obs_combo): population_columns,
+            id(self.curation_source_combo): population_columns,
+        }
         previous_values = {id(combo): combo.currentText() for combo in selector_combos}
         for combo in selector_combos:
-            current = combo.currentText()
+            choices = choices_by_combo[id(combo)]
+            previous = previous_values[id(combo)]
             combo.blockSignals(True)
             combo.clear()
-            combo.addItems(columns)
-            if current in columns:
-                combo.setCurrentText(current)
-        preferred = [
-            column
-            for column in columns
-            if isinstance(self.adata.obs[column].dtype, pd.CategoricalDtype)
-        ]
-        if preferred:
-            for combo in (
-                self.obs_combo,
-                self.population_obs_combo,
-                self.population_qc_obs_combo,
-                self.curation_source_combo,
-            ):
-                if previous_values[id(combo)] not in columns:
-                    preferred_value = preferred[0]
-                    if combo is self.curation_source_combo:
-                        preferred_value = next(
-                            (
-                                column
-                                for column in preferred
-                                if "leiden" in column.lower()
-                            ),
-                            preferred_value,
-                        )
-                    combo.setCurrentText(preferred_value)
+            combo.addItems(choices)
+            if previous in choices:
+                combo.setCurrentText(previous)
+                continue
+            preferred_value = _preferred_population_observation(
+                self.adata.obs,
+                population_columns,
+                prefer_leiden=combo is self.curation_source_combo,
+            )
+            if combo is self.overlay_obs_combo:
+                preferred_value = columns[0] if columns else None
+            if preferred_value is not None and combo.findText(preferred_value) >= 0:
+                combo.setCurrentText(preferred_value)
         for combo in selector_combos:
             combo.blockSignals(False)
         selected_markers = {
@@ -10683,6 +10969,7 @@ class NapariSBTController:
             self.scope_label.setText(
                 "No workflow workspace: choose a task and dataset in Setup."
             )
+            self._refresh_population_qc_scope_banner()
             return
         mode_text = ""
         if (
@@ -10708,6 +10995,7 @@ class NapariSBTController:
             f"experiment {self.manifest.name!r} r{self.manifest.revision}"
             f"{mode_text}"
         )
+        self._refresh_population_qc_scope_banner()
 
     def refresh_class_controls(self) -> None:
         self._updating_queue_controls = True
@@ -10726,7 +11014,11 @@ class NapariSBTController:
                 )
             self.queue_roi_combo.clear()
             self.queue_roi_combo.addItem("All current experiment ROIs", None)
-            queue_rois = sorted(self.cohort["ROI"].astype(str).unique())
+            queue_rois = (
+                sorted(self.cohort["ROI"].astype(str).unique())
+                if "ROI" in self.cohort
+                else []
+            )
             if (
                 self.manifest.experiment_mode == "feature_discovery_trial"
                 and self.manifest.feature_trial is not None
@@ -13800,10 +14092,16 @@ class NapariSBTController:
             existing_is_rgb = bool(
                 existing_layer is not None and getattr(existing_layer, "rgb", False)
             )
-            display_settings = self._recipe_display_settings(
-                name,
-                default_colormap=None if existing_is_rgb else default_colormap,
-            )
+            display_settings = {
+                # Apply blending before every reuse/cache branch. Otherwise a
+                # cached scalar channel recreated after an ROI/recipe switch
+                # inherits Napari's translucent_no_depth default.
+                "blending": "translucent" if existing_is_rgb else "additive",
+                **self._recipe_display_settings(
+                    name,
+                    default_colormap=None if existing_is_rgb else default_colormap,
+                ),
+            }
             if (
                 self._reuse_explore_layer(
                     name,
@@ -14282,18 +14580,105 @@ class NapariSBTController:
             raise ValueError("Choose a Population QC observation and population first.")
         return observation, population
 
+    def _population_qc_scope_is_limited(self) -> bool:
+        if self.manifest is None:
+            return False
+        scope = self.manifest.cell_scope
+        return bool(
+            scope.mode != "all_cells"
+            or scope.eligible_cell_count < scope.total_cell_count
+        )
+
+    def _refresh_population_qc_scope_banner(self) -> None:
+        """Make the cell universe used by Population QC explicit in the tab."""
+
+        if not hasattr(self, "population_qc_scope_banner"):
+            return
+        if self.manifest is None:
+            cell_text = (
+                f"{self.adata.n_obs:,} loaded cells"
+                if self.adata is not None
+                else "no AnnData loaded"
+            )
+            self.population_qc_scope_banner.setText(
+                "ℹ SETUP MODE — No frozen workspace cell scope is active "
+                f"({cell_text}). A new workspace starts at All cells; review the "
+                "scope in Setup before running the integrity check."
+            )
+            self.population_qc_scope_banner.setStyleSheet(
+                "background: #e0f2fe; color: #075985; "
+                "border: 2px solid #38bdf8; border-radius: 7px; padding: 9px; "
+                "font-weight: 800;"
+            )
+            return
+
+        scope = self.manifest.cell_scope
+        eligible = int(scope.eligible_cell_count)
+        total = int(scope.total_cell_count)
+        represented_rois = int(scope.represented_roi_count)
+        if not self._population_qc_scope_is_limited():
+            self.population_qc_scope_banner.setText(
+                f"✅ WHOLE DATASET — Population QC is using all {total:,} cells "
+                f"across {represented_rois:,} ROIs. Population lists, marker "
+                "suggestions, ROI rankings, and overlays use the complete dataset."
+            )
+            self.population_qc_scope_banner.setStyleSheet(
+                "background: #dcfce7; color: #166534; "
+                "border: 2px solid #22c55e; border-radius: 7px; padding: 9px; "
+                "font-weight: 800;"
+            )
+            return
+
+        percentage = 100.0 * eligible / total if total else 0.0
+        selector = "frozen identity list"
+        if scope.mode == "obs_values":
+            values = [str(value) for value in scope.obs_values]
+            displayed_values = values[:4]
+            values_text = ", ".join(repr(value) for value in displayed_values)
+            if len(values) > len(displayed_values):
+                values_text += f", +{len(values) - len(displayed_values)} more"
+            selector = f"{scope.obs_column} ∈ [{values_text}]"
+        trial_note = ""
+        if (
+            self.manifest.experiment_mode == "feature_discovery_trial"
+            and self.manifest.feature_trial is not None
+        ):
+            trial_note = (
+                f" ROI buttons are further restricted to its "
+                f"{len(self.manifest.feature_trial.selected_rois):,} trial ROIs."
+            )
+        self.population_qc_scope_banner.setText(
+            f"⚠ LIMITED CELL SCOPE — Population QC is using {eligible:,} of "
+            f"{total:,} cells ({percentage:.1f}%) across {represented_rois:,} ROIs; "
+            "this is not a whole-dataset review. "
+            f"Frozen selector: {selector}. Populations, marker suggestions, ROI "
+            f"rankings, and overlays outside this scope are excluded.{trial_note}"
+        )
+        self.population_qc_scope_banner.setStyleSheet(
+            "background: #fef3c7; color: #92400e; "
+            "border: 3px solid #f59e0b; border-radius: 7px; padding: 9px; "
+            "font-weight: 900;"
+        )
+
     def refresh_population_qc_populations(self) -> None:
         """Refresh the populations offered by the dedicated QC tab."""
 
+        self._refresh_population_qc_scope_banner()
         previous = self.population_qc_population_combo.currentText()
         observation = self.population_qc_obs_combo.currentText().strip()
         values: list[str] = []
-        if self.adata is not None and observation in self.adata.obs:
-            series = self.adata.obs[observation]
+        adata_view = self._population_qc_adata_view()
+        if adata_view is not None and observation in adata_view.obs:
+            series = adata_view.obs[observation]
+            observed_values = set(series.dropna().astype(str))
             if isinstance(series.dtype, pd.CategoricalDtype):
-                values = [str(value) for value in series.cat.categories]
+                values = [
+                    str(value)
+                    for value in series.cat.categories
+                    if str(value) in observed_values
+                ]
             else:
-                values = sorted(series.dropna().astype(str).unique().tolist())
+                values = sorted(observed_values)
         self.population_qc_population_combo.blockSignals(True)
         self.population_qc_population_combo.clear()
         self.population_qc_population_combo.addItems(values)
@@ -14301,6 +14686,16 @@ class NapariSBTController:
             self.population_qc_population_combo.setCurrentText(previous)
         self.population_qc_population_combo.blockSignals(False)
         self.load_population_qc_recipe_controls()
+        if observation and not values and adata_view is not None:
+            scope_text = (
+                "the limited workspace cell scope"
+                if self._population_qc_scope_is_limited()
+                else "the loaded dataset"
+            )
+            self.population_qc_status_label.setText(
+                f"No non-missing {observation!r} populations are represented in "
+                f"{scope_text}. Choose another observation or workspace."
+            )
 
     def refresh_population_qc_marker_choices(self) -> None:
         """Populate RGB marker selectors from the images available for this ROI."""
@@ -14439,10 +14834,32 @@ class NapariSBTController:
             observation, population
         )
         if not suggestions:
-            raise ValueError(
-                "No current ROI image channels could be matched safely to adata.var. "
-                "Load an ROI, then choose the RGB channels manually if necessary."
-            )
+            adata_view = self._population_qc_adata_view()
+            population_cells = 0
+            if adata_view is not None and observation in adata_view.obs:
+                population_cells = int(
+                    adata_view.obs[observation]
+                    .astype("string")
+                    .eq(str(population))
+                    .fillna(False)
+                    .sum()
+                )
+            if population_cells == 0:
+                message = (
+                    f"{observation}={population!r} has no cells inside the active "
+                    "Population QC cell scope. Review the scope banner at the top "
+                    "of this tab or open an all-cells workspace."
+                )
+            else:
+                message = (
+                    f"The active scope contains {population_cells:,} cells from this "
+                    "population, but no indexed image channels could be matched "
+                    "safely to adata.var. Load an ROI, check image/marker names in "
+                    "Setup, or choose the RGB channels manually."
+                )
+            self.population_qc_status_label.setText(f"⚠ {message}")
+            self.set_status(f"Population QC marker suggestion unavailable: {message}")
+            return
         self._apply_population_qc_marker_suggestions(suggestions)
         self.population_qc_status_label.setText(
             f"Suggested the highest-mean matched image markers for {population!r}. "
@@ -14777,10 +15194,15 @@ class NapariSBTController:
             )
             self.population_qc_roi_buttons[roi] = button
         ordering_text = self.population_qc_roi_order_combo.currentText().lower()
+        scope_text = (
+            " within the LIMITED workspace cell scope"
+            if self._population_qc_scope_is_limited()
+            else " across the whole dataset"
+        )
         self.population_qc_status_label.setText(
             f"Showing {len(ranking):,} {ordering_text} eligible ROIs for "
-            f"{observation}={population}. Green is unvisited; grey is viewed with "
-            "this exact RGB, contrast, and outline recipe."
+            f"{observation}={population}{scope_text}. Green is unvisited; grey is "
+            "viewed with this exact RGB, contrast, and outline recipe."
         )
 
     def recalculate_population_qc_rois(self) -> None:

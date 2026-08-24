@@ -27,6 +27,9 @@ from SpatialBiologyToolkit._napari_imc_normalization import normalize_imc_image
 
 MASK_EXTENSIONS = (".tif", ".tiff")
 IMAGE_EXTENSIONS = (".tif", ".tiff", ".png", ".jpg", ".jpeg", ".bmp", ".webp")
+_ISOTOPE_CHANNEL_PREFIX = re.compile(
+    r"^(?:\d{2,3}[A-Za-z]{1,3}|[A-Za-z]{1,3}\d{2,3})$"
+)
 
 
 @dataclass
@@ -219,7 +222,7 @@ def _normalise_image_alias(value) -> str | None:
     text = str(value).strip()
     if not text:
         return None
-    return re.sub(r"\W+", "", text).casefold()
+    return "".join(character for character in text if character.isalnum()).casefold()
 
 
 def build_image_channel_aliases(
@@ -269,15 +272,40 @@ def _image_channel_candidates(image_path: Path, roi: str) -> list[str]:
     stem = image_path.stem
     candidates: list[str] = []
     prefix = f"{roi}_"
+    roi_suffix = None
     if stem.casefold().startswith(prefix.casefold()):
-        candidates.append(stem[len(prefix) :])
+        roi_suffix = stem[len(prefix) :]
+    for value in (roi_suffix, stem):
+        if not value:
+            continue
+        channel_prefix, separator, marker = value.partition("_")
+        if (
+            separator
+            and marker
+            and _ISOTOPE_CHANNEL_PREFIX.fullmatch(channel_prefix)
+        ):
+            candidates.append(marker)
+    if roi_suffix:
+        candidates.append(roi_suffix)
     parts = stem.split("_", 3)
     if len(parts) == 4:
         candidates.extend((parts[3], parts[2], f"{parts[2]}_{parts[3]}"))
     elif len(parts) >= 3:
         candidates.append(parts[2])
     candidates.append(stem)
-    return list(dict.fromkeys(value for value in candidates if value))
+    expanded: list[str] = []
+    for value in candidates:
+        if not value:
+            continue
+        expanded.append(value)
+        channel_prefix, separator, marker = value.partition("_")
+        if (
+            separator
+            and marker
+            and _ISOTOPE_CHANNEL_PREFIX.fullmatch(channel_prefix)
+        ):
+            expanded.append(marker)
+    return list(dict.fromkeys(expanded))
 
 
 def _image_channel_name(

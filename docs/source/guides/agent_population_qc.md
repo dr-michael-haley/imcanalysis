@@ -7,8 +7,10 @@ compact summaries and the underlying data used by their plots, so a notebook
 can retain an auditable evidence trail.
 
 The toolkit may add candidate annotations to the SpatialData table in memory.
-It never writes the SpatialData Zarr store or replaces the source population
-column. Saving a reviewed result is a separate, explicit step.
+Evidence stages do not write the SpatialData Zarr store. At workflow end,
+`publish_posterior_mapping()` replaces the configured posterior-label column
+in the source H5AD and one table element; it never replaces the source
+population column.
 
 ## Start with context and broad evidence
 
@@ -24,8 +26,9 @@ from SpatialBiologyToolkit.population_qc import (
     plot_clustering_qc_panels,
     plot_marker_distributions,
     plot_population_breakdown,
-    plot_population_matrixplot,
-    plot_population_umap,
+    plot_population_scanpy_abundance,
+    plot_population_scanpy_matrixplot,
+    plot_population_scanpy_umap,
     profile_population,
     summarize_population_representation,
 )
@@ -39,17 +42,17 @@ display(list_stored_population_qc(sdata))
 structural_qc = load_stored_population_qc(sdata, population_key)
 structural_panels = plot_clustering_qc_panels(structural_qc)
 
-global_umap = plot_population_umap(
+global_umap = plot_population_scanpy_umap(
     sdata,
     population_key,
     max_cells=200_000,
     random_state=1729,
 )
-marker_matrix = plot_population_matrixplot(
+marker_matrix = plot_population_scanpy_matrixplot(
     sdata,
     population_key,
-    standardization="marker_robust_zscore",
-    standardization_clip=3.0,
+    vmax=0.6,
+    dendrogram=True,
     max_cells_per_population=10_000,
     random_state=1729,
 )
@@ -77,6 +80,13 @@ display(representation.for_population("18"))
 case_breakdown = plot_population_breakdown(
     representation,
     group_key="animal",
+)
+abundance_by_group = plot_population_scanpy_abundance(
+    sdata,
+    population_key,
+    case_key="animal",
+    roi_key="ROI",
+    group_key="treatment_group",
 )
 ```
 
@@ -221,7 +231,40 @@ values are stored outside rendered HTML.
 
 At completion, use `save_posterior_mapping()` and
 `save_execution_audit()` for the canonical unabridged decision table and the
-explicit no-Zarr-write/source-column-preservation audit.
+explicit no-Zarr-write/source-column-preservation audit. The new native Scanpy
+helpers save the exact plotted cells/sample fractions through the artifact
+writer, so the PNGs do not stand alone as evidence.
+
+## Publish the reviewed posterior mapping at workflow end
+
+Assessment itself does not write SpatialData. At the end of every completed
+population-QC workflow, use the named finalisation API once. It replaces an
+existing configured posterior-label column by default, stages the original
+H5AD, verifies observation identity/order against the Zarr table, writes
+exactly one replacement table element, reopens it to verify the source and
+posterior columns, and then atomically replaces the H5AD:
+
+```python
+from SpatialBiologyToolkit.population_qc import (
+    PosteriorPublicationConfig,
+    publish_posterior_mapping,
+)
+
+config = PosteriorPublicationConfig(
+    zarr="dataset.zarr",
+    table_name="table_cell_quantification",
+    h5ad="anndata.h5ad",
+    mapping_csv="population_assessment_files/tables/posterior_mapping.csv",
+    source_key="leiden_1.0",
+    output_key="posterior_label_leiden_1.0",
+    artifact_root="population_assessment_files",
+)
+manifest = publish_posterior_mapping(config)
+```
+
+The finalisation manifest and `posterior_observation_labels.csv` are written
+before/alongside the slow operation. It emits progress heartbeats every 15
+minutes by default and never writes images, labels, or unrelated tables.
 
 ## Test a possible split in memory
 

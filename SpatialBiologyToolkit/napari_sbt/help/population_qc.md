@@ -15,10 +15,20 @@ calculates and caches the top three safely matched markers for that population.
 The abundance ranking is also cached and is recalculated only when the population
 or ranking controls change, or when **Recalculate ROI list** is pressed.
 
-Population QC reads cells from the workflow's frozen identity scope. It does not
-rename, merge, confirm, or classify cells. Use Population naming for population
-names and merges, or transfer a population through Explore when it should become a
-new classification cohort.
+Population QC reads cells from the workflow's frozen identity scope. A prominent
+banner at the top of the tab says either **WHOLE DATASET** or **LIMITED CELL
+SCOPE**, with selected/total cell and ROI counts. For a limited scope it also
+shows the frozen observation/value selector. Population choices, marker
+suggestions, ROI abundance rankings, and overlays include only represented cells;
+categories which have no cells in the active scope are not offered in the
+population selector. This prevents an out-of-scope population from looking like a
+broken zero-cell result.
+
+Population QC does not rename, merge, confirm, or classify cells. Use Population
+naming for population names and merges, or transfer a population through Explore
+when it should become a new classification cohort. To review the complete dataset
+after opening a limited classification experiment, open or create an all-cells
+workspace; frozen scope is not silently widened.
 
 ## ROI sample metadata
 
@@ -53,7 +63,11 @@ view fingerprint, so changing it creates an appropriate new viewed-ROI context.
 
 **Suggest top three markers** ranks image channels that can be matched safely to
 `adata.var` by their mean `adata.X` expression in the selected population.
-Suggestions are a starting point and should be reviewed biologically.
+Suggestions are a starting point and should be reviewed biologically. If the
+selected scope contains no matching cells, or image names cannot be matched to
+variables, the optional suggestion action reports a warning in the tab instead of
+interrupting workspace use with an error dialog; RGB channels can still be chosen
+manually.
 
 **Save RGB recipe for population** records the controls without changing the
 viewer. **Load population view** saves and applies the recipe to the current ROI.

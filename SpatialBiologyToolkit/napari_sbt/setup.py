@@ -107,6 +107,132 @@ class WorkspaceSummary:
         return "check" if self.warnings else "ready"
 
 
+@dataclass(frozen=True)
+class DatasetAssetSuggestions:
+    """Cheap, bounded suggestions for the dataset inputs shown in Setup."""
+
+    anndata_candidates: tuple[Path, ...] = ()
+    masks_candidates: tuple[Path, ...] = ()
+    image_candidates: tuple[Path, ...] = ()
+
+
+_ANNDATA_FOLDER_NAMES = {
+    "adata",
+    "anndata",
+    "cell_data",
+    "celldata",
+    "data",
+    "processed_data",
+    "processeddata",
+}
+_MASK_FOLDER_NAMES = {
+    "cell_mask",
+    "cell_masks",
+    "cellmask",
+    "cellmasks",
+    "mask",
+    "masks",
+    "segmentation_mask",
+    "segmentation_masks",
+    "segmentationmask",
+    "segmentationmasks",
+}
+_IMAGE_FOLDER_NAMES = {
+    "channel_images",
+    "channelimages",
+    "denoised_images",
+    "denoisedimages",
+    "image",
+    "images",
+    "imc_images",
+    "imcimages",
+    "processed",
+    "staining_images",
+    "stainingimages",
+    "tiff",
+    "tiffs",
+}
+_DISCOVERY_EXCLUDED_FOLDERS = {
+    ".git",
+    ".sbt",
+    "napari_sbt",
+    "outputs",
+    "slurm_logs",
+}
+
+
+def _asset_folder_key(path: Path) -> str:
+    """Normalize a folder name for conservative convention matching."""
+
+    return "".join(
+        character if character.isalnum() else "_" for character in path.name.casefold()
+    ).strip("_")
+
+
+def discover_dataset_assets(project_root: str | Path) -> DatasetAssetSuggestions:
+    """Suggest conventional dataset assets without recursively scanning a project.
+
+    AnnData lookup is limited to the project root and conventional data folders
+    directly below it. Mask and image suggestions use immediate folder names only;
+    image contents are deliberately not inspected here because that potentially
+    expensive work belongs to the explicit dataset-integrity action.
+    """
+
+    root = Path(project_root).expanduser().resolve(strict=False)
+    if not root.is_dir():
+        return DatasetAssetSuggestions()
+
+    try:
+        children = sorted(root.iterdir(), key=lambda path: path.name.casefold())
+    except OSError:
+        return DatasetAssetSuggestions()
+    child_folders = [path for path in children if path.is_dir()]
+    anndata_candidates = [
+        path.resolve(strict=False)
+        for path in children
+        if path.is_file() and path.suffix.casefold() == ".h5ad"
+    ]
+    masks_candidates: list[Path] = []
+    image_candidates: list[Path] = []
+
+    for folder in child_folders:
+        key = _asset_folder_key(folder)
+        compact_key = key.replace("_", "")
+        if key in _ANNDATA_FOLDER_NAMES or compact_key in _ANNDATA_FOLDER_NAMES:
+            try:
+                anndata_candidates.extend(
+                    path.resolve(strict=False)
+                    for path in sorted(
+                        folder.iterdir(), key=lambda path: path.name.casefold()
+                    )
+                    if path.is_file() and path.suffix.casefold() == ".h5ad"
+                )
+            except OSError:
+                pass
+        if key in _DISCOVERY_EXCLUDED_FOLDERS:
+            continue
+        if (
+            key in _MASK_FOLDER_NAMES
+            or compact_key in _MASK_FOLDER_NAMES
+            or "mask" in compact_key
+        ):
+            masks_candidates.append(folder.resolve(strict=False))
+            continue
+        if (
+            key in _IMAGE_FOLDER_NAMES
+            or compact_key in _IMAGE_FOLDER_NAMES
+            or "image" in compact_key
+            or compact_key.startswith("tiff")
+        ):
+            image_candidates.append(folder.resolve(strict=False))
+
+    return DatasetAssetSuggestions(
+        anndata_candidates=tuple(dict.fromkeys(anndata_candidates)),
+        masks_candidates=tuple(dict.fromkeys(masks_candidates)),
+        image_candidates=tuple(dict.fromkeys(image_candidates)),
+    )
+
+
 def workflow_presentation(mode: str | None) -> WorkflowPresentation | None:
     """Return the plain-language definition for a workflow value."""
 
@@ -527,9 +653,11 @@ def setup_is_ready(checks: tuple[SetupCheck, ...]) -> bool:
 
 __all__ = [
     "WORKFLOW_PRESENTATIONS",
+    "DatasetAssetSuggestions",
     "SetupCheck",
     "WorkflowPresentation",
     "WorkspaceSummary",
+    "discover_dataset_assets",
     "discover_workspaces",
     "path_check",
     "setup_checks",

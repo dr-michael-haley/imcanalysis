@@ -162,6 +162,12 @@ def test_unified_dock_is_cohort_gated_and_rejects_context_clicks(tmp_path: Path)
         assert not viewer.layers["excluded_segmentation_context"].visible
         assert controller.roi_combo.count() == 1
         assert "1 eligible cells / 3 total cells" in controller.scope_label.text()
+        assert "LIMITED CELL SCOPE" in controller.population_qc_scope_banner.text()
+        assert "1 of 3 cells" in controller.population_qc_scope_banner.text()
+        assert [
+            controller.population_qc_population_combo.itemText(index)
+            for index in range(controller.population_qc_population_combo.count())
+        ] == ["target"]
 
         controller._on_cohort_click(
             viewer.layers["classification_cohort"],
@@ -176,5 +182,10 @@ def test_unified_dock_is_cohort_gated_and_rejects_context_clicks(tmp_path: Path)
             "r1",
             "r2",
         }
+
+        controller.start_new_workspace(confirm=False)
+        assert controller.scope_combo.currentData() == "all_cells"
+        assert not controller.value_list.selectedItems()
+        assert "SETUP MODE" in controller.population_qc_scope_banner.text()
     finally:
         viewer.close()

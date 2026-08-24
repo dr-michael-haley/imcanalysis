@@ -14,6 +14,16 @@ folder…** for an unregistered or standalone dataset. When an initialized SBT
 project is selected, its configured AnnData, masks, image folder, normalization
 file, and NapariSBT workspace location are proposed automatically.
 
+For standalone folders, or when a configured source is missing, Setup performs a
+cheap automatic lookup for conventional assets. It checks `.h5ad` files at the
+project root and in conventional immediate data folders, and recognizes immediate
+mask and image folders by names such as `masks`, `cell_masks`, `images`,
+`processed`, or `matrix_images_alligned`. It does not inspect their contents. One
+unambiguous AnnData is filled automatically; if several are found, a chooser is
+shown and Setup remains incomplete if it is cancelled. Existing valid configured
+or manually selected sources take precedence. Use **Automatically detect missing
+inputs** to repeat this lookup after adding or moving assets.
+
 NapariSBT looks only in the configured workspace folder (normally
 `<project>/napari_sbt`) and one directory level below it for `experiment.yaml`.
 This bounded lookup is deliberately cheap and is not a recursive scan of the
@@ -32,7 +42,10 @@ start** is disabled and enables it only after all required checks pass.
 When a workspace is open, its immutable name and location are protected from
 accidental edits. **Set up a new workspace** leaves the current saved files
 untouched and returns to new-workspace setup using the same dataset as a starting
-point.
+point. Experiment-specific state is not inherited: the cohort preview, integrity
+result, current ROI, Population QC selections, and classification scope are
+cleared. The new workspace starts explicitly at **All cells**, so a restricted
+cohort from the previous workspace cannot silently carry into the new one.
 
 ## Workflow selection
 
@@ -64,6 +77,12 @@ badges: green **Ready**, amber **Check needed**, red **Action required**, or gre
 `.h5ad` file or uses the AnnData object supplied by a notebook. Add one or more
 **Staining image folders**; additional-image folders are optional.
 
+Channel filenames are matched to `adata.var_names` after punctuation-insensitive
+normalization. Standard IMC isotope prefixes are understood, so files such as
+`141Pr_Ly6G.tiff`, `Pr141_Ly6G.tiff`, and `143Nd_HLA_DR.tiff` match marker-only
+variables such as `Ly6G` and `HLA-DR`. Ambiguous aliases are left as additional
+images instead of being assigned to the wrong variable.
+
 AnnData columns used to match cells to images and integer mask labels are proposed
 from conventional names such as `ROI` and `ObjectNumber`. Their current meaning
 is summarized in plain language. Use **Show advanced cell-identity settings** only
@@ -86,7 +105,9 @@ pressed.
 Use **Reload all selected components** to reread a loaded workspace, AnnData,
 normalization values, saved review state, and current ROI without running the
 expensive folder scan. Use the integrity button separately after files, folders,
-or identity columns change.
+or identity columns change. **Automatically detect missing inputs** is also cheap:
+it searches only bounded conventional locations and never substitutes for the
+integrity check.
 
 The workspace folder is NapariSBT's working area for the manifest, frozen cohort,
 features, labels, and models. It is not the source image or mask directory. Source

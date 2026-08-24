@@ -117,6 +117,15 @@ container itself and immediate child `experiment.yaml` files; it never recursive
 scans the project. Each entry reports its workflow, cohort size, ROI count, last
 change time, and missing-source warnings.
 
+Box 3 also performs bounded dataset-input discovery. Existing valid paths from an
+initialized project or explicit launch arguments remain authoritative. Otherwise,
+NapariSBT looks for root-level `.h5ad` files, `.h5ad` files in conventional
+immediate data folders, and conventionally named immediate mask/image folders.
+One AnnData candidate is selected automatically; several candidates always open
+a chooser and are never guessed. Cancelling leaves AnnData as an action-required
+input. **Automatically detect missing inputs** repeats the same cheap lookup. It
+does not open image/mask contents or replace the explicit integrity check.
+
 New workspaces require a friendly name and receive an automatically derived,
 collision-checked folder. A text-and-colour readiness banner keeps **Create
 workspace and start** disabled until required inputs and the integrity check are
@@ -175,9 +184,12 @@ Multiple image folders are merged for each ROI. Supported layouts are
 `<folder>/<ROI>/<channel>.tiff`, `<folder>/<ROI>.tiff`, and flat
 `<folder>/<ROI>_<channel>.tiff`. Channel filenames are matched against
 `adata.var_names` and, when available, `adata.var["channel_name"]` and
-`adata.var["channel_label"]`. Duplicate channels from different folders remain
-available with their source folder appended; unmatched composites remain
-available as additional images.
+`adata.var["channel_label"]`. Standard mass-first and element-first isotope
+prefixes are removed when required, so `141Pr_Ly6G.tiff` or
+`Pr141_Ly6G.tiff` can match a marker-only variable named `Ly6G`. Matching is
+punctuation-insensitive but collision-aware. Duplicate channels from different
+folders remain available with their source folder appended; unmatched or
+ambiguous composites remain available as additional images.
 
 Experiments contain two to eight stable, mutually exclusive classes. Each has
 a display name, colour, numeric shortcut, and `keep` or `exclude` mask
@@ -213,6 +225,17 @@ view is stored in the shared Explore state, including its colours and contrast.
 Population QC has one workspace-wide 0–20 pixel outline preference for all
 populations (1 pixel by default; 0 fills the labels). It is not restored from or
 stored separately in each population recipe.
+
+A banner at the top of Population QC explicitly reports **WHOLE DATASET** or
+**LIMITED CELL SCOPE**, including selected/total cells, represented ROIs, and the
+frozen observation/value selector. In a limited workspace, population choices,
+marker suggestions, abundance rankings, and overlays use only the frozen cohort;
+unrepresented categorical values are omitted rather than appearing as misleading
+zero-cell populations. Frozen scope is not widened inside Population QC. Starting
+a new workspace resets Setup to **All cells**, preventing the previous workspace's
+restricted selection from being inherited silently. Marker suggestions are
+optional: unavailable image-to-variable matches produce an in-panel warning and
+leave manual RGB selection available rather than raising a blocking dialog.
 
 When no saved population recipe exists, those three marker suggestions are
 calculated immediately and cached for the selected population. ROI abundance
@@ -337,9 +360,12 @@ The **NapariSBT Readiness** tracker is a separate Napari dock, placed beneath th
 built-in Layers selector on the left by default. It paints an action-start
 message before a synchronous callback begins, shows elapsed time and a heartbeat,
 reports live background-process names and PIDs, and changes to a clear finished
-or failed state. It can be moved, floated, or hidden like any other Napari dock;
-hiding it is respected by subsequent heartbeat updates. The feature-building
-panel retains its more detailed per-ROI progress display.
+or failed state. Ready, Working, Finished, and Failed use a large emoji-labelled
+banner and matching border, with a local timestamp for each state transition.
+The Working timestamp stays fixed while elapsed time and the heartbeat update.
+The dock can be moved, floated, or hidden like any other Napari dock; hiding it
+is respected by subsequent heartbeat updates. The feature-building panel retains
+its more detailed per-ROI progress display.
 
 The adjacent **NapariSBT Cell properties** dock is a passive AnnData inspector.
 When tracking is enabled, a left-click on any identity-matched segmented cell

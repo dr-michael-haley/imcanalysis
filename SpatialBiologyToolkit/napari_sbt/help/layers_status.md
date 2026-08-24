@@ -8,10 +8,13 @@ experiment freshness.
 **NapariSBT Readiness** is a separate Napari dock positioned beneath the Layers
 selector on the left when the interface opens. It reports the action currently
 running, elapsed time, a live heartbeat, background-process names and process
-IDs, and the most recent finished or failed state. You can resize, move, float,
-or hide it using Napari's normal dock controls. Heartbeat updates do not reopen
-the dock after you hide it. Detailed feature-extraction progress remains in the
-Feature Building tab.
+IDs, and the most recent finished or failed state. A large emoji-labelled banner
+and matching border distinguish **Ready**, **Working**, **Finished**, and
+**Failed** at a glance. Each state includes its local transition timestamp; the
+timestamp remains fixed while a task is working, while elapsed time updates every
+second. You can resize, move, float, or hide the dock using Napari's normal dock
+controls. Heartbeat updates do not reopen the dock after you hide it. Detailed
+feature-extraction progress remains in the Feature Building tab.
 
 ## Selected-layer utilities
 

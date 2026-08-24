@@ -3,8 +3,9 @@
 The package connects structural clustering evidence, MaxFuse atlas transfers,
 marker expression, case/ROI representation, resolution stability, and targeted
 cell images. Candidate clustering and annotation functions may add reversible
-observation columns in memory; no function writes SpatialData or AnnData to
-disk.
+observation columns in memory. Assessment functions never persist those changes;
+the separately named ``publish_posterior_mapping()`` is the one-write
+end-of-workflow finalisation operation.
 """
 
 from .artifacts import (
@@ -58,7 +59,18 @@ from .plotting import (
     plot_resolution_membership,
     plot_resolution_stability,
 )
+from .publishing import (
+    PosteriorPublicationConfig,
+    map_posterior_labels,
+    publish_posterior_mapping,
+)
 from .resolution import compare_resolutions
+from .scanpy import (
+    plot_population_scanpy_abundance,
+    plot_population_scanpy_matrixplot,
+    plot_population_scanpy_umap,
+    temporary_numba_cache_dir,
+)
 from .selection import (
     VALID_STRATEGIES,
     select_population_cell_panel,
@@ -85,6 +97,7 @@ __all__ = [
     "POSTERIOR_MAPPING_COLUMNS",
     "PlotResult",
     "PopulationQCArtifactWriter",
+    "PosteriorPublicationConfig",
     "PopulationDataContext",
     "PopulationExpressionResult",
     "PopulationRepresentationResult",
@@ -116,10 +129,16 @@ __all__ = [
     "plot_population_heatmap",
     "plot_population_matrixplot",
     "plot_population_representation",
+    "plot_population_scanpy_abundance",
+    "plot_population_scanpy_matrixplot",
+    "plot_population_scanpy_umap",
+    "temporary_numba_cache_dir",
     "plot_population_umap",
     "plot_resolution_membership",
     "plot_resolution_stability",
     "profile_population",
+    "publish_posterior_mapping",
+    "map_posterior_labels",
     "select_population_cell_panel",
     "select_population_cells",
     "subcluster_population",
