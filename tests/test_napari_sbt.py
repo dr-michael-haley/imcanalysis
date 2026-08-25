@@ -24,7 +24,9 @@ from SpatialBiologyToolkit.napari_sbt.cohort import (
 from SpatialBiologyToolkit.napari_sbt.exports import (
     apply_assignments_to_anndata,
     build_assignment_table,
+    build_integrated_identity_table,
     export_annotated_anndata,
+    integrated_identity_crosstab,
 )
 from SpatialBiologyToolkit.napari_sbt.feature_sources import combine_feature_sources
 from SpatialBiologyToolkit.napari_sbt.features import (
@@ -597,6 +599,116 @@ def test_apply_assignments_to_live_anndata_does_not_require_a_disk_write(tmp_pat
     assert data.uns["napari_sbt"][slug]["metrics"][
         "final_identity_decision"
     ]["minimum_model_confidence"] == 0.9
+
+
+def test_integrated_identities_cover_dataset_and_retain_unassigned_source_labels():
+    data = _adata()
+    assignments = pd.DataFrame(
+        {
+            "obs_name": ["b", "c", "d"],
+            "class_id": ["good", "artifact", pd.NA],
+            "class_name": ["Good cell", "Artifact", pd.NA],
+            "assignment_source": ["confirmed", "model", "unassigned"],
+            "confidence": [1.0, 0.95, np.nan],
+            "uncertainty": [0.0, 0.1, np.nan],
+        }
+    )
+    integrated = build_integrated_identity_table(
+        data,
+        assignments,
+        source_obs="leiden",
+        output_obs="reviewed_population",
+        class_labels={"good": "Good cell", "artifact": "Artifact"},
+    )
+
+    assert integrated["obs_name"].tolist() == ["a", "b", "c", "d"]
+    assert integrated["reviewed_population"].tolist() == [
+        "0",
+        "Good cell",
+        "Artifact",
+        "1",
+    ]
+    assert integrated["assignment_source"].tolist() == [
+        "outside_cohort",
+        "confirmed",
+        "model",
+        "unassigned",
+    ]
+    overlap = integrated_identity_crosstab(
+        integrated,
+        output_obs="reviewed_population",
+    )
+    assert int(overlap.loc["1", "Good cell"]) == 1
+    assert int(overlap.loc["1", "Artifact"]) == 1
+
+
+def test_explicit_integration_writes_named_obs_colours_and_provenance(tmp_path: Path):
+    data = _adata()
+    preview = resolve_cohort(
+        data,
+        roi_obs="ROI",
+        object_id_obs="ObjectNumber",
+        mode="obs_values",
+        obs_column="leiden",
+        obs_values=["1"],
+    )
+    manifest = ExperimentManifest(
+        name="Integrated subclasses",
+        anndata_path=str(tmp_path / "source.h5ad"),
+        masks_folder=str(tmp_path / "masks"),
+        cell_scope=preview.scope(
+            mode="obs_values", obs_column="leiden", obs_values=["1"]
+        ),
+        classes=segmentation_qc_classes(),
+    )
+    assignments = preview.eligible_cells.copy()
+    assignments["class_id"] = ["good", "artifact", pd.NA]
+    assignments["class_name"] = ["Good cell", "Artifact", pd.NA]
+    assignments["assignment_source"] = ["confirmed", "model", "unassigned"]
+    assignments["confidence"] = [1.0, 0.95, np.nan]
+    assignments["uncertainty"] = [0.0, 0.1, np.nan]
+    integrated = build_integrated_identity_table(
+        data,
+        assignments,
+        source_obs="leiden",
+        output_obs="reviewed_population",
+        class_labels={"good": "Good cell", "artifact": "Artifact"},
+        naming_strategy="source_and_class",
+    )
+    provenance = {
+        "source_obs": "leiden",
+        "output_obs": "reviewed_population",
+        "naming_strategy": "source_and_class",
+        "class_labels": {"good": "Good cell", "artifact": "Artifact"},
+        "category_colours": {
+            "0": "#aaaaaa",
+            "1": "#bbbbbb",
+            "1 → Good cell": "#1b7837",
+            "1 → Artifact": "#b2182b",
+        },
+    }
+
+    apply_assignments_to_anndata(
+        data,
+        assignments,
+        manifest,
+        integration_table=integrated,
+        integration_provenance=provenance,
+        create_legacy_combined=False,
+    )
+
+    assert data.obs.loc["a", "reviewed_population"] == "0"
+    assert data.obs.loc["b", "reviewed_population"] == "1 → Good cell"
+    assert f"{manifest.output_obs_slug}_combined" not in data.obs
+    assert data.uns["reviewed_population_colors"] == [
+        "#aaaaaa",
+        "#1b7837",
+        "#b2182b",
+        "#bbbbbb",
+    ]
+    assert data.uns["napari_sbt"][manifest.output_obs_slug]["label_integration"][
+        "source_obs"
+    ] == "leiden"
 
 
 def test_manifest_rejects_duplicate_shortcuts():

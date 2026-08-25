@@ -12,6 +12,17 @@ mask and available channels. Enable empty ROIs only after building the Setup
 integrity index. The dimmed full-mask context is optional and does not change the
 eligible classification cohort.
 
+**Reapply the current Explore recipe after changing ROI** has one purpose: after
+the selected ROI identity genuinely changes, it recreates the same image channels,
+colours, contrast, overlays, visibility, and opacity for the new ROI. This makes
+side-by-side tissue review consistent. Ticking or unticking the option does not
+reload the current ROI, and changing a layer's colour, contrast, visibility, or
+opacity does not trigger ROI loading. Qt display-only updates to the ROI selector,
+such as its green/amber review colours, are ignored. Turn the option off when only
+the base mask or classification layers are required. **Load ROI**, Population QC
+view buttons, named-recipe loading, and F-key recipes remain explicit user actions
+and can still refresh or replay the current view.
+
 Data exploration and Population QC do not construct classification-cohort or
 excluded-context label arrays. Classification and Labeler workflows still create
 them because cell eligibility is part of those interactions.
@@ -60,6 +71,15 @@ Select one or more discovered channels. Use greyscale for independent contrast
 control, R/G/B/C/Y/M for additive multiplex review, or RGB for one composite layer
 from the first three selected channels. Image coverage reports which configured
 folder supplied each ROI/channel match.
+
+**Select feature markers** replaces the current selection with the
+channel-derived markers recorded in the active built feature table. If features
+have not been built yet, it uses the current synthetic-feature recipe instead; a
+blank channel recipe means every compatible channel. The same shortcut is
+available for the `adata.X` marker-overlay list. Shape, context, imported-table,
+and embedding dimensions are not mistaken for staining markers, and markers that
+are absent from the current ROI or expression source are reported rather than
+guessed.
 
 ## AnnData and population overlays
 
@@ -131,14 +151,33 @@ updating a recipe takes a final snapshot of the actual continuous or label colou
 visible in the layers rather than reverting to their original loading palette.
 Delete selected recipe entries to stop recreating them. Reviewed-ROI
 colouring applies to the complete current recipe fingerprint, so each named view
-retains its own effective reviewed-ROI context.
+retains its own effective reviewed-ROI context. Green and amber dropdown entries
+use an explicit dark foreground so their ROI names remain readable in Napari's
+dark theme.
 
-The Setup **Live recipe tracking** toggle controls automatic capture of manual
-layer changes. It defaults on for Data exploration and off for Population QC.
-Explicit recipe actions and Population QC RGB controls continue to work while
-tracking is disabled.
+The **Live recipe tracking** toggle is available in Setup, Explore, and Population
+QC; all three controls change the same session setting. It can be switched at any
+time and is not frozen into the workspace. It defaults on for Data exploration
+and off for Population QC. Explicit recipe actions and Population QC RGB controls
+continue to work while tracking is disabled.
 
-Treat the list as an exact preview of what automatic ROI navigation will recreate.
+A simple visibility or opacity change uses an in-memory fast path. It does not
+reload the ROI, reread image data, or rebuild classification layers. The recipe
+value is updated immediately without rescanning the whole AnnData population
+column. Opacity recipe-row text and reviewed-ROI fingerprints wait for the next
+normal Explore refresh so continuous slider events remain cheap. Napari itself
+may still need to repaint the layer as its alpha changes.
+
+Visibility and opacity are treated as the hottest paths for full-size cohort,
+context, focus, confirmed, proposed, predicted, and uncertainty layers. Their
+recipe values are updated immediately, while named-recipe and reviewed-ROI
+fingerprint displays are deferred until Explore is entered or the recipe/ROI is
+otherwise refreshed. This keeps an eye-button click or opacity-slider drag from
+hashing every saved colour specification.
+
+Treat the list as an exact preview of what automatic ROI navigation will recreate
+after a genuine change to a different ROI. It is not continuously reapplied while
+editing layers in the current ROI.
 Classifier layers are regenerated from current labels and scores, while their
 visibility, opacity, contour settings, and probability display choices are replayed.
 After manually changing layers, click **Update from current layers** before moving

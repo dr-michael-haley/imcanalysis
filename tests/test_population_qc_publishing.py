@@ -130,3 +130,8 @@ def test_publish_posterior_mapping_stages_h5ad_and_writes_one_table(
     )
     assert finalization["zarr_write_count"] == 1
     assert (artifact_root / "tables" / "posterior_observation_labels.csv").exists()
+
+    repeated = publish_posterior_mapping(config)
+    assert fake_sdata.write_calls == [("cells", True)]
+    assert repeated["publication_status"] == "already_published"
+    assert repeated["this_invocation_zarr_write_count"] == 0

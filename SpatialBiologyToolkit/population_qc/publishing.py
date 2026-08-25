@@ -64,6 +64,77 @@ def _series_hash(series: pd.Series) -> str:
     return sha256(values.tobytes()).hexdigest()
 
 
+def _load_json_mapping(path: Path) -> dict[str, Any] | None:
+    """Return a JSON object when an existing publication receipt is readable."""
+
+    if not path.exists():
+        return None
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return value if isinstance(value, dict) else None
+
+
+def _publication_receipt_matches(
+    receipt: Mapping[str, Any] | None,
+    config: "PosteriorPublicationConfig",
+    *,
+    mapping_sha256: str,
+) -> bool:
+    """Check whether a receipt describes this exact requested publication."""
+
+    if receipt is None:
+        return False
+    return (
+        receipt.get("mapping_sha256") == mapping_sha256
+        and receipt.get("zarr") == str(config.zarr)
+        and receipt.get("h5ad") == str(config.h5ad)
+        and receipt.get("table_name") == config.table_name
+        and receipt.get("source_key") == config.source_key
+        and receipt.get("output_key") == config.output_key
+    )
+
+
+def _persisted_labels_match(
+    h5ad: Any,
+    table: Any,
+    *,
+    config: "PosteriorPublicationConfig",
+    mapping: Mapping[str, str],
+    categories: list[str],
+    source_hash: str,
+) -> bool:
+    """Return whether both persisted objects already contain the requested map."""
+
+    if config.output_key not in h5ad.obs or config.output_key not in table.obs:
+        return False
+    if _series_hash(h5ad.obs[config.source_key]) != source_hash:
+        return False
+    if _series_hash(table.obs[config.source_key]) != source_hash:
+        return False
+    expected_h5ad = map_posterior_labels(
+        h5ad.obs,
+        source_key=config.source_key,
+        output_key=config.output_key,
+        mapping=mapping,
+        categories=categories,
+        overwrite_output_column=True,
+    )
+    expected_table = map_posterior_labels(
+        table.obs,
+        source_key=config.source_key,
+        output_key=config.output_key,
+        mapping=mapping,
+        categories=categories,
+        overwrite_output_column=True,
+    )
+    return (
+        h5ad.obs[config.output_key].astype(str).equals(expected_h5ad.astype(str))
+        and table.obs[config.output_key].astype(str).equals(expected_table.astype(str))
+    )
+
+
 class _ProgressReporter:
     """Write an immediate progress state and 15-minute heartbeats by default."""
 
@@ -197,8 +268,9 @@ def publish_posterior_mapping(
             f"Staged H5AD already exists; inspect it before retrying: {staged_h5ad}"
         )
 
-    progress.update("preflight")
     mapping, categories = _read_mapping(config.mapping_csv)
+    mapping_sha256 = _file_sha256(config.mapping_csv)
+    progress.update("preflight", mapping_sha256=mapping_sha256)
     h5ad = ad.read_h5ad(config.h5ad)
     sdata = read_zarr(config.zarr)
     if config.table_name not in sdata.tables:
@@ -210,6 +282,26 @@ def publish_posterior_mapping(
         )
     h5ad_source = h5ad.obs[config.source_key].copy()
     table_source = table.obs[config.source_key].copy()
+    prior_receipt = _load_json_mapping(manifest_path)
+    source_hash = _series_hash(table_source)
+    if _publication_receipt_matches(
+        prior_receipt,
+        config,
+        mapping_sha256=mapping_sha256,
+    ) and _persisted_labels_match(
+        h5ad,
+        table,
+        config=config,
+        mapping=mapping,
+        categories=categories,
+        source_hash=source_hash,
+    ):
+        progress.update("already_published", manifest=str(manifest_path))
+        return {
+            **prior_receipt,
+            "publication_status": "already_published",
+            "this_invocation_zarr_write_count": 0,
+        }
     h5ad.obs[config.output_key] = map_posterior_labels(
         h5ad.obs,
         source_key=config.source_key,
@@ -270,7 +362,7 @@ def publish_posterior_mapping(
         "table_name": config.table_name,
         "h5ad": str(config.h5ad),
         "mapping_csv": str(config.mapping_csv),
-        "mapping_sha256": _file_sha256(config.mapping_csv),
+        "mapping_sha256": mapping_sha256,
         "source_key": config.source_key,
         "output_key": config.output_key,
         "n_observations": int(written.n_obs),
@@ -282,6 +374,8 @@ def publish_posterior_mapping(
         "zarr_readback_verified": True,
         "zarr_write_count": 1,
         "zarr_table_write_count": 1,
+        "this_invocation_zarr_write_count": 1,
+        "publication_status": "published",
         "observation_export": str(observation_path),
         "config": {key: str(value) if isinstance(value, Path) else value for key, value in asdict(config).items()},
     }

@@ -202,6 +202,9 @@ def export_annotated_anndata(
     feature_provenance: Mapping | None = None,
     model_provenance: Mapping | None = None,
     metrics: Mapping | None = None,
+    integration_table: pd.DataFrame | None = None,
+    integration_provenance: Mapping | None = None,
+    create_legacy_combined: bool = True,
 ) -> Path:
     """Write an annotated copy while leaving cells outside the cohort missing."""
 
@@ -219,6 +222,9 @@ def export_annotated_anndata(
         feature_provenance=feature_provenance,
         model_provenance=model_provenance,
         metrics=metrics,
+        integration_table=integration_table,
+        integration_provenance=integration_provenance,
+        create_legacy_combined=create_legacy_combined,
     )
     return _atomic_h5ad_write(adata, output)
 
@@ -231,6 +237,9 @@ def apply_assignments_to_anndata(
     feature_provenance: Mapping | None = None,
     model_provenance: Mapping | None = None,
     metrics: Mapping | None = None,
+    integration_table: pd.DataFrame | None = None,
+    integration_provenance: Mapping | None = None,
+    create_legacy_combined: bool = True,
 ):
     """Apply final cohort assignments to an AnnData object in memory.
 
@@ -280,7 +289,45 @@ def apply_assignments_to_anndata(
         )
     adata.obsm[f"{slug}_probabilities"] = probability_matrix
 
-    if manifest.cell_scope.mode == "obs_values":
+    if integration_table is not None:
+        integration_provenance = dict(integration_provenance or {})
+        output_obs = str(integration_provenance.get("output_obs", "")).strip()
+        if not output_obs:
+            raise ValueError(
+                "Integrated AnnData export requires an explicit output observation."
+            )
+        if "obs_name" not in integration_table or output_obs not in integration_table:
+            raise ValueError(
+                "Integrated identity table must contain obs_name and the configured "
+                f"output column {output_obs!r}."
+            )
+        if integration_table["obs_name"].astype(str).duplicated().any():
+            raise ValueError("Integrated identity table contains duplicate obs names.")
+        integration_names = set(integration_table["obs_name"].astype(str))
+        adata_names = set(adata.obs_names.astype(str))
+        if integration_names != adata_names:
+            missing = sorted(adata_names - integration_names)[:10]
+            extra = sorted(integration_names - adata_names)[:10]
+            raise ValueError(
+                "Integrated identities must cover the complete target AnnData. "
+                f"Missing examples: {missing}; unexpected examples: {extra}."
+            )
+        integrated = integration_table.set_index(
+            integration_table["obs_name"].astype(str)
+        )[output_obs].reindex(adata.obs_names.astype(str))
+        categories = list(dict.fromkeys(integrated.dropna().astype(str)))
+        adata.obs[output_obs] = pd.Categorical(integrated, categories=categories)
+        category_colours = {
+            str(label): str(colour)
+            for label, colour in dict(
+                integration_provenance.get("category_colours", {})
+            ).items()
+        }
+        if category_colours:
+            adata.uns[f"{output_obs}_colors"] = [
+                category_colours.get(category, "#808080") for category in categories
+            ]
+    elif create_legacy_combined and manifest.cell_scope.mode == "obs_values":
         source_column = str(manifest.cell_scope.obs_column)
         if source_column not in adata.obs:
             raise ValueError(
@@ -314,9 +361,174 @@ def apply_assignments_to_anndata(
         "feature_provenance": dict(feature_provenance or {}),
         "model_provenance": dict(model_provenance or {}),
         "metrics": dict(metrics or {}),
+        "label_integration": (
+            dict(integration_provenance or {})
+            if integration_table is not None
+            else None
+        ),
     }
     adata.uns["napari_sbt"] = napari_uns
     return adata
+
+
+def build_integrated_identity_table(
+    adata,
+    assignments: pd.DataFrame,
+    *,
+    source_obs: str,
+    output_obs: str,
+    class_labels: Mapping[str, str],
+    naming_strategy: str = "class_names",
+    roi_obs: str = "ROI",
+    object_id_obs: str = "ObjectNumber",
+) -> pd.DataFrame:
+    """Combine cohort classifications with a complete source observation.
+
+    Cells outside the frozen cohort, and cohort cells without an accepted final
+    class, retain their source label. Only cohort rows with a final ``class_id``
+    are replaced. The returned table always covers every AnnData observation.
+    """
+
+    source_obs = str(source_obs).strip()
+    output_obs = str(output_obs).strip()
+    if not source_obs or source_obs not in adata.obs:
+        raise ValueError(f"Source integration observation does not exist: {source_obs!r}.")
+    if not output_obs:
+        raise ValueError("Integrated output observation name must not be empty.")
+    if source_obs == output_obs:
+        raise ValueError(
+            "Integrated output observation must be new; it cannot overwrite the "
+            "source observation."
+        )
+    if output_obs in {
+        "obs_name",
+        "source_observation",
+        "source_label",
+        "is_classification_cohort",
+        "final_class_id",
+        "final_class_name",
+        "assignment_source",
+        "confidence",
+        "uncertainty",
+    }:
+        raise ValueError(f"Integrated output name is reserved: {output_obs!r}.")
+    if naming_strategy not in {"class_names", "source_and_class", "custom"}:
+        raise ValueError(f"Unknown integration naming strategy: {naming_strategy!r}.")
+    required = {"obs_name", "class_id", "assignment_source"}
+    missing_columns = sorted(required - set(assignments.columns))
+    if missing_columns:
+        raise ValueError(
+            f"Final assignment table is missing columns: {missing_columns}."
+        )
+    assignment_names = assignments["obs_name"].astype(str)
+    if assignment_names.duplicated().any():
+        raise ValueError("Final assignment table contains duplicate obs names.")
+    adata_names = pd.Index(adata.obs_names.astype(str))
+    missing_obs = sorted(set(assignment_names) - set(adata_names))
+    if missing_obs:
+        raise ValueError(
+            "Final assignment identities are absent from AnnData. Examples: "
+            f"{missing_obs[:10]}"
+        )
+
+    clean_labels = {
+        str(class_id): str(label).strip()
+        for class_id, label in dict(class_labels).items()
+    }
+    empty_labels = sorted(
+        class_id for class_id, label in clean_labels.items() if not label
+    )
+    if empty_labels:
+        raise ValueError(
+            f"Integrated population names must not be empty: {empty_labels}."
+        )
+    assigned_class_ids = set(assignments["class_id"].dropna().astype(str))
+    missing_labels = sorted(assigned_class_ids - set(clean_labels))
+    if missing_labels:
+        raise ValueError(
+            "No integrated population name was supplied for final class IDs: "
+            f"{missing_labels}."
+        )
+
+    aligned = assignments.copy()
+    aligned.index = assignment_names
+    aligned = aligned.reindex(adata_names)
+    source_values = adata.obs[source_obs].astype("string").copy()
+    source_values.index = adata_names
+    final_class_id = aligned["class_id"].astype("string")
+    mapped = final_class_id.map(clean_labels).astype("string")
+    assigned = final_class_id.notna()
+    integrated = source_values.copy()
+    if naming_strategy == "source_and_class":
+        source_prefix = source_values.fillna("<missing source>")
+        mapped = source_prefix + " → " + mapped
+    integrated.loc[assigned] = mapped.loc[assigned]
+
+    table = pd.DataFrame(
+        {
+            "obs_name": adata_names,
+            "source_observation": source_obs,
+            "source_label": source_values.to_numpy(),
+            "is_classification_cohort": adata_names.isin(set(assignment_names)),
+            "final_class_id": final_class_id.to_numpy(),
+            "final_class_name": aligned.get(
+                "class_name", pd.Series(pd.NA, index=adata_names)
+            ).to_numpy(),
+            "assignment_source": aligned["assignment_source"].fillna(
+                "outside_cohort"
+            ).to_numpy(),
+            "confidence": pd.to_numeric(
+                aligned.get("confidence", pd.Series(np.nan, index=adata_names)),
+                errors="coerce",
+            ).to_numpy(),
+            "uncertainty": pd.to_numeric(
+                aligned.get("uncertainty", pd.Series(np.nan, index=adata_names)),
+                errors="coerce",
+            ).to_numpy(),
+            output_obs: integrated.to_numpy(),
+        }
+    )
+    if roi_obs in adata.obs:
+        table.insert(1, "ROI", adata.obs[roi_obs].astype("string").to_numpy())
+    if object_id_obs in adata.obs:
+        position = 2 if "ROI" in table else 1
+        table.insert(
+            position,
+            "ObjectNumber",
+            pd.to_numeric(adata.obs[object_id_obs], errors="coerce").to_numpy(),
+        )
+    return table
+
+
+def integrated_identity_crosstab(
+    integration_table: pd.DataFrame,
+    *,
+    output_obs: str,
+) -> pd.DataFrame:
+    """Count source labels against accepted integrated cohort labels."""
+
+    required = {
+        "source_label",
+        "is_classification_cohort",
+        "final_class_id",
+        str(output_obs),
+    }
+    missing = sorted(required - set(integration_table.columns))
+    if missing:
+        raise ValueError(f"Integrated identity table is missing columns: {missing}.")
+    rows = integration_table.loc[
+        integration_table["is_classification_cohort"].fillna(False).astype(bool)
+        & integration_table["final_class_id"].notna()
+    ].copy()
+    if rows.empty:
+        return pd.DataFrame()
+    rows["source_label"] = rows["source_label"].fillna("<missing source>")
+    rows[str(output_obs)] = rows[str(output_obs)].fillna("<missing integrated>")
+    return pd.crosstab(
+        rows["source_label"].astype(str),
+        rows[str(output_obs)].astype(str),
+        dropna=False,
+    )
 
 
 def export_assignment_table(
@@ -394,8 +606,10 @@ def export_cleaned_masks(
 __all__ = [
     "apply_assignments_to_anndata",
     "build_assignment_table",
+    "build_integrated_identity_table",
     "export_annotated_anndata",
     "export_assignment_table",
     "export_cleaned_masks",
+    "integrated_identity_crosstab",
     "materialize_cohort_masks",
 ]

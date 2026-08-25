@@ -244,7 +244,14 @@ the bounded image/overlay cache across ROIs, updates matching Napari layers in
 place, and omits classification cohort/context arrays in exploration-only modes.
 Live tracking of manual layer changes defaults off for a Population QC session
 and on for Data exploration; explicit recipes and viewed-ROI history remain
-available in either mode.
+available in either mode. The shared session switch is available in Setup,
+Explore, and Population QC, and can be changed without revising the workspace.
+Visibility and opacity events update the in-memory recipe directly: they do not
+reload ROI images, regenerate overlays, or rescan the full AnnData population.
+For full-size classifier label layers, visibility and opacity also defer
+named-recipe and reviewed-ROI fingerprint display updates until Explore or normal
+ROI replay is next refreshed. Continuous opacity-slider events therefore never
+request an ROI reload or rebuild classification arrays.
 
 ROIs can be recalculated by highest abundance, lowest abundance, or a reproducible
 random ordering, with a configurable result count and random seed. Buttons show
@@ -265,6 +272,22 @@ highlighted in orange; it is retried later instead of being silently pruned.
 Feature work has its own **🧬 Feature Building** tab; it is not required for
 ordinary image exploration. The tab separates source checking, channel
 selection, recipe design, and execution:
+
+The readiness card at the top gives the durable answer to whether features have
+been built. It checks the canonical table, feature dictionary, provenance,
+active feature-set ID, experiment revision, frozen cohort, cell/ROI coverage,
+and the currently displayed builder controls. Green means the feature table is
+ready for classification (or trial refinement); amber identifies partial
+coverage, recorded warnings, or unapplied control changes; red identifies stale
+or incomplete assets. This state is recovered after reopening a workspace and
+can be refreshed after an HPC build without reading the complete feature matrix.
+
+Marker-selection lists in Feature Building, Explore image loading, Explore
+cell-level marker overlays, and Scanpy expression/embedding plotting provide a
+**Select feature markers** shortcut. It derives staining channels from
+the active built feature dictionary, falling back to the current synthetic recipe
+before the first build, and never treats imported dimensions or mask/context
+features as markers.
 
 1. Add optional imported sources. Tables use
    `source_name=/path/to/features.parquet`. AnnData and CellVision sources use
@@ -403,9 +426,12 @@ button applies the same action to the selected cell. Clearing is deliberately
 proposal-specific and cannot erase a confirmed label. Proposed-on-click is the
 default so cells can be labelled rapidly without repeatedly returning to a button,
 while confirmation remains an explicit choice. Class shortcuts continue to change
-the active class. **Clear all proposals (all ROIs)…** reports the proposal count,
-requires confirmation, and clears reversible proposals across the experiment while
-preserving every confirmed label.
+the active class. The **Hotkeys** row gives the exact number-to-class mapping;
+pressing a number with the viewer canvas focused changes only the class selector
+and deliberately leaves **Select**, **Propose**, **Confirm**, or **Clear proposal**
+click behaviour unchanged. **Clear all proposals (all ROIs)…** reports the proposal
+count, requires confirmation, and clears reversible proposals across the experiment
+while preserving every confirmed label.
 
 The live label tally reports proposed and confirmed cells separately for every
 class. Only confirmed labels train the model. HistGradientBoosting uses 20
@@ -417,6 +443,10 @@ alternative; the user may still choose to train anyway.
 Class selectors, the live tally, and active-learning queue entries use the
 class colours defined in Setup, so the same visual identity is retained across
 annotation, prediction review, and display layers.
+
+The `uncertainty_or_probability` intensity layer uses additive blending by default
+for both entropy and selected-class probability views. Refreshing either view also
+corrects an older layer that was created with translucent blending.
 
 The **Model storage** row shows the exact files for the active experiment.
 `models/classifier_latest.joblib` contains the fitted imputer and classifier;
@@ -479,10 +509,29 @@ final cell identities** writes a canonical Parquet table and decision JSON with
 thresholds and counts in the experiment exports folder. Exports are blocked if a
 confirmed label, score, class definition, or threshold changes afterward.
 
+For a subset experiment, the optional next box explicitly integrates these final
+identities with a complete existing observation such as Leiden. Choose the source
+observation, a new output-observation name, and one of three naming strategies:
+use the experiment class names, prefix each class with its source population, or
+enter custom final population names. Cells outside the cohort and unassigned cohort
+cells keep their source label; only confirmed or threshold-accepted identities
+replace it. Reusing a source-population name is therefore an explicit merge.
+
+**Preview overlap / confusion** opens a resizable count matrix of source labels
+against accepted integrated labels. It is an overlap audit, not an accuracy metric.
+**Build / refresh integrated labels** writes a canonical full-dataset table and
+provenance JSON. Changes to final identities, source labels, output name, naming
+strategy, or class-name mapping make this result stale. Integrated export is
+blocked until it is rebuilt, or the optional integration is disabled for an
+intentional cohort-only export.
+
 The same pane exports CSV/Parquet, writes an atomic annotated AnnData copy, or—when
 an AnnData object is live in a notebook—applies the annotations to that in-memory
-object without writing its source file. Thresholds and precedence are stored with
-the output provenance.
+object without writing its source file. When integration is enabled and current,
+the table export contains the complete integrated dataset and AnnData receives the
+explicitly named integrated observation. Otherwise, the table remains cohort-only
+and AnnData receives only cohort classification fields. Thresholds, naming,
+colours, and precedence are stored with the output provenance.
 
 ## Building explicit cell lists with Labeler
 
@@ -547,12 +596,16 @@ identity-matched object in the ROI. Population naming enables this scope when
 showing a newly crafted observation, allowing the refined population to be seen
 alongside the unchanged broad populations in the tissue.
 
-With **Reload the current Explore view when ROI changes** enabled, navigation
-reconstructs the same images, colormaps, observation overlay, population
-layers, and marker overlays for the new ROI. A view fingerprint tracks which
-ROIs have been rendered with exactly those settings: ROI selector entries are
-green when viewed and amber when not yet viewed. Changing any component creates
-a different review set.
+With **Reapply the current Explore recipe after changing ROI** enabled, a genuine
+change to a different ROI reconstructs the same images, colormaps, observation
+overlay, population layers, marker overlays, visibility, and opacity for the new
+ROI. This is its only automatic trigger. Toggling the option or editing layer
+colour, contrast, visibility, or opacity does not load the current ROI, and
+display-only changes to the ROI selector are ignored. **Load ROI**, Population QC
+view buttons, and named/F-key recipe loading remain explicit refresh actions. A
+view fingerprint tracks which ROIs have been rendered with exactly those settings:
+ROI selector entries are green when viewed and amber when not yet viewed. Changing
+any component creates a different review set.
 
 The **Layers re-added when the ROI changes** list is the explicit reload
 contract. It shows every replayable Explore layer, including its colormap,
@@ -629,9 +682,10 @@ live in **Classify → Finalize & export**. Regions & Export provides:
 - optional cleaned masks for classes marked `exclude`.
 
 The annotated copy includes subclass, assignment source, confidence, and
-uncertainty observations; a full probability matrix with `NaN` outside the
-cohort; and an optional combined broad-population/subclass column. Original
-AnnData and masks are never overwritten by default.
+uncertainty observations and a full probability matrix with `NaN` outside the
+cohort. If explicit final-label integration was enabled in Classify, it also
+includes the chosen full-dataset population observation and its categorical
+colours. Original AnnData and masks are never overwritten by default.
 
 ## Naming, merging, and subclustering populations
 

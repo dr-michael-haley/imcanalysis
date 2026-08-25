@@ -175,9 +175,19 @@ class ScanpyPlottingPanel:
         embedding_marker_actions_layout = QHBoxLayout(embedding_marker_actions)
         embedding_marker_actions_layout.setContentsMargins(0, 0, 0, 0)
         self.select_visible_embedding_markers_button = QPushButton("Select visible")
+        self.select_feature_embedding_markers_button = QPushButton(
+            "Select feature markers"
+        )
+        self.select_feature_embedding_markers_button.setToolTip(
+            "Select expression variables that contributed channel-derived "
+            "features to the active NapariSBT feature table."
+        )
         self.clear_embedding_markers_button = QPushButton("Clear")
         embedding_marker_actions_layout.addWidget(
             self.select_visible_embedding_markers_button
+        )
+        embedding_marker_actions_layout.addWidget(
+            self.select_feature_embedding_markers_button
         )
         embedding_marker_actions_layout.addWidget(self.clear_embedding_markers_button)
         embedding_marker_actions_layout.addStretch(1)
@@ -239,8 +249,14 @@ class ScanpyPlottingPanel:
         marker_actions_layout = QHBoxLayout(marker_actions)
         marker_actions_layout.setContentsMargins(0, 0, 0, 0)
         self.select_visible_markers_button = QPushButton("Select visible")
+        self.select_feature_markers_button = QPushButton("Select feature markers")
+        self.select_feature_markers_button.setToolTip(
+            "Select markers that contributed channel-derived features to the "
+            "active NapariSBT feature table."
+        )
         self.clear_markers_button = QPushButton("Clear")
         marker_actions_layout.addWidget(self.select_visible_markers_button)
+        marker_actions_layout.addWidget(self.select_feature_markers_button)
         marker_actions_layout.addWidget(self.clear_markers_button)
         marker_actions_layout.addStretch(1)
         self.expression_scale_combo = QComboBox()
@@ -993,6 +1009,7 @@ class ScanpyPlottingPanel:
             self.embedding_marker_search_edit,
             self.embedding_marker_list,
             self.select_visible_embedding_markers_button,
+            self.select_feature_embedding_markers_button,
             self.clear_embedding_markers_button,
             self.embedding_ncols_spin,
             self.embedding_colormap_combo,

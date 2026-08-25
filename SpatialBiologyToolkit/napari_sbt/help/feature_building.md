@@ -5,6 +5,28 @@ experiment it covers the complete frozen cohort; in a Feature Discovery Trial it
 covers only the selected trial ROIs. Full segmentation masks remain the authority
 for boundaries, neighbours, and background exclusion.
 
+## Feature readiness
+
+The readiness card answers whether a durable, canonical feature table is available
+for the current experiment revision. Unlike the live progress panel, it is rebuilt
+from the saved feature table, dictionary, provenance manifest, active feature-set
+ID, frozen cohort, and experiment revision. It therefore remains informative after
+NapariSBT is closed and reopened.
+
+**Ready for classification** means the required assets exist, their provenance
+matches the current experiment and frozen cohort, and the table covers the intended
+cells and ROIs. A Feature Discovery Trial instead reports **Ready for refinement**.
+Amber states distinguish partial coverage, recorded build warnings, and controls
+that have been changed since the active table was built. Existing built features
+remain usable when controls have unapplied changes; rebuild only if those displayed
+changes should replace the active table. Red states mean the assets are incomplete
+or stale and should not be used for training.
+
+The coverage bar reports cells in the canonical table, not merely completed
+fragments. During a build it temporarily shows processed ROIs and does not declare
+the table ready until final outputs and provenance have been written. Use **Refresh
+saved feature status** after an externally managed or HPC build completes.
+
 ## Imported sources
 
 CSV, Parquet, AnnData `X`/`obs`/`obsm`, and CellVision embeddings are joined by
@@ -30,6 +52,13 @@ Start with a broad panel in a Feature Discovery Trial when feature refinement is
 planned. For a full experiment, limiting channels can substantially reduce I/O and
 feature-extraction time. A channel must be discoverable for the relevant ROIs and
 must match the image/mask dimensions.
+
+**Select feature markers** restores the channel set represented in the
+active built feature table. This is useful after reopening a workspace or changing
+the visible channel selection. Before the first build it falls back to the current
+recipe; when that recipe leaves the channel list blank, all currently available
+channels are selected because the worker interprets blank as “use every discovered
+channel.” Imported features and mask/context features do not count as markers.
 
 ## Synthetic features
 

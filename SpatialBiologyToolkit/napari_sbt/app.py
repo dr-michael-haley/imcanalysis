@@ -9,6 +9,7 @@ import time
 from collections import OrderedDict
 from collections.abc import Iterable
 from datetime import datetime
+from html import escape
 from pathlib import Path
 from uuid import uuid4
 
@@ -91,9 +92,11 @@ from .explore import (
 from .exports import (
     apply_assignments_to_anndata,
     build_assignment_table,
+    build_integrated_identity_table,
     export_annotated_anndata,
     export_assignment_table,
     export_cleaned_masks,
+    integrated_identity_crosstab,
     materialize_cohort_masks,
 )
 from .feature_catalog import (
@@ -412,6 +415,10 @@ MANAGED_LAYER_DEFAULT_OPACITY = {
     LABELER_SELECTED_CELL_LAYER_NAME: 1.0,
 }
 
+MANAGED_LAYER_DEFAULT_BLENDING = {
+    CLASS_LAYER_NAMES["uncertainty"]: "additive",
+}
+
 MANAGED_LAYER_DEFAULT_CONTOUR = {
     "classification_cohort": 1,
     "excluded_segmentation_context": 1,
@@ -583,6 +590,12 @@ class NapariSBTController:
         self.final_assignments = pd.DataFrame()
         self.final_identity_signature: str | None = None
         self.final_identity_decision: dict[str, object] = {}
+        self.integrated_identity_table = pd.DataFrame()
+        self.identity_integration_signature: str | None = None
+        self.identity_integration_plan: dict[str, object] = {}
+        self._identity_integration_custom_names: dict[str, str] = {}
+        self._updating_identity_integration_controls = False
+        self._classification_enabled = False
         self.model_bundle = None
         self.current_roi: str | None = None
         self.current_mask: np.ndarray | None = None
@@ -641,6 +654,7 @@ class NapariSBTController:
         self._explore_layer_data_cache_bytes = 0
         self._recipe_list_refresh_pending = False
         self._roi_review_refresh_pending = False
+        self._active_recipe_label_refresh_pending = False
         self._applying_explore_recipe = False
         self._updating_recipe_layer_state = False
         self._updating_queue_controls = False
@@ -894,13 +908,14 @@ class NapariSBTController:
         self.advanced_workflow_check = QCheckBox("Show advanced combined workflow")
         workflow_choice_layout.addWidget(self.advanced_workflow_check)
         self.live_recipe_tracking_check = QCheckBox(
-            "Track manual Napari layer changes in the working recipe"
+            "Track manual Napari layer changes in the working recipe (this session)"
         )
         self.live_recipe_tracking_check.setChecked(True)
         self.live_recipe_tracking_check.setToolTip(
-            "Disable this for the lightest ROI-switching path. Explicitly saved "
-            "recipes still load, but manual layer display changes are not copied "
-            "back into the working recipe automatically."
+            "This can be changed at any time in Setup, Explore, or Population QC. "
+            "Disable it for the lightest display path. Explicitly saved recipes "
+            "still load, but manual layer display changes are not copied back into "
+            "the working recipe automatically."
         )
         self.workflow_description_label = QLabel(
             "Choose the card that best matches your task. NapariSBT will show only "
@@ -1263,6 +1278,42 @@ class NapariSBTController:
         feature_builder = QWidget()
         feature_builder_layout = QVBoxLayout(feature_builder)
 
+        feature_readiness_group = workflow_group(
+            "Feature readiness",
+            "feature_building",
+            "Feature readiness",
+        )
+        feature_readiness_layout = QVBoxLayout(feature_readiness_group)
+        self.feature_readiness_banner = QLabel(
+            "⚪ No workspace — feature status is unavailable"
+        )
+        self.feature_readiness_banner.setWordWrap(True)
+        self.feature_readiness_banner.setMinimumHeight(48)
+        self.feature_readiness_detail = QLabel(
+            "Create or load a classification workspace to configure and build features."
+        )
+        self.feature_readiness_detail.setWordWrap(True)
+        self.feature_readiness_coverage = QProgressBar()
+        self.feature_readiness_coverage.setRange(0, 1)
+        self.feature_readiness_coverage.setValue(0)
+        self.feature_readiness_coverage.setFormat("No feature table")
+        self.feature_readiness_next_step = QLabel(
+            "Next: create or load a workspace in Setup."
+        )
+        self.feature_readiness_next_step.setWordWrap(True)
+        readiness_actions = QHBoxLayout()
+        self.refresh_feature_readiness_button = QPushButton(
+            "Refresh saved feature status"
+        )
+        readiness_actions.addWidget(self.refresh_feature_readiness_button)
+        readiness_actions.addStretch(1)
+        feature_readiness_layout.addWidget(self.feature_readiness_banner)
+        feature_readiness_layout.addWidget(self.feature_readiness_detail)
+        feature_readiness_layout.addWidget(self.feature_readiness_coverage)
+        feature_readiness_layout.addWidget(self.feature_readiness_next_step)
+        feature_readiness_layout.addLayout(readiness_actions)
+        feature_builder_layout.addWidget(feature_readiness_group)
+
         source_group = workflow_group(
             "1. Imported feature sources", "feature_building", "Imported sources"
         )
@@ -1322,9 +1373,17 @@ class NapariSBTController:
         self.feature_channel_list.setMaximumHeight(150)
         channel_actions = QHBoxLayout()
         self.refresh_feature_channels_button = QPushButton("Refresh available channels")
+        self.select_built_feature_channels_button = QPushButton(
+            "Select feature markers"
+        )
+        self.select_built_feature_channels_button.setToolTip(
+            "Select channel-derived markers from the active built feature table. "
+            "Before a build, use the saved/current synthetic-feature recipe."
+        )
         self.select_all_feature_channels_button = QPushButton("Select all")
         self.clear_feature_channels_button = QPushButton("Clear selection")
         channel_actions.addWidget(self.refresh_feature_channels_button)
+        channel_actions.addWidget(self.select_built_feature_channels_button)
         channel_actions.addWidget(self.select_all_feature_channels_button)
         channel_actions.addWidget(self.clear_feature_channels_button)
         self.channels_edit = QLineEdit()
@@ -1648,7 +1707,12 @@ class NapariSBTController:
         self.show_empty_rois = QCheckBox("Include ROIs with no eligible cells")
         self.context_check_display = QCheckBox("Show dimmed full-mask context")
         self.auto_reload_view_check = QCheckBox(
-            "Reload the current Explore view when ROI changes"
+            "Reapply the current Explore recipe after changing ROI"
+        )
+        self.auto_reload_view_check.setToolTip(
+            "When you choose a different ROI, recreate the same image channels, "
+            "colours, contrasts, overlays, visibility, and opacity for that ROI. "
+            "This setting does not react to layer edits or reload the current ROI."
         )
         self.auto_reload_view_check.setChecked(True)
         self.viewed_rois_label = QLabel("No Explore view is active.")
@@ -1712,6 +1776,15 @@ class NapariSBTController:
             "replayed from this list."
         )
         self.reload_recipe_help.setWordWrap(True)
+        self.explore_live_recipe_tracking_check = QCheckBox(
+            "Track manual layer display changes in the working recipe"
+        )
+        self.explore_live_recipe_tracking_check.setChecked(True)
+        self.explore_live_recipe_tracking_check.setToolTip(
+            "Session control: switch this off when you only want to inspect layers. "
+            "Saved recipes and the explicit ‘Update from current layers’ button "
+            "continue to work. Switching visibility never reloads ROI data."
+        )
         preset_selector = QWidget()
         preset_selector_layout = QHBoxLayout(preset_selector)
         preset_selector_layout.setContentsMargins(0, 0, 0, 0)
@@ -1765,6 +1838,7 @@ class NapariSBTController:
         reload_recipe_actions.addWidget(self.delete_recipe_items_button)
         reload_recipe_actions.addWidget(self.update_recipe_from_layers_button)
         reload_recipe_layout.addWidget(self.reload_recipe_help)
+        reload_recipe_layout.addWidget(self.explore_live_recipe_tracking_check)
         reload_recipe_layout.addWidget(preset_selector)
         reload_recipe_layout.addWidget(preset_editor)
         reload_recipe_layout.addLayout(preset_actions)
@@ -1805,6 +1879,13 @@ class NapariSBTController:
         self.marker_overlay_list = QListWidget()
         self.marker_overlay_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.marker_overlay_list.setMaximumHeight(110)
+        self.select_feature_marker_overlays_button = QPushButton(
+            "Select feature markers"
+        )
+        self.select_feature_marker_overlays_button.setToolTip(
+            "Select AnnData markers that contributed channel-derived features "
+            "to the active feature table."
+        )
         self.load_marker_overlays_button = QPushButton(
             "Add selected adata.X markers as cell overlays"
         )
@@ -1818,7 +1899,14 @@ class NapariSBTController:
         overlay_form.addRow("Separate population layers", self.population_layer_list)
         overlay_form.addRow("", self.load_population_layers_button)
         overlay_form.addRow("Cell-level marker overlays", self.marker_overlay_list)
-        overlay_form.addRow("", self.load_marker_overlays_button)
+        marker_overlay_actions = QWidget()
+        marker_overlay_actions_layout = QHBoxLayout(marker_overlay_actions)
+        marker_overlay_actions_layout.setContentsMargins(0, 0, 0, 0)
+        marker_overlay_actions_layout.addWidget(
+            self.select_feature_marker_overlays_button
+        )
+        marker_overlay_actions_layout.addWidget(self.load_marker_overlays_button)
+        overlay_form.addRow("", marker_overlay_actions)
         population_actions = QWidget()
         population_actions_layout = QHBoxLayout(population_actions)
         population_actions_layout.setContentsMargins(0, 0, 0, 0)
@@ -1844,9 +1932,17 @@ class NapariSBTController:
         self.channel_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.channel_list.setMaximumHeight(120)
         image_actions = QHBoxLayout()
+        self.select_feature_image_channels_button = QPushButton(
+            "Select feature markers"
+        )
+        self.select_feature_image_channels_button.setToolTip(
+            "Select current-ROI image channels that contributed channel-derived "
+            "features to the active feature table."
+        )
         self.load_channels_button = QPushButton("Load selected greyscale")
         self.load_six_colour_button = QPushButton("Load selected as R/G/B/C/Y/M")
         self.load_rgb_button = QPushButton("Load first three selected as RGB")
+        image_actions.addWidget(self.select_feature_image_channels_button)
         image_actions.addWidget(self.load_channels_button)
         image_actions.addWidget(self.load_six_colour_button)
         image_actions.addWidget(self.load_rgb_button)
@@ -1905,6 +2001,18 @@ class NapariSBTController:
         )
         population_qc_selection_form.addRow(
             "Outline width for all populations", self.population_qc_contour_spin
+        )
+        self.population_qc_live_recipe_tracking_check = QCheckBox(
+            "Track manual layer display changes in the working recipe"
+        )
+        self.population_qc_live_recipe_tracking_check.setChecked(True)
+        self.population_qc_live_recipe_tracking_check.setToolTip(
+            "Session control shared with Setup and Explore. Population QC defaults "
+            "to off for speed, but saved RGB recipes and explicit save/load actions "
+            "continue to work."
+        )
+        population_qc_selection_form.addRow(
+            "Live recipe tracking", self.population_qc_live_recipe_tracking_check
         )
         population_qc_layout.addWidget(population_qc_selection_group)
 
@@ -2917,10 +3025,20 @@ class NapariSBTController:
             "active. The selected click action is applied using the current "
             "class. The classification_cohort layer may remain hidden and does "
             "not need to be selected. Clear proposed removes only reversible "
-            "proposals and will not erase confirmed labels."
+            "proposals and will not erase confirmed labels. With the viewer "
+            "canvas focused, press a class number key to switch class without "
+            "changing the selected click action."
         )
         self.cell_picking_help.setWordWrap(True)
         self.class_combo = QComboBox()
+        self.class_hotkey_label = QLabel(
+            "Create or load a classification workspace to show class hotkeys."
+        )
+        self.class_hotkey_label.setWordWrap(True)
+        self.class_hotkey_label.setToolTip(
+            "Number keys select the current class only. They never change whether "
+            "a click selects, proposes, confirms, or clears a proposal."
+        )
         click_behavior_widget = QWidget()
         click_behavior_layout = QGridLayout(click_behavior_widget)
         click_behavior_layout.setContentsMargins(0, 0, 0, 0)
@@ -2987,6 +3105,7 @@ class NapariSBTController:
         selection_form.addRow("Cell", self.selected_cell_label)
         selection_form.addRow("Picking", self.cell_picking_help)
         selection_form.addRow("Class", self.class_combo)
+        selection_form.addRow("Hotkeys", self.class_hotkey_label)
         selection_form.addRow("Click action", click_behavior_widget)
         selection_form.addRow("", annotation_buttons)
         selection_form.addRow("Label tally", self.class_tally_table)
@@ -3163,8 +3282,89 @@ class NapariSBTController:
         final_form.addRow("Final identity status", self.final_identity_summary_label)
         finalize_page_layout.addWidget(final_group)
 
+        integration_group = workflow_group(
+            "5. Optional: integrate with existing population labels",
+            "classify",
+            "Integrate with existing labels",
+        )
+        integration_form = QFormLayout(integration_group)
+        integration_explanation = QLabel(
+            "Use this when the classifier subdivides only part of the dataset. "
+            "Cells with accepted final classes receive the names below; cells "
+            "outside the cohort and unassigned cohort cells retain their existing "
+            "source label. Nothing is written to AnnData until the export action."
+        )
+        integration_explanation.setWordWrap(True)
+        self.final_integration_enable_check = QCheckBox(
+            "Create a full-dataset integrated population label"
+        )
+        self.final_integration_source_combo = QComboBox()
+        self.final_integration_output_edit = QLineEdit("classified_populations")
+        self.final_integration_naming_combo = QComboBox()
+        self.final_integration_naming_combo.addItem(
+            "Use classification class names", "class_names"
+        )
+        self.final_integration_naming_combo.addItem(
+            "Source population → classification name", "source_and_class"
+        )
+        self.final_integration_naming_combo.addItem(
+            "Define custom final names", "custom"
+        )
+        self.final_integration_mapping_help = QLabel()
+        self.final_integration_mapping_help.setWordWrap(True)
+        self.final_integration_mapping_table = QTableWidget(0, 3)
+        self.final_integration_mapping_table.setHorizontalHeaderLabels(
+            ["Final class", "Colour", "Integrated population name"]
+        )
+        self.final_integration_mapping_table.horizontalHeader().setSectionResizeMode(
+            0, QHeaderView.ResizeToContents
+        )
+        self.final_integration_mapping_table.horizontalHeader().setSectionResizeMode(
+            1, QHeaderView.ResizeToContents
+        )
+        self.final_integration_mapping_table.horizontalHeader().setSectionResizeMode(
+            2, QHeaderView.Stretch
+        )
+        self.final_integration_mapping_table.verticalHeader().setVisible(False)
+        self.final_integration_mapping_table.setMaximumHeight(230)
+        integration_actions = QWidget()
+        integration_actions_layout = QHBoxLayout(integration_actions)
+        integration_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.preview_identity_integration_button = QPushButton(
+            "Preview overlap / confusion matrix…"
+        )
+        self.build_identity_integration_button = QPushButton(
+            "Build / refresh integrated labels"
+        )
+        self.build_identity_integration_button.setObjectName("sbtPrimaryActionButton")
+        integration_actions_layout.addWidget(self.preview_identity_integration_button)
+        integration_actions_layout.addWidget(self.build_identity_integration_button)
+        self.identity_integration_summary_label = QLabel(
+            "Optional integration is disabled; exports will contain cohort-only "
+            "final identities."
+        )
+        self.identity_integration_summary_label.setWordWrap(True)
+        integration_form.addRow(integration_explanation)
+        integration_form.addRow("", self.final_integration_enable_check)
+        integration_form.addRow(
+            "Existing population observation", self.final_integration_source_combo
+        )
+        integration_form.addRow(
+            "New integrated observation", self.final_integration_output_edit
+        )
+        integration_form.addRow(
+            "Population naming", self.final_integration_naming_combo
+        )
+        integration_form.addRow("Naming preview", self.final_integration_mapping_help)
+        integration_form.addRow("Class names", self.final_integration_mapping_table)
+        integration_form.addRow("", integration_actions)
+        integration_form.addRow(
+            "Integration status", self.identity_integration_summary_label
+        )
+        finalize_page_layout.addWidget(integration_group)
+
         final_export_group = workflow_group(
-            "5. Export final identities",
+            "6. Export final identities",
             "classify",
             "Final identities and export",
         )
@@ -3175,7 +3375,9 @@ class NapariSBTController:
         self.annotated_path_edit = QLineEdit(
             str(self.project_root / "napari_sbt_annotated.h5ad")
         )
-        self.export_assignments_button = QPushButton("Export final identities CSV")
+        self.export_assignments_button = QPushButton(
+            "Export cohort final identities CSV/Parquet"
+        )
         self.export_adata_button = QPushButton("Export annotated AnnData copy")
         self.apply_live_adata_button = QPushButton(
             "Apply to live AnnData object (memory only)…"
@@ -3781,7 +3983,13 @@ class NapariSBTController:
             self._guard(self.focus_next_setup_problem)
         )
         self.live_recipe_tracking_check.toggled.connect(
-            self._guard(self._live_recipe_tracking_changed)
+            self._live_recipe_tracking_changed
+        )
+        self.explore_live_recipe_tracking_check.toggled.connect(
+            self._live_recipe_tracking_changed
+        )
+        self.population_qc_live_recipe_tracking_check.toggled.connect(
+            self._live_recipe_tracking_changed
         )
         self.validate_integrity_button.clicked.connect(
             self._guard(self.preview_cohort)
@@ -4022,8 +4230,23 @@ class NapariSBTController:
         self.validate_sources_button.clicked.connect(
             self._guard(self.start_source_validation)
         )
+        self.refresh_feature_readiness_button.clicked.connect(
+            self._guard(self.refresh_saved_feature_status)
+        )
+        self.feature_tables_edit.textChanged.connect(self.refresh_feature_readiness)
+        self.anndata_features_edit.textChanged.connect(
+            self.refresh_feature_readiness
+        )
+        self.offset_spin.valueChanged.connect(self.refresh_feature_readiness)
+        self.offset_overlap_check.toggled.connect(self.refresh_feature_readiness)
+        self.background_ring_spin.valueChanged.connect(
+            self.refresh_feature_readiness
+        )
         self.refresh_feature_channels_button.clicked.connect(
             self._guard(self.refresh_feature_channel_choices)
+        )
+        self.select_built_feature_channels_button.clicked.connect(
+            self._guard(self.select_feature_build_channels)
         )
         self.select_all_feature_channels_button.clicked.connect(
             lambda: self.feature_channel_list.selectAll()
@@ -4069,7 +4292,7 @@ class NapariSBTController:
             self._guard(self.promote_feature_trial)
         )
         self.roi_combo.currentTextChanged.connect(
-            self._guard(self.load_roi, pass_signal_args=True)
+            self._guard(self._roi_selection_changed, pass_signal_args=True)
         )
         self.reload_roi_button.clicked.connect(self._guard(self.load_roi))
         self.previous_roi_button.clicked.connect(lambda: self.move_roi(-1))
@@ -4088,7 +4311,10 @@ class NapariSBTController:
         self.show_empty_rois.toggled.connect(self._guard(self.refresh_rois))
         self.context_check_display.toggled.connect(self.toggle_context)
         self.auto_reload_view_check.toggled.connect(
-            self._guard(self.auto_reload_explore_view)
+            self._guard(
+                self.auto_reload_setting_changed,
+                pass_signal_args=True,
+            )
         )
         self.hide_all_layers_button.clicked.connect(self._guard(self.hide_all_layers))
         self.show_all_layers_button.clicked.connect(self._guard(self.show_all_layers))
@@ -4138,6 +4364,9 @@ class NapariSBTController:
         self.load_marker_overlays_button.clicked.connect(
             self._guard(self.load_selected_marker_overlays)
         )
+        self.select_feature_marker_overlays_button.clicked.connect(
+            self._guard(self.select_feature_marker_overlays)
+        )
         self.rank_rois_button.clicked.connect(self._guard(self.rank_rois_by_population))
         self.use_population_button.clicked.connect(
             self._guard(self.use_population_as_cohort)
@@ -4151,10 +4380,22 @@ class NapariSBTController:
         self.load_channels_button.clicked.connect(
             self._guard(self.load_selected_channels)
         )
+        self.select_feature_image_channels_button.clicked.connect(
+            self._guard(self.select_feature_image_channels)
+        )
         self.load_six_colour_button.clicked.connect(
             self._guard(self.load_six_colour_channels)
         )
         self.load_rgb_button.clicked.connect(self._guard(self.load_rgb))
+        self.scanpy_plotting_panel.select_feature_markers_button.clicked.connect(
+            self._guard(self.select_scanpy_expression_feature_markers)
+        )
+        scanpy_embedding_feature_button = (
+            self.scanpy_plotting_panel.select_feature_embedding_markers_button
+        )
+        scanpy_embedding_feature_button.clicked.connect(
+            self._guard(self.select_scanpy_embedding_feature_markers)
+        )
         self.population_qc_obs_combo.currentTextChanged.connect(
             self._guard(self.refresh_population_qc_populations)
         )
@@ -4335,6 +4576,27 @@ class NapariSBTController:
             threshold_signal.connect(self._mark_final_identities_stale)
         self.create_final_identities_button.clicked.connect(
             self._guard(self.create_final_identities)
+        )
+        self.final_integration_enable_check.toggled.connect(
+            self._identity_integration_enabled_changed
+        )
+        self.final_integration_source_combo.currentTextChanged.connect(
+            self._mark_identity_integration_stale
+        )
+        self.final_integration_output_edit.textChanged.connect(
+            self._mark_identity_integration_stale
+        )
+        self.final_integration_naming_combo.currentIndexChanged.connect(
+            self._identity_integration_naming_changed
+        )
+        self.final_integration_mapping_table.itemChanged.connect(
+            self._identity_integration_mapping_changed
+        )
+        self.preview_identity_integration_button.clicked.connect(
+            self._guard(self.preview_identity_integration)
+        )
+        self.build_identity_integration_button.clicked.connect(
+            self._guard(self.build_identity_integration)
         )
         self.apply_live_adata_button.clicked.connect(
             self._guard(self.apply_final_identities_to_live_anndata)
@@ -5908,11 +6170,27 @@ class NapariSBTController:
             and self.live_recipe_tracking_check.isChecked()
         )
 
+    def _sync_recipe_tracking_controls(self, enabled: bool) -> None:
+        """Keep the three session controls consistent without signal feedback."""
+
+        for name in (
+            "live_recipe_tracking_check",
+            "explore_live_recipe_tracking_check",
+            "population_qc_live_recipe_tracking_check",
+        ):
+            control = getattr(self, name, None)
+            if control is None:
+                continue
+            control.blockSignals(True)
+            control.setChecked(bool(enabled))
+            control.blockSignals(False)
+
     def _live_recipe_tracking_changed(self, enabled: bool) -> None:
+        self._sync_recipe_tracking_controls(bool(enabled))
         if enabled:
             for layer in self.viewer.layers:
                 self._bind_recipe_display_tracking(layer)
-            self._refresh_reload_recipe_list(force=True)
+            self._refresh_reload_recipe_list()
             self.set_status(
                 "Live recipe tracking enabled. Manual visibility, opacity, colour, "
                 "contour, and contrast changes will update the working recipe."
@@ -6150,9 +6428,7 @@ class NapariSBTController:
         mode = self.current_workflow_mode()
         self._sync_workflow_cards()
         if mode != self._recipe_tracking_workflow:
-            self.live_recipe_tracking_check.blockSignals(True)
-            self.live_recipe_tracking_check.setChecked(mode != "population_qc")
-            self.live_recipe_tracking_check.blockSignals(False)
+            self._sync_recipe_tracking_controls(mode != "population_qc")
             self._recipe_tracking_workflow = mode
         visible_topics = WORKFLOW_VISIBLE_TABS.get(mode, {"setup"})
         for topic, index in self._workflow_tab_indices.items():
@@ -6394,6 +6670,7 @@ class NapariSBTController:
             f"channel maxima; source/copy: {source}. Unmatched channels use "
             f"quantile {self.display_quantile_spin.value():.4f}."
         )
+        self.refresh_feature_readiness()
 
     def _display_defaults_changed(self) -> None:
         lower = float(self.display_lower_contrast_spin.value())
@@ -6481,6 +6758,7 @@ class NapariSBTController:
         )
 
     def _set_classification_enabled(self, enabled: bool) -> None:
+        self._classification_enabled = bool(enabled)
         for widget in (
             self.class_combo,
             *self.click_behavior_radios.values(),
@@ -6496,6 +6774,7 @@ class NapariSBTController:
             self.apply_prediction_review_button,
             self.reset_prediction_review_button,
             self.create_final_identities_button,
+            self.final_integration_enable_check,
             self.export_assignments_button,
             self.export_adata_button,
             self.apply_live_adata_button,
@@ -6514,6 +6793,7 @@ class NapariSBTController:
             self.import_current_classifier_components_button,
         ):
             widget.setEnabled(enabled)
+        self._update_identity_integration_controls()
 
     def _update_scope_widget_state(self) -> None:
         selected = self.scope_combo.currentData() == "obs_values"
@@ -6628,6 +6908,7 @@ class NapariSBTController:
             self.population_obs_combo,
             self.population_qc_obs_combo,
             self.curation_source_combo,
+            self.final_integration_source_combo,
         )
         roi_obs, object_obs = self._maintenance_identity_columns()
         population_columns = _population_observation_columns(
@@ -6641,6 +6922,7 @@ class NapariSBTController:
             id(self.population_obs_combo): population_columns,
             id(self.population_qc_obs_combo): population_columns,
             id(self.curation_source_combo): population_columns,
+            id(self.final_integration_source_combo): population_columns,
         }
         previous_values = {id(combo): combo.currentText() for combo in selector_combos}
         for combo in selector_combos:
@@ -6655,8 +6937,16 @@ class NapariSBTController:
             preferred_value = _preferred_population_observation(
                 self.adata.obs,
                 population_columns,
-                prefer_leiden=combo is self.curation_source_combo,
+                prefer_leiden=combo
+                in {self.curation_source_combo, self.final_integration_source_combo},
             )
+            if (
+                combo is self.final_integration_source_combo
+                and self.manifest is not None
+                and self.manifest.cell_scope.mode == "obs_values"
+                and self.manifest.cell_scope.obs_column in choices
+            ):
+                preferred_value = str(self.manifest.cell_scope.obs_column)
             if combo is self.overlay_obs_combo:
                 preferred_value = columns[0] if columns else None
             if preferred_value is not None and combo.findText(preferred_value) >= 0:
@@ -6683,6 +6973,7 @@ class NapariSBTController:
         self.refresh_scanpy_plotting_choices()
         self._refresh_maintenance_controls()
         self._refresh_cell_properties_available_observations()
+        self._refresh_identity_integration_mapping()
         self.refresh_setup_readiness()
         self.set_status(
             f"Loaded AnnData selectors for {self.adata.n_obs:,} cells from {source}."
@@ -10366,6 +10657,176 @@ class NapariSBTController:
             str(source.representation or ""),
         )
 
+    @staticmethod
+    def _normalise_marker_selection_name(value: object) -> str:
+        text = str(value).split(" [", 1)[0].strip()
+        return "".join(
+            character for character in text if character.isalnum()
+        ).casefold()
+
+    def _feature_marker_names(self) -> tuple[list[str], str]:
+        """Resolve image markers represented by the active synthetic features."""
+
+        active_feature_set = (
+            self.manifest.active_feature_set_id if self.manifest is not None else None
+        )
+        if (
+            active_feature_set
+            and self.paths is not None
+            and self.paths.feature_dictionary.is_file()
+            and self.paths.feature_manifest.is_file()
+        ):
+            try:
+                provenance = json.loads(
+                    self.paths.feature_manifest.read_text(encoding="utf-8")
+                )
+                dictionary = read_dataframe(self.paths.feature_dictionary)
+            except (OSError, ValueError, json.JSONDecodeError):
+                provenance = {}
+                dictionary = pd.DataFrame()
+            if (
+                provenance.get("feature_set_id") == active_feature_set
+                and "feature" in dictionary
+            ):
+                feature_names = dictionary["feature"].dropna().astype(str).tolist()
+                if "valid_model_input" in dictionary:
+                    usable = dictionary["valid_model_input"].map(
+                        lambda value: str(value).strip().casefold()
+                        not in {"", "0", "false", "nan", "no", "none"}
+                    )
+                    feature_names = (
+                        dictionary.loc[usable, "feature"].dropna().astype(str).tolist()
+                    )
+                recipe = compact_synthetic_recipe(
+                    SyntheticFeatureRecipe(),
+                    feature_names,
+                )
+                channels = list(dict.fromkeys(recipe.channels))
+                if channels:
+                    return channels, "the active built feature table"
+                raise ValueError(
+                    "The active feature table contains no channel-derived IMC "
+                    "features, so there are no staining markers to select."
+                )
+
+        recipe = self.synthetic_recipe_from_controls()
+        if recipe.channels:
+            return list(recipe.channels), "the current synthetic-feature recipe"
+        if not (
+            recipe.distribution_features
+            or recipe.region_features
+            or recipe.gradient_features
+        ):
+            raise ValueError(
+                "The current feature recipe contains only mask/context features; "
+                "it does not use staining markers."
+            )
+
+        available: list[str] = []
+        if self.adata is not None:
+            available.extend(str(value) for value in self.adata.var_names)
+        available.extend(
+            str(value).split(" [", 1)[0] for value in self.current_image_paths
+        )
+        if hasattr(self, "feature_channel_list"):
+            available.extend(
+                self.feature_channel_list.item(index).text()
+                for index in range(self.feature_channel_list.count())
+            )
+        if hasattr(self, "channel_list"):
+            available.extend(
+                self.channel_list.item(index).text().split(" [", 1)[0]
+                for index in range(self.channel_list.count())
+            )
+        channels = list(dict.fromkeys(value for value in available if value))
+        if not channels:
+            raise ValueError(
+                "The feature recipe uses every discovered channel, but no marker "
+                "choices are currently available. Load AnnData or an ROI first."
+            )
+        return channels, "the all-channel synthetic-feature recipe"
+
+    def _select_feature_markers_in_list(self, marker_list, *, destination: str) -> None:
+        markers, source = self._feature_marker_names()
+        target_names = {
+            self._normalise_marker_selection_name(marker)
+            for marker in markers
+            if self._normalise_marker_selection_name(marker)
+        }
+        aliases = self._channel_aliases()
+        for marker in markers:
+            canonical = aliases.get(self._normalise_marker_selection_name(marker))
+            if canonical:
+                target_names.add(self._normalise_marker_selection_name(canonical))
+
+        matched_indices: list[int] = []
+        for index in range(marker_list.count()):
+            item = marker_list.item(index)
+            item_name = self._normalise_marker_selection_name(item.text())
+            canonical = aliases.get(item_name)
+            candidate_names = {item_name}
+            if canonical:
+                candidate_names.add(self._normalise_marker_selection_name(canonical))
+            if candidate_names & target_names:
+                matched_indices.append(index)
+        if not matched_indices:
+            raise ValueError(
+                f"None of the {len(markers)} marker(s) from {source} are available "
+                f"in {destination}. Check the selected expression source or load "
+                "an ROI containing those image channels."
+            )
+        marker_list.blockSignals(True)
+        marker_list.clearSelection()
+        for index in matched_indices:
+            marker_list.item(index).setSelected(True)
+        marker_list.blockSignals(False)
+        missing_count = max(0, len(markers) - len(matched_indices))
+        suffix = (
+            f" {max(0, missing_count)} feature marker(s) were unavailable here."
+            if missing_count > 0
+            else ""
+        )
+        self.set_status(
+            f"Selected {len(matched_indices)} marker(s) in {destination} using "
+            f"{source}."
+            f"{suffix}"
+        )
+
+    def select_feature_build_channels(self) -> None:
+        self._select_feature_markers_in_list(
+            self.feature_channel_list,
+            destination="Feature Building",
+        )
+        self._update_feature_channel_summary()
+
+    def select_feature_image_channels(self) -> None:
+        self._select_feature_markers_in_list(
+            self.channel_list,
+            destination="Explore image channels",
+        )
+
+    def select_feature_marker_overlays(self) -> None:
+        self._select_feature_markers_in_list(
+            self.marker_overlay_list,
+            destination="Explore marker overlays",
+        )
+
+    def select_scanpy_expression_feature_markers(self) -> None:
+        self.scanpy_plotting_panel.marker_search_edit.clear()
+        self._select_feature_markers_in_list(
+            self.scanpy_plotting_panel.marker_list,
+            destination="Scanpy expression markers",
+        )
+        self.scanpy_plotting_panel._controls_changed()
+
+    def select_scanpy_embedding_feature_markers(self) -> None:
+        self.scanpy_plotting_panel.embedding_marker_search_edit.clear()
+        self._select_feature_markers_in_list(
+            self.scanpy_plotting_panel.embedding_marker_list,
+            destination="Scanpy embedding expression variables",
+        )
+        self.scanpy_plotting_panel._controls_changed()
+
     def refresh_feature_channel_choices(self) -> None:
         selected = set(self.selected_feature_channels())
         if not selected and self.manifest is not None:
@@ -10480,6 +10941,384 @@ class NapariSBTController:
             f"{selected_counts['context']}; ROI-rank statistics "
             f"{selected_counts['roi_rank']}."
         )
+        self.refresh_feature_readiness()
+
+    def _feature_scope_counts(self) -> tuple[int, int]:
+        """Return the intended cell/ROI coverage for the active build scope."""
+
+        if self.manifest is None:
+            return 0, 0
+        if self.cohort.empty:
+            return (
+                int(self.manifest.cell_scope.eligible_cell_count),
+                int(self.manifest.cell_scope.represented_roi_count),
+            )
+        working = self.cohort
+        if (
+            self.manifest.experiment_mode == "feature_discovery_trial"
+            and self.manifest.feature_trial is not None
+        ):
+            trial_rois = set(self.manifest.feature_trial.selected_rois)
+            working = working.loc[working["ROI"].astype(str).isin(trial_rois)]
+        return len(working), int(working["ROI"].astype(str).nunique())
+
+    def _normalise_feature_recipe_payload(self, recipe) -> dict:
+        payload = recipe.model_dump(mode="json")
+        normalization_path = payload.get("normalization_dict_path")
+        if not normalization_path:
+            return payload
+        candidate = Path(str(normalization_path)).expanduser()
+        if not candidate.is_absolute() and self.paths is not None:
+            experiment_candidate = self.paths.root / candidate
+            project_candidate = self.project_root / candidate
+            candidate = (
+                experiment_candidate
+                if experiment_candidate.is_file()
+                else project_candidate
+            )
+        payload["normalization_dict_path"] = os.path.normcase(
+            str(candidate.resolve(strict=False))
+        )
+        return payload
+
+    def _feature_controls_match_manifest(self) -> tuple[bool, str | None]:
+        """Check whether current builder controls describe the saved recipe."""
+
+        if self.manifest is None:
+            return True, None
+        try:
+            current_recipe = self._normalise_feature_recipe_payload(
+                self.synthetic_recipe_from_controls()
+            )
+            saved_recipe = self._normalise_feature_recipe_payload(
+                self.manifest.synthetic_features
+            )
+            current_sources = [
+                source.model_dump(mode="json") for source in self.feature_sources()
+            ]
+            saved_sources = [
+                source.model_dump(mode="json")
+                for source in self.manifest.feature_sources
+                if source.enabled
+            ]
+        except (TypeError, ValueError) as exc:
+            return False, f"The current recipe is incomplete: {exc}"
+        if current_recipe != saved_recipe:
+            return False, "The synthetic-feature controls differ from the saved build."
+        if current_sources != saved_sources:
+            return (
+                False,
+                "The imported feature-source list differs from the saved build.",
+            )
+        return True, None
+
+    def _set_feature_readiness_display(
+        self,
+        state: str,
+        title: str,
+        detail: str,
+        next_step: str,
+        *,
+        coverage_value: int = 0,
+        coverage_maximum: int = 1,
+        coverage_format: str = "No feature table",
+    ) -> None:
+        if not hasattr(self, "feature_readiness_banner"):
+            return
+        styles = {
+            "idle": (
+                "#f1f5f9",
+                "#334155",
+                "#94a3b8",
+            ),
+            "working": (
+                "#dbeafe",
+                "#1e40af",
+                "#3b82f6",
+            ),
+            "ready": (
+                "#dcfce7",
+                "#166534",
+                "#22c55e",
+            ),
+            "warning": (
+                "#fef3c7",
+                "#92400e",
+                "#f59e0b",
+            ),
+            "error": (
+                "#fee2e2",
+                "#991b1b",
+                "#ef4444",
+            ),
+        }
+        background, foreground, border = styles[state]
+        self.feature_readiness_banner.setText(title)
+        self.feature_readiness_banner.setStyleSheet(
+            f"background: {background}; color: {foreground}; "
+            f"border: 2px solid {border}; border-radius: 8px; padding: 10px; "
+            "font-size: 16px; font-weight: 900;"
+        )
+        self.feature_readiness_detail.setText(detail)
+        self.feature_readiness_next_step.setText(f"Next: {next_step}")
+        maximum = max(1, int(coverage_maximum))
+        self.feature_readiness_coverage.setRange(0, maximum)
+        self.feature_readiness_coverage.setValue(
+            min(maximum, max(0, int(coverage_value)))
+        )
+        self.feature_readiness_coverage.setFormat(coverage_format)
+
+    def refresh_feature_readiness(self, *_args) -> None:
+        """Summarize durable feature assets independently of live progress."""
+
+        if not hasattr(self, "feature_readiness_banner"):
+            return
+        expected_cells, expected_rois = self._feature_scope_counts()
+        if self.feature_process is not None:
+            total = int(self.feature_progress_state.get("total_rois", 0) or 0)
+            completed = int(
+                self.feature_progress_state.get("completed_rois", 0) or 0
+            )
+            failed = int(self.feature_progress_state.get("failed_rois", 0) or 0)
+            processed = completed + failed
+            self._set_feature_readiness_display(
+                "working",
+                "⏳ Building features — the final table is not ready yet",
+                f"{completed:,} ROI(s) complete, {failed:,} failed, and "
+                f"{max(0, total - processed):,} pending. The process-health panel "
+                "below confirms that the Python worker is still reporting.",
+                "wait for this banner to become Ready, or cancel safely and "
+                "resume later.",
+                coverage_value=processed,
+                coverage_maximum=max(1, total),
+                coverage_format=(
+                    f"{processed:,}/{total:,} ROIs processed"
+                    if total
+                    else "Starting feature worker…"
+                ),
+            )
+            return
+        if self.manifest is None or self.paths is None:
+            self._set_feature_readiness_display(
+                "idle",
+                "⚪ No workspace — feature status is unavailable",
+                "Create or load a classification workspace to configure and "
+                "build features.",
+                "create or load a workspace in Setup.",
+            )
+            return
+
+        active_id = self.manifest.active_feature_set_id
+        required = {
+            "canonical feature table": self.paths.feature_table,
+            "feature dictionary": self.paths.feature_dictionary,
+            "feature provenance": self.paths.feature_manifest,
+        }
+        existing = [label for label, path in required.items() if path.is_file()]
+        if not active_id:
+            detail = (
+                "Some feature files exist, but this experiment revision does not "
+                "identify them as its active feature set. They are not treated as "
+                "ready for training."
+                if existing
+                else f"No canonical feature table has been built for the current "
+                f"scope of {expected_cells:,} cells across {expected_rois:,} ROIs."
+            )
+            self._set_feature_readiness_display(
+                "warning" if existing else "idle",
+                "⚠ Features are not built for this experiment revision"
+                if existing
+                else "⚪ Features have not been built",
+                detail,
+                "review sources and the synthetic recipe, then click Build/resume "
+                "features locally.",
+                coverage_maximum=max(1, expected_cells),
+                coverage_format=(
+                    f"0/{expected_cells:,} cells in the active feature table"
+                ),
+            )
+            return
+
+        missing = [label for label, path in required.items() if not path.is_file()]
+        if missing:
+            self._set_feature_readiness_display(
+                "error",
+                "❌ Feature build is incomplete",
+                "The experiment names an active feature set, but the following "
+                f"required asset(s) are missing: {', '.join(missing)}.",
+                "run Build/resume to reconstruct the missing canonical outputs.",
+                coverage_maximum=max(1, expected_cells),
+                coverage_format="Required feature assets are missing",
+            )
+            return
+        try:
+            provenance = json.loads(
+                self.paths.feature_manifest.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            self._set_feature_readiness_display(
+                "error",
+                "❌ Feature provenance cannot be read",
+                "The canonical feature table exists, but its provenance is "
+                f"invalid: {exc}",
+                "run Build/resume before training so the outputs are recreated safely.",
+                coverage_maximum=max(1, expected_cells),
+                coverage_format="Feature provenance is invalid",
+            )
+            return
+
+        built_cells = int(provenance.get("eligible_cells", 0) or 0)
+        built_rois = int(provenance.get("represented_rois", 0) or 0)
+        feature_count = int(provenance.get("feature_count", 0) or 0)
+        failures = int(provenance.get("failures", 0) or 0)
+        mismatches = []
+        for actual, expected, label in (
+            (
+                provenance.get("experiment_id"),
+                self.manifest.experiment_id,
+                "experiment",
+            ),
+            (provenance.get("experiment_revision"), self.manifest.revision, "revision"),
+            (
+                provenance.get("cohort_sha256"),
+                self.manifest.cell_scope.snapshot_sha256,
+                "frozen cohort",
+            ),
+            (provenance.get("feature_set_id"), active_id, "active feature set"),
+        ):
+            if actual != expected:
+                mismatches.append(label)
+        saved_recipe = provenance.get("recipe")
+        if isinstance(saved_recipe, dict):
+            current_saved_recipe = self._normalise_feature_recipe_payload(
+                self.manifest.synthetic_features
+            )
+            try:
+                provenance_recipe = self._normalise_feature_recipe_payload(
+                    SyntheticFeatureRecipe.model_validate(saved_recipe)
+                )
+            except ValueError:
+                provenance_recipe = {}
+            if provenance_recipe != current_saved_recipe:
+                mismatches.append("saved feature recipe")
+        if mismatches:
+            self._set_feature_readiness_display(
+                "error",
+                "❌ Saved features are stale for the current experiment",
+                f"The table contains {built_cells:,} cells and {feature_count:,} "
+                f"model features, but its provenance does not match the current "
+                f"{', '.join(mismatches)}.",
+                "rebuild features before training or scoring.",
+                coverage_value=built_cells,
+                coverage_maximum=max(1, expected_cells),
+                coverage_format=f"{built_cells:,}/{expected_cells:,} expected cells",
+            )
+            return
+
+        controls_match, controls_detail = self._feature_controls_match_manifest()
+        warnings = provenance.get("warnings", [])
+        warning_count = len(warnings) if isinstance(warnings, list) else 0
+        partial = (
+            built_cells < expected_cells
+            or built_rois < expected_rois
+            or failures > 0
+            or feature_count <= 0
+        )
+        completed_at = str(provenance.get("completed_at", "unknown time"))
+        details = (
+            f"Canonical table: {built_cells:,}/{expected_cells:,} cells across "
+            f"{built_rois:,}/{expected_rois:,} ROIs, with {feature_count:,} usable "
+            f"model features. Completed {completed_at}. Feature set "
+            f"{str(active_id)[:12]}…."
+        )
+        if failures:
+            details += f" {failures:,} ROI build failure(s) were recorded."
+        if warning_count:
+            details += (
+                f" {warning_count:,} build warning(s) are recorded in provenance."
+            )
+        if not controls_match:
+            details += f" {controls_detail}"
+
+        if partial:
+            state = "warning"
+            title = "⚠ Features were built, but coverage is incomplete"
+            next_step = (
+                "inspect failed ROIs and warnings, then resume the build before "
+                "training."
+            )
+        elif not controls_match:
+            state = "warning"
+            title = "✅ Built features are available — controls have unapplied changes"
+            next_step = (
+                "use the existing table as-is, or rebuild to apply the currently "
+                "displayed controls."
+            )
+        elif warning_count:
+            state = "warning"
+            title = "✅ Features are ready, with recorded warnings"
+            next_step = (
+                "review the warnings below, then continue to labelling or training "
+                "if acceptable."
+            )
+        else:
+            state = "ready"
+            title = (
+                "✅ Features are ready for refinement"
+                if self.manifest.experiment_mode == "feature_discovery_trial"
+                else "✅ Features are ready for classification"
+            )
+            next_step = (
+                "open Feature Refinement and confirm labels across trial ROIs."
+                if self.manifest.experiment_mode == "feature_discovery_trial"
+                else "continue to Classify; training will use this active feature set."
+            )
+        self._set_feature_readiness_display(
+            state,
+            title,
+            details,
+            next_step,
+            coverage_value=built_cells,
+            coverage_maximum=max(1, expected_cells),
+            coverage_format=f"{built_cells:,}/{expected_cells:,} cells (%p%)",
+        )
+
+    def refresh_saved_feature_status(self) -> None:
+        """Reload feature-related experiment state after an external/HPC build."""
+
+        if self.paths is not None and self.paths.manifest.is_file():
+            stored_manifest, stored_paths = load_experiment(self.paths.root)
+            if (
+                self.manifest is not None
+                and stored_manifest.experiment_id != self.manifest.experiment_id
+            ):
+                raise ValueError(
+                    "The saved feature manifest belongs to a different experiment."
+                )
+            if (
+                self.manifest is not None
+                and stored_manifest.revision != self.manifest.revision
+            ):
+                raise ValueError(
+                    "The saved experiment revision changed externally. Reload the "
+                    "workspace from Setup before using its new feature table."
+                )
+            previous_feature_set = (
+                self.manifest.active_feature_set_id
+                if self.manifest is not None
+                else None
+            )
+            self.manifest = stored_manifest
+            self.paths = stored_paths
+            if previous_feature_set != self.manifest.active_feature_set_id:
+                self.model_bundle = None
+                self.scores = pd.DataFrame()
+                self.final_assignments = pd.DataFrame()
+                self.final_identity_signature = None
+                self._refresh_model_storage_label()
+        self.refresh_feature_readiness()
+        self.refresh_refinement_readiness()
+        self.set_status("Refreshed feature readiness from the saved experiment assets.")
 
     def synthetic_recipe_from_controls(self) -> SyntheticFeatureRecipe:
         return SyntheticFeatureRecipe(
@@ -10646,6 +11485,16 @@ class NapariSBTController:
 
     def load_existing_experiment(self, path: Path) -> None:
         self.manifest, self.paths = load_experiment(path)
+        # A workspace can share ROI names with the previously open workspace.
+        # Reset the loaded-ROI identity so its first ROI is always a real load,
+        # while later model/view data changes can safely ignore same-text combo
+        # notifications.
+        self.current_roi = None
+        self.current_mask = None
+        self.current_mask_path = None
+        self.current_image_paths.clear()
+        self._clear_explore_layers()
+        self._clear_explore_layer_data_cache()
         self._loaded_workspace_root = self.paths.root
         self._launch_experiment = self.paths.root
         self.name_edit.setReadOnly(True)
@@ -10685,6 +11534,25 @@ class NapariSBTController:
         self.final_assignments = pd.DataFrame()
         self.final_identity_signature = None
         self.final_identity_decision = {}
+        self.integrated_identity_table = pd.DataFrame()
+        self.identity_integration_signature = None
+        self.identity_integration_plan = {}
+        self._identity_integration_custom_names = {}
+        integration_default = self.manifest.cell_scope.mode == "obs_values"
+        blocked = self.final_integration_enable_check.blockSignals(True)
+        self.final_integration_enable_check.setChecked(integration_default)
+        self.final_integration_enable_check.blockSignals(blocked)
+        self.final_integration_output_edit.setText(
+            f"{self.manifest.output_obs_slug}_combined"
+        )
+        self.identity_integration_summary_label.setText(
+            "Subset classification detected. Build optional integrated labels "
+            "after creating final identities."
+            if integration_default
+            else "Optional integration is disabled; exports will contain "
+            "cohort-only final identities."
+        )
+        self._update_identity_integration_controls()
         self.final_identity_summary_label.setText(
             "Not created in this session. Set the rules, then create final "
             "identities before export."
@@ -10928,6 +11796,13 @@ class NapariSBTController:
                 for index in range(self.value_list.count()):
                     item = self.value_list.item(index)
                     item.setSelected(item.text() in selected_values)
+                source_obs = str(self.manifest.cell_scope.obs_column or "")
+                source_index = self.final_integration_source_combo.findText(source_obs)
+                if source_index >= 0:
+                    blocked = self.final_integration_source_combo.blockSignals(True)
+                    self.final_integration_source_combo.setCurrentIndex(source_index)
+                    self.final_integration_source_combo.blockSignals(blocked)
+                    self._refresh_identity_integration_mapping()
         if not self._load_integrity_index():
             self.integrity_status_label.setText(
                 "No matching saved asset index is available. Nested ROI folders "
@@ -10998,6 +11873,7 @@ class NapariSBTController:
         self._refresh_population_qc_scope_banner()
 
     def refresh_class_controls(self) -> None:
+        current_class_id = self.class_combo.currentData()
         self._updating_queue_controls = True
         try:
             self.class_combo.clear()
@@ -11012,6 +11888,9 @@ class NapariSBTController:
                 self.queue_class_combo.addItem(
                     icon, definition.name, definition.class_id
                 )
+            selected_index = self.class_combo.findData(current_class_id)
+            if selected_index >= 0:
+                self.class_combo.setCurrentIndex(selected_index)
             self.queue_roi_combo.clear()
             self.queue_roi_combo.addItem("All current experiment ROIs", None)
             queue_rois = (
@@ -11035,17 +11914,56 @@ class NapariSBTController:
                     f"Could not unbind previous class shortcut {shortcut!r}: {error}"
                 )
         self._class_shortcuts = []
-        for index, definition in enumerate(self.manifest.classes):
+        hotkey_parts = []
+        for definition in self.manifest.classes:
             shortcut = definition.shortcut
 
-            def select_class(_viewer, selected_index=index):
-                self.class_combo.setCurrentIndex(selected_index)
+            def select_class(
+                _viewer,
+                selected_class_id=definition.class_id,
+                selected_shortcut=shortcut,
+            ):
+                self._select_class_from_hotkey(
+                    selected_class_id,
+                    selected_shortcut,
+                )
 
             self.viewer.bind_key(shortcut, overwrite=True)(select_class)
             self._class_shortcuts.append(shortcut)
+            hotkey_parts.append(
+                f'<span style="color: {definition.color};">■</span> '
+                f"<b>{escape(shortcut)}</b> = {escape(definition.name)}"
+            )
+        self.class_hotkey_label.setText(
+            " &nbsp;&nbsp; ".join(hotkey_parts)
+            + "<br><span style=\"color: #9ca3af;\">Selects the class only; "
+            "the current click action is unchanged.</span>"
+        )
         self._refresh_class_tally()
         self._refresh_model_storage_label()
         self._refresh_queue_if_scored()
+        self._refresh_identity_integration_mapping()
+
+    def _select_class_from_hotkey(self, class_id: str, shortcut: str) -> None:
+        """Select one class while deliberately preserving annotation behaviour."""
+
+        index = self.class_combo.findData(str(class_id))
+        if index < 0:
+            return
+        # Only the combo selection changes. In particular, do not touch the
+        # click-behaviour button group: users can keep proposing or confirming
+        # cells while rapidly moving between classes.
+        self.class_combo.setCurrentIndex(index)
+        definition = self._class_definition(str(class_id))
+        class_name = definition.name if definition is not None else str(class_id)
+        checked_action = self.click_behavior_group.checkedButton()
+        action_text = (
+            checked_action.text() if checked_action is not None else "Select only"
+        )
+        self.set_status(
+            f"Hotkey {shortcut}: selected class {class_name!r}. "
+            f"Click action remains {action_text!r}."
+        )
 
     def _class_icon(self, color: str):
         pixmap = self.QPixmap(14, 14)
@@ -11426,14 +12344,38 @@ class NapariSBTController:
         self.roi_combo.setCurrentIndex(target)
 
     def hide_all_layers(self) -> None:
-        for layer in self.viewer.layers:
-            layer.visible = False
+        self._set_all_layer_visibility(False)
         self.set_status("All Napari layers are hidden.")
 
     def show_all_layers(self) -> None:
-        for layer in self.viewer.layers:
-            layer.visible = True
+        self._set_all_layer_visibility(True)
         self.set_status("All Napari layers are visible.")
+
+    def _set_all_layer_visibility(self, visible: bool) -> None:
+        """Change every layer while coalescing live-recipe bookkeeping."""
+
+        previous_state = self._updating_recipe_layer_state
+        self._updating_recipe_layer_state = True
+        tracked_names: list[str] = []
+        try:
+            for layer in self.viewer.layers:
+                layer.visible = bool(visible)
+                name = str(getattr(layer, "name", ""))
+                if self._is_recipe_tracked_layer(name, layer):
+                    tracked_names.append(name)
+        finally:
+            self._updating_recipe_layer_state = previous_state
+        if "excluded_segmentation_context" in self.viewer.layers:
+            self.context_check_display.blockSignals(True)
+            self.context_check_display.setChecked(bool(visible))
+            self.context_check_display.blockSignals(False)
+        if not self._recipe_tracking_enabled():
+            return
+        for name in tracked_names:
+            self.explore_recipe.layer_visibility[name] = bool(visible)
+        self._refresh_active_recipe_preset_label()
+        self._refresh_reload_recipe_list()
+        self._refresh_roi_review_colours()
 
     def delete_all_layers(self) -> None:
         for layer in list(self.viewer.layers):
@@ -12162,6 +13104,9 @@ class NapariSBTController:
             return
         if self._recipe_list_refresh_pending:
             self._refresh_reload_recipe_list(force=True)
+        elif self._active_recipe_label_refresh_pending:
+            self._active_recipe_label_refresh_pending = False
+            self._refresh_active_recipe_preset_label()
         if self._roi_review_refresh_pending:
             self._refresh_roi_review_colours(force=True)
 
@@ -12176,6 +13121,7 @@ class NapariSBTController:
             self._recipe_list_refresh_pending = True
             return
         self._recipe_list_refresh_pending = False
+        self._active_recipe_label_refresh_pending = False
         self.reload_recipe_list.clear()
         self._refresh_active_recipe_preset_label()
         entries = self._recipe_layer_entries()
@@ -12191,44 +13137,14 @@ class NapariSBTController:
         from qtpy.QtWidgets import QListWidgetItem
 
         for entry in entries:
-            name = entry["name"]
-            visible = self.explore_recipe.layer_visibility.get(name, True)
-            if entry["kind"] == "managed":
-                visible = self.explore_recipe.layer_visibility.get(
-                    name,
-                    MANAGED_LAYER_DEFAULT_VISIBILITY[name],
-                )
-                opacity = self.explore_recipe.layer_opacities.get(
-                    name,
-                    MANAGED_LAYER_DEFAULT_OPACITY[name],
-                )
-            else:
-                opacity = self.explore_recipe.layer_opacities.get(name, 1.0)
-            state = "👁 visible" if visible else "◌ hidden"
-            contour = self.explore_recipe.layer_contours.get(
-                name,
-                MANAGED_LAYER_DEFAULT_CONTOUR.get(name),
-            )
-            contour_text = f", contour {contour}px" if contour is not None else ""
-            contrast_limits = self.explore_recipe.layer_contrast_limits.get(name)
-            contrast_text = (
-                f", contrast {contrast_limits[0]:g}–{contrast_limits[1]:g}"
-                if contrast_limits is not None
-                else ""
-            )
+            name = str(entry["name"])
             availability = self._recipe_entry_available(entry)
-            availability_text = ""
-            if availability is False:
-                availability_text = " — ⚠ absent in this workflow or ROI"
-            elif availability is None:
-                availability_text = " — availability checked when an ROI is loaded"
+            stored_entry = dict(entry)
+            stored_entry["_availability"] = availability
             item = QListWidgetItem(
-                f"{entry['description']} — {state}, opacity {opacity:.2f}"
-                f"{contour_text}"
-                f"{contrast_text}"
-                f"{availability_text}"
+                self._recipe_entry_display_text(stored_entry, availability)
             )
-            item.setData(self.Qt.UserRole, entry)
+            item.setData(self.Qt.UserRole, stored_entry)
             if availability is False:
                 item.setForeground(self.QColor("#9a3412"))
                 item.setBackground(self.QColor("#ffedd5"))
@@ -12239,6 +13155,76 @@ class NapariSBTController:
                 "when their data or workflow becomes available."
             )
             self.reload_recipe_list.addItem(item)
+
+    def _recipe_entry_display_text(
+        self,
+        entry: dict,
+        availability: bool | None,
+    ) -> str:
+        """Format one recipe row without rechecking AnnData or image coverage."""
+
+        name = str(entry["name"])
+        visible_default = (
+            MANAGED_LAYER_DEFAULT_VISIBILITY[name]
+            if entry["kind"] == "managed"
+            else True
+        )
+        opacity_default = (
+            MANAGED_LAYER_DEFAULT_OPACITY[name]
+            if entry["kind"] == "managed"
+            else 1.0
+        )
+        visible = self.explore_recipe.layer_visibility.get(name, visible_default)
+        opacity = self.explore_recipe.layer_opacities.get(name, opacity_default)
+        state = "👁 visible" if visible else "◌ hidden"
+        contour = self.explore_recipe.layer_contours.get(
+            name,
+            MANAGED_LAYER_DEFAULT_CONTOUR.get(name),
+        )
+        contour_text = f", contour {contour}px" if contour is not None else ""
+        contrast_limits = self.explore_recipe.layer_contrast_limits.get(name)
+        contrast_text = (
+            f", contrast {contrast_limits[0]:g}–{contrast_limits[1]:g}"
+            if contrast_limits is not None
+            else ""
+        )
+        availability_text = ""
+        if availability is False:
+            availability_text = " — ⚠ absent in this workflow or ROI"
+        elif availability is None:
+            availability_text = " — availability checked when an ROI is loaded"
+        return (
+            f"{entry['description']} — {state}, opacity {opacity:.2f}"
+            f"{contour_text}{contrast_text}{availability_text}"
+        )
+
+    def _refresh_reload_recipe_item(self, name: str) -> None:
+        """Refresh one visible row after a display-only event.
+
+        Availability cannot change when a layer is merely hidden, recoloured, or
+        given a new opacity. Reusing the result from the full refresh avoids an
+        AnnData population scan for every Napari display event.
+        """
+
+        if not hasattr(self, "reload_recipe_list"):
+            return
+        if (
+            hasattr(self, "explore_tab_index")
+            and self.tabs.currentIndex() != self.explore_tab_index
+        ):
+            self._recipe_list_refresh_pending = True
+            return
+        for index in range(self.reload_recipe_list.count()):
+            item = self.reload_recipe_list.item(index)
+            entry = item.data(self.Qt.UserRole)
+            if not isinstance(entry, dict) or str(entry.get("name", "")) != name:
+                continue
+            availability = entry.get("_availability")
+            item.setText(self._recipe_entry_display_text(entry, availability))
+            return
+        # The layer was added after the last list build, so a full refresh is
+        # necessary once. Existing rows stay on the incremental fast path.
+        self._refresh_reload_recipe_list()
 
     def _drop_recipe_layer_settings(self, payload: dict, name: str) -> None:
         for key in (
@@ -12886,6 +13872,7 @@ class NapariSBTController:
         if not self.explore_recipe.has_content:
             for index in range(self.roi_combo.count()):
                 self.roi_combo.setItemData(index, None, self.Qt.BackgroundRole)
+                self.roi_combo.setItemData(index, None, self.Qt.ForegroundRole)
                 self.roi_combo.setItemData(index, None, self.Qt.ToolTipRole)
             self.viewed_rois_label.setText("No Explore view is active.")
             return
@@ -12903,6 +13890,11 @@ class NapariSBTController:
             is_viewed = roi in viewed
             colour = self.QColor("#c6efce" if is_viewed else "#ffeb9c")
             self.roi_combo.setItemData(index, colour, self.Qt.BackgroundRole)
+            self.roi_combo.setItemData(
+                index,
+                self.QColor("#111827"),
+                self.Qt.ForegroundRole,
+            )
             self.roi_combo.setItemData(
                 index,
                 (
@@ -12924,9 +13916,11 @@ class NapariSBTController:
             if name in self.viewer.layers:
                 self.viewer.layers.remove(name)
 
-    def _is_recipe_tracked_layer(self, name: str) -> bool:
+    def _is_recipe_tracked_layer(self, name: str, layer=None) -> bool:
         if name in MANAGED_RECIPE_LAYERS:
             return True
+        if layer is not None:
+            return self._layer_reload_descriptor(layer) is not None
         return name in {
             entry["name"]
             for entry in self._recipe_layer_entries()
@@ -12942,9 +13936,7 @@ class NapariSBTController:
         if events is None:
             return
 
-        def display_changed(_event=None, tracked_layer=layer):
-            self._record_layer_display_state(tracked_layer)
-
+        callbacks = {}
         for event_name in (
             "visible",
             "opacity",
@@ -12954,24 +13946,114 @@ class NapariSBTController:
         ):
             emitter = getattr(events, event_name, None)
             if emitter is not None:
+                def display_changed(
+                    _event=None,
+                    tracked_layer=layer,
+                    property_name=event_name,
+                ):
+                    self._record_layer_display_state(
+                        tracked_layer,
+                        property_name=property_name,
+                    )
+
                 emitter.connect(display_changed)
-        layer._napari_sbt_recipe_display_callback = display_changed
+                callbacks[event_name] = display_changed
+        layer._napari_sbt_recipe_display_callbacks = callbacks
         layer._napari_sbt_recipe_display_bound = True
 
-    def _record_layer_display_state(self, layer) -> None:
+    def _record_layer_display_state(
+        self,
+        layer,
+        *,
+        property_name: str | None = None,
+    ) -> None:
+        """Record one display change without rebuilding or rescanning the view.
+
+        Napari emits a specific event for visibility, opacity, contour, contrast,
+        and colormap changes. The former implementation treated every event as a
+        request to serialize all five properties and rebuild the complete recipe
+        list. In particular, hiding a layer serialized its full colormap and
+        rescanned categorical AnnData values. Keep ordinary toggles on a small,
+        in-memory path; full capture remains available through the explicit UI.
+        """
+
         if self._updating_recipe_layer_state or not self._recipe_tracking_enabled():
             return
         name = str(getattr(layer, "name", ""))
-        if not self._is_recipe_tracked_layer(name):
+        if not self._is_recipe_tracked_layer(name, layer):
             return
-        payload = self.explore_recipe.model_dump(mode="json")
-        self._write_layer_display_state(payload, layer)
-        self.explore_recipe = ExploreViewRecipe.model_validate(payload)
-        if name == "excluded_segmentation_context":
+
+        if property_name in {"visible", "opacity"}:
+            if property_name == "visible":
+                self.explore_recipe.layer_visibility[name] = bool(
+                    getattr(layer, "visible", True)
+                )
+                if name == "excluded_segmentation_context":
+                    self.context_check_display.blockSignals(True)
+                    self.context_check_display.setChecked(bool(layer.visible))
+                    self.context_check_display.blockSignals(False)
+            else:
+                self.explore_recipe.layer_opacities[name] = float(
+                    getattr(layer, "opacity", 1.0)
+                )
+            # Visibility and opacity are the common hot paths, especially for
+            # full-size classifier label layers. Opacity emits repeatedly while
+            # its slider is dragged. Do not hash the complete recipe or recolour
+            # every ROI selector entry while Napari is repainting the layer. The
+            # scalar value is already authoritative for the next replay; heavier
+            # derived UI state is refreshed on entering Explore or during the
+            # next normal recipe/ROI refresh.
+            self._active_recipe_label_refresh_pending = True
+            self._roi_review_refresh_pending = True
+            if property_name == "opacity":
+                # A slider drag can emit many events. Do not even rewrite the
+                # recipe-list row for each intermediate value; its source value
+                # is already current and the text is refreshed by the next
+                # normal Explore/recipe update.
+                self._recipe_list_refresh_pending = True
+            else:
+                self._refresh_reload_recipe_item(name)
+            return
+        elif property_name == "contour" and hasattr(layer, "contour"):
+            self.explore_recipe.layer_contours[name] = int(layer.contour)
+        elif property_name == "contrast_limits" and hasattr(
+            layer, "contrast_limits"
+        ):
+            limits = layer.contrast_limits
+            self.explore_recipe.layer_contrast_limits[name] = (
+                float(limits[0]),
+                float(limits[1]),
+            )
+        elif property_name == "colormap":
+            descriptor = self._layer_reload_descriptor(layer)
+            if descriptor is not None and descriptor.get("kind") != "rgb":
+                spec = self._layer_colormap_spec(layer)
+                if spec is None:
+                    self.explore_recipe.layer_colormap_specs.pop(name, None)
+                    self.explore_recipe.layer_colormaps.pop(name, None)
+                else:
+                    self.explore_recipe.layer_colormap_specs[name] = spec
+                    colormap_name = self._layer_colormap_name(layer)
+                    if colormap_name and spec.get("kind") == "continuous":
+                        self.explore_recipe.layer_colormaps[name] = colormap_name
+                    else:
+                        self.explore_recipe.layer_colormaps.pop(name, None)
+        else:
+            payload = self.explore_recipe.model_dump(mode="json")
+            self._write_layer_display_state(payload, layer)
+            self.explore_recipe = ExploreViewRecipe.model_validate(payload)
+
+        if name == "excluded_segmentation_context" and property_name is None:
             self.context_check_display.blockSignals(True)
             self.context_check_display.setChecked(bool(layer.visible))
             self.context_check_display.blockSignals(False)
-        self._refresh_reload_recipe_list()
+        self._refresh_active_recipe_preset_label()
+        if property_name == "colormap":
+            # The row description includes the colour name. This event is much
+            # rarer than visibility changes and therefore merits a full rebuild.
+            self._refresh_reload_recipe_list()
+        else:
+            self._refresh_reload_recipe_item(name)
         self._refresh_roi_review_colours()
 
     @staticmethod
@@ -13136,6 +14218,12 @@ class NapariSBTController:
             self._refresh_reload_recipe_list()
 
     def _replace_layer(self, name: str, data, layer_type: str, **kwargs):
+        default_blending = MANAGED_LAYER_DEFAULT_BLENDING.get(name)
+        if default_blending is not None:
+            # Entropy and selected-class probability are intensity overlays.
+            # Reapply their intended blending on both creation and reuse so an
+            # older/translucent instance cannot obscure the staining beneath it.
+            kwargs.setdefault("blending", default_blending)
         if name in self.viewer.layers:
             layer = self.viewer.layers[name]
             previous_state = self._updating_recipe_layer_state
@@ -13333,12 +14421,25 @@ class NapariSBTController:
         self._explore_cached_layer_count += 1
         return layer
 
+    def _roi_selection_changed(self, roi: str) -> None:
+        """Load only when the ROI selector's biological identity changed."""
+
+        roi = str(roi).strip()
+        if not roi:
+            return
+        if self.current_mask is not None and str(self.current_roi) == roi:
+            # Qt may re-emit currentTextChanged when item background, foreground,
+            # or tooltip roles change. Those are display-only model updates.
+            return
+        self.load_roi(roi)
+
     def load_roi(self, roi: str | None = None) -> None:
         if self.manifest is None:
             return
         roi = str(roi or self.roi_combo.currentText())
         if not roi:
             return
+        roi_changed = self.current_mask is None or str(self.current_roi) != roi
         mask_path = self._mask_path_for_roi(roi)
         full_mask = load_mask(mask_path)
         eligible = self._eligible_ids_for_roi(roi)
@@ -13414,10 +14515,11 @@ class NapariSBTController:
             ]
         )
         replay_view = bool(
-            self.auto_reload_view_check.isChecked()
+            roi_changed
+            and self.auto_reload_view_check.isChecked()
             and self.explore_recipe.has_content
         )
-        if not replay_view:
+        if roi_changed and not replay_view:
             self._clear_explore_layers()
         if workflow_mode in {"classification", "full_workspace"}:
             self.refresh_classification_layers()
@@ -13443,15 +14545,21 @@ class NapariSBTController:
             "labels are ignored."
         )
 
-    def auto_reload_explore_view(self) -> None:
-        if (
-            self.auto_reload_view_check.isChecked()
-            and self.current_roi
-            and self.explore_recipe.has_content
-        ):
-            self.replay_explore_view()
+    def auto_reload_setting_changed(self, enabled: bool) -> None:
+        """Describe the setting without replaying or loading the current ROI."""
+
+        if enabled:
+            message = (
+                "Explore recipe replay enabled for the next genuine ROI change. "
+                "The current ROI and layers were not reloaded."
+            )
         else:
-            self._refresh_roi_review_colours()
+            message = (
+                "Explore recipe replay disabled. Changing ROI will load its base "
+                "mask/classification layers without recreating Explore images and "
+                "overlays; the current ROI was not reloaded."
+            )
+        self.set_status(message)
 
     def toggle_context(self, checked: bool) -> None:
         if "excluded_segmentation_context" in self.viewer.layers:
@@ -15214,6 +16322,8 @@ class NapariSBTController:
     def activate_population_qc_roi(self, roi: str) -> None:
         """Load one ranked ROI with the current Population QC recipe exactly once."""
 
+        roi = str(roi)
+        roi_changed = self.current_mask is None or str(self.current_roi) != roi
         recipe = self._population_qc_recipe_from_controls()
         self._store_population_qc_recipe(recipe, persist=False, audit=False)
         self.explore_review_state.active_recipe_id = None
@@ -15224,8 +16334,12 @@ class NapariSBTController:
         was_blocked = self.roi_combo.blockSignals(True)
         self.roi_combo.setCurrentIndex(index)
         self.roi_combo.blockSignals(was_blocked)
-        self.load_roi(str(roi))
-        if not self.auto_reload_view_check.isChecked():
+        self.load_roi(roi)
+        if not roi_changed or not self.auto_reload_view_check.isChecked():
+            # A Population QC ROI button explicitly requests this RGB recipe.
+            # A genuine ROI change already replays it through load_roi when
+            # automatic replay is enabled; revisit/off-mode cases need one
+            # deliberate replay here.
             self.replay_explore_view()
         self._append_population_qc_audit(recipe, "open_population_qc_roi")
         button = self.population_qc_roi_buttons.get(str(roi))
@@ -15901,6 +17015,7 @@ class NapariSBTController:
     def refresh_status(self) -> None:
         self._refresh_class_tally()
         self.refresh_refinement_readiness()
+        self.refresh_feature_readiness()
         if self.manifest is None:
             self.set_status("FRESHNESS — no active experiment.")
             return
@@ -16379,8 +17494,13 @@ class NapariSBTController:
 
     def navigate_queue_item(self, item) -> None:
         roi, object_number = item.data(self.Qt.UserRole)
-        self.roi_combo.setCurrentText(roi)
-        self.load_roi(roi)
+        roi = str(roi)
+        if self.roi_combo.currentText() != roi:
+            # currentTextChanged is synchronous and performs the real load.
+            self.roi_combo.setCurrentText(roi)
+        if self.current_mask is None or str(self.current_roi) != roi:
+            # Fallback for a blocked signal or an ROI absent from the selector.
+            self.load_roi(roi)
         self._select_cohort_object(int(object_number))
 
     def bulk_propose(self) -> None:
@@ -17237,6 +18357,7 @@ class NapariSBTController:
             f"Latest: {state.get('recent', 'No worker events yet')}"
         )
         self._update_feature_process_health()
+        self.refresh_feature_readiness()
 
     def _update_feature_process_health(self) -> None:
         if self.feature_build_started_at is None:
@@ -17347,6 +18468,375 @@ class NapariSBTController:
             float(self.final_min_margin_spin.value()),
         )
 
+    def _update_identity_integration_controls(self) -> None:
+        enabled = bool(
+            self._classification_enabled
+            and self.final_integration_enable_check.isChecked()
+        )
+        for widget in (
+            self.final_integration_source_combo,
+            self.final_integration_output_edit,
+            self.final_integration_naming_combo,
+            self.final_integration_mapping_table,
+            self.preview_identity_integration_button,
+            self.build_identity_integration_button,
+        ):
+            widget.setEnabled(enabled)
+        self.export_assignments_button.setText(
+            "Export integrated labels CSV/Parquet"
+            if self.final_integration_enable_check.isChecked()
+            else "Export cohort final identities CSV/Parquet"
+        )
+
+    def _identity_integration_enabled_changed(self, checked: bool) -> None:
+        self._update_identity_integration_controls()
+        self._mark_identity_integration_stale()
+        if not checked:
+            self.identity_integration_summary_label.setText(
+                "Optional integration is disabled; exports will contain cohort-only "
+                "final identities."
+            )
+
+    def _identity_integration_naming_changed(self, *_args) -> None:
+        self._refresh_identity_integration_mapping()
+        self._mark_identity_integration_stale()
+
+    def _identity_integration_mapping_changed(self, item) -> None:
+        if self._updating_identity_integration_controls or item.column() != 2:
+            return
+        class_item = self.final_integration_mapping_table.item(item.row(), 0)
+        if class_item is None:
+            return
+        class_id = class_item.data(self.Qt.UserRole)
+        if class_id is not None:
+            self._identity_integration_custom_names[str(class_id)] = item.text()
+        self._mark_identity_integration_stale()
+
+    def _refresh_identity_integration_mapping(self) -> None:
+        if not hasattr(self, "final_integration_mapping_table"):
+            return
+        self._updating_identity_integration_controls = True
+        try:
+            self.final_integration_mapping_table.setRowCount(0)
+            if self.manifest is None:
+                self.final_integration_mapping_help.setText(
+                    "Create or load a classification workspace to define names."
+                )
+                return
+            strategy = str(
+                self.final_integration_naming_combo.currentData() or "class_names"
+            )
+            custom = strategy == "custom"
+            for definition in self.manifest.classes:
+                row = self.final_integration_mapping_table.rowCount()
+                self.final_integration_mapping_table.insertRow(row)
+                class_item = self.QTableWidgetItem(
+                    f"{definition.shortcut}: {definition.name}"
+                )
+                class_item.setData(self.Qt.UserRole, definition.class_id)
+                class_item.setFlags(class_item.flags() & ~self.Qt.ItemIsEditable)
+                name = (
+                    self._identity_integration_custom_names.get(
+                        definition.class_id, definition.name
+                    )
+                    if custom
+                    else definition.name
+                )
+                name_item = self.QTableWidgetItem(name)
+                if not custom:
+                    name_item.setFlags(name_item.flags() & ~self.Qt.ItemIsEditable)
+                self.final_integration_mapping_table.setItem(row, 0, class_item)
+                self.final_integration_mapping_table.setItem(
+                    row, 1, self._class_colour_item(definition.color)
+                )
+                self.final_integration_mapping_table.setItem(row, 2, name_item)
+            if strategy == "source_and_class":
+                self.final_integration_mapping_help.setText(
+                    "Each assigned cell becomes ‘existing source label → class "
+                    "name’. The table shows the class-name portion."
+                )
+            elif custom:
+                self.final_integration_mapping_help.setText(
+                    "Edit the final population name for each classification class."
+                )
+            else:
+                self.final_integration_mapping_help.setText(
+                    "Assigned cells use the classification class display names "
+                    "exactly as shown."
+                )
+        finally:
+            self._updating_identity_integration_controls = False
+
+    def _identity_integration_class_labels(self) -> dict[str, str]:
+        labels: dict[str, str] = {}
+        for row in range(self.final_integration_mapping_table.rowCount()):
+            class_item = self.final_integration_mapping_table.item(row, 0)
+            name_item = self.final_integration_mapping_table.item(row, 2)
+            if class_item is None or name_item is None:
+                continue
+            class_id = class_item.data(self.Qt.UserRole)
+            if class_id is not None:
+                labels[str(class_id)] = name_item.text().strip()
+        return labels
+
+    def _identity_integration_table_from_controls(
+        self, assignments: pd.DataFrame
+    ) -> pd.DataFrame:
+        if self.adata is None:
+            raise ValueError("Load AnnData before integrating final identities.")
+        return build_integrated_identity_table(
+            self.adata,
+            assignments,
+            source_obs=self.final_integration_source_combo.currentText(),
+            output_obs=self.final_integration_output_edit.text(),
+            class_labels=self._identity_integration_class_labels(),
+            naming_strategy=str(
+                self.final_integration_naming_combo.currentData() or "class_names"
+            ),
+            roi_obs=self.manifest.roi_obs,
+            object_id_obs=self.manifest.object_id_obs,
+        )
+
+    def _identity_integration_plan_from_table(
+        self, table: pd.DataFrame
+    ) -> dict[str, object]:
+        source_obs = self.final_integration_source_combo.currentText().strip()
+        output_obs = self.final_integration_output_edit.text().strip()
+        class_labels = self._identity_integration_class_labels()
+        source_colours = categorical_colour_map(self.adata, source_obs)
+        class_colours = {
+            definition.class_id: definition.color
+            for definition in self.manifest.classes
+        }
+        category_colours = dict(source_colours)
+        assigned = table.loc[table["final_class_id"].notna()]
+        for class_id, label in zip(
+            assigned["final_class_id"].astype(str),
+            assigned[output_obs].astype(str),
+        ):
+            category_colours.setdefault(
+                str(label),
+                source_colours.get(
+                    str(label), class_colours.get(str(class_id), "#808080")
+                ),
+            )
+        source_labels = set(table["source_label"].dropna().astype(str))
+        integrated_class_labels = set(
+            assigned[output_obs].dropna().astype(str)
+        )
+        collisions = sorted(source_labels & integrated_class_labels)
+        duplicate_targets = {
+            label: sorted(class_ids)
+            for label, class_ids in pd.Series(class_labels).groupby(
+                pd.Series(class_labels)
+            ).groups.items()
+            if len(class_ids) > 1
+        }
+        source_frame = pd.DataFrame(
+            {
+                "obs_name": self.adata.obs_names.astype(str),
+                "source_label": self.adata.obs[source_obs].astype("string"),
+            }
+        )
+        return {
+            "created_at": pd.Timestamp.now(tz="UTC").isoformat(),
+            "source_obs": source_obs,
+            "output_obs": output_obs,
+            "naming_strategy": str(
+                self.final_integration_naming_combo.currentData() or "class_names"
+            ),
+            "class_labels": class_labels,
+            "category_colours": category_colours,
+            "source_label_collisions": collisions,
+            "duplicate_class_targets": duplicate_targets,
+            "source_label_fingerprint": dataframe_sha256(
+                source_frame, ["obs_name", "source_label"]
+            ),
+            "output_obs_already_exists": output_obs in self.adata.obs,
+            "total_cells": int(len(table)),
+            "cohort_cells": int(table["is_classification_cohort"].sum()),
+            "replaced_cells": int(table["final_class_id"].notna().sum()),
+            "retained_source_cells": int(table["final_class_id"].isna().sum()),
+            "final_identity_signature": self.final_identity_signature,
+        }
+
+    def _identity_integration_signature_value(self) -> str:
+        if self.adata is None or self.final_identity_signature is None:
+            return ""
+        source_obs = self.final_integration_source_combo.currentText().strip()
+        if source_obs not in self.adata.obs:
+            return ""
+        source_frame = pd.DataFrame(
+            {
+                "obs_name": self.adata.obs_names.astype(str),
+                "source_label": self.adata.obs[source_obs].astype("string"),
+            }
+        )
+        payload = {
+            "final_identity_signature": self.final_identity_signature,
+            "source_obs": source_obs,
+            "source_fingerprint": dataframe_sha256(
+                source_frame, ["obs_name", "source_label"]
+            ),
+            "output_obs": self.final_integration_output_edit.text().strip(),
+            "naming_strategy": self.final_integration_naming_combo.currentData(),
+            "class_labels": self._identity_integration_class_labels(),
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"))
+
+    def _mark_identity_integration_stale(self, *_args) -> None:
+        self.identity_integration_signature = None
+        self.integrated_identity_table = pd.DataFrame()
+        self.identity_integration_plan = {}
+        if self.final_integration_enable_check.isChecked():
+            self.identity_integration_summary_label.setText(
+                "Integration not built, or its inputs changed. Create final cell "
+                "identities first, then build the integrated labels before export."
+            )
+
+    def preview_identity_integration(self) -> None:
+        assignments = self._require_current_final_identities()
+        table = self._identity_integration_table_from_controls(assignments)
+        plan = self._identity_integration_plan_from_table(table)
+        overlap = integrated_identity_crosstab(
+            table,
+            output_obs=str(plan["output_obs"]),
+        )
+        self._show_identity_integration_overlap(overlap, plan)
+
+    def _show_identity_integration_overlap(
+        self, overlap: pd.DataFrame, plan: dict[str, object]
+    ) -> None:
+        from qtpy.QtWidgets import (
+            QAbstractItemView,
+            QDialog,
+            QDialogButtonBox,
+            QHeaderView,
+            QLabel,
+            QTableWidget,
+            QVBoxLayout,
+        )
+
+        dialog = QDialog(self.root)
+        dialog.setWindowTitle("Final-label integration overlap / confusion matrix")
+        dialog.resize(900, 600)
+        layout = QVBoxLayout(dialog)
+        explanation = QLabel(
+            f"Rows are existing labels from {plan['source_obs']!r}; columns are "
+            f"accepted integrated labels for observation {plan['output_obs']!r}. "
+            "This is an overlap table, not a model-accuracy score."
+        )
+        explanation.setWordWrap(True)
+        layout.addWidget(explanation)
+        display = overlap.copy()
+        if not display.empty:
+            display["Total"] = display.sum(axis=1)
+            display.loc["Total"] = display.sum(axis=0)
+        widget = QTableWidget(display.shape[0], display.shape[1] + 1)
+        widget.setHorizontalHeaderLabels(
+            ["Existing source label", *[str(value) for value in display.columns]]
+        )
+        for row_index, (source_label, values) in enumerate(display.iterrows()):
+            widget.setItem(
+                row_index, 0, self.QTableWidgetItem(str(source_label))
+            )
+            for column_index, value in enumerate(values, start=1):
+                widget.setItem(
+                    row_index, column_index, self.QTableWidgetItem(f"{int(value):,}")
+                )
+        widget.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        widget.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        layout.addWidget(widget)
+        warning_parts = []
+        if plan["source_label_collisions"]:
+            warning_parts.append(
+                "Matching source/final names will merge explicitly: "
+                + ", ".join(plan["source_label_collisions"])
+            )
+        if plan["duplicate_class_targets"]:
+            warning_parts.append(
+                "Multiple classifier classes share a final name: "
+                + ", ".join(plan["duplicate_class_targets"])
+            )
+        if plan["output_obs_already_exists"]:
+            warning_parts.append(
+                f"The target observation {plan['output_obs']!r} already exists. "
+                "AnnData export will replace it in the output copy; applying to a "
+                "live object requires confirmation."
+            )
+        summary = QLabel(
+            "\n".join(warning_parts)
+            if warning_parts
+            else "No name collisions or classifier-class merges were detected."
+        )
+        summary.setWordWrap(True)
+        layout.addWidget(summary)
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        dialog.exec()
+
+    def build_identity_integration(self) -> pd.DataFrame:
+        assignments = self._require_current_final_identities()
+        table = self._identity_integration_table_from_controls(assignments)
+        plan = self._identity_integration_plan_from_table(table)
+        signature = self._identity_integration_signature_value()
+        plan["integration_signature"] = signature
+        self.integrated_identity_table = table
+        self.identity_integration_plan = plan
+        self.identity_integration_signature = signature
+        canonical = self.paths.exports / "integrated_identities.parquet"
+        export_assignment_table(table, canonical)
+        write_json(self.paths.exports / "identity_integration.json", plan)
+        append_audit(
+            self.paths,
+            {
+                "action": "build_integrated_final_identities",
+                "canonical_table": str(canonical),
+                "integration": plan,
+            },
+        )
+        collision_text = (
+            f" {len(plan['source_label_collisions'])} source/final name collision(s) "
+            "will merge explicitly."
+            if plan["source_label_collisions"]
+            else " No source/final name collisions were detected."
+        )
+        self.identity_integration_summary_label.setText(
+            f"Current: {plan['replaced_cells']:,} classified cells replace their "
+            f"source label; {plan['retained_source_cells']:,} cells retain it. "
+            f"Output observation: {plan['output_obs']!r}.{collision_text}"
+        )
+        self.set_status(
+            f"Built full-dataset integrated labels in {canonical.name}; exports "
+            "will now use this table."
+        )
+        return table
+
+    def _require_current_identity_integration(
+        self,
+    ) -> tuple[pd.DataFrame, dict[str, object]]:
+        if (
+            self.identity_integration_signature is None
+            or self.integrated_identity_table.empty
+        ):
+            raise ValueError(
+                "Integrated labels have not been built. Use optional step 5 before "
+                "exporting, or disable integration for a cohort-only export."
+            )
+        if (
+            self.identity_integration_signature
+            != self._identity_integration_signature_value()
+        ):
+            self._mark_identity_integration_stale()
+            raise ValueError(
+                "Final identities, source labels, or integration names changed. "
+                "Build the integrated labels again before export."
+            )
+        return self.integrated_identity_table.copy(), dict(
+            self.identity_integration_plan
+        )
+
     def _final_identity_signature_value(self) -> str:
         if self.manifest is None:
             return ""
@@ -17390,6 +18880,7 @@ class NapariSBTController:
         return json.dumps(payload, sort_keys=True, separators=(",", ":"))
 
     def _mark_final_identities_stale(self, *_args) -> None:
+        self._mark_identity_integration_stale()
         if self.final_identity_signature is None:
             return
         self.final_identity_signature = None
@@ -17399,6 +18890,7 @@ class NapariSBTController:
         )
 
     def create_final_identities(self) -> pd.DataFrame:
+        self._mark_identity_integration_stale()
         assignments = self._assignments()
         minimum_confidence, maximum_uncertainty, minimum_margin = (
             self._final_identity_thresholds()
@@ -17505,25 +18997,42 @@ class NapariSBTController:
 
     def export_assignments(self) -> None:
         assignments = self._require_current_final_identities()
+        integration_plan: dict[str, object] | None = None
+        export_table = assignments
+        export_kind = "cohort final identities"
+        if self.final_integration_enable_check.isChecked():
+            export_table, integration_plan = (
+                self._require_current_identity_integration()
+            )
+            export_kind = (
+                f"full-dataset integrated labels ({integration_plan['output_obs']})"
+            )
         destination = Path(self.assignment_path_edit.text()).expanduser()
         if not destination.suffix:
             destination = destination.with_suffix(".csv")
             self.assignment_path_edit.setText(str(destination))
-        export_assignment_table(assignments, destination)
+        export_assignment_table(export_table, destination)
         append_audit(
             self.paths,
             {
                 "action": "export_final_identity_table",
                 "destination": str(destination),
                 "decision": self.final_identity_decision,
+                "integration": integration_plan,
             },
         )
-        self.set_status(f"Exported final cohort identities: {destination}")
+        self.set_status(f"Exported {export_kind}: {destination}")
 
     def export_adata(self) -> None:
         if not self.manifest.anndata_path:
             raise ValueError("Annotated AnnData export requires an AnnData source.")
         assignments = self._require_current_final_identities()
+        integration_table = None
+        integration_plan = None
+        if self.final_integration_enable_check.isChecked():
+            integration_table, integration_plan = (
+                self._require_current_identity_integration()
+            )
         destination = Path(self.annotated_path_edit.text())
         export_annotated_anndata(
             self.manifest.anndata_path,
@@ -17533,6 +19042,9 @@ class NapariSBTController:
             feature_provenance=self._feature_provenance(),
             model_provenance=self._model_provenance(),
             metrics={"final_identity_decision": self.final_identity_decision},
+            integration_table=integration_table,
+            integration_provenance=integration_plan,
+            create_legacy_combined=False,
         )
         append_audit(
             self.paths,
@@ -17540,20 +19052,42 @@ class NapariSBTController:
                 "action": "export_final_identities_to_anndata_copy",
                 "destination": str(destination),
                 "decision": self.final_identity_decision,
+                "integration": integration_plan,
             },
         )
-        self.set_status(f"Exported atomic annotated AnnData copy: {destination}")
+        integration_text = (
+            f" with integrated observation {integration_plan['output_obs']!r}"
+            if integration_plan is not None
+            else " with cohort-only classification annotations"
+        )
+        self.set_status(
+            f"Exported atomic annotated AnnData copy{integration_text}: "
+            f"{destination}"
+        )
 
     def apply_final_identities_to_live_anndata(self) -> None:
         if self.adata is None:
             raise ValueError("No live AnnData object is loaded in this session.")
         assignments = self._require_current_final_identities()
+        integration_table = None
+        integration_plan = None
+        if self.final_integration_enable_check.isChecked():
+            integration_table, integration_plan = (
+                self._require_current_identity_integration()
+            )
+        integration_question = (
+            f"The full-dataset integrated observation "
+            f"{integration_plan['output_obs']!r} will also be added or replaced."
+            if integration_plan is not None
+            else "No full-dataset integrated observation will be created."
+        )
         reply = self.QMessageBox.question(
             self.root,
             "Apply final identities to live AnnData",
-            "Add the final subclass, source, confidence, uncertainty, probability, "
-            "combined-population, and provenance fields to the AnnData object held "
-            "in memory?\n\nThis does not write to or overwrite its source file.",
+            "Add the cohort subclass, source, confidence, uncertainty, probability, "
+            "and provenance fields to the AnnData object held in memory?\n\n"
+            f"{integration_question}\n\n"
+            "This does not write to or overwrite its source file.",
         )
         if reply != self.QMessageBox.Yes:
             self.set_status("Applying final identities to live AnnData was cancelled.")
@@ -17565,6 +19099,9 @@ class NapariSBTController:
             feature_provenance=self._feature_provenance(),
             model_provenance=self._model_provenance(),
             metrics={"final_identity_decision": self.final_identity_decision},
+            integration_table=integration_table,
+            integration_provenance=integration_plan,
+            create_legacy_combined=False,
         )
         self._populate_anndata_selectors(
             source="the live AnnData after final identity application"
@@ -17575,12 +19112,18 @@ class NapariSBTController:
                 "action": "apply_final_identities_to_live_anndata",
                 "written_to_disk": False,
                 "decision": self.final_identity_decision,
+                "integration": integration_plan,
             },
+        )
+        integration_text = (
+            f" and full-dataset {integration_plan['output_obs']}"
+            if integration_plan is not None
+            else ""
         )
         self.set_status(
             f"Applied final identities to the live AnnData as "
-            f"{self.manifest.output_obs_slug}_subclass and related fields; no "
-            "source file was written."
+            f"{self.manifest.output_obs_slug}_subclass{integration_text} and related "
+            "fields; no source file was written."
         )
 
     def export_cohort_masks(self) -> None:

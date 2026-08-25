@@ -67,7 +67,8 @@ from another workflow, and those unavailable layers remain stored.
 contour, and contrast changes into the working recipe. It defaults on for Data
 exploration and off for the lightweight Population QC workflow. Explicit recipe
 controls, saved recipes, and Population QC review history continue to work when
-live tracking is disabled.
+live tracking is disabled. The same session switch is also shown in Explore and
+Population QC, and can be changed at any time without revising the workspace.
 
 ## Dataset inputs
 

@@ -82,6 +82,10 @@ view is needed. Point size and opacity affect display only.
 
 Expression plots use only the markers selected in the searchable list. **Select
 visible** makes it easy to type a marker family and select the filtered results.
+**Select feature markers** replaces that selection with markers represented by
+channel-derived features in the active NapariSBT feature table. The same action is
+available for expression-coloured embedding panels. It selects only markers that
+exist in the chosen expression matrix and reports unavailable feature markers.
 Heat maps and dot plots support at most 100 markers; distribution plots support at
 most 12 to keep the result readable. Marker-wise z-scores compare populations
 within each marker, marker-wise 0–1 scaling shows relative ranges, and unscaled
