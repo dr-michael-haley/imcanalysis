@@ -179,6 +179,14 @@ This parameter scan measures robustness to resolution, neighbour count, and
 PCA dimension. It is not seed stability, bootstrap stability, external-label
 validation, or proof that a cluster represents a biological compartment.
 
+For a chosen clustering, the public
+`SpatialBiologyToolkit.hyperstac.local_analysis` helpers reconstruct exact-size
+ROI label masks, crop combined PNG/SVG galleries directly from normalized
+TIFFs, recreate marker and zero/shuffle perturbation clustermaps, summarize
+sample-associated environment abundance, and assign cell centres to the masks.
+See [Local analysis of pre-generated HyPERSTAC artifacts](../guides/hyperstac_local_analysis.md)
+for a notebook-oriented workflow and the mask-value contract.
+
 Survival plots fitted and displayed on the same cases are optimistic. Prefer the
 held-out cross-validation summaries and risk-group plots produced by `cox`.
 

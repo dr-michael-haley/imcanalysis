@@ -182,6 +182,7 @@ from .population_qc import (
 )
 from .publication_export import (
     DEFAULT_FILENAME_TEMPLATE,
+    PUBLICATION_EXPORT_SCHEMA_VERSION,
     PixelCalibration,
     PublicationAnnotations,
     PublicationExportPreset,
@@ -195,7 +196,9 @@ from .publication_export import (
     compose_publication_image,
     detect_tiff_pixel_calibration,
     downsample_publication_image,
+    publication_render_geometry,
     resolve_publication_frame,
+    resolve_publication_output_size,
     save_publication_image,
 )
 from .resources import resolve_worker_count
@@ -10467,6 +10470,12 @@ class NapariSBTController:
         return [item.text() for item in self.value_list.selectedItems()]
 
     def preview_cohort(self) -> CohortPreview:
+        # Earlier versions rendered the first eligible ROI as a temporary
+        # ``cohort_preview`` labels layer.  That layer was not part of ROI
+        # navigation or the frozen experiment state, so it became an orphan as
+        # soon as the workflow started.  Keep the useful validation summary,
+        # but remove any stale preview left by an older session/build.
+        self._remove_layers(("cohort_preview",))
         mode = self.scope_combo.currentData()
         values = self.selected_scope_values() if mode == "obs_values" else []
         if self.adata is None and Path(self.anndata_edit.text()).is_file():
@@ -10507,16 +10516,12 @@ class NapariSBTController:
         missing_masks: list[str] = []
         missing_ids = 0
         unmatched_ids = 0
-        first_roi = str(self.preview.eligible_cells.iloc[0]["ROI"])
-        first_mask: np.ndarray | None = None
         for roi, group in self.preview.eligible_cells.groupby("ROI", observed=True):
             path = masks.get(str(roi))
             if path is None:
                 missing_masks.append(str(roi))
                 continue
             full_mask = load_mask(path)
-            if str(roi) == first_roi:
-                first_mask = full_mask
             missing, unmatched = validate_mask_coverage(
                 full_mask,
                 group["ObjectNumber"],
@@ -10563,20 +10568,6 @@ class NapariSBTController:
             or not previous_trial_rois
         ):
             self.suggest_trial_rois()
-        if first_roi in masks and first_mask is not None:
-            restricted = cohort_mask(
-                first_mask,
-                self.preview.eligible_cells.loc[
-                    self.preview.eligible_cells["ROI"].astype(str).eq(first_roi),
-                    "ObjectNumber",
-                ],
-            )
-            self._replace_layer(
-                "cohort_preview",
-                restricted,
-                "labels",
-                visible=True,
-            )
         self.integrity_status_label.setText(
             f"Validated and indexed {len(masks):,} masks and {indexed_images:,} "
             f"images across {len(eligible_rois):,} eligible ROIs. Normal ROI "
@@ -12663,6 +12654,9 @@ class NapariSBTController:
             raise ValueError(
                 "Create or load a workflow workspace before saving publication presets."
             )
+        self.publication_export_state.schema_version = (
+            PUBLICATION_EXPORT_SCHEMA_VERSION
+        )
         write_json(
             state_path,
             self.publication_export_state.model_dump(mode="json"),
@@ -13825,7 +13819,6 @@ class NapariSBTController:
         non_recipe_layers: list[str] = []
         managed_names = set(MANAGED_RECIPE_LAYERS)
         separately_managed_names = {
-            "cohort_preview",
             "manual_tissue_regions",
         }
         for layer in self.viewer.layers:
@@ -15210,6 +15203,17 @@ class NapariSBTController:
             spin.setRange(128, 30000)
         self.publication_width_spin.setValue(2400)
         self.publication_height_spin.setValue(1800)
+        self.publication_size_mode_combo = QComboBox()
+        self.publication_size_mode_combo.addItem(
+            "Native source pixels — no resampling (recommended)", "native"
+        )
+        self.publication_size_mode_combo.addItem(
+            "Custom output pixels — resample", "custom"
+        )
+        self.publication_size_mode_combo.setToolTip(
+            "Native keeps one output pixel per source-image pixel. Custom changes "
+            "sampling density while preserving the frozen field of view."
+        )
         self.publication_supersampling_combo = QComboBox()
         self.publication_supersampling_combo.addItem("1× (fast)", 1)
         self.publication_supersampling_combo.addItem("2×", 2)
@@ -15221,6 +15225,10 @@ class NapariSBTController:
         self.publication_dpi_spin = QSpinBox()
         self.publication_dpi_spin.setRange(30, 2400)
         self.publication_dpi_spin.setValue(300)
+        self.publication_dpi_spin.setToolTip(
+            "Print-resolution metadata only. DPI does not change the source-pixel "
+            "field of view, image detail, or physical scale-bar length."
+        )
         self.publication_filename_edit = QLineEdit(DEFAULT_FILENAME_TEMPLATE)
         self.publication_output_folder_edit = QLineEdit()
         output_folder_row = QWidget()
@@ -15237,8 +15245,9 @@ class NapariSBTController:
         self.publication_filename_preview.setWordWrap(True)
         self.publication_print_size_label = QLabel()
         self.publication_print_size_label.setWordWrap(True)
-        output_form.addRow("Width (pixels)", self.publication_width_spin)
-        output_form.addRow("Height (pixels)", self.publication_height_spin)
+        output_form.addRow("Raster sizing", self.publication_size_mode_combo)
+        output_form.addRow("Custom width (pixels)", self.publication_width_spin)
+        output_form.addRow("Custom height (pixels)", self.publication_height_spin)
         output_form.addRow("Supersampling", self.publication_supersampling_combo)
         output_form.addRow("Format", self.publication_format_combo)
         output_form.addRow("DPI metadata", self.publication_dpi_spin)
@@ -15368,6 +15377,7 @@ class NapariSBTController:
             self.publication_aspect_combo,
             self.publication_scale_mode_combo,
             self.publication_scale_position_combo,
+            self.publication_size_mode_combo,
             self.publication_supersampling_combo,
             self.publication_format_combo,
             self.publication_annotation_position_combo,
@@ -15633,6 +15643,7 @@ class NapariSBTController:
         if self.publication_export_dialog is None:
             return
         fixed = self.publication_frame_mode_combo.currentData() == "fixed"
+        custom_size = self.publication_size_mode_combo.currentData() == "custom"
         for control in (
             self.publication_center_y_spin,
             self.publication_center_x_spin,
@@ -15640,6 +15651,9 @@ class NapariSBTController:
             self.publication_field_width_spin,
         ):
             control.setEnabled(fixed)
+        self.publication_aspect_combo.setEnabled(custom_size)
+        self.publication_width_spin.setEnabled(custom_size)
+        self.publication_height_spin.setEnabled(custom_size)
         scale_visible = self.publication_scale_visible_check.isChecked()
         scale_fixed = self.publication_scale_mode_combo.currentData() == "fixed"
         self.publication_scale_length_spin.setEnabled(scale_visible and scale_fixed)
@@ -15650,23 +15664,12 @@ class NapariSBTController:
         self.publication_delete_preset_button.setEnabled(
             self.publication_preset_combo.currentData() in self.publication_export_state.presets
         )
-        dpi = max(1, self.publication_dpi_spin.value())
-        width_inches = self.publication_width_spin.value() / dpi
-        height_inches = self.publication_height_spin.value() / dpi
-        self.publication_print_size_label.setText(
-            f"{width_inches:.2f} × {height_inches:.2f} inches at {dpi} DPI. "
-            "Pixel dimensions, rather than DPI metadata, determine image detail."
-        )
         try:
             preset = self._publication_preset_from_controls(
                 preset_id="preview",
                 capture_live=False,
                 freeze_current_frame=False,
             )
-            filename = build_publication_filename(
-                preset, roi=str(self.current_roi or "ROI")
-            )
-            self.publication_filename_preview.setText(filename)
             current = self._current_publication_camera_frame()
             frame = resolve_publication_frame(
                 preset.frame,
@@ -15674,9 +15677,32 @@ class NapariSBTController:
                 current_frame=current,
                 roi_shape=tuple(self.current_mask.shape[:2]),
             )
+            output_width, output_height = resolve_publication_output_size(
+                preset.output, frame
+            )
+            filename = build_publication_filename(
+                preset,
+                roi=str(self.current_roi or "ROI"),
+                output_size=(output_width, output_height),
+            )
+            self.publication_filename_preview.setText(filename)
+            dpi = max(1, preset.output.dpi)
+            width_inches = output_width / dpi
+            height_inches = output_height / dpi
+            size_description = (
+                "native 1:1 source sampling"
+                if preset.output.size_mode == "native"
+                else "custom resampling"
+            )
+            self.publication_print_size_label.setText(
+                f"{output_width:,} × {output_height:,} pixels ({size_description}); "
+                f"{width_inches:.2f} × {height_inches:.2f} inches at {dpi} DPI. "
+                "DPI changes print metadata only, not the field of view."
+            )
             self.publication_frame_summary.setText(
                 f"centre Y/X {frame.center_y:.2f}, {frame.center_x:.2f}; "
-                f"field {frame.field_height:.2f} × {frame.field_width:.2f} source pixels."
+                f"field {frame.field_height:.2f} × {frame.field_width:.2f} source pixels; "
+                f"output {output_width:,} × {output_height:,} pixels."
             )
             error = ""
             if preset.scale_bar.visible and not preset.calibration.confirmed:
@@ -15685,6 +15711,7 @@ class NapariSBTController:
         except Exception as error:  # noqa: BLE001 - live validation boundary
             self.publication_filename_preview.setText(f"⚠ {error}")
             self.publication_frame_summary.setText(f"⚠ {error}")
+            self.publication_print_size_label.setText(f"⚠ {error}")
 
     def _publication_recipe_snapshot(
         self, *, capture_live: bool
@@ -15750,6 +15777,7 @@ class NapariSBTController:
                 aspect_mode=frame.aspect_mode,
             )
         output = PublicationOutput(
+            size_mode=str(self.publication_size_mode_combo.currentData()),
             width=self.publication_width_spin.value(),
             height=self.publication_height_spin.value(),
             supersampling=int(self.publication_supersampling_combo.currentData()),
@@ -15857,6 +15885,9 @@ class NapariSBTController:
             self.publication_annotation_position_combo.findData(preset.annotations.position)
         )
         self.publication_annotation_font_spin.setValue(preset.annotations.font_size)
+        self.publication_size_mode_combo.setCurrentIndex(
+            self.publication_size_mode_combo.findData(preset.output.size_mode)
+        )
         self.publication_width_spin.setValue(preset.output.width)
         self.publication_height_spin.setValue(preset.output.height)
         self.publication_supersampling_combo.setCurrentIndex(
@@ -16064,37 +16095,65 @@ class NapariSBTController:
         camera = self.viewer.camera
         old_center = tuple(camera.center)
         old_zoom = float(camera.zoom)
+        canvas = getattr(
+            getattr(getattr(self.viewer, "window", None), "_qt_viewer", None),
+            "canvas",
+            None,
+        )
+        if canvas is None or not hasattr(canvas, "size"):
+            raise ValueError("Napari canvas dimensions are not available.")
+        old_canvas_size = tuple(canvas.size)
+        qt_window = getattr(getattr(self.viewer, "window", None), "_qt_window", None)
+        ratio_getter = getattr(qt_window, "devicePixelRatioF", None)
+        if ratio_getter is None:
+            ratio_getter = getattr(qt_window, "devicePixelRatio", None)
+        device_pixel_ratio = float(ratio_getter()) if ratio_getter else 1.0
         scale_bar = getattr(self.viewer, "scale_bar", None)
         old_scale_bar = self._snapshot_napari_scale_bar(scale_bar)
         render_scale = int(preset.output.supersampling)
-        render_width = int(preset.output.width) * render_scale
-        render_height = int(preset.output.height) * render_scale
+        output_width, output_height = resolve_publication_output_size(
+            preset.output, frame
+        )
+        geometry = publication_render_geometry(
+            frame,
+            output_width=output_width,
+            output_height=output_height,
+            supersampling=render_scale,
+            device_pixel_ratio=device_pixel_ratio,
+        )
         try:
+            # Napari zoom is expressed in current *logical canvas* pixels per
+            # world/source pixel.  Resize first, then set zoom.  Calling
+            # screenshot(size=...) after setting zoom preserves the old canvas
+            # rectangle and is the source of output-size-dependent zooming.
+            canvas.size = (
+                geometry.logical_canvas_width,
+                geometry.logical_canvas_height,
+            )
+            self.QApplication.processEvents()
             centre = list(old_center)
             centre[-2:] = [frame.center_y, frame.center_x]
             camera.center = tuple(centre)
-            camera.zoom = min(
-                render_width / frame.field_width,
-                render_height / frame.field_height,
-            )
+            camera.zoom = geometry.zoom
             if scale_bar is not None:
                 # The final scale bar is composited at final-output resolution;
                 # hiding Napari's overlay prevents monitor/DPI-dependent text.
                 scale_bar.visible = False
             self.QApplication.processEvents()
             screenshot = self.viewer.screenshot(
-                size=(render_height, render_width),
                 canvas_only=True,
                 flash=False,
             )
         finally:
+            canvas.size = old_canvas_size
+            self.QApplication.processEvents()
             camera.center = old_center
             camera.zoom = old_zoom
             self._restore_napari_scale_bar(scale_bar, old_scale_bar)
         final_image = downsample_publication_image(
             screenshot,
-            width=preset.output.width,
-            height=preset.output.height,
+            width=output_width,
+            height=output_height,
         )
         composed, annotation_metadata = compose_publication_image(
             final_image,
@@ -16103,11 +16162,29 @@ class NapariSBTController:
             roi=str(self.current_roi),
         )
         render_metadata = {
+            "size_mode": preset.output.size_mode,
             "requested_width": preset.output.width,
             "requested_height": preset.output.height,
+            "output_width": output_width,
+            "output_height": output_height,
+            "output_dpi": preset.output.dpi,
             "supersampling": render_scale,
-            "render_width": render_width,
-            "render_height": render_height,
+            "render_width": geometry.render_width,
+            "render_height": geometry.render_height,
+            "logical_canvas_width": geometry.logical_canvas_width,
+            "logical_canvas_height": geometry.logical_canvas_height,
+            "device_pixel_ratio": device_pixel_ratio,
+            "source_pixel_size_x": preset.calibration.x_size,
+            "source_pixel_size_y": preset.calibration.y_size,
+            "source_pixel_unit": preset.calibration.unit,
+            "physical_field_width": frame.field_width * preset.calibration.x_size,
+            "physical_field_height": frame.field_height * preset.calibration.y_size,
+            "output_pixel_size_x": (
+                frame.field_width * preset.calibration.x_size / output_width
+            ),
+            "output_pixel_size_y": (
+                frame.field_height * preset.calibration.y_size / output_height
+            ),
             **frame.as_dict(),
             **annotation_metadata,
         }
@@ -16130,7 +16207,7 @@ class NapariSBTController:
             except package_metadata.PackageNotFoundError:
                 versions[package] = "unknown"
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "exported_at": datetime.now().astimezone().isoformat(),
             "destination": str(destination.resolve(strict=False)),
             "experiment_id": self.manifest.experiment_id,
@@ -16152,11 +16229,15 @@ class NapariSBTController:
         self,
         *,
         preset: PublicationExportPreset,
+        frame: ResolvedPublicationFrame,
         output_folder: Path,
         conflict_policy: str,
     ) -> tuple[Path, bool]:
+        output_size = resolve_publication_output_size(preset.output, frame)
         destination = output_folder / build_publication_filename(
-            preset, roi=str(self.current_roi)
+            preset,
+            roi=str(self.current_roi),
+            output_size=output_size,
         )
         if not destination.exists():
             return destination, False
@@ -16193,6 +16274,7 @@ class NapariSBTController:
         frame = self._resolved_publication_frame(preset)
         destination, skipped = self._publication_destination(
             preset=preset,
+            frame=frame,
             output_folder=output_folder,
             conflict_policy=conflict_policy,
         )
@@ -16218,6 +16300,14 @@ class NapariSBTController:
                 "preset_fingerprint": preset.fingerprint,
                 "recipe_fingerprint": preset.recipe.fingerprint,
                 "roi": str(self.current_roi),
+                "output_dpi": preset.output.dpi,
+                "source_pixel_size_x": preset.calibration.x_size,
+                "source_pixel_size_y": preset.calibration.y_size,
+                "source_pixel_unit": preset.calibration.unit,
+                "physical_field_width": rendering["physical_field_width"],
+                "physical_field_height": rendering["physical_field_height"],
+                "output_pixel_size_x": rendering["output_pixel_size_x"],
+                "output_pixel_size_y": rendering["output_pixel_size_y"],
             },
         )
         write_json(destination.with_suffix(destination.suffix + ".json"), provenance)
@@ -16355,6 +16445,7 @@ class NapariSBTController:
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         warnings = 0
         for row, roi in enumerate(rois):
+            mask_path = None
             try:
                 mask_path = self._mask_path_index.get(roi) or self._mask_path_for_roi(roi)
                 mask_text = "Ready" if Path(mask_path).is_file() else "Missing"
@@ -16371,7 +16462,32 @@ class NapariSBTController:
                 channel_text = f"Ready ({len(requested)})"
             if mask_text != "Ready" or missing:
                 warnings += 1
-            filename = build_publication_filename(preset, roi=roi)
+            try:
+                if preset.frame.mode == "full_roi":
+                    if mask_path is None or mask_text != "Ready":
+                        raise ValueError("mask is required to resolve native ROI size")
+                    roi_shape = tuple(load_mask(mask_path).shape[:2])
+                    current_frame = None
+                elif preset.frame.mode == "current_view":
+                    roi_shape = (1, 1)
+                    current_frame = self._current_publication_camera_frame()
+                else:
+                    roi_shape = (1, 1)
+                    current_frame = None
+                frame = resolve_publication_frame(
+                    preset.frame,
+                    output=preset.output,
+                    current_frame=current_frame,
+                    roi_shape=roi_shape,
+                )
+                output_size = resolve_publication_output_size(preset.output, frame)
+                filename = build_publication_filename(
+                    preset,
+                    roi=roi,
+                    output_size=output_size,
+                )
+            except (OSError, ValueError) as error:
+                filename = f"Unable to resolve: {error}"
             for column, text in enumerate((roi, mask_text, channel_text, filename)):
                 table.setItem(row, column, QTableWidgetItem(str(text)))
         table.resizeColumnsToContents()
@@ -18785,8 +18901,8 @@ class NapariSBTController:
         self.tabs.setCurrentIndex(0)
         self.preview_cohort()
         self.set_status(
-            "Population transferred into Setup. Review the cohort-only mask preview "
-            "and click Create workspace and start to freeze it."
+            "Population transferred into Setup. Review the eligible-cell counts and "
+            "validation summary, then click Create workspace and start to freeze it."
         )
 
     def _labeler_code_map(self) -> dict[str, int]:

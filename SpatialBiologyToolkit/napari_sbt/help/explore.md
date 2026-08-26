@@ -35,11 +35,15 @@ later edited or removed. Publication presets are stored separately in
 `explore/publication_export_presets.json`, so they do not participate in frequent
 layer-visibility and ROI-review updates.
 
-Set the exact output width and height in pixels. Supersampling renders at 2x or 4x
-and downsamples with a high-quality filter. DPI is written as print metadata; it
-does not add image detail. PNG is the recommended default, TIFF is lossless, and
-JPEG is explicitly lossy. Filenames always retain the ROI and channel identities,
-even when a custom template omits them. The default is
+**Native source pixels** is the recommended default: one exported raster pixel
+represents one original image pixel in the selected field of view, and a whole-ROI
+export keeps that ROI's original pixel dimensions. **Custom output pixels** is an
+explicit resampling mode; changing those dimensions changes sampling density but
+never the centre or field of view. Supersampling renders at 2x or 4x and downsamples
+with a high-quality filter. DPI is written as print metadata and does not change
+the field of view or add image detail. PNG is the recommended default, TIFF is
+lossless, and JPEG is explicitly lossy. Filenames always retain the ROI and
+channel identities, even when a custom template omits them. The default is
 `{roi}__{recipe}__{channels}__{width}x{height}`.
 
 Physical scale bars require an explicitly verified X/Y pixel calibration. Select
@@ -47,10 +51,11 @@ an automatic visually sensible length or a fixed physical length, then control
 position, colour, thickness, font size, margin, ticks, and background box. Napari's
 metadata detector reads OME physical-size metadata or calibrated TIFF resolution
 tags from one current image, but leaves the result unconfirmed until you review it.
-Napari's
-ordinary scale-bar overlay is hidden during capture; NapariSBT composites the final
-bar at the requested output resolution so its typography and thickness do not
-depend on monitor DPI. Use **Render preview** to inspect the exact final raster
+Napari's ordinary scale-bar overlay is hidden during capture; NapariSBT calculates bar
+length from the frozen source-pixel field and verified physical size per pixel,
+then composites it onto the final raster. It is therefore independent of output
+DPI and remains physically correct in both native and custom-size modes. Use
+**Render preview** to inspect the exact final raster
 before saving. ROI, channel, and custom-title annotations are optional.
 
 For bulk export, select one or more ROIs and run preflight. Preflight uses the fast

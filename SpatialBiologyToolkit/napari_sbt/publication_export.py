@@ -16,8 +16,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .explore import ExploreViewRecipe
 
-
-PUBLICATION_EXPORT_SCHEMA_VERSION = 1
+PUBLICATION_EXPORT_SCHEMA_VERSION = 2
 DEFAULT_FILENAME_TEMPLATE = "{roi}__{recipe}__{channels}__{width}x{height}"
 _HEX_COLOUR = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
 _FILENAME_TOKEN = re.compile(r"[^A-Za-z0-9._-]+")
@@ -123,6 +122,10 @@ class PublicationAnnotations(BaseModel):
 class PublicationOutput(BaseModel):
     """Raster-output and file-naming settings."""
 
+    # ``custom`` is the compatibility default for schema-v1 presets, which did
+    # not persist a sizing mode.  The GUI defaults new, unsaved presets to
+    # ``native`` so one output pixel represents one source-image pixel.
+    size_mode: Literal["native", "custom"] = "custom"
     width: int = Field(default=2400, ge=128, le=30000)
     height: int = Field(default=1800, ge=128, le=30000)
     supersampling: Literal[1, 2, 4] = 1
@@ -214,6 +217,71 @@ class ResolvedPublicationFrame:
         }
 
 
+@dataclass(frozen=True)
+class PublicationRenderGeometry:
+    """Physical output and logical Qt-canvas geometry for one render."""
+
+    output_width: int
+    output_height: int
+    render_width: int
+    render_height: int
+    logical_canvas_width: int
+    logical_canvas_height: int
+    zoom: float
+
+
+def resolve_publication_output_size(
+    output: PublicationOutput,
+    frame: ResolvedPublicationFrame,
+) -> tuple[int, int]:
+    """Resolve final raster dimensions without changing the field of view."""
+
+    if output.size_mode == "native":
+        return (
+            max(1, int(round(frame.field_width))),
+            max(1, int(round(frame.field_height))),
+        )
+    return int(output.width), int(output.height)
+
+
+def publication_render_geometry(
+    frame: ResolvedPublicationFrame,
+    *,
+    output_width: int,
+    output_height: int,
+    supersampling: int,
+    device_pixel_ratio: float,
+) -> PublicationRenderGeometry:
+    """Return a DPR-aware canvas and zoom for an exact source-pixel frame.
+
+    Napari defines zoom using the *current logical canvas size*.  Callers must
+    therefore resize the canvas to these logical dimensions before applying
+    ``zoom``; setting zoom before ``viewer.screenshot(size=...)`` couples the
+    captured field of view to the previous on-screen canvas size.
+    """
+
+    if output_width <= 0 or output_height <= 0 or supersampling <= 0:
+        raise ValueError("Publication output dimensions must be positive.")
+    if device_pixel_ratio <= 0 or not math.isfinite(device_pixel_ratio):
+        raise ValueError("The Qt device-pixel ratio must be positive.")
+    render_width = int(output_width) * int(supersampling)
+    render_height = int(output_height) * int(supersampling)
+    logical_width = max(1, int(round(render_width / device_pixel_ratio)))
+    logical_height = max(1, int(round(render_height / device_pixel_ratio)))
+    return PublicationRenderGeometry(
+        output_width=int(output_width),
+        output_height=int(output_height),
+        render_width=render_width,
+        render_height=render_height,
+        logical_canvas_width=logical_width,
+        logical_canvas_height=logical_height,
+        zoom=min(
+            logical_width / float(frame.field_width),
+            logical_height / float(frame.field_height),
+        ),
+    )
+
+
 def camera_frame_from_canvas(
     *, center: tuple[float, ...], zoom: float, canvas_width: float, canvas_height: float
 ) -> ResolvedPublicationFrame:
@@ -294,6 +362,8 @@ def resolve_publication_frame(
             field_height=float(setting.field_height),
             field_width=float(setting.field_width),
         )
+    if output.size_mode == "native":
+        return frame
     return fit_frame_to_aspect(
         frame,
         output_width=output.width,
@@ -393,15 +463,17 @@ def build_publication_filename(
     preset: PublicationExportPreset,
     *,
     roi: str,
+    output_size: tuple[int, int] | None = None,
 ) -> str:
     """Build a safe filename that always retains the ROI and channel identity."""
 
+    width, height = output_size or (preset.output.width, preset.output.height)
     values = {
         "roi": _slug(roi, fallback="roi"),
         "recipe": _slug(preset.source_recipe_name, fallback="recipe"),
         "channels": channel_filename_token(list(preset.recipe.image_channels)),
-        "width": str(preset.output.width),
-        "height": str(preset.output.height),
+        "width": str(int(width)),
+        "height": str(int(height)),
         "fingerprint": preset.fingerprint[:10],
     }
     try:
@@ -657,6 +729,7 @@ __all__ = [
     "PublicationExportState",
     "PublicationFrame",
     "PublicationOutput",
+    "PublicationRenderGeometry",
     "PublicationScaleBar",
     "ResolvedPublicationFrame",
     "build_publication_filename",
@@ -666,7 +739,9 @@ __all__ = [
     "downsample_publication_image",
     "detect_tiff_pixel_calibration",
     "fit_frame_to_aspect",
+    "publication_render_geometry",
     "resolve_publication_frame",
+    "resolve_publication_output_size",
     "resolve_scale_bar_length",
     "save_publication_image",
 ]

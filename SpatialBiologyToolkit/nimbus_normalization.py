@@ -154,6 +154,11 @@ def merge_computed_normalization_parameters(
 ) -> dict[str, NimbusNormalizationParameters]:
     """Combine computed defaults with saved rows, with saved rows taking precedence."""
 
+    if not computed_vmax_values:
+        if saved_parameters:
+            return dict(saved_parameters)
+        return build_normalization_parameters(computed_vmax_values)
+
     computed = build_normalization_parameters(
         computed_vmax_values,
         {marker: default_lower_threshold for marker in computed_vmax_values},

@@ -124,6 +124,22 @@ def test_saved_lower_thresholds_override_the_computed_default():
     assert merged["CD20"].lower_threshold == pytest.approx(0.4)
 
 
+def test_complete_saved_parameters_do_not_require_computed_fallbacks():
+    saved = validate_normalization_parameters(
+        {"CD3": {"vmax": 20, "lower_threshold": 0.8}}
+    )
+
+    merged = merge_computed_normalization_parameters({}, saved_parameters=saved)
+
+    assert merged == saved
+    assert merged is not saved
+
+
+def test_merge_rejects_empty_saved_and_computed_parameters():
+    with pytest.raises(ValueError, match="contains no marker rows"):
+        merge_computed_normalization_parameters({})
+
+
 def test_computed_default_lower_threshold_must_be_below_vmax():
     with pytest.raises(ValueError, match="must be below vmax"):
         merge_computed_normalization_parameters(

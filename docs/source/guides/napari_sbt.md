@@ -712,17 +712,23 @@ when its aspect differs from the requested raster; stretching is never used.
 **Preview frame in viewer** changes only the camera. **Render preview** uses the
 same exact-size renderer and annotation compositor as the saved output.
 
-Output width and height are explicit pixels. Optional 2x/4x supersampling improves
-edges before Lanczos downsampling. PNG is the default, TIFF remains lossless, and
-JPEG is labelled lossy. DPI is stored as print metadata and the interface reports
-the corresponding print size. Filenames contain the ROI and image channels even
-when a custom template omits those tokens.
+Native source-pixel sizing is the recommended default: one output raster pixel
+represents one original pixel in the selected field, and complete-ROI exports keep
+their original pixel dimensions. Custom width and height remain available as an
+explicit resampling mode. They alter sampling density, never the frozen centre or
+field of view. Optional 2x/4x supersampling improves edges before Lanczos
+downsampling. PNG is the default, TIFF remains lossless, and JPEG is labelled
+lossy. DPI is stored as print metadata and the interface reports the corresponding
+print size; it does not change the field of view or add detail. Filenames contain
+the ROI and image channels even when a custom template omits those tokens.
 
 Scale bars are refused until the user verifies the X/Y physical size per source
-pixel. Automatic lengths use a readable 1/2/5 physical-unit interval close to the
-selected fraction of the field width; fixed lengths are also available. Position,
-colour, thickness, font, margins, ticks and the translucent box are applied at
-final output resolution. OME physical sizes and calibrated TIFF resolution tags
+pixel. Their physical length is calculated from the frozen source-pixel field and
+that calibration, independently of raster resampling and output DPI. Automatic
+lengths use a readable 1/2/5 physical-unit interval close to the selected fraction
+of the field width; fixed lengths are also available. Position, colour, thickness,
+font, margins, ticks and the translucent box are applied at final output
+resolution. OME physical sizes and calibrated TIFF resolution tags
 can populate the controls from one current image, but detected values still require
 explicit user confirmation. Optional ROI, channel and custom-title text is also
 composited after rendering.

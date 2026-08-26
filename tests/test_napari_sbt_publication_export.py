@@ -18,7 +18,9 @@ from SpatialBiologyToolkit.napari_sbt.publication_export import (
     compose_publication_image,
     detect_tiff_pixel_calibration,
     fit_frame_to_aspect,
+    publication_render_geometry,
     resolve_publication_frame,
+    resolve_publication_output_size,
     resolve_scale_bar_length,
     save_publication_image,
 )
@@ -80,6 +82,71 @@ def test_full_roi_frame_uses_target_aspect() -> None:
     assert frame.field_width == pytest.approx(100 * 4 / 3)
 
 
+def test_native_output_preserves_source_frame_and_pixel_sampling() -> None:
+    output = PublicationOutput(
+        size_mode="native",
+        width=3000,
+        height=3000,
+    )
+    frame = resolve_publication_frame(
+        PublicationFrame(mode="full_roi", aspect_mode="crop"),
+        output=output,
+        current_frame=None,
+        roi_shape=(100, 200),
+    )
+
+    assert frame.field_height == 100
+    assert frame.field_width == 200
+    assert resolve_publication_output_size(output, frame) == (200, 100)
+
+
+def test_schema_v1_output_remains_custom_sized() -> None:
+    output = PublicationOutput.model_validate({"width": 900, "height": 700})
+
+    assert output.size_mode == "custom"
+    assert resolve_publication_output_size(
+        output,
+        ResolvedPublicationFrame(50, 50, 100, 100),
+    ) == (900, 700)
+
+
+def test_render_geometry_changes_sampling_not_field_of_view() -> None:
+    frame = ResolvedPublicationFrame(250, 250, 500, 500)
+    small = publication_render_geometry(
+        frame,
+        output_width=500,
+        output_height=500,
+        supersampling=1,
+        device_pixel_ratio=1.0,
+    )
+    large = publication_render_geometry(
+        frame,
+        output_width=1000,
+        output_height=1000,
+        supersampling=1,
+        device_pixel_ratio=1.0,
+    )
+
+    assert small.zoom == 1.0
+    assert large.zoom == 2.0
+    assert small.logical_canvas_width / small.zoom == 500
+    assert large.logical_canvas_width / large.zoom == 500
+
+
+def test_render_geometry_accounts_for_qt_device_pixel_ratio() -> None:
+    geometry = publication_render_geometry(
+        ResolvedPublicationFrame(250, 250, 500, 500),
+        output_width=1000,
+        output_height=1000,
+        supersampling=1,
+        device_pixel_ratio=2.0,
+    )
+
+    assert geometry.logical_canvas_width == 500
+    assert geometry.logical_canvas_height == 500
+    assert geometry.zoom == 1.0
+
+
 def test_fixed_frame_requires_all_coordinates() -> None:
     with pytest.raises(ValueError, match="requires centre"):
         PublicationFrame(mode="fixed", center_y=1, center_x=2)
@@ -97,6 +164,24 @@ def test_filename_always_contains_roi_and_channels() -> None:
     assert "Sample-1" in filename
     assert "CD3-CD8" in filename
     assert filename.endswith(".png")
+
+
+def test_filename_can_use_resolved_native_dimensions() -> None:
+    preset = _preset(
+        output=PublicationOutput(
+            size_mode="native",
+            width=2400,
+            height=1800,
+        )
+    )
+
+    filename = build_publication_filename(
+        preset,
+        roi="Sample 1",
+        output_size=(1000, 750),
+    )
+
+    assert "1000x750" in filename
 
 
 def test_scale_bar_requires_confirmed_calibration() -> None:
@@ -117,6 +202,22 @@ def test_scale_bar_requires_confirmed_calibration() -> None:
     )
     assert physical == 20
     assert pixels == 200
+
+
+def test_native_scale_bar_uses_source_pixel_calibration() -> None:
+    frame = ResolvedPublicationFrame(250, 250, 500, 500)
+    output = PublicationOutput(size_mode="native")
+    output_width, _output_height = resolve_publication_output_size(output, frame)
+
+    physical, pixels = resolve_scale_bar_length(
+        PublicationScaleBar(visible=True, length_mode="fixed", length=50),
+        calibration=PixelCalibration(confirmed=True, x_size=1.0, unit="µm"),
+        frame=frame,
+        output_width=output_width,
+    )
+
+    assert physical == 50
+    assert pixels == 50
 
 
 def test_compositor_preserves_size_and_records_annotations() -> None:
@@ -153,6 +254,8 @@ def test_compositor_preserves_size_and_records_annotations() -> None:
 
 
 def test_atomic_png_save(tmp_path) -> None:
+    from PIL import Image
+
     image = np.zeros((20, 30, 4), dtype=np.uint8)
     image[..., 3] = 255
     destination = tmp_path / "figure.png"
@@ -165,6 +268,9 @@ def test_atomic_png_save(tmp_path) -> None:
     assert saved == destination.resolve()
     assert saved.is_file()
     assert not list(tmp_path.glob(".*.tmp.png"))
+    with Image.open(saved) as opened:
+        assert opened.info["dpi"][0] == pytest.approx(300, rel=1e-3)
+        assert opened.info["dpi"][1] == pytest.approx(300, rel=1e-3)
 
 
 def test_saved_publication_preset_keeps_frozen_recipe_snapshot() -> None:
