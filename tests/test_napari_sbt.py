@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import numpy as np
@@ -42,6 +43,7 @@ from SpatialBiologyToolkit.napari_sbt.labels import (
     set_label,
 )
 from SpatialBiologyToolkit.napari_sbt.models import (
+    FEATURE_EXTRACTION_CONTRACT_VERSION,
     CellScope,
     ExperimentManifest,
     FeatureSource,
@@ -795,8 +797,13 @@ def test_worker_builds_and_resumes_cohort_only_roi_fragments(tmp_path: Path):
     assert table.loc[
         table["ObjectNumber"].eq(2),
         "source::imc::channel::CD3::mean",
-    ].iloc[0] == pytest.approx(0.8)
+    ].iloc[0] == pytest.approx(0.7105263)
     assert first.skipped_rois == 1
+    provenance = json.loads(first.manifest.read_text(encoding="utf-8"))
+    assert (
+        provenance["feature_extraction_contract_version"]
+        == FEATURE_EXTRACTION_CONTRACT_VERSION
+    )
     second = run_feature_build(root, workers=1, progress=lambda _event: None)
     assert second.skipped_rois == 1
     reloaded, _ = load_experiment(root)

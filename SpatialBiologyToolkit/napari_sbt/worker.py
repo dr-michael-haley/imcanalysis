@@ -17,7 +17,12 @@ import pandas as pd
 import skimage as sk
 
 from SpatialBiologyToolkit._napari_imc_normalization import (
-    find_normalization_value,
+    find_normalization_parameters,
+    load_normalization_parameters,
+)
+from SpatialBiologyToolkit.nimbus_normalization import (
+    NimbusNormalizationParameters,
+    normalize_nimbus_image,
 )
 from SpatialBiologyToolkit.pipeline.manifests import utc_now, write_json
 from SpatialBiologyToolkit.qc_classifier.io import (
@@ -32,7 +37,11 @@ from .cohort import eligible_ids_by_roi, validate_frozen_cohort
 from .feature_refinement import refine_trial_features
 from .feature_sources import combine_feature_sources, load_feature_source
 from .features import build_feature_dictionary, build_roi_features
-from .models import FeatureSource, SyntheticFeatureRecipe
+from .models import (
+    FEATURE_EXTRACTION_CONTRACT_VERSION,
+    FeatureSource,
+    SyntheticFeatureRecipe,
+)
 from .resources import resolve_worker_count
 from .storage import (
     feature_recipe_hash,
@@ -97,14 +106,12 @@ def _read_json(path: str | Path) -> dict:
         return json.load(handle)
 
 
-def _load_normalization(recipe: SyntheticFeatureRecipe) -> dict[str, float]:
+def _load_normalization(
+    recipe: SyntheticFeatureRecipe,
+) -> dict[str, NimbusNormalizationParameters]:
     if not recipe.normalization_dict_path:
         return {}
-    from SpatialBiologyToolkit._napari_imc_normalization import (
-        load_normalization_mapping,
-    )
-
-    return load_normalization_mapping(Path(recipe.normalization_dict_path))
+    return load_normalization_parameters(Path(recipe.normalization_dict_path))
 
 
 def _resolve_input_path(value: str | Path, base: Path) -> Path:
@@ -130,6 +137,7 @@ def _input_fingerprint(
         "normalization_dict": file_fingerprint(recipe.normalization_dict_path),
     }
     payload = {
+        "feature_extraction_contract_version": FEATURE_EXTRACTION_CONTRACT_VERSION,
         "experiment_id": experiment_id,
         "revision": revision,
         "cohort_sha256": cohort_hash,
@@ -160,9 +168,14 @@ def _roi_task(payload: dict) -> dict:
     channel_items = list(payload["channel_paths"].items())
     for channel_index, (channel, path) in enumerate(channel_items):
         image = _read_channel(path)
-        maximum = find_normalization_value(normalization, channel)
-        if maximum is not None:
-            image = image / float(maximum)
+        parameters = find_normalization_parameters(normalization, channel)
+        if parameters is not None:
+            image = normalize_nimbus_image(
+                image,
+                vmax=parameters.vmax,
+                lower_threshold=parameters.lower_threshold,
+                upper_clip=1.0,
+            )
         channel_recipe = recipe.model_copy(
             update={
                 "shape_features": recipe.shape_features and channel_index == 0,
@@ -211,6 +224,9 @@ def _roi_task(payload: dict) -> dict:
         payload["sidecar_path"],
         {
             "fingerprint": payload["fingerprint"],
+            "feature_extraction_contract_version": (
+                FEATURE_EXTRACTION_CONTRACT_VERSION
+            ),
             "roi": roi,
             "rows": len(combined_table),
             "features": len(combined_table.columns),
@@ -657,6 +673,9 @@ def run_feature_build(
     elapsed = time.monotonic() - started
     feature_set_id = feature_recipe_hash(
         {
+            "feature_extraction_contract_version": (
+                FEATURE_EXTRACTION_CONTRACT_VERSION
+            ),
             "columns": combined.feature_columns,
             "cohort": manifest.cell_scope.snapshot_sha256,
             "build_rois": sorted(eligible),
@@ -665,6 +684,9 @@ def run_feature_build(
     )
     provenance = {
         "schema_version": 1,
+        "feature_extraction_contract_version": (
+            FEATURE_EXTRACTION_CONTRACT_VERSION
+        ),
         "experiment_id": manifest.experiment_id,
         "experiment_revision": manifest.revision,
         "cohort_sha256": manifest.cell_scope.snapshot_sha256,

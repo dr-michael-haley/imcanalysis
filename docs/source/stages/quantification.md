@@ -181,6 +181,12 @@ The stage proceeds as follows:
 7. It optionally calculates conventional and expanded-mask intensities.
 8. It writes cell tables and the canonical AnnData.
 
+Before writing reusable outputs, the stage now requires the Nimbus score table to
+contain exactly one row for every retained ``(ROI, ObjectNumber)`` in the adjusted
+segmentation masks. Missing, unexpected, or duplicate cell identities stop the
+stage with per-ROI diagnostics instead of allowing a silently incomplete cell
+table or AnnData object to proceed downstream.
+
 The toolkit's normalization is deliberately more mask-aware than the generic
 upstream helper. For each marker, it calculates the configured quantile using only
 pixels inside retained cell masks for each usable ROI, then averages those per-ROI

@@ -201,14 +201,17 @@ The Setup class table renders each colour as a readable swatch. Double-click
 the swatch, or select its row and use **Pick selected colour…**, to open the
 colour picker; the saved hexadecimal value remains visible on the swatch.
 
-Setup also owns scientific-display normalization. A Nimbus normalization JSON,
-or a CSV containing `Marker` and `Value` columns, can be loaded into an editable
-Marker/Value table, validated, and copied in canonical JSON form to
-`display/normalization.json` inside the workspace. Fixed per-channel maxima are
-used where available; unmatched channels use the configurable fallback quantile
-and minimum-pixel threshold. Default contrast handles apply only when a recipe
-does not contain an explicit channel range. Images and Napari's slider range stay
-on 0–1, while saved recipe contrast limits take precedence over Setup defaults.
+Setup also owns scientific-display normalization. The preferred Nimbus CSV has
+`marker`, `vmax`, and `lower_threshold` columns; equivalent structured JSON can
+also be loaded into the editable three-column table, validated, and copied to
+`display/normalization.json` inside the workspace. Legacy marker-to-value JSON and
+`Marker,Value` CSV files remain readable and default `lower_threshold` to zero.
+Matched channels use
+`clip((image - lower_threshold) / (vmax - lower_threshold), 0, 1)`; unmatched
+channels use the configurable fallback quantile and minimum-pixel threshold.
+Default contrast handles apply only when a recipe does not contain an explicit
+channel range. Images and Napari's slider range stay on 0–1, while saved recipe
+contrast limits take precedence over Setup defaults.
 A read-only technical JSON preview remains available under an advanced toggle.
 Population QC uses these Setup contrast limits to initialize an unsaved
 population view, while retaining per-channel manual overrides and saved RGB
@@ -339,9 +342,11 @@ original full segmentation in memory:
 - shape features always use the original segmentation.
 
 Stored image values are used by default. A fixed Nimbus normalization mapping
-may be applied for scientific features. The quantile controls used for display
-never change feature values. Image/mask shape mismatches fail rather than
-resizing scientific inputs.
+may be applied for scientific features; current Vmax/lower-threshold rows use the
+same two-point clipped transform as image display, while legacy scalar rows imply
+a zero lower threshold. The quantile controls used for display never change
+feature values. Image/mask shape mismatches fail rather than resizing scientific
+inputs.
 
 Local builds run in a `QProcess`; the worker uses a spawn-safe process pool with
 one task per ROI. Completed Parquet fragments are reusable only when the
@@ -560,6 +565,10 @@ is used, so it does not reintroduce general workspace persistence.
 The **Explore** tab provides cohort-aware ROI navigation, raw and extra image
 loading, RGB views, categorical/numeric AnnData overlays, and abundance-ranked
 population views. Previous/Next buttons follow the current ROI ordering.
+**Add all-cells mask** reuses the current ROI's already-loaded original segmentation
+to create a non-editable `all_cells` labels layer; it does not reload the ROI or
+scan the mask folder. The layer updates in place across ROIs and its display state
+can participate in Explore recipes.
 **Hide all**, **Show all**, and **Delete all** act on every Napari layer; loading
 the ROI again reconstructs the cohort and classification layers after deletion.
 New layers have opacity 1.0 by default, except for the deliberately dimmed
@@ -585,10 +594,23 @@ populations can be selected as individual contour layers. Variables in
 `adata.var_names` can also be loaded from cell-level `adata.X` values and
 mapped onto eligible mask objects as quantitative overlays.
 
-Population layers preserve the original mask ID of every displayed cell while
-using one colour for the selected population. Consequently, a non-zero contour
-width draws boundaries between adjacent cells even when both have the same
-population label; this changes only the display overlay and never the source mask.
+All variable and matched image-channel selectors share one session-wide ordering
+registry. The default follows ``adata.var_names``; users can instead choose a
+case-insensitive alphabetical order or expression similarity calculated with
+``SpatialBiologyToolkit.utils.reorder_vars_by_expression`` on the live
+``adata.X``. The similarity result is cached and reused by Feature Building,
+Explore, Population QC, Scanpy plotting, and Dataset Maintenance. Changing any
+copy of the control synchronizes every other copy, preserves selections, and
+reorders only selector contents—it does not reload an ROI or viewer layer.
+Unmatched image-only or raw-only variables remain after the shared AnnData order.
+
+Categorical observation overlays and individual population layers preserve the
+original mask ID of every displayed cell while assigning colours from the
+observation. Consequently, a non-zero contour width draws boundaries between
+adjacent cells even when both have the same population label. Recipes store the
+category-level palette rather than ROI-specific object IDs, so replaying the view
+on another ROI preserves both the colours and the cell boundaries. This changes
+only the display overlay and never the source mask or AnnData.
 
 Observation overlays are cohort-restricted by default. Enable **Include cells
 outside the classification cohort** to map an observation over every
@@ -674,6 +696,51 @@ mechanism.
 **Use this population as classification cohort** transfers the population
 selector back to Setup and requires a new preview and confirmation.
 
+### Publication-ready Explore images
+
+**Publication export…** opens a modeless window beside Napari. It separates a
+publication composition from the ordinary hot ROI-reload state: a saved
+publication preset contains a frozen Explore recipe snapshot, a camera field of
+view, output dimensions, calibration, scale-bar and annotation settings. Presets
+are saved under `explore/publication_export_presets.json`; editing or removing the
+original Explore recipe does not alter an already frozen publication preset.
+
+Frame sources are the current viewport, the complete ROI, an exact numerical
+centre/field of view, or one selected rectangle from a Shapes layer. The stored
+field of view is independent of the current canvas dimensions. Choose crop or pad
+when its aspect differs from the requested raster; stretching is never used.
+**Preview frame in viewer** changes only the camera. **Render preview** uses the
+same exact-size renderer and annotation compositor as the saved output.
+
+Output width and height are explicit pixels. Optional 2x/4x supersampling improves
+edges before Lanczos downsampling. PNG is the default, TIFF remains lossless, and
+JPEG is labelled lossy. DPI is stored as print metadata and the interface reports
+the corresponding print size. Filenames contain the ROI and image channels even
+when a custom template omits those tokens.
+
+Scale bars are refused until the user verifies the X/Y physical size per source
+pixel. Automatic lengths use a readable 1/2/5 physical-unit interval close to the
+selected fraction of the field width; fixed lengths are also available. Position,
+colour, thickness, font, margins, ticks and the translucent box are applied at
+final output resolution. OME physical sizes and calibrated TIFF resolution tags
+can populate the controls from one current image, but detected values still require
+explicit user confirmation. Optional ROI, channel and custom-title text is also
+composited after rendering.
+
+Bulk export accepts any selection from the current ROI list. Its preflight uses
+the existing Setup asset index rather than scanning folders and reports mask,
+channel and filename coverage. Napari/OpenGL rendering is scheduled one ROI at a
+time on the GUI event loop, with progress, cancellation after the current atomic
+write, failure continuation, and exact-sidecar resume. Automated renders do not
+mark ROIs as manually viewed. On completion or cancellation NapariSBT restores the
+starting ROI, live recipe, active named recipe, camera, auto-reload option and
+scale-bar state.
+
+Every image has a JSON sidecar with the frozen recipe, exact frame, calibration,
+input paths/sizes/modification times, fingerprints and software versions. Each
+bulk run additionally writes its frozen preset, a CSV result manifest and run
+provenance, allowing figures to be traced back to their precise visual settings.
+
 The **Regions & Export** tab stores manual polygon regions and synchronizes
 their contained cell identities. Classification table and AnnData outputs now
 live in **Classify → Finalize & export**. Regions & Export provides:
@@ -692,9 +759,11 @@ colours. Original AnnData and masks are never overwritten by default.
 The **Population naming** tab crafts a named `adata.obs` column from one original
 categorical observation such as `leiden`. Only the new obs-column name is needed;
 there is no separate human display name. Changing the saved-work dropdown loads
-that draft immediately. The first draft freezes a fingerprint of the cell
-identities and source labels, and all sibling drafts remain remappings of that
-same source.
+that draft immediately. Before the first draft, changing the original source also
+updates the automatic output suggestion to `<selected source>_named`, preventing a
+stale Leiden-derived name from being carried into a different source workspace.
+The first draft freezes a fingerprint of the cell identities and source labels,
+and all sibling drafts remain remappings of that same source.
 
 The base table starts as an identity mapping. Editing **Proposed name** renames
 a cluster. Assigning the same final name to multiple rows is an explicit merge:
@@ -817,6 +886,11 @@ convention used by ``matrixplot_with_row_colors``. The strip reserves a separate
 band from the population tick labels so long names do not overlap the colours.
 Users can adjust both the colour/label gap and colour-box width in points; these
 sizes remain stable when the plot window is resized.
+
+This plot-specific marker clustering is separate from the shared variable-list
+order. The shared similarity mode is a cached browsing order from the complete
+live ``adata.X``; the plot option deliberately recalculates from the filtered
+cells, selected matrix source, and selected marker subset.
 
 Every plot also has common presentation controls. Legends or continuous colour
 scales can be hidden; categorical embedding and stacked-bar legends can be placed

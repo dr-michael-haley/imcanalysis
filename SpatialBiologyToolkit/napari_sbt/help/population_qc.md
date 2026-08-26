@@ -24,6 +24,12 @@ categories which have no cells in the active scope are not offered in the
 population selector. This prevents an out-of-scope population from looking like a
 broken zero-cell result.
 
+**Variable list order** controls the RGB channel menus and is synchronized with
+the same control in every other NapariSBT tab. AnnData order is the default;
+alphabetical and cached `adata.X` expression-similarity ordering are also
+available. Changing the order never changes a saved RGB recipe or reloads the
+current ROI.
+
 Population QC does not rename, merge, confirm, or classify cells. Use Population
 naming for population names and merges, or transfer a population through Explore
 when it should become a new classification cohort. To review the complete dataset

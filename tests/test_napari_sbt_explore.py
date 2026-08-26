@@ -11,6 +11,7 @@ from SpatialBiologyToolkit.napari_sbt.explore import (
     ExploreReviewState,
     ExploreViewRecipe,
     categorical_colour_map,
+    categorical_object_categories,
     cell_level_observations,
     format_roi_metadata_value,
     identity_value_map,
@@ -49,6 +50,24 @@ def test_population_identity_map_keeps_touching_population_cells_distinct():
     mapped = population_identity_map(mask, [2, 9])
 
     np.testing.assert_array_equal(mapped, [[0, 2, 2], [9, 9, 0]])
+
+
+def test_categorical_object_categories_keeps_same_class_cells_as_distinct_ids():
+    mask = np.asarray([[0, 2, 2], [9, 9, 5]], dtype=np.int32)
+    object_categories = categorical_object_categories(
+        pd.Series([2, 9, 5]),
+        pd.Series(pd.Categorical(["T cell", "T cell", pd.NA])),
+    )
+
+    mapped = population_identity_map(mask, object_categories.index)
+
+    assert object_categories.to_dict() == {2: "T cell", 9: "T cell"}
+    np.testing.assert_array_equal(mapped, [[0, 2, 2], [9, 9, 0]])
+
+
+def test_categorical_object_categories_rejects_unpaired_inputs():
+    with pytest.raises(ValueError, match="one observation value per object ID"):
+        categorical_object_categories([1, 2], ["T cell"])
 
 
 def test_identity_value_map_avoids_large_lookup_for_sparse_high_ids():

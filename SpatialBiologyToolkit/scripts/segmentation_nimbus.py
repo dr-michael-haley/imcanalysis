@@ -30,6 +30,10 @@ from SpatialBiologyToolkit.nimbus_normalization import (
     resolve_normalization_parameters,
     write_normalization_csv,
 )
+from SpatialBiologyToolkit.nimbus_cell_identity import (
+    validate_cell_identity_coverage,
+    validate_object_number_coverage,
+)
 
 try:
     from nimbus_inference.nimbus import Nimbus
@@ -1143,7 +1147,18 @@ def _merge_with_masks(
     predicted_channels: List[str],
     allow_missing: bool,
 ) -> Tuple[pd.DataFrame, List[str]]:
-    merged = mask_features.merge(nimbus_df, on=["ROI", "ObjectNumber"], how="left")
+    validate_cell_identity_coverage(
+        mask_features,
+        nimbus_df,
+        reference_name="adjusted segmentation masks",
+        candidate_name="Nimbus per-cell scores",
+    )
+    merged = mask_features.merge(
+        nimbus_df,
+        on=["ROI", "ObjectNumber"],
+        how="left",
+        validate="one_to_one",
+    )
 
     if allow_missing:
         for ch in expected_channels:
@@ -1402,6 +1417,8 @@ def _predict_fovs_with_padding(
         df_fov = pd.DataFrame()
         instance_mask = dataset.get_segmentation(fov)
         mask_shape = instance_mask.shape
+        expected_labels = np.unique(instance_mask)
+        expected_labels = expected_labels[expected_labels > 0]
         # Nimbus UNet downsamples four times (stride 16); pre-pad so nothing gets dropped.
         pad_y, pad_x = _calc_padding_to_multiple(mask_shape, multiple=16)
         padded_mask = _pad_2d(instance_mask, pad_y, pad_x, mode="constant")  # zero-pad preserves ids
@@ -1454,10 +1471,16 @@ def _predict_fovs_with_padding(
                 else:
                     raise ValueError(msg)
             df = pd.DataFrame(segment_mean(instance_mask, prediction))
+            validate_object_number_coverage(
+                expected_labels,
+                df["label"],
+                context=f"Nimbus aggregation for ROI '{fov}', channel '{channel_name}'",
+            )
             if df_fov.empty:
                 df_fov["label"] = df["label"]
                 df_fov["fov"] = os.path.basename(fov_path)
-            df_fov[channel_name] = df["intensity_mean"]
+            score_by_label = df.set_index("label")["intensity_mean"]
+            df_fov[channel_name] = score_by_label.reindex(df_fov["label"]).to_numpy()
             if save_predictions:
                 # Persist per-channel confidence map for downstream QC
                 os.makedirs(out_fov_path, exist_ok=True)

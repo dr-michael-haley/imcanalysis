@@ -536,6 +536,7 @@ def load_display_image(
     quantile: float = 0.999,
     minimum_pixel_counts: float = 0.1,
     normalization_value: float | None = None,
+    normalization_lower_threshold: float = 0.0,
 ) -> tuple[np.ndarray, bool]:
     """
     Load an image for Napari display using explorer-style normalization.
@@ -556,6 +557,7 @@ def load_display_image(
         quantile=quantile,
         minimum_pixel_counts=minimum_pixel_counts,
         normalization_value=normalization_value,
+        normalization_lower_threshold=normalization_lower_threshold,
     )
     return image, False
 

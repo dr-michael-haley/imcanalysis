@@ -67,6 +67,13 @@ Choose the biological question first; box 3 then shows only the relevant control
 
 ## Plot options
 
+The **Variable list order** in box 1 controls both searchable expression-variable
+lists and is shared with Feature Building, Explore, Population QC, and Dataset
+Maintenance. **Expression similarity** here is a cached whole-`adata.X` browsing
+order. It is distinct from the plot-specific **Marker ordering** option below,
+which recalculates similarity from only the cells, matrix source, and markers in
+the requested plot.
+
 For embeddings, select any `obsm` matrix with at least two components and choose
 the horizontal and vertical component numbers. **Colour by** can show the selected
 population labels or expression values. In expression mode, choose one or more

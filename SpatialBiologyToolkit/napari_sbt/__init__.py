@@ -10,6 +10,14 @@ _LAZY_EXPORTS = {
     "ModelBundle": (".classifier", "ModelBundle"),
     "PopulationDraft": (".population_curation", "PopulationDraft"),
     "PopulationWorkspace": (".population_curation", "PopulationWorkspace"),
+    "PublicationExportPreset": (
+        ".publication_export",
+        "PublicationExportPreset",
+    ),
+    "PublicationExportState": (
+        ".publication_export",
+        "PublicationExportState",
+    ),
     "apply_population_draft": (
         ".population_curation",
         "apply_population_draft",
@@ -83,6 +91,8 @@ __all__ = [
     "ModelBundle",
     "PopulationDraft",
     "PopulationWorkspace",
+    "PublicationExportPreset",
+    "PublicationExportState",
     "apply_cell_filter",
     "apply_population_draft",
     "apply_var_rename",

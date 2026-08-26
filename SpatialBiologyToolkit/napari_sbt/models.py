@@ -19,6 +19,10 @@ from .feature_catalog import (
 )
 
 SCHEMA_VERSION = 1
+# Increment this whenever feature values can change without a manifest recipe or
+# input-file change.  It is intentionally separate from the experiment schema:
+# old experiments remain loadable, while their cached feature assets are rebuilt.
+FEATURE_EXTRACTION_CONTRACT_VERSION = 2
 CLASS_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 SHORTCUT_PATTERN = re.compile(r"^[1-8]$")
 WorkflowMode = Literal[
@@ -388,6 +392,7 @@ def segmentation_qc_classes() -> list[ClassificationClass]:
 
 
 __all__ = [
+    "FEATURE_EXTRACTION_CONTRACT_VERSION",
     "SCHEMA_VERSION",
     "CellScope",
     "ClassificationClass",

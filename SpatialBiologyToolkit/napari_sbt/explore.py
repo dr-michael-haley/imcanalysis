@@ -119,6 +119,35 @@ def population_identity_map(
     return identity_value_map(mask, mapping, dtype=dtype)
 
 
+def categorical_object_categories(
+    object_ids,
+    values,
+) -> pd.Series:
+    """Return one category per valid object ID, preserving identity labels.
+
+    The returned series is indexed by ``ObjectNumber`` and contains category
+    text.  Missing categories and non-positive/non-numeric identities are
+    omitted.  Duplicate identities retain the final value, matching
+    :func:`identity_value_map` and the historical overlay behaviour.
+    """
+
+    identities = pd.to_numeric(pd.Series(object_ids, copy=False), errors="coerce")
+    categories = pd.Series(values, copy=False)
+    if len(identities) != len(categories):
+        raise ValueError(
+            "Categorical overlays require one observation value per object ID."
+        )
+    usable = identities.notna() & identities.gt(0) & categories.notna()
+    if not bool(usable.any()):
+        return pd.Series(dtype="string", index=pd.Index([], dtype=np.int64))
+    result = pd.Series(
+        categories.loc[usable].astype(str).to_numpy(),
+        index=identities.loc[usable].astype(np.int64).to_numpy(),
+        dtype="string",
+    )
+    return result.loc[~result.index.duplicated(keep="last")]
+
+
 def _colour_text(value: Any) -> str | None:
     """Normalize common Scanpy/Matplotlib colour representations."""
 

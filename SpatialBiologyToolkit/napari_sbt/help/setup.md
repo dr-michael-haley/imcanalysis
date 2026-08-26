@@ -121,24 +121,28 @@ subprocesses. Opening the dock alone does not write the object.
 
 ## Image normalization and default display
 
-Choose either a Nimbus normalization JSON or a CSV containing `Marker` and
-`Value` columns. Both formats load the channel-to-maximum mapping into an editable
-two-column table. Add or remove marker rows without writing JSON. **Show technical
-JSON preview** provides a read-only representation for troubleshooting.
+Choose the preferred Nimbus CSV containing `marker`, `vmax`, and
+`lower_threshold`, or a JSON containing the same structured marker entries. Both
+formats load into an editable three-column table. Older marker-to-value JSON and
+`Marker,Value` CSV files remain supported and receive a lower threshold of zero.
+Add or remove marker rows without writing JSON. **Show technical JSON preview**
+provides a read-only representation for troubleshooting.
 **Validate edited values** checks the table without writing it. After a workspace
 exists, **Save edited copy into experiment** stores the mapping in canonical JSON
 form at `display/normalization.json` and records it in the manifest. Workspace
 creation also writes this experiment-owned copy, including an empty mapping when
-no fixed maxima are supplied.
+no fixed bounds are supplied.
 
-For channels without a fixed maximum, the fallback quantile and minimum-pixel
-threshold reproduce the legacy IMC Explorer display normalization. Default lower
-and upper contrast values apply to newly loaded scalar images whose recipe has no
-explicit range. They also initialize Population QC RGB contrast controls for
-populations without a saved recipe. Population QC values can be changed per
-channel, and manual or saved overrides are not replaced by later Setup changes.
-Recipe-specific contrast always takes precedence. Pixel values and Napari's
-contrast slider range remain normalized to 0–1.
+For matched channels, NapariSBT uses
+`clip((image - lower_threshold) / (vmax - lower_threshold), 0, 1)`. For channels
+without fixed bounds, the fallback quantile and minimum-pixel threshold reproduce
+the legacy IMC Explorer display normalization. Default lower and upper contrast
+values apply to newly loaded scalar images whose recipe has no explicit range.
+They also initialize Population QC RGB contrast controls for populations without
+a saved recipe. Population QC values can be changed per channel, and manual or
+saved overrides are not replaced by later Setup changes. Recipe-specific contrast
+always takes precedence. Pixel values and Napari's contrast slider range remain
+normalized to 0–1.
 
 ## Cell scope
 

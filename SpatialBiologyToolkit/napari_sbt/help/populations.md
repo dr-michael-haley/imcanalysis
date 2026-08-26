@@ -11,7 +11,9 @@ Choose the original observation, enter the single **New label column
 (adata.obs)** name, and create the first draft. That is the only new name needed:
 the technical draft display-name field has been removed. NapariSBT still records
 the original cell/label fingerprint internally so it cannot silently remap a
-different dataset.
+different dataset. Before the first draft, changing the source observation updates
+the automatic suggestion to `<selected source>_named`; an explicitly typed name is
+preserved while the same source remains selected.
 
 Several saved label columns can derive from the same original observation.
 Changing **Saved naming work** loads it immediately; there is no separate Load

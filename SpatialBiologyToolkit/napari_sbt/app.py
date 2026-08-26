@@ -17,10 +17,12 @@ import numpy as np
 import pandas as pd
 
 from SpatialBiologyToolkit._napari_imc_normalization import (
-    find_normalization_value,
-    load_normalization_mapping,
-    prepare_normalization_dict,
+    find_normalization_parameters,
+    load_normalization_parameters,
+    normalization_parameters_payload,
+    prepare_normalization_parameters,
 )
+from SpatialBiologyToolkit.nimbus_normalization import NimbusNormalizationParameters
 from SpatialBiologyToolkit.pipeline.manifests import write_json
 from SpatialBiologyToolkit.qc_classifier.io import (
     build_image_channel_aliases,
@@ -80,6 +82,7 @@ from .explore import (
     ExploreReviewState,
     ExploreViewRecipe,
     categorical_colour_map,
+    categorical_object_categories,
     cell_level_observations,
     format_roi_metadata_value,
     identity_value_map,
@@ -126,6 +129,7 @@ from .labels import (
     validate_labels,
 )
 from .models import (
+    FEATURE_EXTRACTION_CONTRACT_VERSION,
     ClassificationClass,
     DisplaySettings,
     ExperimentManifest,
@@ -176,6 +180,24 @@ from .population_qc import (
     retarget_population_qc_recipe,
     top_population_markers,
 )
+from .publication_export import (
+    DEFAULT_FILENAME_TEMPLATE,
+    PixelCalibration,
+    PublicationAnnotations,
+    PublicationExportPreset,
+    PublicationExportState,
+    PublicationFrame,
+    PublicationOutput,
+    PublicationScaleBar,
+    ResolvedPublicationFrame,
+    build_publication_filename,
+    camera_frame_from_canvas,
+    compose_publication_image,
+    detect_tiff_pixel_calibration,
+    downsample_publication_image,
+    resolve_publication_frame,
+    save_publication_image,
+)
 from .resources import resolve_worker_count
 from .scanpy_plotting import (
     build_scanpy_plot,
@@ -202,6 +224,7 @@ from .storage import (
     save_experiment,
     write_dataframe,
 )
+from .variable_ordering import VARIABLE_ORDER_OPTIONS, VariableOrderRegistry
 
 CLASS_LAYER_NAMES = {
     "confirmed": "confirmed_classes",
@@ -211,6 +234,7 @@ CLASS_LAYER_NAMES = {
 }
 
 SELECTED_CELL_LAYER_NAME = "selected_cell_outline"
+ALL_CELLS_LAYER_NAME = "all_cells"
 NONCONTEXT_MASK_LAYER_NAME = "noncontext_mask"
 LABELER_LAYER_NAME = "labeler_assignments"
 LABELER_SELECTED_CELL_LAYER_NAME = "labeler_selected_cell_outline"
@@ -375,6 +399,7 @@ WORKFLOW_VISIBLE_TABS = {
 }
 
 MANAGED_RECIPE_LAYERS = {
+    ALL_CELLS_LAYER_NAME: "Complete original segmentation: all cells",
     "classification_cohort": "Eligible-cell classification mask",
     "excluded_segmentation_context": "Excluded-cell segmentation context",
     NONCONTEXT_MASK_LAYER_NAME: "Classifier: opaque mask outside feature context",
@@ -390,6 +415,7 @@ MANAGED_RECIPE_LAYERS = {
 }
 
 MANAGED_LAYER_DEFAULT_VISIBILITY = {
+    ALL_CELLS_LAYER_NAME: True,
     "classification_cohort": False,
     "excluded_segmentation_context": False,
     NONCONTEXT_MASK_LAYER_NAME: False,
@@ -403,6 +429,7 @@ MANAGED_LAYER_DEFAULT_VISIBILITY = {
 }
 
 MANAGED_LAYER_DEFAULT_OPACITY = {
+    ALL_CELLS_LAYER_NAME: 1.0,
     "classification_cohort": 1.0,
     "excluded_segmentation_context": 0.18,
     NONCONTEXT_MASK_LAYER_NAME: 1.0,
@@ -420,6 +447,7 @@ MANAGED_LAYER_DEFAULT_BLENDING = {
 }
 
 MANAGED_LAYER_DEFAULT_CONTOUR = {
+    ALL_CELLS_LAYER_NAME: 1,
     "classification_cohort": 1,
     "excluded_segmentation_context": 1,
     NONCONTEXT_MASK_LAYER_NAME: 0,
@@ -553,6 +581,7 @@ class NapariSBTController:
         self.QDialog = QDialog
         self.QDialogButtonBox = QDialogButtonBox
         self.QInputDialog = QInputDialog
+        self.QComboBox = QComboBox
         self.QColor = QColor
         self.QIcon = QIcon
         self.QPixmap = QPixmap
@@ -631,7 +660,15 @@ class NapariSBTController:
         self.current_image_paths: dict[str, Path] = {}
         self.explore_recipe = ExploreViewRecipe()
         self.explore_review_state = ExploreReviewState()
-        self.display_normalization: dict[str, float] = {}
+        self.publication_export_state = PublicationExportState()
+        self.publication_export_dialog = None
+        self.publication_batch: dict[str, object] | None = None
+        self._publication_export_running = False
+        self.display_normalization: dict[str, NimbusNormalizationParameters] = {}
+        self.variable_order_registry = VariableOrderRegistry()
+        self.variable_order_registry.set_adata(self.adata)
+        self._variable_order_combos: list[object] = []
+        self._syncing_variable_order = False
         self._workflow_tab_indices: dict[str, int] = {}
         self.population_qc_roi_buttons: dict[str, object] = {}
         self._mask_path_index: dict[str, Path] = {}
@@ -1073,9 +1110,10 @@ class NapariSBTController:
         )
         display_layout = QVBoxLayout(display_group)
         display_explanation = QLabel(
-            "Load a Nimbus channel-to-maximum JSON mapping or a CSV with Marker "
-            "and Value columns, then review or edit the Marker/Value table below. "
-            "Scalar images are "
+            "Load a Nimbus marker/Vmax/lower-threshold JSON or CSV, then review "
+            "or edit all three values below. Legacy marker-to-value JSON and "
+            "Marker/Value CSV files remain supported with a lower threshold of "
+            "zero. Scalar images are "
             "normalized to 0-1; the default contrast handles below are used only "
             "when a saved recipe has no channel-specific range."
         )
@@ -1085,7 +1123,7 @@ class NapariSBTController:
         normalization_source_layout.setContentsMargins(0, 0, 0, 0)
         self.normalization_edit = QLineEdit()
         self.normalization_edit.setPlaceholderText(
-            "Optional Nimbus normalization JSON or Marker/Value CSV"
+            "Optional Nimbus normalization CSV or legacy JSON"
         )
         self.choose_normalization_button = QPushButton("Choose...")
         self.load_normalization_button = QPushButton("Load into editor")
@@ -1098,8 +1136,10 @@ class NapariSBTController:
         normalization_source_layout.addWidget(self.normalization_edit, 1)
         normalization_source_layout.addWidget(self.choose_normalization_button)
         normalization_source_layout.addWidget(self.load_normalization_button)
-        self.normalization_table = QTableWidget(0, 2)
-        self.normalization_table.setHorizontalHeaderLabels(["Marker", "Value"])
+        self.normalization_table = QTableWidget(0, 3)
+        self.normalization_table.setHorizontalHeaderLabels(
+            ["Marker", "Vmax", "Lower threshold"]
+        )
         self.normalization_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.Stretch
         )
@@ -1368,6 +1408,7 @@ class NapariSBTController:
             "Blank selection means every channel discovered consistently by the worker."
         )
         channel_explanation.setWordWrap(True)
+        self.feature_variable_order_combo = self._create_variable_order_combo()
         self.feature_channel_list = QListWidget()
         self.feature_channel_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.feature_channel_list.setMaximumHeight(150)
@@ -1390,6 +1431,10 @@ class NapariSBTController:
         self.channels_edit.setReadOnly(True)
         self.channels_edit.setPlaceholderText("Every discovered channel")
         channel_layout.addWidget(channel_explanation)
+        feature_order_row = QHBoxLayout()
+        feature_order_row.addWidget(QLabel("Variable list order"))
+        feature_order_row.addWidget(self.feature_variable_order_combo, 1)
+        channel_layout.addLayout(feature_order_row)
         channel_layout.addWidget(self.feature_channel_list)
         channel_layout.addLayout(channel_actions)
         channel_layout.addWidget(self.channels_edit)
@@ -1697,11 +1742,24 @@ class NapariSBTController:
         self.previous_roi_button = QPushButton("Previous ROI")
         self.next_roi_button = QPushButton("Next ROI")
         self.reload_roi_button = QPushButton("Load ROI")
+        self.add_all_cells_mask_button = QPushButton("Add all-cells mask")
+        self.add_all_cells_mask_button.setToolTip(
+            "Add the complete original segmentation for the current ROI as the "
+            "editable-off 'all_cells' labels layer. This reuses the mask already "
+            "in memory and does not reload the ROI."
+        )
+        self.publication_export_button = QPushButton("Publication export…")
+        self.publication_export_button.setToolTip(
+            "Open reproducible framing, scale-bar, single-image, and bulk ROI "
+            "publication export controls for the current Explore view."
+        )
         roi_row.addWidget(self.previous_roi_button)
         roi_row.addWidget(QLabel("ROI"))
         roi_row.addWidget(self.roi_combo)
         roi_row.addWidget(self.next_roi_button)
         roi_row.addWidget(self.reload_roi_button)
+        roi_row.addWidget(self.add_all_cells_mask_button)
+        roi_row.addWidget(self.publication_export_button)
         explore_layout.addLayout(roi_row)
         roi_options_row = QHBoxLayout()
         self.show_empty_rois = QCheckBox("Include ROIs with no eligible cells")
@@ -1879,6 +1937,7 @@ class NapariSBTController:
         self.marker_overlay_list = QListWidget()
         self.marker_overlay_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.marker_overlay_list.setMaximumHeight(110)
+        self.explore_variable_order_combo = self._create_variable_order_combo()
         self.select_feature_marker_overlays_button = QPushButton(
             "Select feature markers"
         )
@@ -1898,6 +1957,9 @@ class NapariSBTController:
         overlay_form.addRow("Population", self.population_value_combo)
         overlay_form.addRow("Separate population layers", self.population_layer_list)
         overlay_form.addRow("", self.load_population_layers_button)
+        overlay_form.addRow(
+            "Variable list order", self.explore_variable_order_combo
+        )
         overlay_form.addRow("Cell-level marker overlays", self.marker_overlay_list)
         marker_overlay_actions = QWidget()
         marker_overlay_actions_layout = QHBoxLayout(marker_overlay_actions)
@@ -2013,6 +2075,12 @@ class NapariSBTController:
         )
         population_qc_selection_form.addRow(
             "Live recipe tracking", self.population_qc_live_recipe_tracking_check
+        )
+        self.population_qc_variable_order_combo = (
+            self._create_variable_order_combo()
+        )
+        population_qc_selection_form.addRow(
+            "Variable list order", self.population_qc_variable_order_combo
         )
         population_qc_layout.addWidget(population_qc_selection_group)
 
@@ -2206,6 +2274,8 @@ class NapariSBTController:
         self.curation_source_combo = QComboBox()
         self.curation_draft_combo = QComboBox()
         self.curation_derived_obs_edit = QLineEdit("population_curated")
+        self._curation_auto_obs_source: str | None = None
+        self._curation_auto_obs_value = "population_curated"
         self.curation_derived_obs_edit.setPlaceholderText(
             "For example: population_named"
         )
@@ -2511,6 +2581,8 @@ class NapariSBTController:
                 pass_signal_args=True,
             ),
             close_all_callback=self._guard(self.close_all_scanpy_plot_windows),
+            variable_order_combo_factory=self._create_variable_order_combo,
+            order_variables=self._ordered_variable_values,
         )
         add_tab(
             self.scanpy_plotting_panel.widget,
@@ -2627,6 +2699,11 @@ class NapariSBTController:
 
         maintenance_channels_page = QWidget()
         maintenance_channels_layout = QVBoxLayout(maintenance_channels_page)
+        maintenance_order_row = QHBoxLayout()
+        maintenance_order_row.addWidget(QLabel("Variable list order"))
+        self.maintenance_variable_order_combo = self._create_variable_order_combo()
+        maintenance_order_row.addWidget(self.maintenance_variable_order_combo, 1)
+        maintenance_channels_layout.addLayout(maintenance_order_row)
         maintenance_rename_group = workflow_group(
             "2. Rename variables and matching images",
             "dataset_maintenance",
@@ -4295,6 +4372,12 @@ class NapariSBTController:
             self._guard(self._roi_selection_changed, pass_signal_args=True)
         )
         self.reload_roi_button.clicked.connect(self._guard(self.load_roi))
+        self.add_all_cells_mask_button.clicked.connect(
+            self._guard(self.add_all_cells_mask)
+        )
+        self.publication_export_button.clicked.connect(
+            self._guard(self.show_publication_export)
+        )
         self.previous_roi_button.clicked.connect(lambda: self.move_roi(-1))
         self.next_roi_button.clicked.connect(lambda: self.move_roi(1))
         self.labeler_roi_combo.currentTextChanged.connect(
@@ -4679,7 +4762,10 @@ class NapariSBTController:
                     self.root, "napari_sbt", f"{type(exc).__name__}: {exc}"
                 )
                 return None
-            if monitor_ready and self._active_background_processes():
+            if monitor_ready and self.publication_batch is not None:
+                self.activity_waiting_for_process = True
+                self._activity_update("Publication bulk export is running.")
+            elif monitor_ready and self._active_background_processes():
                 self.activity_waiting_for_process = True
                 self._activity_update("Background Python process is running.")
             elif monitor_ready:
@@ -5827,6 +5913,7 @@ class NapariSBTController:
         self._clear_explore_layers()
         self._remove_layers(
             [
+                ALL_CELLS_LAYER_NAME,
                 "classification_cohort",
                 "excluded_segmentation_context",
                 NONCONTEXT_MASK_LAYER_NAME,
@@ -6496,39 +6583,47 @@ class NapariSBTController:
         self._refresh_population_qc_scope_banner()
         self.refresh_setup_readiness()
 
-    def _normalization_from_editor(self) -> dict[str, float]:
-        payload: dict[str, float] = {}
+    def _normalization_from_editor(
+        self,
+    ) -> dict[str, NimbusNormalizationParameters]:
+        payload: dict[str, object] = {}
         for row in range(self.normalization_table.rowCount()):
             marker_item = self.normalization_table.item(row, 0)
-            value_item = self.normalization_table.item(row, 1)
+            vmax_item = self.normalization_table.item(row, 1)
+            lower_item = self.normalization_table.item(row, 2)
             marker = marker_item.text().strip() if marker_item is not None else ""
-            value_text = value_item.text().strip() if value_item is not None else ""
-            if not marker and not value_text:
+            vmax_text = vmax_item.text().strip() if vmax_item is not None else ""
+            lower_text = lower_item.text().strip() if lower_item is not None else ""
+            if not marker and not vmax_text and not lower_text:
                 continue
-            if not marker or not value_text:
+            if not marker or not vmax_text:
                 raise ValueError(
-                    f"Normalization row {row + 1} requires both Marker and Value."
+                    f"Normalization row {row + 1} requires Marker and Vmax."
                 )
             if marker in payload:
                 raise ValueError(f"Normalization marker {marker!r} is duplicated.")
-            try:
-                payload[marker] = float(value_text)
-            except ValueError as exc:
-                raise ValueError(
-                    f"Normalization value for {marker!r} must be a number."
-                ) from exc
-        return prepare_normalization_dict(payload)
+            payload[marker] = {
+                "vmax": vmax_text,
+                "lower_threshold": lower_text or 0.0,
+            }
+        return prepare_normalization_parameters(payload)
 
-    def _set_normalization_table(self, mapping: dict[str, float]) -> None:
+    def _set_normalization_table(self, mapping: dict[str, object]) -> None:
+        parameters = prepare_normalization_parameters(mapping)
         self.normalization_table.blockSignals(True)
         try:
-            self.normalization_table.setRowCount(len(mapping))
-            for row, (marker, value) in enumerate(sorted(mapping.items())):
+            self.normalization_table.setRowCount(len(parameters))
+            for row, (marker, entry) in enumerate(sorted(parameters.items())):
                 self.normalization_table.setItem(
                     row, 0, self.QTableWidgetItem(str(marker))
                 )
                 self.normalization_table.setItem(
-                    row, 1, self.QTableWidgetItem(f"{float(value):g}")
+                    row, 1, self.QTableWidgetItem(f"{entry.vmax:g}")
+                )
+                self.normalization_table.setItem(
+                    row,
+                    2,
+                    self.QTableWidgetItem(f"{entry.lower_threshold:g}"),
                 )
         finally:
             self.normalization_table.blockSignals(False)
@@ -6539,6 +6634,7 @@ class NapariSBTController:
         self.normalization_table.insertRow(row)
         self.normalization_table.setItem(row, 0, self.QTableWidgetItem(""))
         self.normalization_table.setItem(row, 1, self.QTableWidgetItem(""))
+        self.normalization_table.setItem(row, 2, self.QTableWidgetItem("0"))
         self.normalization_table.setCurrentCell(row, 0)
         self.normalization_table.editItem(self.normalization_table.item(row, 0))
 
@@ -6553,7 +6649,9 @@ class NapariSBTController:
 
     def _sync_normalization_json_preview(self, *_args) -> None:
         try:
-            payload = self._normalization_from_editor()
+            payload = normalization_parameters_payload(
+                self._normalization_from_editor()
+            )
             text = json.dumps(payload, indent=2, sort_keys=True)
         except ValueError as exc:
             text = json.dumps({"needs_attention": str(exc)}, indent=2)
@@ -6574,7 +6672,7 @@ class NapariSBTController:
     def load_normalization_json(self) -> None:
         source = Path(self.normalization_edit.text().strip()).expanduser()
         try:
-            self.display_normalization = load_normalization_mapping(source)
+            self.display_normalization = load_normalization_parameters(source)
         except ValueError:
             # Early Setup workspaces persisted an empty editor as
             # {"normalization_dict": {}} and then failed while reopening it.
@@ -6590,9 +6688,14 @@ class NapariSBTController:
         self._set_normalization_table(self.display_normalization)
         self._clear_explore_layer_data_cache()
         if self.display_normalization:
+            lower_count = sum(
+                entry.lower_threshold > 0
+                for entry in self.display_normalization.values()
+            )
             self.normalization_status_label.setText(
-                f"Loaded {len(self.display_normalization):,} channel maxima from "
-                f"{source}. Save the workspace to create an experiment-backed copy."
+                f"Loaded {len(self.display_normalization):,} channel bounds from "
+                f"{source}; {lower_count:,} use a non-zero lower threshold. Save "
+                "the workspace to create an experiment-backed copy."
             )
         else:
             self.normalization_status_label.setText(
@@ -6604,9 +6707,13 @@ class NapariSBTController:
     def validate_normalization_editor(self) -> None:
         self.display_normalization = self._normalization_from_editor()
         self._clear_explore_layer_data_cache()
+        lower_count = sum(
+            entry.lower_threshold > 0 for entry in self.display_normalization.values()
+        )
         self.normalization_status_label.setText(
             f"Valid normalization mapping: {len(self.display_normalization):,} "
-            "channel maxima. Save it into the experiment to persist edits."
+            f"channel bounds; {lower_count:,} use a non-zero lower threshold. "
+            "Save it into the experiment to persist edits."
         )
         self._refresh_feature_normalization_summary()
 
@@ -6631,7 +6738,11 @@ class NapariSBTController:
         destination = root / "display" / "normalization.json"
         write_json(
             destination,
-            {"normalization_dict": self.display_normalization},
+            {
+                "normalization_dict": normalization_parameters_payload(
+                    self.display_normalization
+                )
+            },
         )
         self.normalization_edit.setText(str(destination))
         return str(destination)
@@ -6655,9 +6766,13 @@ class NapariSBTController:
         )
         self.manifest = updated
         self._clear_explore_layer_data_cache()
+        lower_count = sum(
+            entry.lower_threshold > 0 for entry in self.display_normalization.values()
+        )
         self.normalization_status_label.setText(
-            f"Saved {len(self.display_normalization):,} channel maxima and display "
-            f"defaults inside {self.paths.root / 'display'}."
+            f"Saved {len(self.display_normalization):,} channel bounds "
+            f"({lower_count:,} non-zero lower thresholds) and display defaults "
+            f"inside {self.paths.root / 'display'}."
         )
         self._refresh_feature_normalization_summary()
 
@@ -6665,10 +6780,14 @@ class NapariSBTController:
         if not hasattr(self, "feature_normalization_summary"):
             return
         source = self.normalization_edit.text().strip() or "none"
+        lower_count = sum(
+            entry.lower_threshold > 0 for entry in self.display_normalization.values()
+        )
         self.feature_normalization_summary.setText(
             f"Configured in Setup: {len(self.display_normalization):,} fixed "
-            f"channel maxima; source/copy: {source}. Unmatched channels use "
-            f"quantile {self.display_quantile_spin.value():.4f}."
+            f"channel bounds ({lower_count:,} non-zero lower thresholds); "
+            f"source/copy: {source}. Unmatched channels use quantile "
+            f"{self.display_quantile_spin.value():.4f}."
         )
         self.refresh_feature_readiness()
 
@@ -6885,9 +7004,123 @@ class NapariSBTController:
             "eventual classification target."
         )
 
+    def _create_variable_order_combo(self):
+        """Create one view onto the session-wide variable-order registry."""
+
+        combo = self.QComboBox()
+        for label, mode in VARIABLE_ORDER_OPTIONS:
+            combo.addItem(label, mode)
+        current = combo.findData(self.variable_order_registry.mode)
+        combo.setCurrentIndex(max(0, current))
+        combo.setToolTip(
+            "This is shared by every AnnData variable and image-channel list in "
+            "NapariSBT. Similarity uses the same expression clustering as the "
+            "matrix-plot ordering option and is cached for the live AnnData."
+        )
+        combo.currentIndexChanged.connect(
+            self._guard(
+                lambda source=combo: self._variable_order_changed(
+                    str(source.currentData())
+                )
+            )
+        )
+        self._variable_order_combos.append(combo)
+        return combo
+
+    def _ordered_variable_values(self, values: Iterable[object]) -> list[str]:
+        """Order marker/image display names against their canonical AnnData vars."""
+
+        display_values = list(dict.fromkeys(str(value) for value in values))
+        canonical_names: dict[str, str] = {}
+        aliases = self._channel_aliases() if self.adata is not None else {}
+        available = (
+            set(self.adata.var_names.astype(str)) if self.adata is not None else set()
+        )
+        for value in display_values:
+            base = value.split(" [", 1)[0]
+            if base in available:
+                canonical_names[value] = base
+                continue
+            key = self._normalise_marker_selection_name(base)
+            canonical = aliases.get(key)
+            if canonical is not None:
+                canonical_names[value] = str(canonical)
+        return self.variable_order_registry.ordered(
+            display_values,
+            canonical_names=canonical_names,
+        )
+
+    def _refresh_marker_overlay_list(self) -> None:
+        if not hasattr(self, "marker_overlay_list"):
+            return
+        selected = {
+            item.text() for item in self.marker_overlay_list.selectedItems()
+        }
+        self.marker_overlay_list.blockSignals(True)
+        self.marker_overlay_list.clear()
+        if self.adata is not None:
+            self.marker_overlay_list.addItems(
+                self._ordered_variable_values(self.adata.var_names.astype(str))
+            )
+        for index in range(self.marker_overlay_list.count()):
+            self.marker_overlay_list.item(index).setSelected(
+                self.marker_overlay_list.item(index).text() in selected
+            )
+        self.marker_overlay_list.blockSignals(False)
+
+    def _refresh_variable_ordered_controls(self) -> None:
+        """Reorder all variable selectors without reloading viewer layers or ROIs."""
+
+        self._refresh_marker_overlay_list()
+        if hasattr(self, "channel_list") and self.current_roi:
+            self.refresh_channel_list()
+        if hasattr(self, "feature_channel_list"):
+            self.refresh_feature_channel_choices()
+        if hasattr(self, "population_qc_marker_combos"):
+            self.refresh_population_qc_marker_choices()
+        if hasattr(self, "maintenance_var_rename_table"):
+            self._refresh_maintenance_controls()
+        if hasattr(self, "scanpy_plotting_panel"):
+            self.scanpy_plotting_panel.refresh_variable_order()
+
+    def _variable_order_changed(self, mode: str) -> None:
+        if self._syncing_variable_order:
+            return
+        self.variable_order_registry.set_mode(mode)
+        self._syncing_variable_order = True
+        try:
+            for combo in self._variable_order_combos:
+                index = combo.findData(mode)
+                if index >= 0 and combo.currentIndex() != index:
+                    blocked = combo.blockSignals(True)
+                    combo.setCurrentIndex(index)
+                    combo.blockSignals(blocked)
+        finally:
+            self._syncing_variable_order = False
+
+        working = mode == "similarity" and self.adata is not None
+        if working:
+            self._activity_begin(
+                "Ordering variables",
+                "Clustering adata.X variables by expression similarity once; the "
+                "result will be cached and shared by every variable list…",
+            )
+            self.QApplication.processEvents()
+        self._refresh_variable_ordered_controls()
+        label = next(
+            label for label, value in VARIABLE_ORDER_OPTIONS if value == mode
+        )
+        detail = f"Variable lists now use {label.lower()}."
+        if self.variable_order_registry.last_warning:
+            detail = self.variable_order_registry.last_warning
+        if working:
+            self._activity_finish(True, detail)
+        self.set_status(detail)
+
     def _populate_anndata_selectors(self, *, source: str) -> None:
         if self.adata is None:
             raise RuntimeError("No AnnData object is available.")
+        self.variable_order_registry.set_adata(self.adata)
         # Any live AnnData mutation can change observation or marker overlays.
         # Drop cached derived arrays before rebuilding their selectors.
         self._clear_explore_layer_data_cache()
@@ -6953,16 +7186,7 @@ class NapariSBTController:
                 combo.setCurrentText(preferred_value)
         for combo in selector_combos:
             combo.blockSignals(False)
-        selected_markers = {
-            item.text() for item in self.marker_overlay_list.selectedItems()
-        }
-        self.marker_overlay_list.clear()
-        self.marker_overlay_list.addItems(
-            [str(marker) for marker in self.adata.var_names]
-        )
-        for index in range(self.marker_overlay_list.count()):
-            item = self.marker_overlay_list.item(index)
-            item.setSelected(item.text() in selected_markers)
+        self._refresh_marker_overlay_list()
         self.refresh_scope_values()
         self.refresh_population_values()
         self.refresh_population_qc_populations()
@@ -7157,8 +7381,9 @@ class NapariSBTController:
                 logical = str(channel).split(" [", 1)[0]
                 image_counts[logical] = image_counts.get(logical, 0) + 1
         self.maintenance_var_rename_table.blockSignals(True)
-        self.maintenance_var_rename_table.setRowCount(self.adata.n_vars)
-        for row, variable in enumerate(self.adata.var_names.astype(str)):
+        variables = self._ordered_variable_values(self.adata.var_names.astype(str))
+        self.maintenance_var_rename_table.setRowCount(len(variables))
+        for row, variable in enumerate(variables):
             current_item = self.QTableWidgetItem(variable)
             current_item.setFlags(current_item.flags() & ~self.Qt.ItemIsEditable)
             renamed_item = self.QTableWidgetItem(prior_mapping.get(variable, ""))
@@ -7173,9 +7398,7 @@ class NapariSBTController:
             item.text() for item in self.maintenance_remove_vars_list.selectedItems()
         }
         self.maintenance_remove_vars_list.clear()
-        self.maintenance_remove_vars_list.addItems(
-            self.adata.var_names.astype(str).tolist()
-        )
+        self.maintenance_remove_vars_list.addItems(variables)
         for index in range(self.maintenance_remove_vars_list.count()):
             item = self.maintenance_remove_vars_list.item(index)
             item.setSelected(item.text() in selected_vars)
@@ -7394,7 +7617,7 @@ class NapariSBTController:
             )
 
     def _rename_live_channel_references(self, mapping: dict[str, str]) -> None:
-        renamed_normalization: dict[str, float] = {}
+        renamed_normalization: dict[str, NimbusNormalizationParameters] = {}
         for key, value in self.display_normalization.items():
             renamed_normalization[mapping.get(str(key), str(key))] = value
         self.display_normalization = renamed_normalization
@@ -8339,6 +8562,7 @@ class NapariSBTController:
         candidate_paths = population_workspace_paths(
             self._population_curation_root(), source_obs
         )
+        source_changed = self._curation_auto_obs_source != source_obs
         self.curation_draft_combo.blockSignals(True)
         self.curation_draft_combo.clear()
         if not candidate_paths.manifest.is_file():
@@ -8358,10 +8582,15 @@ class NapariSBTController:
                 "first naming draft to begin."
             )
             default_obs = f"{slugify(source_obs)}_named"
-            if not self.curation_derived_obs_edit.text().strip() or (
-                self.curation_derived_obs_edit.text().strip() == "population_curated"
+            current_obs = self.curation_derived_obs_edit.text().strip()
+            if (
+                source_changed
+                or not current_obs
+                or current_obs == self._curation_auto_obs_value
             ):
                 self.curation_derived_obs_edit.setText(default_obs)
+            self._curation_auto_obs_source = source_obs
+            self._curation_auto_obs_value = default_obs
             self.curation_draft_combo.blockSignals(False)
             self.refresh_population_provenance()
             self._refresh_population_naming_readiness()
@@ -8374,6 +8603,7 @@ class NapariSBTController:
         )
         self.population_workspace = workspace
         self.population_workspace_paths = workspace_paths
+        self._curation_auto_obs_source = source_obs
         drafts = list_population_drafts(workspace_paths)
         for draft in drafts:
             sync_state = population_draft_sync_state(self.adata, draft)
@@ -10854,6 +11084,7 @@ class NapariSBTController:
         ):
             if channel not in channels:
                 channels.append(channel)
+        channels = self._ordered_variable_values(channels)
         verified = set(discovered_channels)
         self.feature_channel_list.clear()
         for channel in channels:
@@ -11174,6 +11405,11 @@ class NapariSBTController:
         mismatches = []
         for actual, expected, label in (
             (
+                provenance.get("feature_extraction_contract_version"),
+                FEATURE_EXTRACTION_CONTRACT_VERSION,
+                "feature-extraction contract",
+            ),
+            (
                 provenance.get("experiment_id"),
                 self.manifest.experiment_id,
                 "experiment",
@@ -11484,6 +11720,12 @@ class NapariSBTController:
             self.load_existing_experiment(Path(selected))
 
     def load_existing_experiment(self, path: Path) -> None:
+        if self.publication_batch is not None:
+            raise ValueError(
+                "Cancel the active publication bulk export before changing workspace."
+            )
+        if self.publication_export_dialog is not None:
+            self.publication_export_dialog.hide()
         self.manifest, self.paths = load_experiment(path)
         # A workspace can share ROI names with the previously open workspace.
         # Reset the loaded-ROI identity so its first ROI is always a real load,
@@ -11494,6 +11736,7 @@ class NapariSBTController:
         self.current_mask_path = None
         self.current_image_paths.clear()
         self._clear_explore_layers()
+        self._remove_layers([ALL_CELLS_LAYER_NAME])
         self._clear_explore_layer_data_cache()
         self._loaded_workspace_root = self.paths.root
         self._launch_experiment = self.paths.root
@@ -11771,6 +12014,7 @@ class NapariSBTController:
         else:
             self.reviewed_rois = set()
         self._load_explore_review_state()
+        self._load_publication_export_state()
         if self._in_memory_adata is not None:
             if "obs_name" in self.cohort:
                 frozen_names = set(self.cohort["obs_name"].astype(str))
@@ -12391,6 +12635,39 @@ class NapariSBTController:
             return None
         return self.paths.root / "explore" / "review_state.json"
 
+    def _publication_export_state_path(self) -> Path | None:
+        if self.paths is None:
+            return None
+        return self.paths.root / "explore" / "publication_export_presets.json"
+
+    def _load_publication_export_state(self) -> None:
+        """Load the cold publication-preset catalogue for this workspace."""
+
+        self.publication_export_state = PublicationExportState()
+        state_path = self._publication_export_state_path()
+        if state_path is None or not state_path.is_file():
+            return
+        try:
+            self.publication_export_state = PublicationExportState.model_validate(
+                json.loads(state_path.read_text(encoding="utf-8"))
+            )
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            self.set_status(
+                "Publication export presets could not be loaded; the saved file "
+                f"was left untouched: {error}"
+            )
+
+    def _save_publication_export_state(self) -> None:
+        state_path = self._publication_export_state_path()
+        if state_path is None:
+            raise ValueError(
+                "Create or load a workflow workspace before saving publication presets."
+            )
+        write_json(
+            state_path,
+            self.publication_export_state.model_dump(mode="json"),
+        )
+
     def _sync_population_qc_contour_control(self) -> None:
         if not hasattr(self, "population_qc_contour_spin"):
             return
@@ -12641,6 +12918,12 @@ class NapariSBTController:
         )
 
     def _activate_recipe_preset(self, preset_id: str, *, source: str) -> None:
+        if self._publication_export_running:
+            self.set_status(
+                "Publication bulk export is using a frozen recipe; recipe switching "
+                "is available again when the batch finishes or is cancelled."
+            )
+            return
         preset = self.explore_review_state.recipe_presets.get(str(preset_id))
         if preset is None:
             raise ValueError("The requested Explore recipe no longer exists.")
@@ -12879,6 +13162,10 @@ class NapariSBTController:
         self, name: str, default: str | None = None
     ) -> str | None:
         spec = self.explore_recipe.layer_colormap_specs.get(name)
+        if spec and spec.get("kind") == "categorical_labels":
+            colours = spec.get("colours", {})
+            if isinstance(colours, dict) and colours:
+                return f"{len(colours)} saved category colours"
         if spec and spec.get("kind") == "direct_labels":
             colours = [
                 value
@@ -13016,16 +13303,21 @@ class NapariSBTController:
                 recipe.layer_contrast_limits,
             )
             for name, description in MANAGED_RECIPE_LAYERS.items():
-                relevant = name not in classifier_names | labeler_names
-                relevant |= name in classifier_names and mode in {
-                    "classification",
-                    "full_workspace",
-                }
-                relevant |= name in labeler_names and mode in {
-                    "cell_labeling",
-                    "full_workspace",
-                }
-                relevant |= name in configured_names or name in self.viewer.layers
+                if name == ALL_CELLS_LAYER_NAME:
+                    relevant = (
+                        name in configured_names or name in self.viewer.layers
+                    )
+                else:
+                    relevant = name not in classifier_names | labeler_names
+                    relevant |= name in classifier_names and mode in {
+                        "classification",
+                        "full_workspace",
+                    }
+                    relevant |= name in labeler_names and mode in {
+                        "cell_labeling",
+                        "full_workspace",
+                    }
+                    relevant |= name in configured_names or name in self.viewer.layers
                 if not relevant:
                     continue
                 entries.append(
@@ -13354,6 +13646,9 @@ class NapariSBTController:
         colormap = getattr(layer, "colormap", None)
         if colormap is None:
             return None
+        categorical_spec = self._categorical_layer_colormap_spec(layer)
+        if categorical_spec is not None:
+            return categorical_spec
         try:
             from napari.utils.colormaps import CyclicLabelColormap
         except ImportError:  # pragma: no cover - guarded by the GUI dependency
@@ -14061,6 +14356,13 @@ class NapariSBTController:
         if not current or not desired or current.get("kind") != desired.get("kind"):
             return False
         try:
+            if current["kind"] == "categorical_labels":
+                current_colours = current.get("colours", {})
+                desired_colours = desired.get("colours", {})
+                return set(current_colours) == set(desired_colours) and all(
+                    np.allclose(current_colours[key], desired_colours[key])
+                    for key in current_colours
+                )
             if current["kind"] == "direct_labels":
                 current_colours = current.get("colours", {})
                 desired_colours = desired.get("colours", {})
@@ -14424,6 +14726,8 @@ class NapariSBTController:
     def _roi_selection_changed(self, roi: str) -> None:
         """Load only when the ROI selector's biological identity changed."""
 
+        if self._publication_export_running:
+            return
         roi = str(roi).strip()
         if not roi:
             return
@@ -14446,6 +14750,43 @@ class NapariSBTController:
         self.current_roi = roi
         self.current_mask = full_mask
         self.current_mask_path = mask_path
+        configured_layer_names = set().union(
+            self.explore_recipe.layer_colormaps,
+            self.explore_recipe.layer_colormap_specs,
+            self.explore_recipe.layer_visibility,
+            self.explore_recipe.layer_opacities,
+            self.explore_recipe.layer_contours,
+            self.explore_recipe.layer_contrast_limits,
+        )
+        all_cells_present = ALL_CELLS_LAYER_NAME in self.viewer.layers
+        if all_cells_present or ALL_CELLS_LAYER_NAME in configured_layer_names:
+            if all_cells_present:
+                all_cells_layer = self._replace_layer(
+                    ALL_CELLS_LAYER_NAME,
+                    full_mask,
+                    "labels",
+                )
+            else:
+                all_cells_layer = self._replace_layer(
+                    ALL_CELLS_LAYER_NAME,
+                    full_mask,
+                    "labels",
+                    visible=self.explore_recipe.layer_visibility.get(
+                        ALL_CELLS_LAYER_NAME,
+                        MANAGED_LAYER_DEFAULT_VISIBILITY[ALL_CELLS_LAYER_NAME],
+                    ),
+                    opacity=self.explore_recipe.layer_opacities.get(
+                        ALL_CELLS_LAYER_NAME,
+                        MANAGED_LAYER_DEFAULT_OPACITY[ALL_CELLS_LAYER_NAME],
+                    ),
+                )
+                self._set_label_contour_from_recipe(
+                    all_cells_layer,
+                    ALL_CELLS_LAYER_NAME,
+                    MANAGED_LAYER_DEFAULT_CONTOUR[ALL_CELLS_LAYER_NAME],
+                )
+            if hasattr(all_cells_layer, "editable"):
+                all_cells_layer.editable = False
         self.current_selected_object = None
         self.current_labeler_object = None
         self.cell_properties_selected_object = None
@@ -14564,6 +14905,1776 @@ class NapariSBTController:
     def toggle_context(self, checked: bool) -> None:
         if "excluded_segmentation_context" in self.viewer.layers:
             self.viewer.layers["excluded_segmentation_context"].visible = checked
+
+    def add_all_cells_mask(self) -> None:
+        """Show the complete original segmentation already loaded for this ROI."""
+
+        if self.current_mask is None or not self.current_roi:
+            raise ValueError("Load an ROI before adding its all-cells mask.")
+        layer = self._replace_layer(
+            ALL_CELLS_LAYER_NAME,
+            self.current_mask,
+            "labels",
+            visible=True,
+            opacity=self.explore_recipe.layer_opacities.get(
+                ALL_CELLS_LAYER_NAME,
+                MANAGED_LAYER_DEFAULT_OPACITY[ALL_CELLS_LAYER_NAME],
+            ),
+        )
+        self._set_label_contour_from_recipe(
+            layer,
+            ALL_CELLS_LAYER_NAME,
+            MANAGED_LAYER_DEFAULT_CONTOUR[ALL_CELLS_LAYER_NAME],
+        )
+        if hasattr(layer, "editable"):
+            layer.editable = False
+        self.viewer.layers.selection.active = layer
+        if self._recipe_tracking_enabled():
+            self._record_layer_display_state(layer)
+        else:
+            self._refresh_reload_recipe_list()
+        self.set_status(
+            f"Added the complete original segmentation for ROI {self.current_roi!r} "
+            "as the 'all_cells' labels layer without reloading the ROI."
+        )
+
+    def show_publication_export(self) -> None:
+        """Open the modeless, reproducible publication-image export window."""
+
+        if self.paths is None or self.manifest is None:
+            raise ValueError(
+                "Create or load a workflow workspace before exporting images."
+            )
+        if self.current_mask is None or not self.current_roi:
+            raise ValueError("Load an ROI before opening publication export.")
+        if self.publication_export_dialog is not None:
+            self._refresh_publication_export_controls()
+            self.publication_export_dialog.show()
+            self.publication_export_dialog.raise_()
+            self.publication_export_dialog.activateWindow()
+            return
+
+        from qtpy.QtWidgets import (
+            QAbstractItemView,
+            QCheckBox,
+            QComboBox,
+            QDialog,
+            QDoubleSpinBox,
+            QFormLayout,
+            QGroupBox,
+            QHBoxLayout,
+            QLabel,
+            QLineEdit,
+            QListWidget,
+            QProgressBar,
+            QPushButton,
+            QSpinBox,
+            QTabWidget,
+            QVBoxLayout,
+            QWidget,
+        )
+
+        dialog = QDialog(self.root)
+        dialog.setWindowTitle("NapariSBT publication image export")
+        dialog.setModal(False)
+        dialog.resize(980, 780)
+        layout = QVBoxLayout(dialog)
+        intro = QLabel(
+            "Create a frozen, reproducible composition from an Explore recipe. "
+            "Output size and field of view are independent of the current monitor "
+            "or dock layout; original images and masks are never modified."
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+        top_actions = QHBoxLayout()
+        top_actions.addStretch(1)
+        help_button = QPushButton("❓ Publication export help")
+        help_button.setObjectName("sbtTabHelpButton")
+        help_button.clicked.connect(
+            lambda: self.show_help(
+                "explore",
+                "Publication image export",
+                section="Publication image export",
+            )
+        )
+        top_actions.addWidget(help_button)
+        layout.addLayout(top_actions)
+
+        tabs = QTabWidget()
+        layout.addWidget(tabs, 1)
+
+        def publication_help_button():
+            button = QPushButton("❓ Help")
+            button.setObjectName("sbtBoxHelpButton")
+            button.setToolTip("Open instructions for the publication export workflow.")
+            button.clicked.connect(
+                lambda: self.show_help(
+                    "explore",
+                    "Publication image export",
+                    section="Publication image export",
+                )
+            )
+            return button
+
+        # View and recipe tab.
+        view_tab = QWidget()
+        view_layout = QVBoxLayout(view_tab)
+        recipe_group = QGroupBox("1. Recipe and reusable publication preset")
+        recipe_form = QFormLayout(recipe_group)
+        recipe_form.addRow("", publication_help_button())
+        self.publication_recipe_combo = QComboBox()
+        self.publication_preset_combo = QComboBox()
+        self.publication_preset_name_edit = QLineEdit()
+        self.publication_preset_name_edit.setPlaceholderText(
+            "e.g. Myeloid whole-ROI panel"
+        )
+        preset_actions = QWidget()
+        preset_actions_layout = QHBoxLayout(preset_actions)
+        preset_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.publication_save_preset_button = QPushButton("Save as new preset")
+        self.publication_update_preset_button = QPushButton("Update selected")
+        self.publication_delete_preset_button = QPushButton("Delete selected…")
+        preset_actions_layout.addWidget(self.publication_save_preset_button)
+        preset_actions_layout.addWidget(self.publication_update_preset_button)
+        preset_actions_layout.addWidget(self.publication_delete_preset_button)
+        recipe_form.addRow("Explore recipe", self.publication_recipe_combo)
+        recipe_form.addRow("Saved publication preset", self.publication_preset_combo)
+        recipe_form.addRow("Preset name", self.publication_preset_name_edit)
+        recipe_form.addRow("", preset_actions)
+        view_layout.addWidget(recipe_group)
+
+        frame_group = QGroupBox("2. Exact frame and field of view")
+        frame_form = QFormLayout(frame_group)
+        frame_form.addRow("", publication_help_button())
+        self.publication_frame_mode_combo = QComboBox()
+        self.publication_frame_mode_combo.addItem("Current Napari viewport", "current_view")
+        self.publication_frame_mode_combo.addItem("Entire ROI", "full_roi")
+        self.publication_frame_mode_combo.addItem("Fixed centre and field of view", "fixed")
+        self.publication_aspect_combo = QComboBox()
+        self.publication_aspect_combo.addItem("Crop to output aspect", "crop")
+        self.publication_aspect_combo.addItem("Pad field to output aspect", "pad")
+        self.publication_center_y_spin = QDoubleSpinBox()
+        self.publication_center_x_spin = QDoubleSpinBox()
+        self.publication_field_height_spin = QDoubleSpinBox()
+        self.publication_field_width_spin = QDoubleSpinBox()
+        for spin in (
+            self.publication_center_y_spin,
+            self.publication_center_x_spin,
+            self.publication_field_height_spin,
+            self.publication_field_width_spin,
+        ):
+            spin.setRange(-1_000_000_000, 1_000_000_000)
+            spin.setDecimals(3)
+        self.publication_field_height_spin.setMinimum(0.001)
+        self.publication_field_width_spin.setMinimum(0.001)
+        frame_actions = QWidget()
+        frame_actions_layout = QHBoxLayout(frame_actions)
+        frame_actions_layout.setContentsMargins(0, 0, 0, 0)
+        self.publication_capture_view_button = QPushButton("Capture current viewport")
+        self.publication_use_rectangle_button = QPushButton("Use selected Shapes rectangle")
+        self.publication_preview_frame_button = QPushButton("Preview frame in viewer")
+        frame_actions_layout.addWidget(self.publication_capture_view_button)
+        frame_actions_layout.addWidget(self.publication_use_rectangle_button)
+        frame_actions_layout.addWidget(self.publication_preview_frame_button)
+        frame_form.addRow("Frame source", self.publication_frame_mode_combo)
+        frame_form.addRow("Aspect handling", self.publication_aspect_combo)
+        frame_form.addRow("Centre Y", self.publication_center_y_spin)
+        frame_form.addRow("Centre X", self.publication_center_x_spin)
+        frame_form.addRow("Field height (source pixels)", self.publication_field_height_spin)
+        frame_form.addRow("Field width (source pixels)", self.publication_field_width_spin)
+        frame_form.addRow("", frame_actions)
+        self.publication_frame_summary = QLabel()
+        self.publication_frame_summary.setWordWrap(True)
+        frame_form.addRow("Resolved frame", self.publication_frame_summary)
+        view_layout.addWidget(frame_group)
+        view_layout.addStretch(1)
+        tabs.addTab(view_tab, "View & recipe")
+
+        # Scale bar and annotation tab.
+        appearance_tab = QWidget()
+        appearance_layout = QVBoxLayout(appearance_tab)
+        calibration_group = QGroupBox("3. Physical calibration and scale bar")
+        calibration_form = QFormLayout(calibration_group)
+        calibration_form.addRow("", publication_help_button())
+        self.publication_calibration_confirmed_check = QCheckBox(
+            "I have verified this image-pixel calibration"
+        )
+        self.publication_pixel_x_spin = QDoubleSpinBox()
+        self.publication_pixel_y_spin = QDoubleSpinBox()
+        for spin in (self.publication_pixel_x_spin, self.publication_pixel_y_spin):
+            spin.setRange(0.000001, 1_000_000)
+            spin.setDecimals(6)
+            spin.setValue(1.0)
+        self.publication_unit_edit = QLineEdit("µm")
+        self.publication_detect_calibration_button = QPushButton(
+            "Detect from current TIFF metadata"
+        )
+        self.publication_scale_visible_check = QCheckBox("Draw scale bar")
+        self.publication_scale_visible_check.setChecked(False)
+        self.publication_scale_mode_combo = QComboBox()
+        self.publication_scale_mode_combo.addItem("Automatic nice length", "auto")
+        self.publication_scale_mode_combo.addItem("Fixed physical length", "fixed")
+        self.publication_scale_length_spin = QDoubleSpinBox()
+        self.publication_scale_length_spin.setRange(0.000001, 1_000_000_000)
+        self.publication_scale_length_spin.setDecimals(4)
+        self.publication_scale_length_spin.setValue(50.0)
+        self.publication_scale_fraction_spin = QDoubleSpinBox()
+        self.publication_scale_fraction_spin.setRange(5.0, 50.0)
+        self.publication_scale_fraction_spin.setSuffix(" % of image width")
+        self.publication_scale_fraction_spin.setValue(20.0)
+        self.publication_scale_position_combo = QComboBox()
+        for label, value in (
+            ("Bottom right", "bottom_right"),
+            ("Bottom left", "bottom_left"),
+            ("Top right", "top_right"),
+            ("Top left", "top_left"),
+        ):
+            self.publication_scale_position_combo.addItem(label, value)
+        self.publication_scale_colour_edit = QLineEdit("#ffffff")
+        self.publication_scale_box_colour_edit = QLineEdit("#000000a6")
+        colour_row = QWidget()
+        colour_layout = QHBoxLayout(colour_row)
+        colour_layout.setContentsMargins(0, 0, 0, 0)
+        self.publication_scale_colour_button = QPushButton("Bar/text colour…")
+        self.publication_scale_box_colour_button = QPushButton("Box colour…")
+        colour_layout.addWidget(self.publication_scale_colour_edit)
+        colour_layout.addWidget(self.publication_scale_colour_button)
+        colour_layout.addWidget(self.publication_scale_box_colour_edit)
+        colour_layout.addWidget(self.publication_scale_box_colour_button)
+        self.publication_scale_thickness_spin = QSpinBox()
+        self.publication_scale_thickness_spin.setRange(1, 100)
+        self.publication_scale_thickness_spin.setValue(5)
+        self.publication_scale_font_spin = QSpinBox()
+        self.publication_scale_font_spin.setRange(6, 300)
+        self.publication_scale_font_spin.setValue(28)
+        self.publication_scale_margin_spin = QSpinBox()
+        self.publication_scale_margin_spin.setRange(0, 1000)
+        self.publication_scale_margin_spin.setValue(30)
+        self.publication_scale_ticks_check = QCheckBox("End ticks")
+        self.publication_scale_ticks_check.setChecked(True)
+        self.publication_scale_box_check = QCheckBox("Translucent background box")
+        self.publication_scale_box_check.setChecked(True)
+        calibration_form.addRow("Calibration", self.publication_calibration_confirmed_check)
+        calibration_form.addRow("Physical size per pixel — X", self.publication_pixel_x_spin)
+        calibration_form.addRow("Physical size per pixel — Y", self.publication_pixel_y_spin)
+        calibration_form.addRow("Unit", self.publication_unit_edit)
+        calibration_form.addRow("", self.publication_detect_calibration_button)
+        calibration_form.addRow("Scale bar", self.publication_scale_visible_check)
+        calibration_form.addRow("Length", self.publication_scale_mode_combo)
+        calibration_form.addRow("Fixed length", self.publication_scale_length_spin)
+        calibration_form.addRow("Automatic target", self.publication_scale_fraction_spin)
+        calibration_form.addRow("Position", self.publication_scale_position_combo)
+        calibration_form.addRow("Colours", colour_row)
+        calibration_form.addRow("Line thickness (output px)", self.publication_scale_thickness_spin)
+        calibration_form.addRow("Font size (output px)", self.publication_scale_font_spin)
+        calibration_form.addRow("Edge margin (output px)", self.publication_scale_margin_spin)
+        calibration_form.addRow("Style", self.publication_scale_ticks_check)
+        calibration_form.addRow("", self.publication_scale_box_check)
+        appearance_layout.addWidget(calibration_group)
+
+        annotation_group = QGroupBox("4. Optional image annotations")
+        annotation_form = QFormLayout(annotation_group)
+        annotation_form.addRow("", publication_help_button())
+        self.publication_show_roi_check = QCheckBox("Include ROI name")
+        self.publication_show_channels_check = QCheckBox("Include channel names")
+        self.publication_title_edit = QLineEdit()
+        self.publication_annotation_position_combo = QComboBox()
+        for label, value in (
+            ("Top left", "top_left"),
+            ("Top right", "top_right"),
+            ("Bottom left", "bottom_left"),
+            ("Bottom right", "bottom_right"),
+        ):
+            self.publication_annotation_position_combo.addItem(label, value)
+        self.publication_annotation_font_spin = QSpinBox()
+        self.publication_annotation_font_spin.setRange(6, 300)
+        self.publication_annotation_font_spin.setValue(28)
+        annotation_form.addRow("ROI", self.publication_show_roi_check)
+        annotation_form.addRow("Channels", self.publication_show_channels_check)
+        annotation_form.addRow("Custom title", self.publication_title_edit)
+        annotation_form.addRow("Position", self.publication_annotation_position_combo)
+        annotation_form.addRow("Font size (output px)", self.publication_annotation_font_spin)
+        appearance_layout.addWidget(annotation_group)
+        appearance_layout.addStretch(1)
+        tabs.addTab(appearance_tab, "Scale bar & labels")
+
+        # Output and batch tab.
+        output_tab = QWidget()
+        output_layout = QVBoxLayout(output_tab)
+        output_group = QGroupBox("5. Output size and files")
+        output_form = QFormLayout(output_group)
+        output_form.addRow("", publication_help_button())
+        self.publication_width_spin = QSpinBox()
+        self.publication_height_spin = QSpinBox()
+        for spin in (self.publication_width_spin, self.publication_height_spin):
+            spin.setRange(128, 30000)
+        self.publication_width_spin.setValue(2400)
+        self.publication_height_spin.setValue(1800)
+        self.publication_supersampling_combo = QComboBox()
+        self.publication_supersampling_combo.addItem("1× (fast)", 1)
+        self.publication_supersampling_combo.addItem("2×", 2)
+        self.publication_supersampling_combo.addItem("4×", 4)
+        self.publication_format_combo = QComboBox()
+        self.publication_format_combo.addItem("PNG — recommended", "png")
+        self.publication_format_combo.addItem("TIFF — lossless", "tiff")
+        self.publication_format_combo.addItem("JPEG — lossy", "jpeg")
+        self.publication_dpi_spin = QSpinBox()
+        self.publication_dpi_spin.setRange(30, 2400)
+        self.publication_dpi_spin.setValue(300)
+        self.publication_filename_edit = QLineEdit(DEFAULT_FILENAME_TEMPLATE)
+        self.publication_output_folder_edit = QLineEdit()
+        output_folder_row = QWidget()
+        output_folder_layout = QHBoxLayout(output_folder_row)
+        output_folder_layout.setContentsMargins(0, 0, 0, 0)
+        self.publication_choose_folder_button = QPushButton("Choose…")
+        output_folder_layout.addWidget(self.publication_output_folder_edit, 1)
+        output_folder_layout.addWidget(self.publication_choose_folder_button)
+        self.publication_conflict_combo = QComboBox()
+        self.publication_conflict_combo.addItem("Resume: skip exact matching outputs", "resume")
+        self.publication_conflict_combo.addItem("Create a versioned filename", "version")
+        self.publication_conflict_combo.addItem("Overwrite existing files", "overwrite")
+        self.publication_filename_preview = QLabel()
+        self.publication_filename_preview.setWordWrap(True)
+        self.publication_print_size_label = QLabel()
+        self.publication_print_size_label.setWordWrap(True)
+        output_form.addRow("Width (pixels)", self.publication_width_spin)
+        output_form.addRow("Height (pixels)", self.publication_height_spin)
+        output_form.addRow("Supersampling", self.publication_supersampling_combo)
+        output_form.addRow("Format", self.publication_format_combo)
+        output_form.addRow("DPI metadata", self.publication_dpi_spin)
+        output_form.addRow("Filename template", self.publication_filename_edit)
+        output_form.addRow("Output folder", output_folder_row)
+        output_form.addRow("Existing files", self.publication_conflict_combo)
+        output_form.addRow("Filename preview", self.publication_filename_preview)
+        output_form.addRow("Estimated print size", self.publication_print_size_label)
+        output_layout.addWidget(output_group)
+
+        bulk_group = QGroupBox("6. Current ROI or reproducible bulk export")
+        bulk_layout = QVBoxLayout(bulk_group)
+        bulk_help_row = QHBoxLayout()
+        bulk_help_row.addStretch(1)
+        bulk_help_row.addWidget(publication_help_button())
+        bulk_layout.addLayout(bulk_help_row)
+        bulk_help = QLabel(
+            "Select ROIs below. Bulk export uses one frozen recipe and processes "
+            "ROIs sequentially so Napari/OpenGL rendering remains safe."
+        )
+        bulk_help.setWordWrap(True)
+        self.publication_roi_list = QListWidget()
+        self.publication_roi_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.publication_roi_list.setMaximumHeight(180)
+        roi_actions = QHBoxLayout()
+        self.publication_select_all_rois_button = QPushButton("Select all")
+        self.publication_select_current_roi_button = QPushButton("Select current")
+        self.publication_clear_rois_button = QPushButton("Clear selection")
+        roi_actions.addWidget(self.publication_select_all_rois_button)
+        roi_actions.addWidget(self.publication_select_current_roi_button)
+        roi_actions.addWidget(self.publication_clear_rois_button)
+        export_actions = QHBoxLayout()
+        self.publication_render_preview_button = QPushButton("Render preview")
+        self.publication_export_current_button = QPushButton("Export current ROI")
+        self.publication_export_bulk_button = QPushButton("Preflight and bulk export…")
+        self.publication_cancel_button = QPushButton("Cancel bulk export")
+        self.publication_cancel_button.setEnabled(False)
+        export_actions.addWidget(self.publication_render_preview_button)
+        export_actions.addWidget(self.publication_export_current_button)
+        export_actions.addWidget(self.publication_export_bulk_button)
+        export_actions.addWidget(self.publication_cancel_button)
+        self.publication_progress_bar = QProgressBar()
+        self.publication_progress_bar.setRange(0, 1)
+        self.publication_progress_label = QLabel("No export is running.")
+        self.publication_progress_label.setWordWrap(True)
+        bulk_layout.addWidget(bulk_help)
+        bulk_layout.addWidget(self.publication_roi_list)
+        bulk_layout.addLayout(roi_actions)
+        bulk_layout.addLayout(export_actions)
+        bulk_layout.addWidget(self.publication_progress_bar)
+        bulk_layout.addWidget(self.publication_progress_label)
+        output_layout.addWidget(bulk_group)
+        output_layout.addStretch(1)
+        tabs.addTab(output_tab, "Output & bulk")
+
+        close_row = QHBoxLayout()
+        close_row.addStretch(1)
+        close_button = QPushButton("Close")
+        close_button.clicked.connect(dialog.hide)
+        close_row.addWidget(close_button)
+        layout.addLayout(close_row)
+
+        self.publication_export_dialog = dialog
+
+        # Dialog-local signals deliberately do not touch ROI loading unless an
+        # explicit preview/export button is pressed.
+        self.publication_preset_combo.currentIndexChanged.connect(
+            self._load_selected_publication_preset
+        )
+        self.publication_save_preset_button.clicked.connect(
+            self._guard(self.save_new_publication_preset)
+        )
+        self.publication_update_preset_button.clicked.connect(
+            self._guard(self.update_selected_publication_preset)
+        )
+        self.publication_delete_preset_button.clicked.connect(
+            self._guard(self.delete_selected_publication_preset)
+        )
+        self.publication_capture_view_button.clicked.connect(
+            self._guard(self.capture_publication_view)
+        )
+        self.publication_use_rectangle_button.clicked.connect(
+            self._guard(self.capture_publication_rectangle)
+        )
+        self.publication_preview_frame_button.clicked.connect(
+            self._guard(self.preview_publication_frame)
+        )
+        self.publication_scale_colour_button.clicked.connect(
+            lambda: self._pick_publication_colour(self.publication_scale_colour_edit)
+        )
+        self.publication_detect_calibration_button.clicked.connect(
+            self._guard(self.detect_publication_calibration)
+        )
+        self.publication_scale_box_colour_button.clicked.connect(
+            lambda: self._pick_publication_colour(
+                self.publication_scale_box_colour_edit,
+                allow_alpha=True,
+            )
+        )
+        self.publication_choose_folder_button.clicked.connect(
+            self._guard(self.choose_publication_output_folder)
+        )
+        self.publication_select_all_rois_button.clicked.connect(
+            self.publication_roi_list.selectAll
+        )
+        self.publication_select_current_roi_button.clicked.connect(
+            self._select_current_publication_roi
+        )
+        self.publication_clear_rois_button.clicked.connect(
+            self.publication_roi_list.clearSelection
+        )
+        self.publication_export_current_button.clicked.connect(
+            self._guard(self.export_current_publication_image)
+        )
+        self.publication_render_preview_button.clicked.connect(
+            self._guard(self.render_publication_preview)
+        )
+        self.publication_export_bulk_button.clicked.connect(
+            self.start_publication_bulk_export
+        )
+        self.publication_cancel_button.clicked.connect(
+            self.cancel_publication_bulk_export
+        )
+        for control in (
+            self.publication_recipe_combo,
+            self.publication_frame_mode_combo,
+            self.publication_aspect_combo,
+            self.publication_scale_mode_combo,
+            self.publication_scale_position_combo,
+            self.publication_supersampling_combo,
+            self.publication_format_combo,
+            self.publication_annotation_position_combo,
+        ):
+            control.currentIndexChanged.connect(
+                self._publication_export_controls_changed
+            )
+        for control in (
+            self.publication_center_y_spin,
+            self.publication_center_x_spin,
+            self.publication_field_height_spin,
+            self.publication_field_width_spin,
+            self.publication_pixel_x_spin,
+            self.publication_pixel_y_spin,
+            self.publication_scale_length_spin,
+            self.publication_scale_fraction_spin,
+            self.publication_scale_thickness_spin,
+            self.publication_scale_font_spin,
+            self.publication_scale_margin_spin,
+            self.publication_annotation_font_spin,
+            self.publication_width_spin,
+            self.publication_height_spin,
+            self.publication_dpi_spin,
+        ):
+            control.valueChanged.connect(self._publication_export_controls_changed)
+        for control in (
+            self.publication_preset_name_edit,
+            self.publication_unit_edit,
+            self.publication_scale_colour_edit,
+            self.publication_scale_box_colour_edit,
+            self.publication_title_edit,
+            self.publication_filename_edit,
+            self.publication_output_folder_edit,
+        ):
+            control.textChanged.connect(self._publication_export_controls_changed)
+        for control in (
+            self.publication_calibration_confirmed_check,
+            self.publication_scale_visible_check,
+            self.publication_scale_ticks_check,
+            self.publication_scale_box_check,
+            self.publication_show_roi_check,
+            self.publication_show_channels_check,
+        ):
+            control.toggled.connect(self._publication_export_controls_changed)
+
+        self._capture_current_recipe_display_state()
+        self._refresh_publication_export_controls()
+        if (
+            self.publication_preset_combo.currentData()
+            not in self.publication_export_state.presets
+        ):
+            initial_frame = self._current_publication_camera_frame()
+            self.publication_center_y_spin.setValue(initial_frame.center_y)
+            self.publication_center_x_spin.setValue(initial_frame.center_x)
+            self.publication_field_height_spin.setValue(initial_frame.field_height)
+            self.publication_field_width_spin.setValue(initial_frame.field_width)
+            self.publication_frame_mode_combo.setCurrentIndex(
+                self.publication_frame_mode_combo.findData("current_view")
+            )
+        self._publication_export_controls_changed()
+        dialog.show()
+
+    def _publication_canvas_size(self) -> tuple[float, float]:
+        canvas = getattr(
+            getattr(getattr(self.viewer, "window", None), "_qt_viewer", None),
+            "canvas",
+            None,
+        )
+        size = getattr(canvas, "size", None)
+        if size is None or len(size) != 2:
+            raise ValueError("Napari canvas dimensions are not available.")
+        return float(size[0]), float(size[1])
+
+    def _current_publication_camera_frame(self) -> ResolvedPublicationFrame:
+        width, height = self._publication_canvas_size()
+        return camera_frame_from_canvas(
+            center=tuple(self.viewer.camera.center),
+            zoom=float(self.viewer.camera.zoom),
+            canvas_width=width,
+            canvas_height=height,
+        )
+
+    def capture_publication_view(self) -> None:
+        frame = self._current_publication_camera_frame()
+        self.publication_center_y_spin.setValue(frame.center_y)
+        self.publication_center_x_spin.setValue(frame.center_x)
+        self.publication_field_height_spin.setValue(frame.field_height)
+        self.publication_field_width_spin.setValue(frame.field_width)
+        self.publication_frame_mode_combo.setCurrentIndex(
+            self.publication_frame_mode_combo.findData("fixed")
+        )
+        self._publication_export_controls_changed()
+        self.set_status(
+            "Captured the current Napari centre and field of view as a fixed "
+            "publication frame."
+        )
+
+    def capture_publication_rectangle(self) -> None:
+        layer = self.viewer.layers.selection.active
+        if layer is None or layer.__class__.__name__.lower() != "shapes":
+            raise ValueError(
+                "Select a Shapes layer containing the desired rectangular crop."
+            )
+        selected = list(getattr(layer, "selected_data", []))
+        if len(selected) != 1:
+            raise ValueError("Select exactly one rectangle in the Shapes layer.")
+        points = np.asarray(layer.data[selected[0]], dtype=float)
+        if points.ndim != 2 or points.shape[0] < 2 or points.shape[1] < 2:
+            raise ValueError("The selected shape has no two-dimensional extent.")
+        y_values = points[:, -2]
+        x_values = points[:, -1]
+        height = float(np.max(y_values) - np.min(y_values))
+        width = float(np.max(x_values) - np.min(x_values))
+        if height <= 0 or width <= 0:
+            raise ValueError("The selected shape has zero width or height.")
+        self.publication_center_y_spin.setValue(float(np.mean([np.min(y_values), np.max(y_values)])))
+        self.publication_center_x_spin.setValue(float(np.mean([np.min(x_values), np.max(x_values)])))
+        self.publication_field_height_spin.setValue(height)
+        self.publication_field_width_spin.setValue(width)
+        self.publication_frame_mode_combo.setCurrentIndex(
+            self.publication_frame_mode_combo.findData("fixed")
+        )
+        self._publication_export_controls_changed()
+        self.set_status("Captured the selected Shapes rectangle as the export frame.")
+
+    def _pick_publication_colour(self, target, *, allow_alpha: bool = False) -> None:
+        current_text = target.text().strip() or "#ffffff"
+        if allow_alpha and len(current_text) == 9 and current_text.startswith("#"):
+            current = self.QColor(
+                int(current_text[1:3], 16),
+                int(current_text[3:5], 16),
+                int(current_text[5:7], 16),
+                int(current_text[7:9], 16),
+            )
+        else:
+            current = self.QColor(current_text)
+        options = (
+            self.QColorDialog.ShowAlphaChannel
+            if allow_alpha
+            else self.QColorDialog.ColorDialogOptions()
+        )
+        colour = self.QColorDialog.getColor(current, self.root, "Choose export colour", options)
+        if not colour.isValid():
+            return
+        if allow_alpha:
+            target.setText(
+                f"#{colour.red():02x}{colour.green():02x}{colour.blue():02x}"
+                f"{colour.alpha():02x}"
+            )
+        else:
+            target.setText(colour.name(self.QColor.HexRgb))
+
+    def choose_publication_output_folder(self) -> None:
+        initial = self.publication_output_folder_edit.text().strip()
+        if not initial:
+            initial = str(self.paths.exports / "publication_images")
+        selected = self.QFileDialog.getExistingDirectory(
+            self.root,
+            "Choose publication image output folder",
+            initial,
+        )
+        if selected:
+            self.publication_output_folder_edit.setText(selected)
+
+    def detect_publication_calibration(self) -> None:
+        recipe, _recipe_id, _recipe_name = self._publication_recipe_snapshot(
+            capture_live=False
+        )
+        candidates = [
+            self.current_image_paths[channel]
+            for channel in recipe.image_channels
+            if channel in self.current_image_paths
+            and self.current_image_paths[channel].suffix.lower() in {".tif", ".tiff"}
+        ]
+        if not candidates:
+            candidates = [
+                path
+                for path in self.current_image_paths.values()
+                if path.suffix.lower() in {".tif", ".tiff"}
+            ]
+        if not candidates:
+            raise ValueError(
+                "No current ROI TIFF is available. Load at least one image channel first."
+            )
+        detected = detect_tiff_pixel_calibration(candidates[0])
+        if detected is None:
+            raise ValueError(
+                "The current TIFF has no supported OME PhysicalSize or calibrated "
+                "TIFF resolution tags. Enter the pixel size manually."
+            )
+        calibration, source = detected
+        self.publication_pixel_x_spin.setValue(calibration.x_size)
+        self.publication_pixel_y_spin.setValue(calibration.y_size)
+        self.publication_unit_edit.setText(calibration.unit)
+        self.publication_calibration_confirmed_check.setChecked(False)
+        self.set_status(
+            f"Detected {calibration.x_size:g} × {calibration.y_size:g} "
+            f"{calibration.unit}/pixel from {source} in {candidates[0].name}. "
+            "Review the values, then tick the verification box."
+        )
+
+    def _select_current_publication_roi(self) -> None:
+        self.publication_roi_list.clearSelection()
+        matches = self.publication_roi_list.findItems(
+            str(self.current_roi or ""), self.Qt.MatchExactly
+        )
+        if matches:
+            matches[0].setSelected(True)
+            self.publication_roi_list.scrollToItem(matches[0])
+
+    def _refresh_publication_export_controls(self) -> None:
+        if self.publication_export_dialog is None:
+            return
+        selected_recipe = self.publication_recipe_combo.currentData()
+        self.publication_recipe_combo.blockSignals(True)
+        self.publication_recipe_combo.clear()
+        self.publication_recipe_combo.addItem("Current live Explore view", None)
+        for recipe in sorted(
+            self.explore_review_state.recipe_presets.values(),
+            key=lambda item: item.name.casefold(),
+        ):
+            self.publication_recipe_combo.addItem(recipe.name, recipe.preset_id)
+        recipe_index = self.publication_recipe_combo.findData(selected_recipe)
+        self.publication_recipe_combo.setCurrentIndex(max(0, recipe_index))
+        self.publication_recipe_combo.blockSignals(False)
+
+        selected_preset = self.publication_preset_combo.currentData()
+        self.publication_preset_combo.blockSignals(True)
+        self.publication_preset_combo.clear()
+        self.publication_preset_combo.addItem("Unsaved publication settings", None)
+        for preset in sorted(
+            self.publication_export_state.presets.values(),
+            key=lambda item: item.name.casefold(),
+        ):
+            self.publication_preset_combo.addItem(preset.name, preset.preset_id)
+        if selected_preset is None:
+            selected_preset = self.publication_export_state.active_preset_id
+        preset_index = self.publication_preset_combo.findData(selected_preset)
+        self.publication_preset_combo.setCurrentIndex(max(0, preset_index))
+        self.publication_preset_combo.blockSignals(False)
+
+        selected_rois = {
+            item.text() for item in self.publication_roi_list.selectedItems()
+        }
+        self.publication_roi_list.clear()
+        self.publication_roi_list.addItems(
+            [self.roi_combo.itemText(index) for index in range(self.roi_combo.count())]
+        )
+        for index in range(self.publication_roi_list.count()):
+            item = self.publication_roi_list.item(index)
+            item.setSelected(item.text() in selected_rois)
+        if not selected_rois:
+            self._select_current_publication_roi()
+        if not self.publication_output_folder_edit.text().strip():
+            self.publication_output_folder_edit.setText(
+                str(self.paths.exports / "publication_images")
+            )
+        if selected_preset in self.publication_export_state.presets:
+            self._load_selected_publication_preset()
+        self._publication_export_controls_changed()
+
+    def _publication_export_controls_changed(self, *_args) -> None:
+        if self.publication_export_dialog is None:
+            return
+        fixed = self.publication_frame_mode_combo.currentData() == "fixed"
+        for control in (
+            self.publication_center_y_spin,
+            self.publication_center_x_spin,
+            self.publication_field_height_spin,
+            self.publication_field_width_spin,
+        ):
+            control.setEnabled(fixed)
+        scale_visible = self.publication_scale_visible_check.isChecked()
+        scale_fixed = self.publication_scale_mode_combo.currentData() == "fixed"
+        self.publication_scale_length_spin.setEnabled(scale_visible and scale_fixed)
+        self.publication_scale_fraction_spin.setEnabled(scale_visible and not scale_fixed)
+        self.publication_update_preset_button.setEnabled(
+            self.publication_preset_combo.currentData() in self.publication_export_state.presets
+        )
+        self.publication_delete_preset_button.setEnabled(
+            self.publication_preset_combo.currentData() in self.publication_export_state.presets
+        )
+        dpi = max(1, self.publication_dpi_spin.value())
+        width_inches = self.publication_width_spin.value() / dpi
+        height_inches = self.publication_height_spin.value() / dpi
+        self.publication_print_size_label.setText(
+            f"{width_inches:.2f} × {height_inches:.2f} inches at {dpi} DPI. "
+            "Pixel dimensions, rather than DPI metadata, determine image detail."
+        )
+        try:
+            preset = self._publication_preset_from_controls(
+                preset_id="preview",
+                capture_live=False,
+                freeze_current_frame=False,
+            )
+            filename = build_publication_filename(
+                preset, roi=str(self.current_roi or "ROI")
+            )
+            self.publication_filename_preview.setText(filename)
+            current = self._current_publication_camera_frame()
+            frame = resolve_publication_frame(
+                preset.frame,
+                output=preset.output,
+                current_frame=current,
+                roi_shape=tuple(self.current_mask.shape[:2]),
+            )
+            self.publication_frame_summary.setText(
+                f"centre Y/X {frame.center_y:.2f}, {frame.center_x:.2f}; "
+                f"field {frame.field_height:.2f} × {frame.field_width:.2f} source pixels."
+            )
+            error = ""
+            if preset.scale_bar.visible and not preset.calibration.confirmed:
+                error = " Scale bar disabled until calibration is verified."
+            self.publication_filename_preview.setToolTip(error)
+        except Exception as error:  # noqa: BLE001 - live validation boundary
+            self.publication_filename_preview.setText(f"⚠ {error}")
+            self.publication_frame_summary.setText(f"⚠ {error}")
+
+    def _publication_recipe_snapshot(
+        self, *, capture_live: bool
+    ) -> tuple[ExploreViewRecipe, str | None, str]:
+        recipe_id = self.publication_recipe_combo.currentData()
+        if isinstance(recipe_id, str) and recipe_id.startswith(
+            "publication_frozen::"
+        ):
+            publication_id = recipe_id.split("::", 1)[1]
+            publication = self.publication_export_state.presets.get(publication_id)
+            if publication is not None:
+                return (
+                    publication.recipe.model_copy(deep=True),
+                    publication.source_recipe_id,
+                    publication.source_recipe_name,
+                )
+        saved = self.explore_review_state.recipe_presets.get(recipe_id)
+        if saved is not None:
+            return saved.recipe.model_copy(deep=True), saved.preset_id, saved.name
+        if capture_live:
+            self._capture_current_recipe_display_state()
+        active = self.explore_review_state.recipe_presets.get(
+            self.explore_review_state.active_recipe_id
+        )
+        live_name = "Current Explore view"
+        live_id = None
+        if active is not None and active.recipe.fingerprint == self.explore_recipe.fingerprint:
+            live_name = active.name
+            live_id = active.preset_id
+        return self.explore_recipe.model_copy(deep=True), live_id, live_name
+
+    def _publication_preset_from_controls(
+        self,
+        *,
+        preset_id: str,
+        capture_live: bool,
+        freeze_current_frame: bool,
+    ) -> PublicationExportPreset:
+        recipe, recipe_id, recipe_name = self._publication_recipe_snapshot(
+            capture_live=capture_live
+        )
+        if not recipe.has_content:
+            raise ValueError(
+                "Build or select an Explore recipe with at least one visible source first."
+            )
+        frame_mode = str(self.publication_frame_mode_combo.currentData())
+        frame = PublicationFrame(
+            mode=frame_mode,
+            center_y=self.publication_center_y_spin.value() if frame_mode == "fixed" else None,
+            center_x=self.publication_center_x_spin.value() if frame_mode == "fixed" else None,
+            field_height=self.publication_field_height_spin.value() if frame_mode == "fixed" else None,
+            field_width=self.publication_field_width_spin.value() if frame_mode == "fixed" else None,
+            aspect_mode=str(self.publication_aspect_combo.currentData()),
+        )
+        if freeze_current_frame and frame.mode == "current_view":
+            current = self._current_publication_camera_frame()
+            frame = PublicationFrame(
+                mode="fixed",
+                center_y=current.center_y,
+                center_x=current.center_x,
+                field_height=current.field_height,
+                field_width=current.field_width,
+                aspect_mode=frame.aspect_mode,
+            )
+        output = PublicationOutput(
+            width=self.publication_width_spin.value(),
+            height=self.publication_height_spin.value(),
+            supersampling=int(self.publication_supersampling_combo.currentData()),
+            format=str(self.publication_format_combo.currentData()),
+            dpi=self.publication_dpi_spin.value(),
+            filename_template=self.publication_filename_edit.text(),
+        )
+        scale_bar = PublicationScaleBar(
+            visible=self.publication_scale_visible_check.isChecked(),
+            length_mode=str(self.publication_scale_mode_combo.currentData()),
+            length=self.publication_scale_length_spin.value(),
+            target_fraction=self.publication_scale_fraction_spin.value() / 100.0,
+            position=str(self.publication_scale_position_combo.currentData()),
+            color=self.publication_scale_colour_edit.text(),
+            thickness=self.publication_scale_thickness_spin.value(),
+            font_size=self.publication_scale_font_spin.value(),
+            margin=self.publication_scale_margin_spin.value(),
+            ticks=self.publication_scale_ticks_check.isChecked(),
+            box=self.publication_scale_box_check.isChecked(),
+            box_color=self.publication_scale_box_colour_edit.text(),
+        )
+        annotations = PublicationAnnotations(
+            show_roi=self.publication_show_roi_check.isChecked(),
+            show_channels=self.publication_show_channels_check.isChecked(),
+            custom_title=self.publication_title_edit.text(),
+            position=str(self.publication_annotation_position_combo.currentData()),
+            font_size=self.publication_annotation_font_spin.value(),
+        )
+        return PublicationExportPreset(
+            preset_id=preset_id,
+            name=self.publication_preset_name_edit.text().strip() or "Publication export",
+            source_recipe_id=recipe_id,
+            source_recipe_name=recipe_name,
+            recipe=recipe,
+            frame=frame,
+            calibration=PixelCalibration(
+                confirmed=self.publication_calibration_confirmed_check.isChecked(),
+                x_size=self.publication_pixel_x_spin.value(),
+                y_size=self.publication_pixel_y_spin.value(),
+                unit=self.publication_unit_edit.text(),
+            ),
+            scale_bar=scale_bar,
+            annotations=annotations,
+            output=output,
+        )
+
+    def _load_selected_publication_preset(self, *_args) -> None:
+        preset_id = self.publication_preset_combo.currentData()
+        preset = self.publication_export_state.presets.get(preset_id)
+        if preset is None:
+            self.publication_export_state.active_preset_id = None
+            self._publication_export_controls_changed()
+            return
+        self.publication_export_state.active_preset_id = preset.preset_id
+        self._save_publication_export_state()
+        self.publication_preset_name_edit.setText(preset.name)
+        frozen_recipe_id = f"publication_frozen::{preset.preset_id}"
+        existing_frozen = self.publication_recipe_combo.findData(frozen_recipe_id)
+        if existing_frozen < 0:
+            self.publication_recipe_combo.insertItem(
+                0,
+                f"Frozen snapshot — {preset.source_recipe_name}",
+                frozen_recipe_id,
+            )
+            existing_frozen = 0
+        self.publication_recipe_combo.setCurrentIndex(existing_frozen)
+        self.publication_frame_mode_combo.setCurrentIndex(
+            self.publication_frame_mode_combo.findData(preset.frame.mode)
+        )
+        self.publication_aspect_combo.setCurrentIndex(
+            self.publication_aspect_combo.findData(preset.frame.aspect_mode)
+        )
+        for control, value in (
+            (self.publication_center_y_spin, preset.frame.center_y),
+            (self.publication_center_x_spin, preset.frame.center_x),
+            (self.publication_field_height_spin, preset.frame.field_height),
+            (self.publication_field_width_spin, preset.frame.field_width),
+        ):
+            if value is not None:
+                control.setValue(float(value))
+        self.publication_calibration_confirmed_check.setChecked(preset.calibration.confirmed)
+        self.publication_pixel_x_spin.setValue(preset.calibration.x_size)
+        self.publication_pixel_y_spin.setValue(preset.calibration.y_size)
+        self.publication_unit_edit.setText(preset.calibration.unit)
+        self.publication_scale_visible_check.setChecked(preset.scale_bar.visible)
+        self.publication_scale_mode_combo.setCurrentIndex(
+            self.publication_scale_mode_combo.findData(preset.scale_bar.length_mode)
+        )
+        self.publication_scale_length_spin.setValue(preset.scale_bar.length)
+        self.publication_scale_fraction_spin.setValue(preset.scale_bar.target_fraction * 100)
+        self.publication_scale_position_combo.setCurrentIndex(
+            self.publication_scale_position_combo.findData(preset.scale_bar.position)
+        )
+        self.publication_scale_colour_edit.setText(preset.scale_bar.color)
+        self.publication_scale_box_colour_edit.setText(preset.scale_bar.box_color)
+        self.publication_scale_thickness_spin.setValue(preset.scale_bar.thickness)
+        self.publication_scale_font_spin.setValue(preset.scale_bar.font_size)
+        self.publication_scale_margin_spin.setValue(preset.scale_bar.margin)
+        self.publication_scale_ticks_check.setChecked(preset.scale_bar.ticks)
+        self.publication_scale_box_check.setChecked(preset.scale_bar.box)
+        self.publication_show_roi_check.setChecked(preset.annotations.show_roi)
+        self.publication_show_channels_check.setChecked(preset.annotations.show_channels)
+        self.publication_title_edit.setText(preset.annotations.custom_title)
+        self.publication_annotation_position_combo.setCurrentIndex(
+            self.publication_annotation_position_combo.findData(preset.annotations.position)
+        )
+        self.publication_annotation_font_spin.setValue(preset.annotations.font_size)
+        self.publication_width_spin.setValue(preset.output.width)
+        self.publication_height_spin.setValue(preset.output.height)
+        self.publication_supersampling_combo.setCurrentIndex(
+            self.publication_supersampling_combo.findData(preset.output.supersampling)
+        )
+        self.publication_format_combo.setCurrentIndex(
+            self.publication_format_combo.findData(preset.output.format)
+        )
+        self.publication_dpi_spin.setValue(preset.output.dpi)
+        self.publication_filename_edit.setText(preset.output.filename_template)
+        self._publication_export_controls_changed()
+
+    def save_new_publication_preset(self) -> None:
+        name = self.publication_preset_name_edit.text().strip()
+        if not name:
+            raise ValueError("Enter a descriptive publication preset name.")
+        if any(
+            item.name.casefold() == name.casefold()
+            for item in self.publication_export_state.presets.values()
+        ):
+            raise ValueError(f"A publication preset named {name!r} already exists.")
+        preset = self._publication_preset_from_controls(
+            preset_id=str(uuid4()),
+            capture_live=True,
+            freeze_current_frame=True,
+        )
+        self.publication_export_state.presets[preset.preset_id] = preset
+        self.publication_export_state.active_preset_id = preset.preset_id
+        self._save_publication_export_state()
+        self._refresh_publication_export_controls()
+        index = self.publication_preset_combo.findData(preset.preset_id)
+        self.publication_preset_combo.setCurrentIndex(index)
+        append_audit(
+            self.paths,
+            {
+                "action": "save_publication_export_preset",
+                "preset_id": preset.preset_id,
+                "name": preset.name,
+                "fingerprint": preset.fingerprint,
+            },
+        )
+        self.set_status(f"Saved publication export preset {preset.name!r}.")
+
+    def update_selected_publication_preset(self) -> None:
+        preset_id = self.publication_preset_combo.currentData()
+        existing = self.publication_export_state.presets.get(preset_id)
+        if existing is None:
+            raise ValueError("Select a saved publication preset to update.")
+        name = self.publication_preset_name_edit.text().strip()
+        if not name:
+            raise ValueError("Enter a descriptive publication preset name.")
+        if any(
+            item.preset_id != existing.preset_id
+            and item.name.casefold() == name.casefold()
+            for item in self.publication_export_state.presets.values()
+        ):
+            raise ValueError(f"A publication preset named {name!r} already exists.")
+        preset = self._publication_preset_from_controls(
+            preset_id=existing.preset_id,
+            capture_live=True,
+            freeze_current_frame=True,
+        )
+        self.publication_export_state.presets[preset.preset_id] = preset
+        self.publication_export_state.active_preset_id = preset.preset_id
+        self._save_publication_export_state()
+        self._refresh_publication_export_controls()
+        self.set_status(f"Updated publication export preset {preset.name!r}.")
+
+    def delete_selected_publication_preset(self) -> None:
+        preset_id = self.publication_preset_combo.currentData()
+        preset = self.publication_export_state.presets.get(preset_id)
+        if preset is None:
+            raise ValueError("Select a saved publication preset to delete.")
+        reply = self.QMessageBox.question(
+            self.root,
+            "Delete publication preset",
+            f"Delete publication preset {preset.name!r}? Existing exported images "
+            "and their provenance files will not be removed.",
+        )
+        if reply != self.QMessageBox.Yes:
+            return
+        del self.publication_export_state.presets[preset.preset_id]
+        if self.publication_export_state.active_preset_id == preset.preset_id:
+            self.publication_export_state.active_preset_id = None
+        self._save_publication_export_state()
+        self._refresh_publication_export_controls()
+        self.set_status(f"Deleted publication export preset {preset.name!r}.")
+
+    def _resolved_publication_frame(
+        self, preset: PublicationExportPreset
+    ) -> ResolvedPublicationFrame:
+        if self.current_mask is None:
+            raise ValueError("Load an ROI before resolving its publication frame.")
+        current = self._current_publication_camera_frame()
+        return resolve_publication_frame(
+            preset.frame,
+            output=preset.output,
+            current_frame=current,
+            roi_shape=tuple(self.current_mask.shape[:2]),
+        )
+
+    def preview_publication_frame(self) -> None:
+        preset = self._publication_preset_from_controls(
+            preset_id="preview",
+            capture_live=False,
+            freeze_current_frame=False,
+        )
+        frame = self._resolved_publication_frame(preset)
+        width, height = self._publication_canvas_size()
+        centre = list(self.viewer.camera.center)
+        centre[-2:] = [frame.center_y, frame.center_x]
+        self.viewer.camera.center = tuple(centre)
+        self.viewer.camera.zoom = min(
+            width / frame.field_width,
+            height / frame.field_height,
+        )
+        self.set_status(
+            "Previewed the publication centre and field of view in Napari. "
+            "Use Render preview to inspect the exact requested pixel dimensions, "
+            "annotations, and deterministically composited scale bar."
+        )
+
+    @staticmethod
+    def _publication_file_identity(path: Path | None) -> dict[str, object] | None:
+        if path is None:
+            return None
+        resolved = Path(path).expanduser().resolve(strict=False)
+        try:
+            stat = resolved.stat()
+        except OSError:
+            return {"path": str(resolved), "missing": True}
+        return {
+            "path": str(resolved),
+            "size": int(stat.st_size),
+            "modified_ns": int(stat.st_mtime_ns),
+        }
+
+    def _publication_input_payload(
+        self, preset: PublicationExportPreset
+    ) -> dict[str, object]:
+        sources = {
+            channel: self._publication_file_identity(
+                self.current_image_paths.get(channel)
+            )
+            for channel in preset.recipe.image_channels
+        }
+        return {
+            "roi": str(self.current_roi or ""),
+            "mask": self._publication_file_identity(self.current_mask_path),
+            "images": sources,
+        }
+
+    def _publication_input_fingerprint(
+        self, preset: PublicationExportPreset
+    ) -> str:
+        import hashlib
+
+        payload = self._publication_input_payload(preset)
+        encoded = json.dumps(payload, sort_keys=True).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    @staticmethod
+    def _snapshot_napari_scale_bar(scale_bar) -> dict[str, object]:
+        if scale_bar is None:
+            return {}
+        values = {}
+        for name in (
+            "visible",
+            "unit",
+            "length",
+            "colored",
+            "color",
+            "ticks",
+            "font_size",
+            "box",
+            "box_color",
+            "position",
+            "opacity",
+        ):
+            if hasattr(scale_bar, name):
+                value = getattr(scale_bar, name)
+                values[name] = (
+                    value.tolist() if hasattr(value, "tolist") else value
+                )
+        return values
+
+    @staticmethod
+    def _restore_napari_scale_bar(scale_bar, values: dict[str, object]) -> None:
+        if scale_bar is None:
+            return
+        for name, value in values.items():
+            if hasattr(scale_bar, name):
+                try:
+                    setattr(scale_bar, name, value)
+                except (TypeError, ValueError):
+                    continue
+
+    def _render_publication_screenshot(
+        self,
+        preset: PublicationExportPreset,
+        frame: ResolvedPublicationFrame,
+    ) -> tuple[np.ndarray, dict[str, object]]:
+        """Render one exact-FOV canvas and restore all temporary viewer state."""
+
+        camera = self.viewer.camera
+        old_center = tuple(camera.center)
+        old_zoom = float(camera.zoom)
+        scale_bar = getattr(self.viewer, "scale_bar", None)
+        old_scale_bar = self._snapshot_napari_scale_bar(scale_bar)
+        render_scale = int(preset.output.supersampling)
+        render_width = int(preset.output.width) * render_scale
+        render_height = int(preset.output.height) * render_scale
+        try:
+            centre = list(old_center)
+            centre[-2:] = [frame.center_y, frame.center_x]
+            camera.center = tuple(centre)
+            camera.zoom = min(
+                render_width / frame.field_width,
+                render_height / frame.field_height,
+            )
+            if scale_bar is not None:
+                # The final scale bar is composited at final-output resolution;
+                # hiding Napari's overlay prevents monitor/DPI-dependent text.
+                scale_bar.visible = False
+            self.QApplication.processEvents()
+            screenshot = self.viewer.screenshot(
+                size=(render_height, render_width),
+                canvas_only=True,
+                flash=False,
+            )
+        finally:
+            camera.center = old_center
+            camera.zoom = old_zoom
+            self._restore_napari_scale_bar(scale_bar, old_scale_bar)
+        final_image = downsample_publication_image(
+            screenshot,
+            width=preset.output.width,
+            height=preset.output.height,
+        )
+        composed, annotation_metadata = compose_publication_image(
+            final_image,
+            preset=preset,
+            frame=frame,
+            roi=str(self.current_roi),
+        )
+        render_metadata = {
+            "requested_width": preset.output.width,
+            "requested_height": preset.output.height,
+            "supersampling": render_scale,
+            "render_width": render_width,
+            "render_height": render_height,
+            **frame.as_dict(),
+            **annotation_metadata,
+        }
+        return composed, render_metadata
+
+    def _publication_provenance(
+        self,
+        *,
+        preset: PublicationExportPreset,
+        frame: ResolvedPublicationFrame,
+        rendering: dict[str, object],
+        destination: Path,
+    ) -> dict[str, object]:
+        import importlib.metadata as package_metadata
+
+        versions = {}
+        for package in ("SpatialBiologyToolkit", "napari", "numpy", "pillow"):
+            try:
+                versions[package] = package_metadata.version(package)
+            except package_metadata.PackageNotFoundError:
+                versions[package] = "unknown"
+        return {
+            "schema_version": 1,
+            "exported_at": datetime.now().astimezone().isoformat(),
+            "destination": str(destination.resolve(strict=False)),
+            "experiment_id": self.manifest.experiment_id,
+            "experiment_revision": self.manifest.revision,
+            "roi": str(self.current_roi),
+            "preset_id": preset.preset_id,
+            "preset_name": preset.name,
+            "preset_fingerprint": preset.fingerprint,
+            "recipe_fingerprint": preset.recipe.fingerprint,
+            "input_fingerprint": self._publication_input_fingerprint(preset),
+            "inputs": self._publication_input_payload(preset),
+            "frame": frame.as_dict(),
+            "rendering": rendering,
+            "preset": preset.model_dump(mode="json"),
+            "versions": versions,
+        }
+
+    def _publication_destination(
+        self,
+        *,
+        preset: PublicationExportPreset,
+        output_folder: Path,
+        conflict_policy: str,
+    ) -> tuple[Path, bool]:
+        destination = output_folder / build_publication_filename(
+            preset, roi=str(self.current_roi)
+        )
+        if not destination.exists():
+            return destination, False
+        sidecar = destination.with_suffix(destination.suffix + ".json")
+        if conflict_policy == "resume" and sidecar.is_file():
+            try:
+                existing = json.loads(sidecar.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                existing = {}
+            if (
+                existing.get("preset_fingerprint") == preset.fingerprint
+                and existing.get("input_fingerprint")
+                == self._publication_input_fingerprint(preset)
+            ):
+                return destination, True
+        if conflict_policy == "overwrite":
+            return destination, False
+        stem = destination.stem
+        suffix = destination.suffix
+        version = 2
+        while True:
+            candidate = destination.with_name(f"{stem}_v{version}{suffix}")
+            if not candidate.exists():
+                return candidate, False
+            version += 1
+
+    def _save_publication_for_current_roi(
+        self,
+        *,
+        preset: PublicationExportPreset,
+        output_folder: Path,
+        conflict_policy: str,
+    ) -> dict[str, object]:
+        frame = self._resolved_publication_frame(preset)
+        destination, skipped = self._publication_destination(
+            preset=preset,
+            output_folder=output_folder,
+            conflict_policy=conflict_policy,
+        )
+        if skipped:
+            return {
+                "roi": str(self.current_roi),
+                "status": "skipped_matching",
+                "path": str(destination),
+                "error": "",
+            }
+        image, rendering = self._render_publication_screenshot(preset, frame)
+        provenance = self._publication_provenance(
+            preset=preset,
+            frame=frame,
+            rendering=rendering,
+            destination=destination,
+        )
+        save_publication_image(
+            image,
+            destination,
+            dpi=preset.output.dpi,
+            metadata={
+                "preset_fingerprint": preset.fingerprint,
+                "recipe_fingerprint": preset.recipe.fingerprint,
+                "roi": str(self.current_roi),
+            },
+        )
+        write_json(destination.with_suffix(destination.suffix + ".json"), provenance)
+        return {
+            "roi": str(self.current_roi),
+            "status": "exported",
+            "path": str(destination),
+            "error": "",
+        }
+
+    def render_publication_preview(self) -> None:
+        """Render the exact final composition into a resizable preview window."""
+
+        from qtpy.QtCore import Qt
+        from qtpy.QtGui import QImage, QPixmap
+        from qtpy.QtWidgets import QDialog, QLabel, QScrollArea, QVBoxLayout
+
+        preset = self._publication_preset_from_controls(
+            preset_id="preview",
+            capture_live=True,
+            freeze_current_frame=True,
+        )
+        frame = self._resolved_publication_frame(preset)
+        image, _rendering = self._render_publication_screenshot(preset, frame)
+        rgba = np.ascontiguousarray(image)
+        height, width = rgba.shape[:2]
+        qimage = QImage(
+            rgba.data,
+            width,
+            height,
+            int(rgba.strides[0]),
+            QImage.Format_RGBA8888,
+        ).copy()
+        pixmap = QPixmap.fromImage(qimage)
+        preview = QDialog(self.root)
+        preview.setWindowTitle(
+            f"Publication preview — {self.current_roi} — {preset.source_recipe_name}"
+        )
+        preview.resize(min(width + 40, 1200), min(height + 80, 900))
+        layout = QVBoxLayout(preview)
+        summary = QLabel(
+            f"Exact {width} × {height} px output preview. Scroll at 100% or resize "
+            "the window; exporting uses this same renderer."
+        )
+        summary.setWordWrap(True)
+        layout.addWidget(summary)
+        scroll = QScrollArea()
+        image_label = QLabel()
+        image_label.setAlignment(Qt.AlignCenter)
+        image_label.setPixmap(pixmap)
+        image_label.resize(pixmap.size())
+        scroll.setWidget(image_label)
+        scroll.setWidgetResizable(False)
+        layout.addWidget(scroll, 1)
+        preview.setAttribute(Qt.WA_DeleteOnClose, True)
+        preview.show()
+        # Retain the modeless window through Qt ownership and an explicit list.
+        if not hasattr(self, "publication_preview_windows"):
+            self.publication_preview_windows = []
+        self.publication_preview_windows.append(preview)
+        preview.destroyed.connect(
+            lambda: self.publication_preview_windows.remove(preview)
+            if preview in self.publication_preview_windows
+            else None
+        )
+        self.set_status(
+            f"Rendered publication preview for ROI {self.current_roi!r} at "
+            f"{width} × {height} pixels."
+        )
+
+    def export_current_publication_image(self) -> None:
+        if self.current_mask is None or not self.current_roi:
+            raise ValueError("Load an ROI before exporting it.")
+        preset = self._publication_preset_from_controls(
+            preset_id=str(uuid4()),
+            capture_live=True,
+            freeze_current_frame=True,
+        )
+        output_text = self.publication_output_folder_edit.text().strip()
+        if not output_text:
+            raise ValueError("Choose a publication output folder first.")
+        output_folder = Path(output_text).expanduser().resolve(strict=False)
+        result = self._save_publication_for_current_roi(
+            preset=preset,
+            output_folder=output_folder,
+            conflict_policy=str(self.publication_conflict_combo.currentData()),
+        )
+        append_audit(
+            self.paths,
+            {
+                "action": "export_publication_image",
+                "roi": self.current_roi,
+                "preset_fingerprint": preset.fingerprint,
+                "status": result["status"],
+                "path": result["path"],
+            },
+        )
+        self.publication_progress_label.setText(
+            f"{result['status'].replace('_', ' ').title()}: {result['path']}"
+        )
+        self.set_status(
+            f"Publication image {result['status'].replace('_', ' ')}: "
+            f"{result['path']}"
+        )
+
+    def _publication_selected_rois(self) -> list[str]:
+        return [item.text() for item in self.publication_roi_list.selectedItems()]
+
+    def _publication_bulk_preflight(
+        self, rois: list[str], preset: PublicationExportPreset, output_folder: Path
+    ) -> bool:
+        from qtpy.QtWidgets import (
+            QAbstractItemView,
+            QDialog,
+            QDialogButtonBox,
+            QLabel,
+            QTableWidget,
+            QTableWidgetItem,
+            QVBoxLayout,
+        )
+
+        dialog = QDialog(self.root)
+        dialog.setWindowTitle("Publication bulk-export preflight")
+        dialog.resize(1000, min(760, 180 + len(rois) * 28))
+        layout = QVBoxLayout(dialog)
+        label = QLabel(
+            "This check uses the Setup asset index and exact known paths; it does "
+            "not rescan image folders. Missing requested channels are explicit "
+            "warnings because those exports would not be composition-equivalent."
+        )
+        label.setWordWrap(True)
+        layout.addWidget(label)
+        table = QTableWidget(len(rois), 4)
+        table.setHorizontalHeaderLabels(["ROI", "Mask", "Requested channels", "Output"])
+        table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        warnings = 0
+        for row, roi in enumerate(rois):
+            try:
+                mask_path = self._mask_path_index.get(roi) or self._mask_path_for_roi(roi)
+                mask_text = "Ready" if Path(mask_path).is_file() else "Missing"
+            except (FileNotFoundError, ValueError):
+                mask_text = "Missing"
+            indexed_channels = set(self._roi_image_path_index.get(roi, {}))
+            requested = list(preset.recipe.image_channels)
+            missing = [channel for channel in requested if channel not in indexed_channels]
+            if not requested:
+                channel_text = "No image channels in recipe"
+            elif missing:
+                channel_text = "Missing: " + ", ".join(missing)
+            else:
+                channel_text = f"Ready ({len(requested)})"
+            if mask_text != "Ready" or missing:
+                warnings += 1
+            filename = build_publication_filename(preset, roi=roi)
+            for column, text in enumerate((roi, mask_text, channel_text, filename)):
+                table.setItem(row, column, QTableWidgetItem(str(text)))
+        table.resizeColumnsToContents()
+        table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(table)
+        summary = QLabel(
+            f"{len(rois)} ROI(s); {warnings} row(s) contain warnings; output root: "
+            f"{output_folder}. Continue only if any missing-channel exports are intentional."
+        )
+        summary.setWordWrap(True)
+        layout.addWidget(summary)
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.button(QDialogButtonBox.Ok).setText("Start bulk export")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        return dialog.exec() == QDialog.Accepted
+
+    def start_publication_bulk_export(self) -> None:
+        if self.publication_batch is not None:
+            self.set_status("A publication bulk export is already running.")
+            return
+        self._activity_begin("Bulk publication export", "Preparing frozen recipe…")
+        try:
+            rois = self._publication_selected_rois()
+            if not rois:
+                raise ValueError("Select at least one ROI for bulk export.")
+            preset = self._publication_preset_from_controls(
+                preset_id=str(uuid4()),
+                capture_live=True,
+                freeze_current_frame=True,
+            )
+            output_text = self.publication_output_folder_edit.text().strip()
+            if not output_text:
+                raise ValueError("Choose a publication output folder first.")
+            output_root = Path(output_text).expanduser().resolve(strict=False)
+            output_folder = output_root / (slugify(preset.name) or "publication_export")
+            if not self._publication_bulk_preflight(rois, preset, output_folder):
+                self._activity_finish(True, "Bulk publication export cancelled at preflight.")
+                return
+            output_folder.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now().astimezone().strftime("%Y%m%dT%H%M%S%z")
+            write_json(
+                output_folder / f"export_preset_{preset.fingerprint[:10]}.json",
+                preset.model_dump(mode="json"),
+            )
+            scale_bar = getattr(self.viewer, "scale_bar", None)
+            locked_controls = (
+                self.roi_combo,
+                self.previous_roi_button,
+                self.next_roi_button,
+                self.reload_roi_button,
+                self.recipe_preset_combo,
+                self.load_recipe_preset_button,
+                self.save_new_recipe_preset_button,
+                self.update_recipe_preset_button,
+                self.delete_recipe_preset_button,
+            )
+            self.publication_batch = {
+                "preset": preset,
+                "rois": list(rois),
+                "index": 0,
+                "results": [],
+                "cancelled": False,
+                "output_folder": output_folder,
+                "conflict_policy": str(self.publication_conflict_combo.currentData()),
+                "timestamp": timestamp,
+                "started_at": datetime.now().astimezone().isoformat(),
+                "original_roi": self.current_roi,
+                "original_recipe": self.explore_recipe.model_copy(deep=True),
+                "original_active_recipe_id": self.explore_review_state.active_recipe_id,
+                "original_auto_reload": self.auto_reload_view_check.isChecked(),
+                "original_camera_center": tuple(self.viewer.camera.center),
+                "original_camera_zoom": float(self.viewer.camera.zoom),
+                "original_scale_bar": self._snapshot_napari_scale_bar(scale_bar),
+                "locked_controls": [
+                    (control, control.isEnabled()) for control in locked_controls
+                ],
+            }
+            self._publication_export_running = True
+            blocked = self.auto_reload_view_check.blockSignals(True)
+            self.auto_reload_view_check.setChecked(False)
+            self.auto_reload_view_check.blockSignals(blocked)
+            self.publication_progress_bar.setRange(0, len(rois))
+            self.publication_progress_bar.setValue(0)
+            self.publication_cancel_button.setEnabled(True)
+            self.publication_export_bulk_button.setEnabled(False)
+            self.publication_export_current_button.setEnabled(False)
+            for control, _enabled in self.publication_batch["locked_controls"]:
+                control.setEnabled(False)
+            self.publication_progress_label.setText(
+                f"Starting 0/{len(rois)} — frozen recipe {preset.source_recipe_name!r}."
+            )
+            self._activity_update(f"Starting 0/{len(rois)} publication images.")
+            from qtpy.QtCore import QTimer
+
+            QTimer.singleShot(0, self._publication_export_next)
+        except Exception as error:  # noqa: BLE001 - modeless callback boundary
+            pending = self.publication_batch
+            if pending is not None:
+                blocked = self.auto_reload_view_check.blockSignals(True)
+                self.auto_reload_view_check.setChecked(
+                    bool(pending.get("original_auto_reload", True))
+                )
+                self.auto_reload_view_check.blockSignals(blocked)
+                for control, enabled in pending.get("locked_controls", []):
+                    control.setEnabled(bool(enabled))
+                self._restore_napari_scale_bar(
+                    getattr(self.viewer, "scale_bar", None),
+                    dict(pending.get("original_scale_bar", {})),
+                )
+            self.publication_batch = None
+            self._publication_export_running = False
+            self._activity_finish(False, f"{type(error).__name__}: {error}")
+            self.set_status(f"ERROR — {type(error).__name__}: {error}")
+            self.QMessageBox.critical(
+                self.root, "napari_sbt", f"{type(error).__name__}: {error}"
+            )
+
+    def cancel_publication_bulk_export(self) -> None:
+        if self.publication_batch is None:
+            return
+        self.publication_batch["cancelled"] = True
+        self.publication_cancel_button.setEnabled(False)
+        self.publication_progress_label.setText(
+            "Cancellation requested; the current atomic image write will finish safely."
+        )
+        self._activity_update("Publication export cancellation requested.")
+
+    def _publication_export_next(self) -> None:
+        batch = self.publication_batch
+        if batch is None:
+            return
+        rois = list(batch["rois"])
+        index = int(batch["index"])
+        if bool(batch["cancelled"]) or index >= len(rois):
+            self._finish_publication_bulk_export()
+            return
+        roi = str(rois[index])
+        preset = batch["preset"]
+        self.publication_progress_label.setText(
+            f"Loading {index + 1}/{len(rois)}: {roi}"
+        )
+        self._activity_update(f"Loading ROI {roi} ({index + 1}/{len(rois)}).")
+        try:
+            combo_blocked = self.roi_combo.blockSignals(True)
+            if self.roi_combo.findText(roi) >= 0:
+                self.roi_combo.setCurrentText(roi)
+            self.roi_combo.blockSignals(combo_blocked)
+            self.load_roi(roi)
+            self._apply_explore_recipe(preset.recipe, replay=True)
+            self.QApplication.processEvents()
+        except Exception as error:  # noqa: BLE001 - continue-on-error batch boundary
+            batch["results"].append(
+                {
+                    "roi": roi,
+                    "status": "failed",
+                    "path": "",
+                    "error": f"{type(error).__name__}: {error}",
+                }
+            )
+            batch["index"] = index + 1
+            self.publication_progress_bar.setValue(index + 1)
+            from qtpy.QtCore import QTimer
+
+            QTimer.singleShot(0, self._publication_export_next)
+            return
+        from qtpy.QtCore import QTimer
+
+        # A short event-loop yield allows Vispy to upload changed textures before
+        # the canvas-only screenshot, without blocking the interface in a loop.
+        QTimer.singleShot(60, self._publication_capture_batch_current)
+
+    def _publication_capture_batch_current(self) -> None:
+        batch = self.publication_batch
+        if batch is None:
+            return
+        rois = list(batch["rois"])
+        index = int(batch["index"])
+        roi = str(rois[index])
+        preset = batch["preset"]
+        try:
+            result = self._save_publication_for_current_roi(
+                preset=preset,
+                output_folder=Path(batch["output_folder"]),
+                conflict_policy=str(batch["conflict_policy"]),
+            )
+        except Exception as error:  # noqa: BLE001 - continue-on-error batch boundary
+            result = {
+                "roi": roi,
+                "status": "failed",
+                "path": "",
+                "error": f"{type(error).__name__}: {error}",
+            }
+        batch["results"].append(result)
+        batch["index"] = index + 1
+        completed = index + 1
+        self.publication_progress_bar.setValue(completed)
+        exported = sum(item["status"] == "exported" for item in batch["results"])
+        skipped = sum(
+            item["status"] == "skipped_matching" for item in batch["results"]
+        )
+        failed = sum(item["status"] == "failed" for item in batch["results"])
+        self.publication_progress_label.setText(
+            f"Completed {completed}/{len(rois)} — exported {exported}, "
+            f"resumed/skipped {skipped}, failed {failed}."
+        )
+        self._activity_update(
+            f"Publication images {completed}/{len(rois)}; {failed} failed."
+        )
+        from qtpy.QtCore import QTimer
+
+        QTimer.singleShot(0, self._publication_export_next)
+
+    def _finish_publication_bulk_export(self) -> None:
+        batch = self.publication_batch
+        if batch is None:
+            return
+        results = list(batch["results"])
+        output_folder = Path(batch["output_folder"])
+        timestamp = str(batch["timestamp"])
+        cancelled = bool(batch["cancelled"])
+        restore_error = ""
+        try:
+            original_recipe = batch["original_recipe"]
+            self.explore_review_state.active_recipe_id = batch[
+                "original_active_recipe_id"
+            ]
+            self.explore_recipe = original_recipe.model_copy(deep=True)
+            original_auto = bool(batch["original_auto_reload"])
+            original_roi = batch["original_roi"]
+            if original_roi:
+                combo_blocked = self.roi_combo.blockSignals(True)
+                if self.roi_combo.findText(str(original_roi)) >= 0:
+                    self.roi_combo.setCurrentText(str(original_roi))
+                self.roi_combo.blockSignals(combo_blocked)
+                self.load_roi(str(original_roi))
+                self._apply_explore_recipe(original_recipe, replay=True)
+            blocked = self.auto_reload_view_check.blockSignals(True)
+            self.auto_reload_view_check.setChecked(original_auto)
+            self.auto_reload_view_check.blockSignals(blocked)
+            self.viewer.camera.center = batch["original_camera_center"]
+            self.viewer.camera.zoom = float(batch["original_camera_zoom"])
+            self._restore_napari_scale_bar(
+                getattr(self.viewer, "scale_bar", None),
+                dict(batch["original_scale_bar"]),
+            )
+        except Exception as error:  # noqa: BLE001 - best-effort UI restoration
+            restore_error = f"{type(error).__name__}: {error}"
+        finally:
+            self._publication_export_running = False
+            for control, enabled in batch.get("locked_controls", []):
+                control.setEnabled(bool(enabled))
+            self.publication_batch = None
+            self.publication_cancel_button.setEnabled(False)
+            self.publication_export_bulk_button.setEnabled(True)
+            self.publication_export_current_button.setEnabled(True)
+
+        manifest_path = output_folder / f"export_manifest_{timestamp}.csv"
+        write_dataframe(manifest_path, pd.DataFrame(results))
+        run_payload = {
+            "schema_version": 1,
+            "started_at": batch["started_at"],
+            "finished_at": datetime.now().astimezone().isoformat(),
+            "cancelled": cancelled,
+            "preset_id": batch["preset"].preset_id,
+            "preset_fingerprint": batch["preset"].fingerprint,
+            "requested_rois": list(batch["rois"]),
+            "result_counts": {
+                "exported": sum(item["status"] == "exported" for item in results),
+                "skipped_matching": sum(
+                    item["status"] == "skipped_matching" for item in results
+                ),
+                "failed": sum(item["status"] == "failed" for item in results),
+            },
+            "manifest": str(manifest_path),
+            "restore_error": restore_error,
+        }
+        write_json(output_folder / f"run_provenance_{timestamp}.json", run_payload)
+        failed = run_payload["result_counts"]["failed"]
+        status = "cancelled" if cancelled else "finished"
+        detail = (
+            f"Bulk publication export {status}: {len(results)}/"
+            f"{len(batch['rois'])} ROI(s) processed, {failed} failed. "
+            f"Manifest: {manifest_path}."
+        )
+        if restore_error:
+            detail += f" Viewer restoration warning: {restore_error}."
+        self.publication_progress_label.setText(detail)
+        self._activity_finish(not failed and not restore_error, detail)
+        self.set_status(detail)
+        append_audit(
+            self.paths,
+            {
+                "action": "bulk_export_publication_images",
+                "preset_fingerprint": batch["preset"].fingerprint,
+                "requested_rois": len(batch["rois"]),
+                "processed_rois": len(results),
+                "failed": failed,
+                "cancelled": cancelled,
+                "manifest": str(manifest_path),
+            },
+        )
 
     def _refresh_noncontext_mask(self) -> None:
         """Mask pixels outside the cohort's recipe-defined staining context."""
@@ -14958,6 +17069,9 @@ class NapariSBTController:
         self._bind_recipe_display_tracking(layer)
 
     def refresh_channel_list(self) -> None:
+        selected_channels = {
+            item.text() for item in self.channel_list.selectedItems()
+        }
         self.channel_list.clear()
         self.current_image_paths = {}
         if self.manifest is None or not self.current_roi:
@@ -14968,7 +17082,8 @@ class NapariSBTController:
         self.current_image_paths = dict(paths)
         logical_names = set(channel_aliases.values())
         matched = 0
-        for channel, path in paths.items():
+        for channel in self._ordered_variable_values(list(paths)):
+            path = paths[channel]
             from qtpy.QtWidgets import QListWidgetItem
 
             list_item = QListWidgetItem(channel)
@@ -14980,7 +17095,10 @@ class NapariSBTController:
             else:
                 list_item.setToolTip(f"Additional image (not in adata.var): {path}")
             self.channel_list.addItem(list_item)
-            list_item.setSelected(channel in self.explore_recipe.image_channels)
+            list_item.setSelected(
+                channel in selected_channels
+                or channel in self.explore_recipe.image_channels
+            )
         if paths:
             additional = len(paths) - matched
             self.image_coverage_label.setText(
@@ -15067,26 +17185,35 @@ class NapariSBTController:
             normalization_path=self.normalization_edit.text().strip() or None
         )
 
-    def _display_normalization_value(self, channel: str) -> float | None:
+    def _display_normalization_parameters(
+        self,
+        channel: str,
+    ) -> NimbusNormalizationParameters | None:
         candidates = [str(channel), str(channel).split(" [", 1)[0]]
         path = self.current_image_paths.get(str(channel))
         if path is not None:
             candidates.append(path.stem)
         for candidate in candidates:
-            value = find_normalization_value(
+            parameters = find_normalization_parameters(
                 self.display_normalization,
                 candidate,
             )
-            if value is not None:
-                return float(value)
+            if parameters is not None:
+                return parameters
         return None
 
     def _display_image_load_kwargs(self, channel: str) -> dict[str, float | None]:
         settings = self._display_image_settings()
+        parameters = self._display_normalization_parameters(channel)
         return {
             "quantile": float(settings.fallback_quantile),
             "minimum_pixel_counts": float(settings.minimum_pixel_counts),
-            "normalization_value": self._display_normalization_value(channel),
+            "normalization_value": (
+                None if parameters is None else float(parameters.vmax)
+            ),
+            "normalization_lower_threshold": (
+                0.0 if parameters is None else float(parameters.lower_threshold)
+            ),
         }
 
     def _render_recipe_images(self) -> int:
@@ -15344,10 +17471,111 @@ class NapariSBTController:
             }
         return self._cohort_ids_by_roi.get(str(roi), set())
 
-    def _direct_label_colormap(self, colours: dict[int, str]):
+    def _direct_label_colormap(self, colours: dict[int, object]):
         from napari.utils.colormaps import DirectLabelColormap
 
         return DirectLabelColormap(color_dict={None: "#00000000", **colours})
+
+    def _categorical_observation_colours(
+        self,
+        name: str,
+        defaults: dict[str, str],
+    ) -> dict[str, object]:
+        """Restore category colours without tying a recipe to one ROI's IDs."""
+
+        resolved: dict[str, object] = dict(defaults)
+        spec = self.explore_recipe.layer_colormap_specs.get(name)
+        if not isinstance(spec, dict):
+            return resolved
+        colours = spec.get("colours", {})
+        if spec.get("kind") == "categorical_labels" and isinstance(colours, dict):
+            for category in defaults:
+                if category in colours:
+                    resolved[category] = colours[category]
+            return resolved
+        if spec.get("kind") == "direct_labels" and isinstance(colours, dict):
+            # Recipes written before identity-preserving categorical overlays
+            # keyed colours by their stable dataset-wide category code.
+            for code, category in enumerate(defaults, start=1):
+                if str(code) in colours:
+                    resolved[category] = colours[str(code)]
+        return resolved
+
+    def _set_categorical_overlay_metadata(
+        self,
+        layer,
+        *,
+        observation: str,
+        object_categories: pd.Series,
+        category_colours: dict[str, object],
+    ) -> None:
+        """Attach enough semantics to save colours independently of object IDs."""
+
+        representative_ids: dict[str, int] = {}
+        for object_id, category in object_categories.items():
+            representative_ids.setdefault(str(category), int(object_id))
+        metadata = dict(getattr(layer, "metadata", {}) or {})
+        metadata["napari_sbt_categorical_overlay"] = {
+            "observation": str(observation),
+            "representative_ids": representative_ids,
+            "category_colours": dict(category_colours),
+        }
+        layer.metadata = metadata
+
+    def _categorical_layer_colormap_spec(self, layer) -> dict | None:
+        """Collapse an identity-keyed live colormap into a category-keyed recipe."""
+
+        metadata = getattr(layer, "metadata", None)
+        state = (
+            metadata.get("napari_sbt_categorical_overlay")
+            if isinstance(metadata, dict)
+            else None
+        )
+        if not isinstance(state, dict):
+            return None
+        category_colours = state.get("category_colours", {})
+        if not isinstance(category_colours, dict) or not category_colours:
+            return None
+        categories = [str(category) for category in category_colours]
+        try:
+            default_colormap = self._direct_label_colormap(
+                {
+                    index: category_colours[category]
+                    for index, category in enumerate(categories, start=1)
+                }
+            )
+            rgba = np.asarray(
+                default_colormap.map(
+                    np.arange(1, len(categories) + 1, dtype=np.int64)
+                ),
+                dtype=float,
+            )
+            resolved = {
+                category: rgba[index].tolist()
+                for index, category in enumerate(categories)
+            }
+        except (TypeError, ValueError):
+            return None
+
+        representatives = state.get("representative_ids", {})
+        present = [
+            (str(category), int(object_id))
+            for category, object_id in representatives.items()
+            if str(category) in resolved
+        ]
+        if present:
+            try:
+                live_rgba = np.asarray(
+                    layer.colormap.map(
+                        np.asarray([object_id for _category, object_id in present])
+                    ),
+                    dtype=float,
+                )
+                for index, (category, _object_id) in enumerate(present):
+                    resolved[category] = live_rgba[index].tolist()
+            except (AttributeError, TypeError, ValueError):
+                pass
+        return {"kind": "categorical_labels", "colours": resolved}
 
     def _render_observation_overlay(self, observation: str) -> int:
         name = f"obs::{observation}"
@@ -15391,36 +17619,6 @@ class NapariSBTController:
                 is not None
             ):
                 return 1
-        else:
-            population_colours = categorical_colour_map(self.adata, observation)
-            # Use dataset-wide category order so saved direct-label colours keep
-            # the same biological meaning even when an ROI lacks categories.
-            categories = list(population_colours)
-            codes = {value: index + 1 for index, value in enumerate(categories)}
-            default_colormap = self._direct_label_colormap(
-                {code: population_colours[value] for value, code in codes.items()}
-            )
-            display_settings = {
-                "colormap": self._recipe_colormap(name, default_colormap),
-                "visible": self.explore_recipe.layer_visibility.get(name, True),
-                "opacity": self.explore_recipe.layer_opacities.get(name, 1.0),
-            }
-            layer = self._reuse_explore_layer(
-                name,
-                reload_descriptor,
-                **display_settings,
-            )
-            if layer is None:
-                layer = self._restore_cached_explore_layer(
-                    name,
-                    reload_descriptor,
-                    "labels",
-                    **display_settings,
-                )
-            if layer is not None:
-                self._set_label_contour_from_recipe(layer, name)
-                return 1
-
         rows, object_ids, selected, _roi_selector = self._roi_adata_rows()
         if self.explore_recipe.observation_overlay_full_dataset:
             selected = object_ids.notna()
@@ -15439,17 +17637,67 @@ class NapariSBTController:
                 **display_settings,
             )
         else:
-            mapping = pd.Series(
-                values[selected].astype(str).map(codes).to_numpy(),
-                index=object_ids[selected].astype(int),
+            reload_descriptor["label_encoding"] = "object_id"
+            object_categories = categorical_object_categories(
+                object_ids[selected],
+                values[selected],
             )
-            overlay = identity_value_map(self.current_mask, mapping, dtype=np.int32)
+            default_category_colours = categorical_colour_map(
+                self.adata,
+                observation,
+            )
+            category_colours = self._categorical_observation_colours(
+                name,
+                default_category_colours,
+            )
+            object_colours = {
+                int(object_id): category_colours[str(category)]
+                for object_id, category in object_categories.items()
+                if str(category) in category_colours
+            }
+            display_settings = {
+                "colormap": self._direct_label_colormap(object_colours),
+                "visible": self.explore_recipe.layer_visibility.get(name, True),
+                "opacity": self.explore_recipe.layer_opacities.get(name, 1.0),
+            }
+            layer = self._reuse_explore_layer(
+                name,
+                reload_descriptor,
+                **display_settings,
+            )
+            if layer is None:
+                layer = self._restore_cached_explore_layer(
+                    name,
+                    reload_descriptor,
+                    "labels",
+                    **display_settings,
+                )
+            if layer is not None:
+                self._set_categorical_overlay_metadata(
+                    layer,
+                    observation=observation,
+                    object_categories=object_categories,
+                    category_colours=category_colours,
+                )
+                self._set_label_contour_from_recipe(layer, name)
+                return 1
+            overlay = population_identity_map(
+                self.current_mask,
+                object_categories.index,
+                dtype=np.int32,
+            )
             layer = self._replace_explore_layer(
                 name,
                 overlay,
                 "labels",
                 reload_descriptor=reload_descriptor,
                 **display_settings,
+            )
+            self._set_categorical_overlay_metadata(
+                layer,
+                observation=observation,
+                object_categories=object_categories,
+                category_colours=category_colours,
             )
             self._set_label_contour_from_recipe(layer, name)
         return 1
@@ -15655,7 +17903,8 @@ class NapariSBTController:
         )
         self._refresh_reload_recipe_list()
         if loaded or managed_present:
-            self._mark_current_explore_viewed()
+            if not self._publication_export_running:
+                self._mark_current_explore_viewed()
             active_preset = self.explore_review_state.recipe_presets.get(
                 self.explore_review_state.active_recipe_id
             )
@@ -15808,7 +18057,7 @@ class NapariSBTController:
     def refresh_population_qc_marker_choices(self) -> None:
         """Populate RGB marker selectors from the images available for this ROI."""
 
-        channels = list(self.current_image_paths)
+        channels = self._ordered_variable_values(list(self.current_image_paths))
         for combo in self.population_qc_marker_combos.values():
             previous = combo.currentText().strip()
             combo.blockSignals(True)
@@ -17299,6 +19548,24 @@ class NapariSBTController:
         if not self.paths.feature_table.exists():
             raise FileNotFoundError(
                 "No canonical feature table exists. Build or resume features first."
+            )
+        try:
+            provenance = json.loads(
+                self.paths.feature_manifest.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            raise ValueError(
+                "The feature table has no readable provenance. Rebuild features "
+                "before training or scoring."
+            ) from exc
+        if (
+            provenance.get("feature_extraction_contract_version")
+            != FEATURE_EXTRACTION_CONTRACT_VERSION
+        ):
+            raise ValueError(
+                "The active feature table was built with an older extraction "
+                "contract. Rebuild/resume features so Nimbus lower thresholds "
+                "are applied before training or scoring."
             )
         return read_dataframe(self.paths.feature_table)
 

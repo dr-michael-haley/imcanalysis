@@ -32,6 +32,11 @@ intended to be replaced.
 **Use the saved file as the Setup AnnData path** makes subsequent reloads use the
 new file and updates the active workspace source when a workspace is open.
 
+The **Variable list order** at the top of Channels is the same session-wide
+control used elsewhere in NapariSBT. It reorders the rename table and removal list
+while preserving typed rename values and selections. AnnData order is the
+default; alphabetical and cached expression-similarity order are optional.
+
 ## Rename variables and images
 
 Enter new names only in rows that should change. **Preview rename** validates

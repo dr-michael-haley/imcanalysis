@@ -53,6 +53,12 @@ planned. For a full experiment, limiting channels can substantially reduce I/O a
 feature-extraction time. A channel must be discoverable for the relevant ROIs and
 must match the image/mask dimensions.
 
+**Variable list order** changes the shared order used by every marker/channel
+selector in NapariSBT. AnnData order is the default. Alphabetical order is
+case-insensitive, while expression similarity is calculated from live `adata.X`
+with the same clustering helper used by matrix plots and then cached. Reordering
+preserves the channel selection and does not change the feature recipe.
+
 **Select feature markers** restores the channel set represented in the
 active built feature table. This is useful after reopening a workspace or changing
 the visible channel selection. Before the first build it falls back to the current

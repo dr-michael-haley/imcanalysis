@@ -7,11 +7,15 @@ from tempfile import TemporaryDirectory
 import numpy as np
 
 from SpatialBiologyToolkit._napari_imc_normalization import (
+    find_normalization_parameters,
     find_normalization_value,
     load_normalization_mapping,
+    load_normalization_parameters,
+    normalization_parameters_payload,
     normalize_imc_image,
     normalized_contrast_limits,
     prepare_normalization_dict,
+    prepare_normalization_parameters,
 )
 
 
@@ -37,6 +41,20 @@ class NapariIMCNormalizationTests(unittest.TestCase):
 
         self.assertEqual(values, {"CD3": 10.5, "CD20": 20.0})
 
+    def test_full_nimbus_csv_parameters_preserve_lower_thresholds(self):
+        with TemporaryDirectory() as directory:
+            source = Path(directory) / "normalization_dict.csv"
+            source.write_text(
+                "marker,vmax,lower_threshold\nCD3,10.5,0.8\nCD20,20,0\n",
+                encoding="utf-8",
+            )
+
+            values = load_normalization_parameters(source)
+
+        self.assertEqual(values["CD3"].vmax, 10.5)
+        self.assertEqual(values["CD3"].lower_threshold, 0.8)
+        self.assertEqual(values["CD20"].lower_threshold, 0.0)
+
     def test_normalization_csv_requires_marker_and_value_columns(self):
         with TemporaryDirectory() as directory:
             source = Path(directory) / "normalization.csv"
@@ -58,6 +76,24 @@ class NapariIMCNormalizationTests(unittest.TestCase):
 
         self.assertEqual(values, {"CD3": 10.5, "CD20": 20.0})
 
+    def test_structured_and_legacy_parameters_share_one_validated_format(self):
+        values = prepare_normalization_parameters(
+            {
+                "CD3": {"vmax": "10.5", "lower_threshold": "0.8"},
+                "CD20": 20,
+            }
+        )
+
+        self.assertEqual(values["CD3"].lower_threshold, 0.8)
+        self.assertEqual(values["CD20"].lower_threshold, 0.0)
+        self.assertEqual(
+            normalization_parameters_payload(values),
+            {
+                "CD3": {"vmax": 10.5, "lower_threshold": 0.8},
+                "CD20": {"vmax": 20.0, "lower_threshold": 0.0},
+            },
+        )
+
     def test_invalid_normalization_values_are_rejected(self):
         for value in ("not-a-number", 0, -1, np.inf, np.nan):
             with self.subTest(value=value):
@@ -71,6 +107,17 @@ class NapariIMCNormalizationTests(unittest.TestCase):
         self.assertEqual(find_normalization_value(values, "CD45-RO"), 12.0)
         self.assertIsNone(find_normalization_value(values, "CD3"))
 
+    def test_parameter_lookup_preserves_lower_threshold(self):
+        values = prepare_normalization_parameters(
+            {"CD45RO": {"vmax": 12, "lower_threshold": 0.75}}
+        )
+
+        parameters = find_normalization_parameters(values, "CD45-RO")
+
+        self.assertIsNotNone(parameters)
+        self.assertEqual(parameters.vmax, 12.0)
+        self.assertEqual(parameters.lower_threshold, 0.75)
+
     def test_supplied_value_sets_maximum_and_clips_at_one(self):
         image = np.array([[0, 5, 10, 20]], dtype=np.uint16)
 
@@ -82,6 +129,19 @@ class NapariIMCNormalizationTests(unittest.TestCase):
         )
 
         np.testing.assert_allclose(normalized, [[0, 0.5, 1, 1]])
+
+    def test_supplied_lower_threshold_uses_two_point_nimbus_normalization(self):
+        image = np.array([[0, 1, 2, 5, 10, 20]], dtype=np.float32)
+
+        normalized = normalize_imc_image(
+            image,
+            quantile=0.5,
+            minimum_pixel_counts=0.1,
+            normalization_value=10,
+            normalization_lower_threshold=2,
+        )
+
+        np.testing.assert_allclose(normalized, [[0, 0, 0, 0.375, 1, 1]])
 
     def test_missing_value_uses_legacy_quantile_normalization(self):
         image = np.array([[0, 5, 10]], dtype=np.uint16)

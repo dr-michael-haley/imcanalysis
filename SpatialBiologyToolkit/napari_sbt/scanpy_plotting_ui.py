@@ -30,6 +30,8 @@ class ScanpyPlottingPanel:
         focus_callback: Callable[[str], None],
         close_callback: Callable[[str], None],
         close_all_callback: Callable[[], None],
+        variable_order_combo_factory: Callable[[], object],
+        order_variables: Callable[[list[str]], list[str]],
     ) -> None:
         from qtpy.QtCore import Qt
         from qtpy.QtWidgets import (
@@ -57,6 +59,7 @@ class ScanpyPlottingPanel:
         self._roi_obs: str | None = None
         self._cohort_obs_names: set[str] | None = None
         self._window_items: dict[str, object] = {}
+        self._order_variables = order_variables
 
         self.widget = QWidget()
         layout = QVBoxLayout(self.widget)
@@ -115,6 +118,7 @@ class ScanpyPlottingPanel:
         metadata_actions_layout.addWidget(self.clear_metadata_filter_button)
         metadata_actions_layout.addStretch(1)
         self.matrix_source_combo = QComboBox()
+        self.variable_order_combo = variable_order_combo_factory()
         self.data_summary_label = QLabel("Load AnnData to configure plotting.")
         self.data_summary_label.setWordWrap(True)
         data_form.addRow("Labels / populations", self.groupby_combo)
@@ -131,6 +135,7 @@ class ScanpyPlottingPanel:
         )
         data_form.addRow("", metadata_actions)
         data_form.addRow("Expression matrix", self.matrix_source_combo)
+        data_form.addRow("Variable list order", self.variable_order_combo)
         data_form.addRow("Selection summary", self.data_summary_label)
         layout.addWidget(data_group)
 
@@ -880,7 +885,7 @@ class ScanpyPlottingPanel:
         markers = matrix_source_var_names(
             self._adata, self.matrix_source_combo.currentText()
         ).tolist()
-        marker_names = [str(marker) for marker in markers]
+        marker_names = self._order_variables([str(marker) for marker in markers])
         self.marker_list.addItems(marker_names)
         self.embedding_marker_list.addItems(marker_names)
         for index in range(self.marker_list.count()):
@@ -891,6 +896,12 @@ class ScanpyPlottingPanel:
             item.setSelected(item.text() in selected_embedding)
         self._filter_markers(self.marker_search_edit.text())
         self._filter_embedding_markers(self.embedding_marker_search_edit.text())
+
+    def refresh_variable_order(self) -> None:
+        """Reorder both marker selectors while preserving their selections."""
+
+        self._refresh_markers()
+        self._controls_changed()
 
     def _groupby_changed(self, *_args) -> None:
         self._refresh_group_values()

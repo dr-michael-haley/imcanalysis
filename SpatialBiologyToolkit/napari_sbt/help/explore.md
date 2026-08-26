@@ -12,6 +12,62 @@ mask and available channels. Enable empty ROIs only after building the Setup
 integrity index. The dimmed full-mask context is optional and does not change the
 eligible classification cohort.
 
+**Add all-cells mask** adds the complete original segmentation for the current ROI
+as the non-editable `all_cells` labels layer. It reuses the mask already held in
+memory, so pressing it does not reload the ROI or rescan the mask folder. The layer
+updates in place during ROI navigation and can retain its visibility, opacity, and
+contour width through an Explore recipe. It never modifies the source mask.
+
+## Publication image export
+
+Open **Publication export…** beside the ROI controls to prepare a canvas-only image
+without changing the source images or masks. The window is modeless: keep it open
+beside Napari while adjusting the tissue view, then use **Capture current viewport**
+or a selected rectangle from a Shapes layer. A captured frame stores centre and
+field-of-view coordinates rather than only Napari's raw zoom number, so it is
+independent of monitor size and dock layout. **Entire ROI** calculates the frame
+separately for each ROI. Aspect mismatches are cropped or padded; images are never
+stretched.
+
+Choose a named Explore recipe or the current live view. Saving a publication
+preset freezes a complete recipe snapshot, even if the original Explore recipe is
+later edited or removed. Publication presets are stored separately in
+`explore/publication_export_presets.json`, so they do not participate in frequent
+layer-visibility and ROI-review updates.
+
+Set the exact output width and height in pixels. Supersampling renders at 2x or 4x
+and downsamples with a high-quality filter. DPI is written as print metadata; it
+does not add image detail. PNG is the recommended default, TIFF is lossless, and
+JPEG is explicitly lossy. Filenames always retain the ROI and channel identities,
+even when a custom template omits them. The default is
+`{roi}__{recipe}__{channels}__{width}x{height}`.
+
+Physical scale bars require an explicitly verified X/Y pixel calibration. Select
+an automatic visually sensible length or a fixed physical length, then control
+position, colour, thickness, font size, margin, ticks, and background box. Napari's
+metadata detector reads OME physical-size metadata or calibrated TIFF resolution
+tags from one current image, but leaves the result unconfirmed until you review it.
+Napari's
+ordinary scale-bar overlay is hidden during capture; NapariSBT composites the final
+bar at the requested output resolution so its typography and thickness do not
+depend on monitor DPI. Use **Render preview** to inspect the exact final raster
+before saving. ROI, channel, and custom-title annotations are optional.
+
+For bulk export, select one or more ROIs and run preflight. Preflight uses the fast
+Setup asset index and never rescans image folders. It reports missing masks,
+requested channels, and target filenames. Rendering then runs sequentially on the
+GUI thread because Napari/OpenGL canvases cannot safely be moved into worker
+processes. The progress display reports exported, resumed, and failed ROIs;
+cancellation finishes the current atomic file safely. Matching sidecars permit
+resume, while version and overwrite policies are also available.
+
+Every raster receives a `.json` sidecar containing its frozen recipe, frame,
+calibration, scale-bar settings, input file identities, software versions, and
+fingerprints. Bulk folders also contain the frozen preset, a CSV result manifest,
+and run provenance. The original ROI, recipe, camera, auto-reload setting, and
+Napari scale bar are restored when the batch finishes or is cancelled. Automated
+exports are not counted as manually viewed ROIs.
+
 **Reapply the current Explore recipe after changing ROI** has one purpose: after
 the selected ROI identity genuinely changes, it recreates the same image channels,
 colours, contrast, overlays, visibility, and opacity for the new ROI. This makes
@@ -67,6 +123,15 @@ numeric observations, individual populations, and `adata.X` marker values can be
 rendered as cell overlays. Existing categorical colours are recovered from
 `adata.uns` whenever possible.
 
+**Variable list order** is shared across NapariSBT. **AnnData order** follows
+`adata.var_names` and is the default; **Alphabetical** ignores case; **Expression
+similarity** uses the same hierarchical expression ordering as the matrix-plot
+option. The similarity order is calculated once from the live `adata.X` and
+cached. Changing this control in Explore immediately updates the matching control
+and variable lists in Feature Building, Population QC, Scanpy plotting, and
+Dataset Maintenance without reloading the ROI or viewer layers. Image-only
+channels which cannot be matched safely to AnnData remain at the end.
+
 Select one or more discovered channels. Use greyscale for independent contrast
 control, R/G/B/C/Y/M for additive multiplex review, or RGB for one composite layer
 from the first three selected channels. Image coverage reports which configured
@@ -88,6 +153,11 @@ outside the classification cohort** when reviewing a curated observation
 alongside every identity-matched cell in the ROI.
 
 Choose an observation and render it as a categorical or numeric cell overlay.
+Categorical overlays keep every cell's original mask ID and use the observation
+only to assign its colour. A non-zero contour therefore separates touching cells
+even when they belong to the same category; the source mask and AnnData are not
+changed. Saved recipes retain category-level colours rather than ROI-specific
+object IDs, so the same palette remains valid on another ROI.
 Population controls can add selected populations as separate layers, rank ROIs by
 abundance, or send one population back to Setup as a proposed cohort. Marker
 overlays use cell-level values from `adata.X`, not image pixels.

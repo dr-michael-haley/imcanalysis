@@ -1,11 +1,15 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 
+from SpatialBiologyToolkit._napari_imc_normalization import (
+    prepare_normalization_parameters,
+)
 from SpatialBiologyToolkit.napari_sbt.app import (
     NapariSBTController,
     _population_observation_columns,
@@ -169,3 +173,38 @@ def test_empty_normalization_editor_does_not_create_invalid_workspace_file(tmp_p
 
     assert result is None
     assert not (tmp_path / "display" / "normalization.json").exists()
+
+
+def test_workspace_normalization_preserves_structured_bounds(tmp_path):
+    controller = object.__new__(NapariSBTController)
+    parameters = prepare_normalization_parameters(
+        {"CD3": {"vmax": 10, "lower_threshold": 0.8}}
+    )
+    controller._normalization_from_editor = lambda: parameters
+    controller.normalization_edit = SimpleNamespace(setText=lambda _value: None)
+
+    result = controller._write_experiment_normalization(tmp_path)
+
+    payload = json.loads(Path(result).read_text(encoding="utf-8"))
+    assert payload == {
+        "normalization_dict": {
+            "CD3": {"vmax": 10.0, "lower_threshold": 0.8}
+        }
+    }
+
+
+def test_display_image_kwargs_include_marker_lower_threshold():
+    controller = object.__new__(NapariSBTController)
+    controller.display_normalization = prepare_normalization_parameters(
+        {"CD3": {"vmax": 10, "lower_threshold": 0.8}}
+    )
+    controller.current_image_paths = {}
+    controller._display_image_settings = lambda: SimpleNamespace(
+        fallback_quantile=0.999,
+        minimum_pixel_counts=0.1,
+    )
+
+    kwargs = controller._display_image_load_kwargs("CD3")
+
+    assert kwargs["normalization_value"] == 10.0
+    assert kwargs["normalization_lower_threshold"] == 0.8
