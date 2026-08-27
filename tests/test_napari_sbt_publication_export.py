@@ -3,6 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from SpatialBiologyToolkit.napari_sbt import publication_export
 from SpatialBiologyToolkit.napari_sbt.explore import ExploreViewRecipe
 from SpatialBiologyToolkit.napari_sbt.publication_export import (
     PixelCalibration,
@@ -19,6 +20,8 @@ from SpatialBiologyToolkit.napari_sbt.publication_export import (
     detect_tiff_pixel_calibration,
     fit_frame_to_aspect,
     publication_render_geometry,
+    publication_resolution_scale,
+    resolve_publication_dpi,
     resolve_publication_frame,
     resolve_publication_output_size,
     resolve_scale_bar_length,
@@ -100,14 +103,35 @@ def test_native_output_preserves_source_frame_and_pixel_sampling() -> None:
     assert resolve_publication_output_size(output, frame) == (200, 100)
 
 
-def test_schema_v1_output_remains_custom_sized() -> None:
+def test_schema_v1_v2_output_remains_custom_sized() -> None:
     output = PublicationOutput.model_validate({"width": 900, "height": 700})
 
+    assert output.resolution == "custom"
     assert output.size_mode == "custom"
     assert resolve_publication_output_size(
         output,
         ResolvedPublicationFrame(50, 50, 100, 100),
     ) == (900, 700)
+
+
+@pytest.mark.parametrize(
+    ("resolution", "factor", "dpi"),
+    [("low", 1, 150), ("medium", 2, 300), ("high", 4, 600)],
+)
+def test_simple_resolution_scales_pixels_annotations_and_dpi_together(
+    resolution: str,
+    factor: int,
+    dpi: int,
+) -> None:
+    output = PublicationOutput(resolution=resolution)
+    frame = ResolvedPublicationFrame(200, 250, 400, 500)
+    width, height = resolve_publication_output_size(output, frame)
+
+    assert (width, height) == (500 * factor, 400 * factor)
+    assert publication_resolution_scale(output) == factor
+    assert resolve_publication_dpi(output) == dpi
+    assert width / dpi == pytest.approx(500 / 150)
+    assert height / dpi == pytest.approx(400 / 150)
 
 
 def test_render_geometry_changes_sampling_not_field_of_view() -> None:
@@ -251,6 +275,79 @@ def test_compositor_preserves_size_and_records_annotations() -> None:
     assert metadata["scale_bar_output_pixels"] == 160
     assert metadata["annotation_text"] == ["ROI-A", "CD3 · CD8"]
     assert np.any(composed[..., :3] != 0)
+
+
+@pytest.mark.parametrize(
+    (
+        "resolution",
+        "size",
+        "scale_font",
+        "annotation_font",
+        "thickness",
+        "margin",
+    ),
+    [
+        ("low", 600, 16, 18, 3, 18),
+        ("medium", 1200, 32, 36, 6, 36),
+        ("high", 2400, 64, 72, 12, 72),
+    ],
+)
+def test_simple_resolutions_choose_proportional_readable_annotation_styling(
+    resolution: str,
+    size: int,
+    scale_font: int,
+    annotation_font: int,
+    thickness: int,
+    margin: int,
+) -> None:
+    preset = _preset(
+        output=PublicationOutput(resolution=resolution),
+        calibration=PixelCalibration(confirmed=True, x_size=1, y_size=1),
+        scale_bar=PublicationScaleBar(
+            visible=True,
+            length_mode="fixed",
+            length=50,
+            thickness=99,
+            font_size=99,
+            margin=99,
+        ),
+        annotations=PublicationAnnotations(
+            show_roi=True,
+            font_size=99,
+            margin=99,
+        ),
+    )
+    image = np.zeros((size, size, 4), dtype=np.uint8)
+    image[..., 3] = 255
+
+    _composed, metadata = compose_publication_image(
+        image,
+        preset=preset,
+        frame=ResolvedPublicationFrame(300, 300, 600, 600),
+        roi="ROI-A",
+    )
+
+    assert metadata["annotation_style_profile"] == "automatic"
+    assert metadata["scale_bar_output_pixels"] == size // 12
+    assert metadata["scale_bar_rendered_font_size"] == scale_font
+    assert metadata["scale_bar_rendered_thickness"] == thickness
+    assert metadata["scale_bar_rendered_margin"] == margin
+    assert metadata["annotation_rendered_font_size"] == annotation_font
+    assert metadata["annotation_rendered_margin"] == margin
+
+
+def test_publication_font_fallback_honours_requested_pixel_size() -> None:
+    small = publication_export._font(20)
+    large = publication_export._font(40)
+    small_box = small.getbbox("Scale bar 50 µm")
+    large_box = large.getbbox("Scale bar 50 µm")
+    small_width = small_box[2] - small_box[0]
+    large_width = large_box[2] - large_box[0]
+    small_height = small_box[3] - small_box[1]
+    large_height = large_box[3] - large_box[1]
+
+    assert large_width >= small_width * 1.8
+    assert large_height >= small_height * 1.8
 
 
 def test_atomic_png_save(tmp_path) -> None:

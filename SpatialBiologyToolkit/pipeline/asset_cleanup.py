@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -79,11 +80,11 @@ def _before_inventory(
 
 def _remaining_claims(
     context: ProjectContext,
-    selected: ExecutionRecord,
+    excluded_technical_run_ids: Collection[str],
 ) -> dict[str, list[str]]:
     claims: dict[str, list[str]] = {}
     for execution in load_execution_index(context, require_exists=True).executions:
-        if execution.technical_run_id == selected.technical_run_id:
+        if execution.technical_run_id in excluded_technical_run_ids:
             continue
         spec = get_stage(execution.stage)
         for role in sorted(set(spec.requires_assets) | set(spec.produces_assets)):
@@ -149,6 +150,8 @@ def _protected_paths(
 def plan_asset_cleanup(
     context: ProjectContext,
     selected: ExecutionRecord,
+    *,
+    excluded_technical_run_ids: Collection[str] = (),
 ) -> AssetCleanupPlan:
     """Identify created, unused asset roots while retaining uncertain/shared data."""
     spec = get_stage(selected.stage)
@@ -172,7 +175,9 @@ def plan_asset_cleanup(
         if manifest is not None
         else {}
     )
-    claims = _remaining_claims(context, selected)
+    excluded = set(excluded_technical_run_ids)
+    excluded.add(selected.technical_run_id)
+    claims = _remaining_claims(context, excluded)
 
     for role in roles:
         previous = before_by_role.get(role)

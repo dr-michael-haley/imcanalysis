@@ -113,11 +113,13 @@ dependency-`blocked` executions after one confirmation. It compacts later IDs
 once and retains each removed execution in the technical audit. Cleanup never
 deletes or restores reusable scientific assets.
 
-`sbt remove 003` removes an execution from the visible workflow, removes its
-human-facing folder, and compacts later execution numbers. Temporary names and
-a project lock prevent rename collisions; manifests, technical references, and
-generated links are rewritten while permanent technical IDs remain unchanged.
-External bookmarks to mutable numbered paths can break after compaction.
+`sbt remove 003` removes one execution; `sbt remove 003 005 006` removes several
+in one operation. Every ID is resolved before mutation, then the selected
+human-facing folders and active entries are removed under one project lock and
+the remaining execution numbers are compacted once. Temporary names prevent
+rename collisions; manifests, technical references, and generated links are
+rewritten while permanent technical IDs remain unchanged. External bookmarks
+to mutable numbered paths can break after compaction.
 
 Removal does **not** pretend to reverse scientific changes. Executions that
 created or modified assets, or whose effect is unknown, require a second
@@ -125,9 +127,9 @@ warning; non-interactive removal requires `--yes --accept-asset-risk`.
 
 When the workflow's pre-run inventory proves that an asset role was newly
 created, `sbt remove` offers unused in-project paths for separate cleanup.
-Assets required or produced by another active execution are listed and retained,
-as are pre-existing or ownership-uncertain paths, external paths, and all
-`.h5ad` files. Interactive deletion requires typing `yes`; non-interactive
+Assets required or produced by an unselected active execution are listed and
+retained, as are pre-existing or ownership-uncertain paths, external paths, and
+all `.h5ad` files. Interactive deletion requires typing `yes`; non-interactive
 deletion additionally requires `--remove-assets`. A hidden audit under
 `.sbt/audit/removals/` preserves the old ID and path, technical identity, asset
 classification, cleanup decision and result, reason, and renumbering map. It

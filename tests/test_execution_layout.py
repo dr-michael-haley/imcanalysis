@@ -292,6 +292,92 @@ class ExecutionLayoutTests(unittest.TestCase):
             )
             self.assertIn("Environment Diagnostics", removed.stdout)
 
+    def test_remove_command_accepts_multiple_ids_and_compacts_once(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = self._project(temp_dir)
+            self._submit(context, ["debug"], ["703"])
+            self._submit(context, ["config"], ["704"])
+            self._submit(context, ["debug"], ["705"])
+            self._submit(context, ["config"], ["706"])
+            original = load_execution_index(context).executions
+            for record in original:
+                update_execution(context, record.technical_run_id, status="completed")
+
+            result = CliRunner().invoke(
+                app,
+                [
+                    "remove",
+                    "001",
+                    "003",
+                    "--project",
+                    str(context.root),
+                    "--yes",
+                ],
+            )
+
+            self.assertEqual(result.exit_code, 0, result.stdout)
+            self.assertIn("Remove 2 executions?", result.stdout)
+            self.assertIn("Removed 2 executions (001, 003)", result.stdout)
+            remaining = load_execution_index(context).executions
+            self.assertEqual(
+                [record.technical_run_id for record in remaining],
+                [original[1].technical_run_id, original[3].technical_run_id],
+            )
+            self.assertEqual(
+                [record.execution_label for record in remaining],
+                ["001", "002"],
+            )
+            self.assertEqual(
+                [execution_output_path(context, record).name for record in remaining],
+                ["001_Configuration_Maintenance", "002_Configuration_Maintenance"],
+            )
+            audits = [
+                read_yaml(path)
+                for path in sorted(
+                    (context.root / ".sbt" / "audit" / "removals").glob("*.yaml")
+                )
+            ]
+            self.assertEqual(len(audits), 2)
+            self.assertEqual(
+                {audit["previous_execution_id"] for audit in audits},
+                {1, 3},
+            )
+            self.assertTrue(all(len(audit["renumbered"]) == 2 for audit in audits))
+
+    def test_remove_command_resolves_every_id_before_mutating(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = self._project(temp_dir)
+            self._submit(context, ["debug"], ["707"])
+            self._submit(context, ["config"], ["708"])
+            records = load_execution_index(context).executions
+            for record in records:
+                update_execution(context, record.technical_run_id, status="completed")
+
+            result = CliRunner().invoke(
+                app,
+                [
+                    "remove",
+                    "001",
+                    "999",
+                    "--project",
+                    str(context.root),
+                    "--yes",
+                ],
+            )
+
+            self.assertNotEqual(result.exit_code, 0)
+            self.assertIn("Execution 999 is not active", result.output)
+            self.assertEqual(
+                load_execution_index(context).executions,
+                [
+                    resolve_execution(context, "001"),
+                    resolve_execution(context, "002"),
+                ],
+            )
+            self.assertFalse(
+                (context.root / ".sbt" / "audit" / "removals").exists()
+            )
+
     def test_bulk_remove_compacts_once_and_preserves_each_audit(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             context = self._project(temp_dir)
@@ -609,6 +695,26 @@ class ExecutionLayoutTests(unittest.TestCase):
                     "002 denoise" in item.dependent_stages[0]
                     for item in dependent.values()
                 )
+            )
+            combined_plan = plan_asset_cleanup(
+                context,
+                prep,
+                excluded_technical_run_ids={
+                    prep.technical_run_id,
+                    denoise.technical_run_id,
+                },
+            )
+            self.assertIn(
+                "raw_images",
+                [item.role for item in combined_plan.removable],
+            )
+            self.assertNotIn(
+                "raw_images",
+                [
+                    item.role
+                    for item in combined_plan.retained
+                    if item.reason == "used by remaining stages"
+                ],
             )
             self.assertIn(
                 protected,

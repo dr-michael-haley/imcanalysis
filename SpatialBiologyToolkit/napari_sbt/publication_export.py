@@ -16,8 +16,10 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .explore import ExploreViewRecipe
 
-PUBLICATION_EXPORT_SCHEMA_VERSION = 2
+PUBLICATION_EXPORT_SCHEMA_VERSION = 3
 DEFAULT_FILENAME_TEMPLATE = "{roi}__{recipe}__{channels}__{width}x{height}"
+PUBLICATION_RESOLUTION_FACTORS = {"low": 1, "medium": 2, "high": 4}
+PUBLICATION_RESOLUTION_DPI = {"low": 150, "medium": 300, "high": 600}
 _HEX_COLOUR = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
 _FILENAME_TOKEN = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -122,9 +124,12 @@ class PublicationAnnotations(BaseModel):
 class PublicationOutput(BaseModel):
     """Raster-output and file-naming settings."""
 
-    # ``custom`` is the compatibility default for schema-v1 presets, which did
-    # not persist a sizing mode.  The GUI defaults new, unsaved presets to
-    # ``native`` so one output pixel represents one source-image pixel.
+    # Schema-v1/v2 presets had no simple resolution level, so ``custom`` keeps
+    # their exact output dimensions, DPI, supersampling and fixed-pixel styling.
+    resolution: Literal["low", "medium", "high", "custom"] = "custom"
+    # ``custom`` is also the compatibility default for schema-v1 presets, which
+    # did not persist a sizing mode. The GUI explicitly creates new presets at
+    # its recommended coordinated ``medium`` resolution.
     size_mode: Literal["native", "custom"] = "custom"
     width: int = Field(default=2400, ge=128, le=30000)
     height: int = Field(default=1800, ge=128, le=30000)
@@ -236,12 +241,48 @@ def resolve_publication_output_size(
 ) -> tuple[int, int]:
     """Resolve final raster dimensions without changing the field of view."""
 
+    resolution_factor = PUBLICATION_RESOLUTION_FACTORS.get(output.resolution)
+    if resolution_factor is not None:
+        return (
+            max(1, int(round(frame.field_width * resolution_factor))),
+            max(1, int(round(frame.field_height * resolution_factor))),
+        )
     if output.size_mode == "native":
         return (
             max(1, int(round(frame.field_width))),
             max(1, int(round(frame.field_height))),
         )
     return int(output.width), int(output.height)
+
+
+def publication_resolution_scale(output: PublicationOutput) -> float:
+    """Return the coordinated raster/annotation scale for an output preset."""
+
+    return float(PUBLICATION_RESOLUTION_FACTORS.get(output.resolution, 1))
+
+
+def automatic_publication_style(
+    *, output_width: int, output_height: int
+) -> dict[str, int]:
+    """Choose readable annotation geometry from the final raster dimensions."""
+
+    reference = max(1, min(int(output_width), int(output_height)))
+    return {
+        "scale_bar_font_size": max(10, int(round(reference * 0.026667))),
+        "annotation_font_size": max(10, int(round(reference * 0.03))),
+        "scale_bar_thickness": max(2, int(round(reference * 0.005))),
+        "margin": max(8, int(round(reference * 0.03))),
+        "scale_bar_box_padding": max(4, int(round(reference * 0.01))),
+        "annotation_box_padding": max(4, int(round(reference * 0.013333))),
+        "tick_extension": max(1, int(round(reference * 0.003333))),
+        "line_spacing": max(2, int(round(reference * 0.006667))),
+    }
+
+
+def resolve_publication_dpi(output: PublicationOutput) -> int:
+    """Return the print DPI represented by a simple or legacy output preset."""
+
+    return int(PUBLICATION_RESOLUTION_DPI.get(output.resolution, output.dpi))
 
 
 def publication_render_geometry(
@@ -362,7 +403,7 @@ def resolve_publication_frame(
             field_height=float(setting.field_height),
             field_width=float(setting.field_width),
         )
-    if output.size_mode == "native":
+    if output.resolution != "custom" or output.size_mode == "native":
         return frame
     return fit_frame_to_aspect(
         frame,
@@ -534,12 +575,27 @@ def _rgba(value: str) -> tuple[int, int, int, int]:
 def _font(size: int):
     from PIL import ImageFont
 
-    for candidate in ("DejaVuSans.ttf", "Arial.ttf"):
+    requested_size = max(1, int(size))
+    windows_root = Path(os.environ.get("WINDIR", "C:/Windows"))
+    candidates = (
+        Path("DejaVuSans.ttf"),
+        Path("Arial.ttf"),
+        windows_root / "Fonts" / "arial.ttf",
+        windows_root / "Fonts" / "segoeui.ttf",
+        Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+        Path("/usr/share/fonts/dejavu/DejaVuSans.ttf"),
+        Path("/Library/Fonts/Arial.ttf"),
+        Path("/System/Library/Fonts/Supplemental/Arial.ttf"),
+    )
+    for candidate in candidates:
         try:
-            return ImageFont.truetype(candidate, int(size))
+            return ImageFont.truetype(str(candidate), requested_size)
         except OSError:
             continue
-    return ImageFont.load_default()
+    # Pillow's scalable embedded Aileron font is available through ``size``.
+    # Calling load_default() without it returns a fixed-size bitmap font, which
+    # made high-resolution exports retain tiny scale-bar and annotation text.
+    return ImageFont.load_default(size=requested_size)
 
 
 def compose_publication_image(
@@ -558,7 +614,20 @@ def compose_publication_image(
         raise ValueError("Publication screenshots must be RGB or RGBA arrays.")
     canvas = Image.fromarray(array.astype(np.uint8)).convert("RGBA")
     width, height = canvas.size
-    metadata: dict[str, Any] = {}
+    style_scale = publication_resolution_scale(preset.output)
+    automatic_style = preset.output.resolution in PUBLICATION_RESOLUTION_FACTORS
+    style = automatic_publication_style(
+        output_width=width,
+        output_height=height,
+    )
+
+    def scaled(value: int, *, minimum: int = 0) -> int:
+        return max(minimum, int(round(int(value) * style_scale)))
+
+    metadata: dict[str, Any] = {
+        "annotation_style_scale": style_scale,
+        "annotation_style_profile": "automatic" if automatic_style else "custom",
+    }
 
     scale_bar = preset.scale_bar
     if scale_bar.visible:
@@ -569,24 +638,40 @@ def compose_publication_image(
             output_width=width,
         )
         bar_width = max(1, bar_width)
-        if bar_width >= width - 2 * scale_bar.margin:
+        margin = style["margin"] if automatic_style else scaled(scale_bar.margin)
+        thickness = (
+            style["scale_bar_thickness"]
+            if automatic_style
+            else scaled(scale_bar.thickness, minimum=1)
+        )
+        font_size = (
+            style["scale_bar_font_size"]
+            if automatic_style
+            else scaled(scale_bar.font_size, minimum=1)
+        )
+        box_padding = (
+            style["scale_bar_box_padding"]
+            if automatic_style
+            else scaled(scale_bar.box_padding)
+        )
+        if bar_width >= width - 2 * margin:
             raise ValueError(
                 "The requested scale bar is wider than the exported field of view."
             )
         label = f"{physical_length:g} {preset.calibration.unit}"
-        font = _font(scale_bar.font_size)
+        font = _font(font_size)
         draw = ImageDraw.Draw(canvas, "RGBA")
         text_box = draw.textbbox((0, 0), label, font=font)
         text_width = text_box[2] - text_box[0]
         text_height = text_box[3] - text_box[1]
         content_width = max(bar_width, text_width)
-        content_height = text_height + scale_bar.box_padding + scale_bar.thickness
+        content_height = text_height + box_padding + thickness
         left = scale_bar.position.endswith("left")
         top = scale_bar.position.startswith("top")
-        x0 = scale_bar.margin if left else width - scale_bar.margin - content_width
-        y0 = scale_bar.margin if top else height - scale_bar.margin - content_height
+        x0 = margin if left else width - margin - content_width
+        y0 = margin if top else height - margin - content_height
         if scale_bar.box:
-            pad = scale_bar.box_padding
+            pad = box_padding
             draw.rounded_rectangle(
                 (x0 - pad, y0 - pad, x0 + content_width + pad, y0 + content_height + pad),
                 radius=max(2, pad // 2),
@@ -596,35 +681,45 @@ def compose_publication_image(
         line_x = x0 + (content_width - bar_width) / 2
         if top:
             line_y = y0
-            text_y = y0 + scale_bar.thickness + scale_bar.box_padding
+            text_y = y0 + thickness + box_padding
         else:
             text_y = y0
-            line_y = y0 + text_height + scale_bar.box_padding
+            line_y = y0 + text_height + box_padding
         colour = _rgba(scale_bar.color)
         draw.rectangle(
             (
                 line_x,
                 line_y,
                 line_x + bar_width,
-                line_y + scale_bar.thickness,
+                line_y + thickness,
             ),
             fill=colour,
         )
         if scale_bar.ticks:
-            tick = max(scale_bar.thickness * 3, scale_bar.thickness + 2)
+            tick_extension = (
+                style["tick_extension"]
+                if automatic_style
+                else scaled(2, minimum=1)
+            )
+            tick = max(thickness * 3, thickness + tick_extension)
             for tick_x in (line_x, line_x + bar_width):
                 draw.rectangle(
                     (
-                        tick_x - scale_bar.thickness / 2,
+                        tick_x - thickness / 2,
                         line_y - tick / 2,
-                        tick_x + scale_bar.thickness / 2,
-                        line_y + scale_bar.thickness + tick / 2,
+                        tick_x + thickness / 2,
+                        line_y + thickness + tick / 2,
                     ),
                     fill=colour,
                 )
         draw.text((text_x, text_y), label, font=font, fill=colour)
         metadata["scale_bar_physical_length"] = physical_length
         metadata["scale_bar_output_pixels"] = bar_width
+        metadata["scale_bar_rendered_font_size"] = font_size
+        metadata["scale_bar_rendered_text_width"] = text_width
+        metadata["scale_bar_rendered_text_height"] = text_height
+        metadata["scale_bar_rendered_thickness"] = thickness
+        metadata["scale_bar_rendered_margin"] = margin
 
     annotations = preset.annotations
     lines = []
@@ -637,16 +732,34 @@ def compose_publication_image(
     if lines:
         text = "\n".join(lines)
         draw = ImageDraw.Draw(canvas, "RGBA")
-        font = _font(annotations.font_size)
-        text_box = draw.multiline_textbbox((0, 0), text, font=font, spacing=4)
+        font_size = (
+            style["annotation_font_size"]
+            if automatic_style
+            else scaled(annotations.font_size, minimum=1)
+        )
+        margin = style["margin"] if automatic_style else scaled(annotations.margin)
+        box_padding = (
+            style["annotation_box_padding"]
+            if automatic_style
+            else scaled(annotations.box_padding)
+        )
+        spacing = (
+            style["line_spacing"]
+            if automatic_style
+            else scaled(4, minimum=1)
+        )
+        font = _font(font_size)
+        text_box = draw.multiline_textbbox(
+            (0, 0), text, font=font, spacing=spacing
+        )
         text_width = text_box[2] - text_box[0]
         text_height = text_box[3] - text_box[1]
         left = annotations.position.endswith("left")
         top = annotations.position.startswith("top")
-        x = annotations.margin if left else width - annotations.margin - text_width
-        y = annotations.margin if top else height - annotations.margin - text_height
+        x = margin if left else width - margin - text_width
+        y = margin if top else height - margin - text_height
         if annotations.box:
-            pad = annotations.box_padding
+            pad = box_padding
             draw.rounded_rectangle(
                 (x - pad, y - pad, x + text_width + pad, y + text_height + pad),
                 radius=max(2, pad // 2),
@@ -657,10 +770,14 @@ def compose_publication_image(
             text,
             font=font,
             fill=_rgba(annotations.color),
-            spacing=4,
+            spacing=spacing,
             align="left" if left else "right",
         )
         metadata["annotation_text"] = lines
+        metadata["annotation_rendered_font_size"] = font_size
+        metadata["annotation_rendered_text_width"] = text_width
+        metadata["annotation_rendered_text_height"] = text_height
+        metadata["annotation_rendered_margin"] = margin
 
     return np.asarray(canvas), metadata
 
@@ -723,6 +840,8 @@ def save_publication_image(
 __all__ = [
     "DEFAULT_FILENAME_TEMPLATE",
     "PUBLICATION_EXPORT_SCHEMA_VERSION",
+    "PUBLICATION_RESOLUTION_DPI",
+    "PUBLICATION_RESOLUTION_FACTORS",
     "PixelCalibration",
     "PublicationAnnotations",
     "PublicationExportPreset",
@@ -732,6 +851,7 @@ __all__ = [
     "PublicationRenderGeometry",
     "PublicationScaleBar",
     "ResolvedPublicationFrame",
+    "automatic_publication_style",
     "build_publication_filename",
     "camera_frame_from_canvas",
     "channel_filename_token",
@@ -740,6 +860,8 @@ __all__ = [
     "detect_tiff_pixel_calibration",
     "fit_frame_to_aspect",
     "publication_render_geometry",
+    "publication_resolution_scale",
+    "resolve_publication_dpi",
     "resolve_publication_frame",
     "resolve_publication_output_size",
     "resolve_scale_bar_length",

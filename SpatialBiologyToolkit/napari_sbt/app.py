@@ -197,6 +197,8 @@ from .publication_export import (
     detect_tiff_pixel_calibration,
     downsample_publication_image,
     publication_render_geometry,
+    publication_resolution_scale,
+    resolve_publication_dpi,
     resolve_publication_frame,
     resolve_publication_output_size,
     save_publication_image,
@@ -15158,9 +15160,12 @@ class NapariSBTController:
         calibration_form.addRow("Automatic target", self.publication_scale_fraction_spin)
         calibration_form.addRow("Position", self.publication_scale_position_combo)
         calibration_form.addRow("Colours", colour_row)
-        calibration_form.addRow("Line thickness (output px)", self.publication_scale_thickness_spin)
-        calibration_form.addRow("Font size (output px)", self.publication_scale_font_spin)
-        calibration_form.addRow("Edge margin (output px)", self.publication_scale_margin_spin)
+        scale_sizing_help = QLabel(
+            "Bar thickness, label size, margins, ticks and the background box "
+            "automatically scale with the selected output resolution."
+        )
+        scale_sizing_help.setWordWrap(True)
+        calibration_form.addRow("Automatic sizing", scale_sizing_help)
         calibration_form.addRow("Style", self.publication_scale_ticks_check)
         calibration_form.addRow("", self.publication_scale_box_check)
         appearance_layout.addWidget(calibration_group)
@@ -15186,7 +15191,12 @@ class NapariSBTController:
         annotation_form.addRow("Channels", self.publication_show_channels_check)
         annotation_form.addRow("Custom title", self.publication_title_edit)
         annotation_form.addRow("Position", self.publication_annotation_position_combo)
-        annotation_form.addRow("Font size (output px)", self.publication_annotation_font_spin)
+        annotation_scale_help = QLabel(
+            "Text size, margins and background boxes automatically scale with "
+            "the selected Low, Medium or High output resolution."
+        )
+        annotation_scale_help.setWordWrap(True)
+        annotation_form.addRow("Automatic sizing", annotation_scale_help)
         appearance_layout.addWidget(annotation_group)
         appearance_layout.addStretch(1)
         tabs.addTab(appearance_tab, "Scale bar & labels")
@@ -15194,7 +15204,7 @@ class NapariSBTController:
         # Output and batch tab.
         output_tab = QWidget()
         output_layout = QVBoxLayout(output_tab)
-        output_group = QGroupBox("5. Output size and files")
+        output_group = QGroupBox("5. Resolution and files")
         output_form = QFormLayout(output_group)
         output_form.addRow("", publication_help_button())
         self.publication_width_spin = QSpinBox()
@@ -15218,6 +15228,23 @@ class NapariSBTController:
         self.publication_supersampling_combo.addItem("1× (fast)", 1)
         self.publication_supersampling_combo.addItem("2×", 2)
         self.publication_supersampling_combo.addItem("4×", 4)
+        self.publication_resolution_combo = QComboBox()
+        self.publication_resolution_combo.addItem(
+            "Low — native pixels, 150 DPI (fast)", "low"
+        )
+        self.publication_resolution_combo.addItem(
+            "Medium — 2× pixels, 300 DPI (recommended)", "medium"
+        )
+        self.publication_resolution_combo.addItem(
+            "High — 4× pixels, 600 DPI (large figures)", "high"
+        )
+        self.publication_resolution_combo.setCurrentIndex(
+            self.publication_resolution_combo.findData("medium")
+        )
+        self.publication_resolution_combo.setToolTip(
+            "Resolution changes raster sampling and DPI together while preserving "
+            "the field of view and automatically scaling all labels and scale-bar styling."
+        )
         self.publication_format_combo = QComboBox()
         self.publication_format_combo.addItem("PNG — recommended", "png")
         self.publication_format_combo.addItem("TIFF — lossless", "tiff")
@@ -15245,12 +15272,8 @@ class NapariSBTController:
         self.publication_filename_preview.setWordWrap(True)
         self.publication_print_size_label = QLabel()
         self.publication_print_size_label.setWordWrap(True)
-        output_form.addRow("Raster sizing", self.publication_size_mode_combo)
-        output_form.addRow("Custom width (pixels)", self.publication_width_spin)
-        output_form.addRow("Custom height (pixels)", self.publication_height_spin)
-        output_form.addRow("Supersampling", self.publication_supersampling_combo)
+        output_form.addRow("Resolution", self.publication_resolution_combo)
         output_form.addRow("Format", self.publication_format_combo)
-        output_form.addRow("DPI metadata", self.publication_dpi_spin)
         output_form.addRow("Filename template", self.publication_filename_edit)
         output_form.addRow("Output folder", output_folder_row)
         output_form.addRow("Existing files", self.publication_conflict_combo)
@@ -15377,6 +15400,7 @@ class NapariSBTController:
             self.publication_aspect_combo,
             self.publication_scale_mode_combo,
             self.publication_scale_position_combo,
+            self.publication_resolution_combo,
             self.publication_size_mode_combo,
             self.publication_supersampling_combo,
             self.publication_format_combo,
@@ -15643,7 +15667,11 @@ class NapariSBTController:
         if self.publication_export_dialog is None:
             return
         fixed = self.publication_frame_mode_combo.currentData() == "fixed"
-        custom_size = self.publication_size_mode_combo.currentData() == "custom"
+        custom_resolution = self.publication_resolution_combo.currentData() == "custom"
+        custom_size = (
+            custom_resolution
+            and self.publication_size_mode_combo.currentData() == "custom"
+        )
         for control in (
             self.publication_center_y_spin,
             self.publication_center_x_spin,
@@ -15686,18 +15714,21 @@ class NapariSBTController:
                 output_size=(output_width, output_height),
             )
             self.publication_filename_preview.setText(filename)
-            dpi = max(1, preset.output.dpi)
+            dpi = max(1, resolve_publication_dpi(preset.output))
             width_inches = output_width / dpi
             height_inches = output_height / dpi
-            size_description = (
-                "native 1:1 source sampling"
-                if preset.output.size_mode == "native"
-                else "custom resampling"
-            )
+            resolution_labels = {
+                "low": "Low — 1× source pixels",
+                "medium": "Medium — 2× source pixels",
+                "high": "High — 4× source pixels",
+                "custom": "Existing custom settings",
+            }
+            size_description = resolution_labels[preset.output.resolution]
+            annotation_scale = publication_resolution_scale(preset.output)
             self.publication_print_size_label.setText(
                 f"{output_width:,} × {output_height:,} pixels ({size_description}); "
                 f"{width_inches:.2f} × {height_inches:.2f} inches at {dpi} DPI. "
-                "DPI changes print metadata only, not the field of view."
+                f"Scale-bar and label styling: {annotation_scale:g}×."
             )
             self.publication_frame_summary.setText(
                 f"centre Y/X {frame.center_y:.2f}, {frame.center_x:.2f}; "
@@ -15776,15 +15807,30 @@ class NapariSBTController:
                 field_width=current.field_width,
                 aspect_mode=frame.aspect_mode,
             )
+        resolution = str(self.publication_resolution_combo.currentData())
+        simple_resolution = resolution in {"low", "medium", "high"}
         output = PublicationOutput(
-            size_mode=str(self.publication_size_mode_combo.currentData()),
+            resolution=resolution,
+            size_mode=(
+                "native"
+                if simple_resolution
+                else str(self.publication_size_mode_combo.currentData())
+            ),
             width=self.publication_width_spin.value(),
             height=self.publication_height_spin.value(),
-            supersampling=int(self.publication_supersampling_combo.currentData()),
+            supersampling=(
+                1
+                if simple_resolution
+                else int(self.publication_supersampling_combo.currentData())
+            ),
             format=str(self.publication_format_combo.currentData()),
             dpi=self.publication_dpi_spin.value(),
             filename_template=self.publication_filename_edit.text(),
         )
+        if simple_resolution:
+            output = output.model_copy(
+                update={"dpi": resolve_publication_dpi(output)}
+            )
         scale_bar = PublicationScaleBar(
             visible=self.publication_scale_visible_check.isChecked(),
             length_mode=str(self.publication_scale_mode_combo.currentData()),
@@ -15885,6 +15931,15 @@ class NapariSBTController:
             self.publication_annotation_position_combo.findData(preset.annotations.position)
         )
         self.publication_annotation_font_spin.setValue(preset.annotations.font_size)
+        resolution_index = self.publication_resolution_combo.findData(
+            preset.output.resolution
+        )
+        if resolution_index < 0 and preset.output.resolution == "custom":
+            self.publication_resolution_combo.addItem(
+                "Custom — existing saved preset", "custom"
+            )
+            resolution_index = self.publication_resolution_combo.findData("custom")
+        self.publication_resolution_combo.setCurrentIndex(resolution_index)
         self.publication_size_mode_combo.setCurrentIndex(
             self.publication_size_mode_combo.findData(preset.output.size_mode)
         )
@@ -16162,12 +16217,14 @@ class NapariSBTController:
             roi=str(self.current_roi),
         )
         render_metadata = {
+            "resolution": preset.output.resolution,
+            "resolution_scale": publication_resolution_scale(preset.output),
             "size_mode": preset.output.size_mode,
             "requested_width": preset.output.width,
             "requested_height": preset.output.height,
             "output_width": output_width,
             "output_height": output_height,
-            "output_dpi": preset.output.dpi,
+            "output_dpi": resolve_publication_dpi(preset.output),
             "supersampling": render_scale,
             "render_width": geometry.render_width,
             "render_height": geometry.render_height,
@@ -16207,7 +16264,7 @@ class NapariSBTController:
             except package_metadata.PackageNotFoundError:
                 versions[package] = "unknown"
         return {
-            "schema_version": 2,
+            "schema_version": 3,
             "exported_at": datetime.now().astimezone().isoformat(),
             "destination": str(destination.resolve(strict=False)),
             "experiment_id": self.manifest.experiment_id,
@@ -16295,12 +16352,12 @@ class NapariSBTController:
         save_publication_image(
             image,
             destination,
-            dpi=preset.output.dpi,
+            dpi=resolve_publication_dpi(preset.output),
             metadata={
                 "preset_fingerprint": preset.fingerprint,
                 "recipe_fingerprint": preset.recipe.fingerprint,
                 "roi": str(self.current_roi),
-                "output_dpi": preset.output.dpi,
+                "output_dpi": resolve_publication_dpi(preset.output),
                 "source_pixel_size_x": preset.calibration.x_size,
                 "source_pixel_size_y": preset.calibration.y_size,
                 "source_pixel_unit": preset.calibration.unit,

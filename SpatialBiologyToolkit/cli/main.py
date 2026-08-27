@@ -61,12 +61,13 @@ from SpatialBiologyToolkit.pipeline.executions import (
     execution_output_path,
     execution_summaries,
     load_execution_index,
-    remove_execution,
     remove_executions,
     resolve_execution,
     resolve_technical_execution,
 )
 from SpatialBiologyToolkit.pipeline.models import (
+    AssetCleanupPlan,
+    ExecutionRecord,
     ExternalDependency,
     ProjectStatusRefresh,
     model_data,
@@ -3055,17 +3056,26 @@ def cleanup_command(
 
 @app.command(
     "remove",
-    help="Remove a visible execution safely and renumber later executions.",
+    help=(
+        "Remove a visible execution safely, or several at once, and renumber "
+        "the remainder."
+    ),
 )
 def remove_command(
-    execution: str = typer.Argument(..., help="Active execution ID."),
+    executions: list[str] = typer.Argument(
+        ...,
+        help="One or more active execution IDs.",
+    ),
     project: Path | None = typer.Option(None, "--project"),
     yes: bool = typer.Option(False, "--yes"),
     accept_asset_risk: bool = typer.Option(False, "--accept-asset-risk"),
     remove_assets: bool = typer.Option(
         False,
         "--remove-assets",
-        help="With --yes, remove eligible unused assets after removing the execution.",
+        help=(
+            "With --yes, remove eligible unused assets after removing the "
+            "selected executions."
+        ),
     ),
     reason: str | None = typer.Option(None, "--reason"),
 ) -> None:
@@ -3073,27 +3083,67 @@ def remove_command(
         _fail("--remove-assets requires --yes for non-interactive confirmation.")
     try:
         context = _project(project)
-        selected = resolve_execution(context, execution)
-        output = execution_output_path(context, selected)
-        asset_plan = plan_asset_cleanup(context, selected)
+        selected: list[ExecutionRecord] = []
+        selected_technical_ids: set[str] = set()
+        for reference in executions:
+            record = resolve_execution(context, reference)
+            if record.technical_run_id in selected_technical_ids:
+                raise ValueError(
+                    f"Execution {record.execution_label} was specified more than once."
+                )
+            selected.append(record)
+            selected_technical_ids.add(record.technical_run_id)
+        outputs = {
+            record.technical_run_id: execution_output_path(context, record)
+            for record in selected
+        }
+        asset_plans: dict[str, AssetCleanupPlan] = {
+            record.technical_run_id: plan_asset_cleanup(
+                context,
+                record,
+                excluded_technical_run_ids=selected_technical_ids,
+            )
+            for record in selected
+        }
     except Exception as exc:
         _fail(exc)
-    risky = selected.asset_effect != "none"
-    typer.echo(
-        f"Remove execution {selected.execution_label} — {selected.stage_display_name}?"
-    )
+    risky = [record for record in selected if record.asset_effect != "none"]
+    if len(selected) == 1:
+        record = selected[0]
+        typer.echo(
+            f"Remove execution {record.execution_label} — "
+            f"{record.stage_display_name}?"
+        )
+    else:
+        typer.echo(f"Remove {len(selected)} executions?")
+    for position, record in enumerate(selected):
+        if len(selected) > 1:
+            if position:
+                typer.echo("")
+            typer.echo(
+                f"Execution {record.execution_label} — {record.stage_display_name}"
+            )
+        typer.echo("")
+        typer.echo(f"Status: {record.status}")
+        typer.echo(f"Output folder: {outputs[record.technical_run_id]}")
+        typer.echo(f"Technical execution ID: {record.technical_run_id}")
+        typer.echo(f"Reusable asset effect: {record.asset_effect}")
     typer.echo("")
-    typer.echo(f"Status: {selected.status}")
-    typer.echo(f"Output folder: {output}")
-    typer.echo(f"Technical execution ID: {selected.technical_run_id}")
-    typer.echo(f"Reusable asset effect: {selected.asset_effect}")
-    typer.echo("")
     typer.echo(
-        "This removes the human-facing output folder and active workflow entry. "
+        "This removes the human-facing output folders and active workflow entries. "
         "Permanent technical evidence is retained under .sbt/."
     )
-    if asset_plan.removable or asset_plan.retained:
+    for record in selected:
+        asset_plan = asset_plans[record.technical_run_id]
+        if not (asset_plan.removable or asset_plan.retained):
+            continue
         typer.echo("")
+        if len(selected) > 1:
+            typer.echo(
+                f"Asset cleanup for {record.execution_label} — "
+                f"{record.stage_display_name}:"
+            )
+            typer.echo("")
         typer.echo("Remaining unused assets eligible for removal:")
         if asset_plan.removable:
             for item in asset_plan.removable:
@@ -3132,61 +3182,90 @@ def remove_command(
     if risky:
         typer.echo("")
         typer.echo(
-            "This execution created or modified reusable assets, or its effect is "
+            "One or more selected executions created or modified reusable assets, "
+            "or their effect is "
             "unknown. Removal does not restore those assets and downstream analyses "
             "may depend on them."
         )
         if yes and not accept_asset_risk:
             _fail(
-                "Non-interactive removal requires --accept-asset-risk for this execution."
+                "Non-interactive removal requires --accept-asset-risk for the "
+                "selected execution(s)."
             )
         if not accept_asset_risk and not typer.confirm(
-            "Remove this execution from the visible workflow anyway?",
+            "Remove the selected execution(s) from the visible workflow anyway?",
             default=False,
         ):
             raise typer.Abort()
     remove_assets_now = remove_assets
-    if asset_plan.removable and not yes:
+    if any(plan.removable for plan in asset_plans.values()) and not yes:
         typer.echo("")
         response = typer.prompt(
-            "Type 'yes' to remove the eligible unused assets; anything else keeps them",
+            "Type 'yes' to remove all eligible unused assets; anything else keeps them",
             default="",
             show_default=False,
         )
         remove_assets_now = response.strip().lower() == "yes"
     try:
-        audit = remove_execution(
+        audits = remove_executions(
             context,
-            selected.execution_id,
+            [record.technical_run_id for record in selected],
             reason=reason,
             confirmation_mode="non_interactive" if yes else "interactive",
-            asset_cleanup=cleanup_audit(
-                asset_plan,
-                offered=bool(asset_plan.removable),
-                confirmed=remove_assets_now,
-            ),
+            asset_cleanup_by_technical_id={
+                technical_run_id: cleanup_audit(
+                    asset_plan,
+                    offered=bool(asset_plan.removable),
+                    confirmed=remove_assets_now,
+                )
+                for technical_run_id, asset_plan in asset_plans.items()
+            },
         )
         if remove_assets_now:
-            audit = apply_asset_cleanup(context, audit, asset_plan)
+            audits = [
+                apply_asset_cleanup(
+                    context,
+                    audit,
+                    asset_plans[audit.technical_run_id],
+                )
+                for audit in audits
+            ]
     except Exception as exc:
         _fail(exc)
-    typer.echo(
-        f"Removed execution {audit.previous_execution.execution_label}; "
-        f"renumbered {len(audit.renumbered)} later execution(s)."
-    )
-    cleanup = audit.asset_cleanup
-    if cleanup and cleanup.confirmed:
+    renumbered = len(audits[0].renumbered) if audits else 0
+    if len(audits) == 1:
         typer.echo(
-            f"Cleaned {len(cleanup.cleaned_paths)} unused asset path(s) "
-            f"({cleanup.removed_entries} filesystem entries)."
+            f"Removed execution {audits[0].previous_execution.execution_label}; "
+            f"renumbered {renumbered} later execution(s)."
         )
-        if cleanup.errors:
+    else:
+        removed_labels = ", ".join(
+            audit.previous_execution.execution_label for audit in audits
+        )
+        typer.echo(
+            f"Removed {len(audits)} executions ({removed_labels}); "
+            f"renumbered {renumbered} remaining execution(s)."
+        )
+    cleanups = [audit.asset_cleanup for audit in audits if audit.asset_cleanup]
+    confirmed_cleanups = [cleanup for cleanup in cleanups if cleanup.confirmed]
+    if confirmed_cleanups:
+        cleaned_paths = sum(len(cleanup.cleaned_paths) for cleanup in confirmed_cleanups)
+        removed_entries = sum(cleanup.removed_entries for cleanup in confirmed_cleanups)
+        typer.echo(
+            f"Cleaned {cleaned_paths} unused asset path(s) "
+            f"({removed_entries} filesystem entries)."
+        )
+        cleanup_errors = [
+            error for cleanup in confirmed_cleanups for error in cleanup.errors
+        ]
+        if cleanup_errors:
             typer.echo("Some asset cleanup operations failed:")
-            for error in cleanup.errors:
+            for error in cleanup_errors:
                 typer.echo(f"  {error}")
-        if cleanup.retained:
+        retained_count = sum(len(cleanup.retained) for cleanup in confirmed_cleanups)
+        if retained_count:
             typer.echo(
-                f"Retained {len(cleanup.retained)} protected or shared asset path(s)."
+                f"Retained {retained_count} protected or shared asset path(s)."
             )
     else:
         typer.echo("Reusable project assets were not deleted or restored.")

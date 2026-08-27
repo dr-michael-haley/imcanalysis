@@ -591,6 +591,9 @@ def remove_executions(
     *,
     reason: str | None,
     confirmation_mode: Literal["interactive", "non_interactive", "system"],
+    asset_cleanup_by_technical_id: dict[
+        str, AssetCleanupAudit | None
+    ] | None = None,
 ) -> list[RemovalAudit]:
     """Remove several terminal executions under one lock and one renumber pass."""
     requested = list(dict.fromkeys(technical_run_ids))
@@ -618,6 +621,7 @@ def remove_executions(
             removed,
             reason=reason,
             confirmation_mode=confirmation_mode,
+            asset_cleanup_by_technical_id=asset_cleanup_by_technical_id,
         )
 
 

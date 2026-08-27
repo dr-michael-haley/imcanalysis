@@ -35,26 +35,31 @@ later edited or removed. Publication presets are stored separately in
 `explore/publication_export_presets.json`, so they do not participate in frequent
 layer-visibility and ROI-review updates.
 
-**Native source pixels** is the recommended default: one exported raster pixel
-represents one original image pixel in the selected field of view, and a whole-ROI
-export keeps that ROI's original pixel dimensions. **Custom output pixels** is an
-explicit resampling mode; changing those dimensions changes sampling density but
-never the centre or field of view. Supersampling renders at 2x or 4x and downsamples
-with a high-quality filter. DPI is written as print metadata and does not change
-the field of view or add image detail. PNG is the recommended default, TIFF is
-lossless, and JPEG is explicitly lossy. Filenames always retain the ROI and
+Choose one coordinated **Resolution** rather than managing raster size, DPI, and
+annotation sizes separately. **Low** exports one raster pixel per source pixel at
+150 DPI, **Medium** (recommended) exports at 2x linear resolution and 300 DPI, and
+**High** exports at 4x linear resolution and 600 DPI. All three preserve exactly
+the same centre, field of view, aspect ratio, and approximate printed dimensions.
+Scale-bar thickness, text, margins, ticks, annotation text, and annotation boxes
+grow with the selected resolution, so the composition keeps the same visual
+proportions. Higher levels provide denser pixels for large figures; they cannot
+create detail absent from the source images. Existing presets that used the old
+manual controls open as **Custom — existing saved preset** and retain their exact
+settings until you choose a new resolution. PNG is the recommended default, TIFF
+is lossless, and JPEG is explicitly lossy. Filenames always retain the ROI and
 channel identities, even when a custom template omits them. The default is
 `{roi}__{recipe}__{channels}__{width}x{height}`.
 
 Physical scale bars require an explicitly verified X/Y pixel calibration. Select
 an automatic visually sensible length or a fixed physical length, then control
-position, colour, thickness, font size, margin, ticks, and background box. Napari's
+position, colour, ticks, and background box. Thickness, font size, margin, tick
+size, and box padding are sized automatically from the chosen resolution. Napari's
 metadata detector reads OME physical-size metadata or calibrated TIFF resolution
 tags from one current image, but leaves the result unconfirmed until you review it.
 Napari's ordinary scale-bar overlay is hidden during capture; NapariSBT calculates bar
 length from the frozen source-pixel field and verified physical size per pixel,
 then composites it onto the final raster. It is therefore independent of output
-DPI and remains physically correct in both native and custom-size modes. Use
+DPI and remains physically correct at every resolution. Use
 **Render preview** to inspect the exact final raster
 before saving. ROI, channel, and custom-title annotations are optional.
 
