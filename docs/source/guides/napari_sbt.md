@@ -719,11 +719,15 @@ resolution at 600 DPI. Because pixel density and DPI increase together, the thre
 levels preserve the same field of view, aspect ratio, and approximate physical
 print size. Scale-bar thickness, text, margins, ticks and boxes, plus ROI/channel/
 title annotations, scale with the chosen level so their visual proportions remain
-stable. Higher levels are useful for large figures but cannot add detail absent
-from the input. Existing presets created with manual width, height, supersampling,
-and DPI controls load as a backward-compatible custom mode and remain unchanged
-until the user selects Low, Medium, or High. PNG is the default, TIFF remains
-lossless, and JPEG is labelled lossy. Filenames contain the ROI and image channels
+stable. Relative percentage controls multiply this automatic baseline without
+changing the field of view: scale-bar label, bar/ticks, margin and box padding can
+be adjusted independently, while custom-title, ROI-name and channel-name text
+have separate size controls. Higher levels are useful for large figures but cannot
+add detail absent from the input. Existing presets created with manual width,
+height, supersampling, and DPI controls load as a backward-compatible custom mode
+and remain unchanged until the user selects Low, Medium, or High. PNG is the
+default, TIFF remains lossless, and JPEG is labelled lossy. Filenames contain the
+ROI and image channels
 even when a custom template omits those tokens.
 
 Scale bars are refused until the user verifies the X/Y physical size per source
@@ -731,12 +735,17 @@ pixel. Their physical length is calculated from the frozen source-pixel field an
 that calibration, independently of raster resampling and output DPI. Automatic
 lengths use a readable 1/2/5 physical-unit interval close to the selected fraction
 of the field width; fixed lengths are also available. Position, colour, ticks and
-the translucent box remain user choices, while thickness, fonts, margins, ticks
-and box padding are automatically scaled for the final output resolution. OME
+the translucent box remain user choices. The physical-length text can be hidden
+for a bar-only scale indicator. Thickness, fonts, margins, ticks and box padding
+are automatically scaled for the final output resolution and then multiplied by
+their user-selected relative percentages. OME
 physical sizes and calibrated TIFF resolution tags
 can populate the controls from one current image, but detected values still require
 explicit user confirmation. Optional ROI, channel and custom-title text is also
-composited after rendering.
+composited after rendering, with configurable colour, translucent background,
+margin and padding. Each channel name can optionally use the representative
+high-value colour from its exact frozen layer colormap; RGB and legacy six-colour
+recipes use their component colours as deterministic fallbacks.
 
 Bulk export accepts any selection from the current ROI list. Its preflight uses
 the existing Setup asset index rather than scanning folders and reports mask,

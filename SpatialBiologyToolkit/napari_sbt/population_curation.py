@@ -31,6 +31,7 @@ from SpatialBiologyToolkit.pipeline.manifests import (
     write_yaml,
 )
 
+from .anndata_io import write_h5ad_compat
 from .colour_helper import categorical_colour_collisions, normalise_hex_colour
 from .models import slugify
 from .storage import dataframe_sha256, read_dataframe, write_dataframe
@@ -1559,7 +1560,7 @@ def atomic_write_curated_anndata(adata: Any, destination: str | Path) -> Path:
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(f".{output.stem}.tmp{output.suffix}")
     try:
-        adata.write_h5ad(temporary)
+        write_h5ad_compat(adata, temporary)
         os.replace(temporary, output)
     finally:
         if temporary.exists():

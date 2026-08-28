@@ -68,7 +68,11 @@ RGB recipe or CSV row. The current global width still contributes to the effecti
 view fingerprint, so changing it creates an appropriate new viewed-ROI context.
 
 **Suggest top three markers** ranks image channels that can be matched safely to
-`adata.var` by their mean `adata.X` expression in the selected population.
+`adata.var` by their mean `adata.X` expression in the selected population. Each
+AnnData variable is suggested at most once even if different ROIs use different
+image-channel aliases. Channels available in the current ROI are preferred; a
+dataset-wide fallback channel that is absent from the current ROI is shown in
+orange rather than silently leaving an RGB selector blank.
 Suggestions are a starting point and should be reviewed biologically. If the
 selected scope contains no matching cells, or image names cannot be matched to
 variables, the optional suggestion action reports a warning in the tab instead of

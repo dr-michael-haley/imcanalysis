@@ -249,6 +249,42 @@ def marker_values(adata, marker: str) -> np.ndarray:
     return values
 
 
+def rank_marker_rois(
+    adata,
+    *,
+    marker: str,
+    roi_obs: str,
+    eligible_rois: list[str] | tuple[str, ...] | set[str] | None = None,
+) -> list[tuple[str, float]]:
+    """Rank ROIs by mean ``adata.X`` signal quantified inside segmented cells."""
+
+    if roi_obs not in adata.obs:
+        raise KeyError(f"AnnData ROI observation does not exist: {roi_obs}")
+    expression = np.asarray(marker_values(adata, marker), dtype=float)
+    roi_values = adata.obs[roi_obs].astype("string")
+    usable = roi_values.notna().to_numpy() & np.isfinite(expression)
+    if not bool(usable.any()):
+        return []
+    working = pd.DataFrame(
+        {
+            "roi": roi_values.loc[usable].astype(str).to_numpy(),
+            "expression": expression[usable],
+        }
+    )
+    means = working.groupby("roi", sort=False, observed=True)["expression"].mean()
+    allowed = (
+        None
+        if eligible_rois is None
+        else {str(roi) for roi in eligible_rois}
+    )
+    ranked = [
+        (str(roi), float(mean))
+        for roi, mean in means.items()
+        if allowed is None or str(roi) in allowed
+    ]
+    return sorted(ranked, key=lambda item: (-item[1], item[0].casefold(), item[0]))
+
+
 def roi_level_metadata(
     obs: pd.DataFrame,
     *,
@@ -535,6 +571,7 @@ __all__ = [
     "observation_categories",
     "population_identity_map",
     "population_recipe_key",
+    "rank_marker_rois",
     "recipe_layer_data_is_current",
     "roi_level_metadata",
 ]

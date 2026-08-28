@@ -14,14 +14,25 @@ from typing import Any, Literal
 import numpy as np
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from .explore import ExploreViewRecipe
+from .explore import SIX_COLOUR_COLORMAPS, ExploreViewRecipe
 
-PUBLICATION_EXPORT_SCHEMA_VERSION = 3
+PUBLICATION_EXPORT_SCHEMA_VERSION = 4
 DEFAULT_FILENAME_TEMPLATE = "{roi}__{recipe}__{channels}__{width}x{height}"
 PUBLICATION_RESOLUTION_FACTORS = {"low": 1, "medium": 2, "high": 4}
 PUBLICATION_RESOLUTION_DPI = {"low": 150, "medium": 300, "high": 600}
 _HEX_COLOUR = re.compile(r"^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
 _FILENAME_TOKEN = re.compile(r"[^A-Za-z0-9._-]+")
+_NAMED_CHANNEL_COLOURS = {
+    "red": "#ff0000",
+    "green": "#00ff00",
+    "blue": "#0000ff",
+    "cyan": "#00ffff",
+    "yellow": "#ffff00",
+    "magenta": "#ff00ff",
+    "gray": "#ffffff",
+    "grey": "#ffffff",
+    "white": "#ffffff",
+}
 
 
 class PixelCalibration(BaseModel):
@@ -75,17 +86,22 @@ class PublicationScaleBar(BaseModel):
     length_mode: Literal["auto", "fixed"] = "auto"
     length: float = Field(default=50.0, gt=0)
     target_fraction: float = Field(default=0.2, gt=0.05, le=0.5)
-    position: Literal[
-        "bottom_right", "bottom_left", "top_right", "top_left"
-    ] = "bottom_right"
+    position: Literal["bottom_right", "bottom_left", "top_right", "top_left"] = (
+        "bottom_right"
+    )
     color: str = "#ffffff"
     thickness: int = Field(default=5, ge=1, le=100)
     font_size: int = Field(default=28, ge=6, le=300)
     margin: int = Field(default=30, ge=0, le=1000)
+    show_label: bool = True
+    label_scale: float = Field(default=1.0, ge=0.1, le=5.0)
+    thickness_scale: float = Field(default=1.0, ge=0.1, le=5.0)
+    margin_scale: float = Field(default=1.0, ge=0.1, le=5.0)
     ticks: bool = True
     box: bool = True
     box_color: str = "#000000a6"
     box_padding: int = Field(default=12, ge=0, le=500)
+    box_padding_scale: float = Field(default=1.0, ge=0.1, le=5.0)
 
     @field_validator("color", "box_color")
     @classmethod
@@ -108,9 +124,15 @@ class PublicationAnnotations(BaseModel):
     color: str = "#ffffff"
     font_size: int = Field(default=28, ge=6, le=300)
     margin: int = Field(default=30, ge=0, le=1000)
+    title_scale: float = Field(default=1.0, ge=0.1, le=5.0)
+    roi_scale: float = Field(default=1.0, ge=0.1, le=5.0)
+    channel_scale: float = Field(default=1.0, ge=0.1, le=5.0)
+    margin_scale: float = Field(default=1.0, ge=0.1, le=5.0)
+    color_channels: bool = False
     box: bool = True
     box_color: str = "#000000a6"
     box_padding: int = Field(default=12, ge=0, le=500)
+    box_padding_scale: float = Field(default=1.0, ge=0.1, le=5.0)
 
     @field_validator("color", "box_color")
     @classmethod
@@ -170,9 +192,7 @@ class PublicationExportPreset(BaseModel):
     frame: PublicationFrame = Field(default_factory=PublicationFrame)
     calibration: PixelCalibration = Field(default_factory=PixelCalibration)
     scale_bar: PublicationScaleBar = Field(default_factory=PublicationScaleBar)
-    annotations: PublicationAnnotations = Field(
-        default_factory=PublicationAnnotations
-    )
+    annotations: PublicationAnnotations = Field(default_factory=PublicationAnnotations)
     output: PublicationOutput = Field(default_factory=PublicationOutput)
 
     @field_validator("preset_id", "name")
@@ -461,6 +481,7 @@ def detect_tiff_pixel_calibration(
         unit_tag = page.tags.get("ResolutionUnit")
         if x_tag is None or y_tag is None or unit_tag is None:
             return None
+
         def resolution_value(value: Any) -> float:
             if isinstance(value, tuple) and len(value) == 2:
                 return float(value[0]) / float(value[1])
@@ -471,11 +492,7 @@ def detect_tiff_pixel_calibration(
         unit_value = unit_tag.value
         unit_number = int(getattr(unit_value, "value", unit_value))
         micrometres_per_unit = {2: 25_400.0, 3: 10_000.0}.get(unit_number)
-        if (
-            micrometres_per_unit is None
-            or x_resolution <= 0
-            or y_resolution <= 0
-        ):
+        if micrometres_per_unit is None or x_resolution <= 0 or y_resolution <= 0:
             return None
         return (
             PixelCalibration(
@@ -565,6 +582,69 @@ def resolve_scale_bar_length(
     return float(physical_length), pixels
 
 
+def _rgba_values_to_hex(value: Any) -> str | None:
+    """Convert one serialized RGB(A) value into an opaque text colour."""
+
+    try:
+        rgba = np.asarray(value, dtype=float).reshape(-1)
+    except (TypeError, ValueError):
+        return None
+    if rgba.size not in {3, 4} or not np.isfinite(rgba).all():
+        return None
+    if rgba.size == 4 and rgba[3] <= 0:
+        return None
+    rgb = np.clip(np.rint(rgba[:3] * 255), 0, 255).astype(np.uint8)
+    return "#" + "".join(f"{channel:02x}" for channel in rgb)
+
+
+def _representative_colormap_colour(spec: dict[str, Any] | None) -> str | None:
+    """Choose the visible high-value colour from a frozen continuous colormap."""
+
+    if not spec or spec.get("kind") != "continuous":
+        return None
+    colours = spec.get("colours", [])
+    if not isinstance(colours, list):
+        return None
+    for value in reversed(colours):
+        colour = _rgba_values_to_hex(value)
+        if colour is not None:
+            return colour
+    return None
+
+
+def publication_channel_colours(recipe: ExploreViewRecipe) -> dict[str, str]:
+    """Resolve channel-name colours from the exact frozen Explore recipe.
+
+    Scalar layers prefer their serialized continuous-colormap endpoint, then a
+    saved named colormap, and finally the colour implied by the image mode. RGB
+    composites use their red/green/blue component roles. The mapping therefore
+    remains reproducible during bulk export and does not depend on the live
+    viewer having the same ROI open.
+    """
+
+    resolved: dict[str, str] = {}
+    for index, channel in enumerate(recipe.image_channels):
+        layer_name = f"image::{channel}"
+        colour = _representative_colormap_colour(
+            recipe.layer_colormap_specs.get(layer_name)
+        )
+        named = recipe.layer_colormaps.get(layer_name, "").strip().lower()
+        if colour is None:
+            if _HEX_COLOUR.fullmatch(named):
+                colour = named[:7]
+            else:
+                colour = _NAMED_CHANNEL_COLOURS.get(named)
+        if colour is None and recipe.image_mode == "rgb":
+            colour = ("#ff0000", "#00ff00", "#0000ff")[index % 3]
+        if colour is None and recipe.image_mode == "six_colour":
+            default_name = SIX_COLOUR_COLORMAPS[index % len(SIX_COLOUR_COLORMAPS)]
+            colour = _NAMED_CHANNEL_COLOURS[default_name]
+        if colour is None and recipe.image_mode == "grayscale":
+            colour = "#ffffff"
+        resolved[str(channel)] = colour or "#ffffff"
+    return resolved
+
+
 def _rgba(value: str) -> tuple[int, int, int, int]:
     text = value.lstrip("#")
     if len(text) == 6:
@@ -624,6 +704,9 @@ def compose_publication_image(
     def scaled(value: int, *, minimum: int = 0) -> int:
         return max(minimum, int(round(int(value) * style_scale)))
 
+    def relative(value: int, factor: float, *, minimum: int = 0) -> int:
+        return max(minimum, int(round(int(value) * float(factor))))
+
     metadata: dict[str, Any] = {
         "annotation_style_scale": style_scale,
         "annotation_style_profile": "automatic" if automatic_style else "custom",
@@ -638,34 +721,43 @@ def compose_publication_image(
             output_width=width,
         )
         bar_width = max(1, bar_width)
-        margin = style["margin"] if automatic_style else scaled(scale_bar.margin)
-        thickness = (
+        base_margin = style["margin"] if automatic_style else scaled(scale_bar.margin)
+        base_thickness = (
             style["scale_bar_thickness"]
             if automatic_style
             else scaled(scale_bar.thickness, minimum=1)
         )
-        font_size = (
+        base_font_size = (
             style["scale_bar_font_size"]
             if automatic_style
             else scaled(scale_bar.font_size, minimum=1)
         )
-        box_padding = (
+        base_box_padding = (
             style["scale_bar_box_padding"]
             if automatic_style
             else scaled(scale_bar.box_padding)
         )
+        margin = relative(base_margin, scale_bar.margin_scale)
+        thickness = relative(base_thickness, scale_bar.thickness_scale, minimum=1)
+        font_size = relative(base_font_size, scale_bar.label_scale, minimum=1)
+        box_padding = relative(base_box_padding, scale_bar.box_padding_scale)
         if bar_width >= width - 2 * margin:
             raise ValueError(
                 "The requested scale bar is wider than the exported field of view."
             )
         label = f"{physical_length:g} {preset.calibration.unit}"
-        font = _font(font_size)
         draw = ImageDraw.Draw(canvas, "RGBA")
-        text_box = draw.textbbox((0, 0), label, font=font)
-        text_width = text_box[2] - text_box[0]
-        text_height = text_box[3] - text_box[1]
+        font = _font(font_size) if scale_bar.show_label else None
+        if scale_bar.show_label:
+            text_box = draw.textbbox((0, 0), label, font=font)
+            text_width = text_box[2] - text_box[0]
+            text_height = text_box[3] - text_box[1]
+        else:
+            text_width = 0
+            text_height = 0
         content_width = max(bar_width, text_width)
-        content_height = text_height + box_padding + thickness
+        label_gap = box_padding if scale_bar.show_label else 0
+        content_height = text_height + label_gap + thickness
         left = scale_bar.position.endswith("left")
         top = scale_bar.position.startswith("top")
         x0 = margin if left else width - margin - content_width
@@ -673,7 +765,12 @@ def compose_publication_image(
         if scale_bar.box:
             pad = box_padding
             draw.rounded_rectangle(
-                (x0 - pad, y0 - pad, x0 + content_width + pad, y0 + content_height + pad),
+                (
+                    x0 - pad,
+                    y0 - pad,
+                    x0 + content_width + pad,
+                    y0 + content_height + pad,
+                ),
                 radius=max(2, pad // 2),
                 fill=_rgba(scale_bar.box_color),
             )
@@ -681,10 +778,10 @@ def compose_publication_image(
         line_x = x0 + (content_width - bar_width) / 2
         if top:
             line_y = y0
-            text_y = y0 + thickness + box_padding
+            text_y = y0 + thickness + label_gap
         else:
             text_y = y0
-            line_y = y0 + text_height + box_padding
+            line_y = y0 + text_height + label_gap
         colour = _rgba(scale_bar.color)
         draw.rectangle(
             (
@@ -696,10 +793,11 @@ def compose_publication_image(
             fill=colour,
         )
         if scale_bar.ticks:
-            tick_extension = (
-                style["tick_extension"]
-                if automatic_style
-                else scaled(2, minimum=1)
+            base_tick_extension = (
+                style["tick_extension"] if automatic_style else scaled(2, minimum=1)
+            )
+            tick_extension = relative(
+                base_tick_extension, scale_bar.thickness_scale, minimum=1
             )
             tick = max(thickness * 3, thickness + tick_extension)
             for tick_x in (line_x, line_x + bar_width):
@@ -712,48 +810,104 @@ def compose_publication_image(
                     ),
                     fill=colour,
                 )
-        draw.text((text_x, text_y), label, font=font, fill=colour)
+        if scale_bar.show_label:
+            draw.text((text_x, text_y), label, font=font, fill=colour)
         metadata["scale_bar_physical_length"] = physical_length
         metadata["scale_bar_output_pixels"] = bar_width
-        metadata["scale_bar_rendered_font_size"] = font_size
+        metadata["scale_bar_label_visible"] = scale_bar.show_label
+        metadata["scale_bar_label"] = label if scale_bar.show_label else None
+        metadata["scale_bar_rendered_font_size"] = (
+            font_size if scale_bar.show_label else 0
+        )
         metadata["scale_bar_rendered_text_width"] = text_width
         metadata["scale_bar_rendered_text_height"] = text_height
         metadata["scale_bar_rendered_thickness"] = thickness
         metadata["scale_bar_rendered_margin"] = margin
 
     annotations = preset.annotations
-    lines = []
+    annotation_text: list[str] = []
+    annotation_lines: list[dict[str, Any]] = []
+    base_font_size = (
+        style["annotation_font_size"]
+        if automatic_style
+        else scaled(annotations.font_size, minimum=1)
+    )
+    line_definitions: list[tuple[str, str, float]] = []
     if annotations.custom_title.strip():
-        lines.append(annotations.custom_title.strip())
-    if annotations.show_roi:
-        lines.append(str(roi))
-    if annotations.show_channels and preset.recipe.image_channels:
-        lines.append(" · ".join(preset.recipe.image_channels))
-    if lines:
-        text = "\n".join(lines)
-        draw = ImageDraw.Draw(canvas, "RGBA")
-        font_size = (
-            style["annotation_font_size"]
-            if automatic_style
-            else scaled(annotations.font_size, minimum=1)
+        line_definitions.append(
+            ("title", annotations.custom_title.strip(), annotations.title_scale)
         )
-        margin = style["margin"] if automatic_style else scaled(annotations.margin)
-        box_padding = (
+    if annotations.show_roi:
+        line_definitions.append(("roi", str(roi), annotations.roi_scale))
+    if annotations.show_channels and preset.recipe.image_channels:
+        line_definitions.append(
+            (
+                "channels",
+                " · ".join(preset.recipe.image_channels),
+                annotations.channel_scale,
+            )
+        )
+    if line_definitions:
+        draw = ImageDraw.Draw(canvas, "RGBA")
+        default_colour = annotations.color
+        channel_colours = (
+            publication_channel_colours(preset.recipe)
+            if annotations.color_channels
+            else {}
+        )
+        rendered_font_sizes: dict[str, int] = {}
+        for line_kind, text, font_scale in line_definitions:
+            font_size = relative(base_font_size, font_scale, minimum=1)
+            rendered_font_sizes[line_kind] = font_size
+            font = _font(font_size)
+            if line_kind == "channels" and annotations.color_channels:
+                segments = []
+                for index, channel in enumerate(preset.recipe.image_channels):
+                    if index:
+                        segments.append((" · ", default_colour, font))
+                    segments.append((str(channel), channel_colours[str(channel)], font))
+            else:
+                segments = [(text, default_colour, font)]
+            measured_segments = []
+            line_width = 0
+            line_height = 0
+            for segment_text, segment_colour, segment_font in segments:
+                bounds = draw.textbbox((0, 0), segment_text, font=segment_font)
+                segment_width = bounds[2] - bounds[0]
+                segment_height = bounds[3] - bounds[1]
+                measured_segments.append(
+                    {
+                        "text": segment_text,
+                        "colour": segment_colour,
+                        "font": segment_font,
+                        "bounds": bounds,
+                        "width": segment_width,
+                    }
+                )
+                line_width += segment_width
+                line_height = max(line_height, segment_height)
+            annotation_text.append(text)
+            annotation_lines.append(
+                {
+                    "segments": measured_segments,
+                    "width": line_width,
+                    "height": line_height,
+                }
+            )
+
+        base_margin = style["margin"] if automatic_style else scaled(annotations.margin)
+        base_box_padding = (
             style["annotation_box_padding"]
             if automatic_style
             else scaled(annotations.box_padding)
         )
-        spacing = (
-            style["line_spacing"]
-            if automatic_style
-            else scaled(4, minimum=1)
+        margin = relative(base_margin, annotations.margin_scale)
+        box_padding = relative(base_box_padding, annotations.box_padding_scale)
+        spacing = style["line_spacing"] if automatic_style else scaled(4, minimum=1)
+        text_width = max(line["width"] for line in annotation_lines)
+        text_height = sum(line["height"] for line in annotation_lines) + spacing * (
+            len(annotation_lines) - 1
         )
-        font = _font(font_size)
-        text_box = draw.multiline_textbbox(
-            (0, 0), text, font=font, spacing=spacing
-        )
-        text_width = text_box[2] - text_box[0]
-        text_height = text_box[3] - text_box[1]
         left = annotations.position.endswith("left")
         top = annotations.position.startswith("top")
         x = margin if left else width - margin - text_width
@@ -765,16 +919,23 @@ def compose_publication_image(
                 radius=max(2, pad // 2),
                 fill=_rgba(annotations.box_color),
             )
-        draw.multiline_text(
-            (x, y),
-            text,
-            font=font,
-            fill=_rgba(annotations.color),
-            spacing=spacing,
-            align="left" if left else "right",
-        )
-        metadata["annotation_text"] = lines
-        metadata["annotation_rendered_font_size"] = font_size
+        line_y = y
+        for line in annotation_lines:
+            cursor_x = x if left else x + text_width - line["width"]
+            for segment in line["segments"]:
+                bounds = segment["bounds"]
+                draw.text(
+                    (cursor_x - bounds[0], line_y - bounds[1]),
+                    segment["text"],
+                    font=segment["font"],
+                    fill=_rgba(segment["colour"]),
+                )
+                cursor_x += segment["width"]
+            line_y += line["height"] + spacing
+        metadata["annotation_text"] = annotation_text
+        metadata["annotation_rendered_font_size"] = base_font_size
+        metadata["annotation_rendered_font_sizes"] = rendered_font_sizes
+        metadata["annotation_channel_colours"] = channel_colours
         metadata["annotation_rendered_text_width"] = text_width
         metadata["annotation_rendered_text_height"] = text_height
         metadata["annotation_rendered_margin"] = margin
@@ -860,6 +1021,7 @@ __all__ = [
     "detect_tiff_pixel_calibration",
     "fit_frame_to_aspect",
     "publication_render_geometry",
+    "publication_channel_colours",
     "publication_resolution_scale",
     "resolve_publication_dpi",
     "resolve_publication_frame",

@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 from pydantic import BaseModel, Field, model_validator
 
+from .anndata_io import write_h5ad_compat
 from .colour_helper import categorical_colour_collisions, normalise_hex_colour
 
 ReadinessLevel = Literal["ready", "warning", "blocked", "optional"]
@@ -126,7 +127,7 @@ def atomic_write_anndata(
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(f".{output.stem}.{uuid4().hex}.tmp{output.suffix}")
     try:
-        adata.write_h5ad(temporary)
+        write_h5ad_compat(adata, temporary)
         os.replace(temporary, output)
     finally:
         if temporary.exists():

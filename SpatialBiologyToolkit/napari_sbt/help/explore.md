@@ -42,7 +42,10 @@ annotation sizes separately. **Low** exports one raster pixel per source pixel a
 the same centre, field of view, aspect ratio, and approximate printed dimensions.
 Scale-bar thickness, text, margins, ticks, annotation text, and annotation boxes
 grow with the selected resolution, so the composition keeps the same visual
-proportions. Higher levels provide denser pixels for large figures; they cannot
+proportions. Relative size controls then multiply that automatic baseline: scale
+the scale-bar label, bar/ticks, margin, and box padding independently, and set
+separate percentages for custom-title, ROI-name, and channel-name text. Higher
+levels provide denser pixels for large figures; they cannot
 create detail absent from the source images. Existing presets that used the old
 manual controls open as **Custom — existing saved preset** and retain their exact
 settings until you choose a new resolution. PNG is the recommended default, TIFF
@@ -52,8 +55,10 @@ channel identities, even when a custom template omits them. The default is
 
 Physical scale bars require an explicitly verified X/Y pixel calibration. Select
 an automatic visually sensible length or a fixed physical length, then control
-position, colour, ticks, and background box. Thickness, font size, margin, tick
-size, and box padding are sized automatically from the chosen resolution. Napari's
+position, colour, ticks, and background box. Untick **Show physical-length text**
+to export the bar and optional end ticks without a numerical label. Thickness,
+font size, margin, tick size, and box padding are sized automatically from the
+chosen resolution before their relative percentages are applied. Napari's
 metadata detector reads OME physical-size metadata or calibrated TIFF resolution
 tags from one current image, but leaves the result unconfirmed until you review it.
 Napari's ordinary scale-bar overlay is hidden during capture; NapariSBT calculates bar
@@ -61,7 +66,12 @@ length from the frozen source-pixel field and verified physical size per pixel,
 then composites it onto the final raster. It is therefore independent of output
 DPI and remains physically correct at every resolution. Use
 **Render preview** to inspect the exact final raster
-before saving. ROI, channel, and custom-title annotations are optional.
+before saving. ROI, channel, and custom-title annotations are optional. Their
+text colour, translucent background colour, box visibility, margin, padding, and
+individual relative sizes can be adjusted. **Match each channel name to its image
+colour** uses the exact colormaps in the frozen Explore recipe (or its RGB/
+six-colour roles for older recipes), so bulk exports remain reproducible even
+when another ROI is currently displayed.
 
 For bulk export, select one or more ROIs and run preflight. Preflight uses the fast
 Setup asset index and never rescans image folders. It reports missing masks,
@@ -155,6 +165,15 @@ available for the `adata.X` marker-overlay list. Shape, context, imported-table,
 and embedding dimensions are not mistaken for staining markers, and markers that
 are absent from the current ROI or expression source are reported rather than
 guessed.
+
+**Rank ROIs by selected marker** requires exactly one selected cell-level marker
+and orders the ROI selector by descending mean `adata.X` expression. These are
+cell-level values quantified inside segmented cells; raw image background and
+extracellular pixels are never included. It uses mean cell expression so large
+ROIs do not rank highly merely because they contain more cells. The **Overlay
+scope** control determines whether ranking uses only the active workflow cell
+scope or every matched cell in the AnnData object. Feature Discovery Trial ROI
+restrictions are retained.
 
 ## AnnData and population overlays
 

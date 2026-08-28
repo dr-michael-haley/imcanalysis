@@ -8,6 +8,9 @@ the original HyPERSTAC preprint.
 from __future__ import annotations
 
 from .local_analysis import (
+    EnvironmentAbundanceTables,
+    FigureSaveOptions,
+    HeatmapOptions,
     HyperstacGalleryResult,
     HyperstacMaskResult,
     aggregate_environment_abundance,
@@ -19,12 +22,16 @@ from .local_analysis import (
     plot_hyperstac_cluster_features,
     plot_hyperstac_environment_gallery,
     plot_hyperstac_umap,
+    prepare_environment_abundance_tables,
     reconstruct_cluster_label_masks,
     summarize_cell_environment_composition,
     summarize_environment_abundance,
 )
 
 __all__ = [
+    "EnvironmentAbundanceTables",
+    "FigureSaveOptions",
+    "HeatmapOptions",
     "HyperstacGalleryResult",
     "HyperstacMaskResult",
     "aggregate_environment_abundance",
@@ -36,6 +43,7 @@ __all__ = [
     "plot_hyperstac_cluster_features",
     "plot_hyperstac_environment_gallery",
     "plot_hyperstac_umap",
+    "prepare_environment_abundance_tables",
     "reconstruct_cluster_label_masks",
     "summarize_cell_environment_composition",
     "summarize_environment_abundance",

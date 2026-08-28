@@ -18,6 +18,7 @@ from SpatialBiologyToolkit.napari_sbt.explore import (
     marker_values,
     population_identity_map,
     population_recipe_key,
+    rank_marker_rois,
     recipe_layer_data_is_current,
     roi_level_metadata,
 )
@@ -124,6 +125,24 @@ def test_marker_values_extracts_one_dense_anndata_x_column():
     adata = _adata_like()
 
     assert marker_values(adata, "CD20").tolist() == [2.0, 4.0, 6.0]
+
+
+def test_rank_marker_rois_uses_mean_expression_and_eligible_scope():
+    adata = SimpleNamespace(
+        obs=pd.DataFrame({"ROI": ["A", "A", "B", "C"]}),
+        var_names=np.asarray(["CD3"]),
+        X=np.asarray([[1.0], [9.0], [6.0], [20.0]]),
+        n_obs=4,
+    )
+
+    ranking = rank_marker_rois(
+        adata,
+        marker="CD3",
+        roi_obs="ROI",
+        eligible_rois={"A", "B"},
+    )
+
+    assert ranking == [("B", 6.0), ("A", 5.0)]
 
 
 def test_roi_level_metadata_detects_constant_mixed_type_obs_fields():

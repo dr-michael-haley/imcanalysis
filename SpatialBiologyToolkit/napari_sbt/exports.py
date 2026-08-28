@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 import tifffile
 
+from .anndata_io import write_h5ad_compat
 from .cohort import cohort_mask
 from .models import ClassificationClass, ExperimentManifest
 from .storage import write_dataframe
@@ -185,7 +186,7 @@ def _atomic_h5ad_write(adata, destination: Path) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     temporary = destination.with_name(f".{destination.stem}.tmp{destination.suffix}")
     try:
-        adata.write_h5ad(temporary)
+        write_h5ad_compat(adata, temporary)
         os.replace(temporary, destination)
     finally:
         if temporary.exists():

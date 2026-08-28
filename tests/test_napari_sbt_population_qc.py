@@ -96,6 +96,23 @@ def test_population_marker_suggestions_use_population_mean_expression():
     assert markers == ["CD3 image", "CD68 image"]
 
 
+def test_population_marker_suggestions_deduplicate_image_aliases():
+    markers = top_population_markers(
+        _adata(),
+        observation="leiden",
+        population="1",
+        candidates=[
+            ("CD3", "CD3"),
+            ("170Er_CD3", "CD3"),
+            ("CD68", "CD68"),
+            ("PanCK", "PanCK"),
+        ],
+        top_n=3,
+    )
+
+    assert markers == ["CD3", "CD68", "PanCK"]
+
+
 def test_population_qc_recipe_persists_rgb_colours_and_ranges():
     recipe = build_population_qc_recipe(
         observation="leiden",

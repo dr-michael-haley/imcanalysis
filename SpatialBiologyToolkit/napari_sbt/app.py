@@ -7,7 +7,7 @@ import os
 import sys
 import time
 from collections import OrderedDict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from html import escape
 from pathlib import Path
@@ -34,6 +34,7 @@ from SpatialBiologyToolkit.qc_classifier.io import (
     resolve_mask_file,
 )
 
+from .anndata_io import write_h5ad_compat
 from .classifier import (
     HGB_MIN_SAMPLES_LEAF,
     confirmed_labels_fingerprint,
@@ -89,6 +90,7 @@ from .explore import (
     marker_values,
     population_identity_map,
     population_recipe_key,
+    rank_marker_rois,
     recipe_layer_data_is_current,
     roi_level_metadata,
 )
@@ -502,7 +504,7 @@ def _write_anndata_snapshot(adata, destination: str | Path) -> Path:
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_name(f".{output.stem}.tmp{output.suffix}")
     try:
-        adata.write_h5ad(temporary)
+        write_h5ad_compat(adata, temporary)
         os.replace(temporary, output)
     finally:
         if temporary.exists():
@@ -1953,6 +1955,12 @@ class NapariSBTController:
         self.load_marker_overlays_button = QPushButton(
             "Add selected adata.X markers as cell overlays"
         )
+        self.rank_marker_rois_button = QPushButton("Rank ROIs by selected marker")
+        self.rank_marker_rois_button.setToolTip(
+            "Select exactly one marker above. ROIs are ranked by its mean adata.X "
+            "signal quantified inside segmented cells using the current Overlay "
+            "scope; raw image background is not measured."
+        )
         overlay_form.addRow(
             "Categorical or numeric observation", self.overlay_obs_combo
         )
@@ -1973,6 +1981,7 @@ class NapariSBTController:
             self.select_feature_marker_overlays_button
         )
         marker_overlay_actions_layout.addWidget(self.load_marker_overlays_button)
+        marker_overlay_actions_layout.addWidget(self.rank_marker_rois_button)
         overlay_form.addRow("", marker_overlay_actions)
         population_actions = QWidget()
         population_actions_layout = QHBoxLayout(population_actions)
@@ -4454,6 +4463,9 @@ class NapariSBTController:
         )
         self.select_feature_marker_overlays_button.clicked.connect(
             self._guard(self.select_feature_marker_overlays)
+        )
+        self.rank_marker_rois_button.clicked.connect(
+            self._guard(self.rank_rois_by_marker)
         )
         self.rank_rois_button.clicked.connect(self._guard(self.rank_rois_by_population))
         self.use_population_button.clicked.connect(
@@ -14963,6 +14975,7 @@ class NapariSBTController:
             QListWidget,
             QProgressBar,
             QPushButton,
+            QScrollArea,
             QSpinBox,
             QTabWidget,
             QVBoxLayout,
@@ -15010,6 +15023,18 @@ class NapariSBTController:
                 )
             )
             return button
+
+        def publication_relative_scale_spin():
+            spin = QDoubleSpinBox()
+            spin.setRange(10.0, 500.0)
+            spin.setDecimals(0)
+            spin.setSingleStep(10.0)
+            spin.setSuffix(" %")
+            spin.setValue(100.0)
+            spin.setToolTip(
+                "100% keeps the automatic size; lower or higher values scale it."
+            )
+            return spin
 
         # View and recipe tab.
         view_tab = QWidget()
@@ -15145,27 +15170,59 @@ class NapariSBTController:
         self.publication_scale_margin_spin = QSpinBox()
         self.publication_scale_margin_spin.setRange(0, 1000)
         self.publication_scale_margin_spin.setValue(30)
+        self.publication_scale_box_padding_spin = QSpinBox()
+        self.publication_scale_box_padding_spin.setRange(0, 500)
+        self.publication_scale_box_padding_spin.setValue(12)
+        self.publication_scale_show_label_check = QCheckBox("Show physical-length text")
+        self.publication_scale_show_label_check.setChecked(True)
+        self.publication_scale_label_scale_spin = publication_relative_scale_spin()
+        self.publication_scale_thickness_scale_spin = publication_relative_scale_spin()
+        self.publication_scale_margin_scale_spin = publication_relative_scale_spin()
+        self.publication_scale_box_padding_scale_spin = (
+            publication_relative_scale_spin()
+        )
         self.publication_scale_ticks_check = QCheckBox("End ticks")
         self.publication_scale_ticks_check.setChecked(True)
         self.publication_scale_box_check = QCheckBox("Translucent background box")
         self.publication_scale_box_check.setChecked(True)
-        calibration_form.addRow("Calibration", self.publication_calibration_confirmed_check)
-        calibration_form.addRow("Physical size per pixel — X", self.publication_pixel_x_spin)
-        calibration_form.addRow("Physical size per pixel — Y", self.publication_pixel_y_spin)
+        calibration_form.addRow(
+            "Calibration", self.publication_calibration_confirmed_check
+        )
+        calibration_form.addRow(
+            "Physical size per pixel — X", self.publication_pixel_x_spin
+        )
+        calibration_form.addRow(
+            "Physical size per pixel — Y", self.publication_pixel_y_spin
+        )
         calibration_form.addRow("Unit", self.publication_unit_edit)
         calibration_form.addRow("", self.publication_detect_calibration_button)
         calibration_form.addRow("Scale bar", self.publication_scale_visible_check)
         calibration_form.addRow("Length", self.publication_scale_mode_combo)
         calibration_form.addRow("Fixed length", self.publication_scale_length_spin)
-        calibration_form.addRow("Automatic target", self.publication_scale_fraction_spin)
+        calibration_form.addRow(
+            "Automatic target", self.publication_scale_fraction_spin
+        )
         calibration_form.addRow("Position", self.publication_scale_position_combo)
         calibration_form.addRow("Colours", colour_row)
         scale_sizing_help = QLabel(
-            "Bar thickness, label size, margins, ticks and the background box "
-            "automatically scale with the selected output resolution."
+            "These percentages multiply the automatic size chosen for the final "
+            "resolution. They also apply to older custom-resolution presets."
         )
         scale_sizing_help.setWordWrap(True)
-        calibration_form.addRow("Automatic sizing", scale_sizing_help)
+        calibration_form.addRow("Relative sizing", scale_sizing_help)
+        calibration_form.addRow("Length text", self.publication_scale_show_label_check)
+        calibration_form.addRow(
+            "Length-text size", self.publication_scale_label_scale_spin
+        )
+        calibration_form.addRow(
+            "Bar/tick thickness", self.publication_scale_thickness_scale_spin
+        )
+        calibration_form.addRow(
+            "Outer margin", self.publication_scale_margin_scale_spin
+        )
+        calibration_form.addRow(
+            "Box/label padding", self.publication_scale_box_padding_scale_spin
+        )
         calibration_form.addRow("Style", self.publication_scale_ticks_check)
         calibration_form.addRow("", self.publication_scale_box_check)
         appearance_layout.addWidget(calibration_group)
@@ -15175,6 +15232,9 @@ class NapariSBTController:
         annotation_form.addRow("", publication_help_button())
         self.publication_show_roi_check = QCheckBox("Include ROI name")
         self.publication_show_channels_check = QCheckBox("Include channel names")
+        self.publication_colour_channels_check = QCheckBox(
+            "Match each channel name to its image colour"
+        )
         self.publication_title_edit = QLineEdit()
         self.publication_annotation_position_combo = QComboBox()
         for label, value in (
@@ -15187,19 +15247,66 @@ class NapariSBTController:
         self.publication_annotation_font_spin = QSpinBox()
         self.publication_annotation_font_spin.setRange(6, 300)
         self.publication_annotation_font_spin.setValue(28)
+        self.publication_annotation_margin_spin = QSpinBox()
+        self.publication_annotation_margin_spin.setRange(0, 1000)
+        self.publication_annotation_margin_spin.setValue(30)
+        self.publication_annotation_box_padding_spin = QSpinBox()
+        self.publication_annotation_box_padding_spin.setRange(0, 500)
+        self.publication_annotation_box_padding_spin.setValue(12)
+        self.publication_title_scale_spin = publication_relative_scale_spin()
+        self.publication_roi_scale_spin = publication_relative_scale_spin()
+        self.publication_channel_scale_spin = publication_relative_scale_spin()
+        self.publication_annotation_margin_scale_spin = (
+            publication_relative_scale_spin()
+        )
+        self.publication_annotation_box_padding_scale_spin = (
+            publication_relative_scale_spin()
+        )
+        self.publication_annotation_colour_edit = QLineEdit("#ffffff")
+        self.publication_annotation_box_colour_edit = QLineEdit("#000000a6")
+        annotation_colour_row = QWidget()
+        annotation_colour_layout = QHBoxLayout(annotation_colour_row)
+        annotation_colour_layout.setContentsMargins(0, 0, 0, 0)
+        self.publication_annotation_colour_button = QPushButton("Title/ROI colour…")
+        self.publication_annotation_box_colour_button = QPushButton("Box colour…")
+        annotation_colour_layout.addWidget(self.publication_annotation_colour_edit)
+        annotation_colour_layout.addWidget(self.publication_annotation_colour_button)
+        annotation_colour_layout.addWidget(self.publication_annotation_box_colour_edit)
+        annotation_colour_layout.addWidget(
+            self.publication_annotation_box_colour_button
+        )
+        self.publication_annotation_box_check = QCheckBox("Translucent background box")
+        self.publication_annotation_box_check.setChecked(True)
         annotation_form.addRow("ROI", self.publication_show_roi_check)
         annotation_form.addRow("Channels", self.publication_show_channels_check)
+        annotation_form.addRow(
+            "Channel colours", self.publication_colour_channels_check
+        )
         annotation_form.addRow("Custom title", self.publication_title_edit)
         annotation_form.addRow("Position", self.publication_annotation_position_combo)
         annotation_scale_help = QLabel(
-            "Text size, margins and background boxes automatically scale with "
-            "the selected Low, Medium or High output resolution."
+            "Set each text type relative to the automatic size for the chosen "
+            "resolution. Channel colours come from the frozen recipe, not the live ROI."
         )
         annotation_scale_help.setWordWrap(True)
-        annotation_form.addRow("Automatic sizing", annotation_scale_help)
+        annotation_form.addRow("Relative sizing", annotation_scale_help)
+        annotation_form.addRow("Title size", self.publication_title_scale_spin)
+        annotation_form.addRow("ROI-name size", self.publication_roi_scale_spin)
+        annotation_form.addRow("Channel-name size", self.publication_channel_scale_spin)
+        annotation_form.addRow(
+            "Outer margin", self.publication_annotation_margin_scale_spin
+        )
+        annotation_form.addRow(
+            "Box padding", self.publication_annotation_box_padding_scale_spin
+        )
+        annotation_form.addRow("Colours", annotation_colour_row)
+        annotation_form.addRow("Style", self.publication_annotation_box_check)
         appearance_layout.addWidget(annotation_group)
         appearance_layout.addStretch(1)
-        tabs.addTab(appearance_tab, "Scale bar & labels")
+        appearance_scroll = QScrollArea()
+        appearance_scroll.setWidgetResizable(True)
+        appearance_scroll.setWidget(appearance_tab)
+        tabs.addTab(appearance_scroll, "Scale bar & labels")
 
         # Output and batch tab.
         output_tab = QWidget()
@@ -15370,6 +15477,17 @@ class NapariSBTController:
                 allow_alpha=True,
             )
         )
+        self.publication_annotation_colour_button.clicked.connect(
+            lambda: self._pick_publication_colour(
+                self.publication_annotation_colour_edit
+            )
+        )
+        self.publication_annotation_box_colour_button.clicked.connect(
+            lambda: self._pick_publication_colour(
+                self.publication_annotation_box_colour_edit,
+                allow_alpha=True,
+            )
+        )
         self.publication_choose_folder_button.clicked.connect(
             self._guard(self.choose_publication_output_folder)
         )
@@ -15421,7 +15539,19 @@ class NapariSBTController:
             self.publication_scale_thickness_spin,
             self.publication_scale_font_spin,
             self.publication_scale_margin_spin,
+            self.publication_scale_box_padding_spin,
             self.publication_annotation_font_spin,
+            self.publication_annotation_margin_spin,
+            self.publication_annotation_box_padding_spin,
+            self.publication_scale_label_scale_spin,
+            self.publication_scale_thickness_scale_spin,
+            self.publication_scale_margin_scale_spin,
+            self.publication_scale_box_padding_scale_spin,
+            self.publication_title_scale_spin,
+            self.publication_roi_scale_spin,
+            self.publication_channel_scale_spin,
+            self.publication_annotation_margin_scale_spin,
+            self.publication_annotation_box_padding_scale_spin,
             self.publication_width_spin,
             self.publication_height_spin,
             self.publication_dpi_spin,
@@ -15432,6 +15562,8 @@ class NapariSBTController:
             self.publication_unit_edit,
             self.publication_scale_colour_edit,
             self.publication_scale_box_colour_edit,
+            self.publication_annotation_colour_edit,
+            self.publication_annotation_box_colour_edit,
             self.publication_title_edit,
             self.publication_filename_edit,
             self.publication_output_folder_edit,
@@ -15440,10 +15572,13 @@ class NapariSBTController:
         for control in (
             self.publication_calibration_confirmed_check,
             self.publication_scale_visible_check,
+            self.publication_scale_show_label_check,
             self.publication_scale_ticks_check,
             self.publication_scale_box_check,
             self.publication_show_roi_check,
             self.publication_show_channels_check,
+            self.publication_colour_channels_check,
+            self.publication_annotation_box_check,
         ):
             control.toggled.connect(self._publication_export_controls_changed)
 
@@ -15685,12 +15820,30 @@ class NapariSBTController:
         scale_visible = self.publication_scale_visible_check.isChecked()
         scale_fixed = self.publication_scale_mode_combo.currentData() == "fixed"
         self.publication_scale_length_spin.setEnabled(scale_visible and scale_fixed)
-        self.publication_scale_fraction_spin.setEnabled(scale_visible and not scale_fixed)
+        self.publication_scale_fraction_spin.setEnabled(
+            scale_visible and not scale_fixed
+        )
+        self.publication_scale_label_scale_spin.setEnabled(
+            scale_visible and self.publication_scale_show_label_check.isChecked()
+        )
+        for control in (
+            self.publication_scale_thickness_scale_spin,
+            self.publication_scale_margin_scale_spin,
+            self.publication_scale_box_padding_scale_spin,
+            self.publication_scale_ticks_check,
+            self.publication_scale_box_check,
+        ):
+            control.setEnabled(scale_visible)
+        self.publication_colour_channels_check.setEnabled(
+            self.publication_show_channels_check.isChecked()
+        )
         self.publication_update_preset_button.setEnabled(
-            self.publication_preset_combo.currentData() in self.publication_export_state.presets
+            self.publication_preset_combo.currentData()
+            in self.publication_export_state.presets
         )
         self.publication_delete_preset_button.setEnabled(
-            self.publication_preset_combo.currentData() in self.publication_export_state.presets
+            self.publication_preset_combo.currentData()
+            in self.publication_export_state.presets
         )
         try:
             preset = self._publication_preset_from_controls(
@@ -15728,7 +15881,8 @@ class NapariSBTController:
             self.publication_print_size_label.setText(
                 f"{output_width:,} × {output_height:,} pixels ({size_description}); "
                 f"{width_inches:.2f} × {height_inches:.2f} inches at {dpi} DPI. "
-                f"Scale-bar and label styling: {annotation_scale:g}×."
+                f"Automatic annotation baseline: {annotation_scale:g}×; "
+                "the relative percentages are applied afterwards."
             )
             self.publication_frame_summary.setText(
                 f"centre Y/X {frame.center_y:.2f}, {frame.center_x:.2f}; "
@@ -15841,20 +15995,46 @@ class NapariSBTController:
             thickness=self.publication_scale_thickness_spin.value(),
             font_size=self.publication_scale_font_spin.value(),
             margin=self.publication_scale_margin_spin.value(),
+            show_label=self.publication_scale_show_label_check.isChecked(),
+            label_scale=self.publication_scale_label_scale_spin.value() / 100.0,
+            thickness_scale=(
+                self.publication_scale_thickness_scale_spin.value() / 100.0
+            ),
+            margin_scale=self.publication_scale_margin_scale_spin.value() / 100.0,
             ticks=self.publication_scale_ticks_check.isChecked(),
             box=self.publication_scale_box_check.isChecked(),
             box_color=self.publication_scale_box_colour_edit.text(),
+            box_padding=self.publication_scale_box_padding_spin.value(),
+            box_padding_scale=(
+                self.publication_scale_box_padding_scale_spin.value() / 100.0
+            ),
         )
         annotations = PublicationAnnotations(
             show_roi=self.publication_show_roi_check.isChecked(),
             show_channels=self.publication_show_channels_check.isChecked(),
             custom_title=self.publication_title_edit.text(),
             position=str(self.publication_annotation_position_combo.currentData()),
+            color=self.publication_annotation_colour_edit.text(),
             font_size=self.publication_annotation_font_spin.value(),
+            margin=self.publication_annotation_margin_spin.value(),
+            title_scale=self.publication_title_scale_spin.value() / 100.0,
+            roi_scale=self.publication_roi_scale_spin.value() / 100.0,
+            channel_scale=self.publication_channel_scale_spin.value() / 100.0,
+            margin_scale=(
+                self.publication_annotation_margin_scale_spin.value() / 100.0
+            ),
+            color_channels=self.publication_colour_channels_check.isChecked(),
+            box=self.publication_annotation_box_check.isChecked(),
+            box_color=self.publication_annotation_box_colour_edit.text(),
+            box_padding=self.publication_annotation_box_padding_spin.value(),
+            box_padding_scale=(
+                self.publication_annotation_box_padding_scale_spin.value() / 100.0
+            ),
         )
         return PublicationExportPreset(
             preset_id=preset_id,
-            name=self.publication_preset_name_edit.text().strip() or "Publication export",
+            name=self.publication_preset_name_edit.text().strip()
+            or "Publication export",
             source_recipe_id=recipe_id,
             source_recipe_name=recipe_name,
             recipe=recipe,
@@ -15922,15 +16102,56 @@ class NapariSBTController:
         self.publication_scale_thickness_spin.setValue(preset.scale_bar.thickness)
         self.publication_scale_font_spin.setValue(preset.scale_bar.font_size)
         self.publication_scale_margin_spin.setValue(preset.scale_bar.margin)
+        self.publication_scale_box_padding_spin.setValue(preset.scale_bar.box_padding)
+        self.publication_scale_show_label_check.setChecked(preset.scale_bar.show_label)
+        self.publication_scale_label_scale_spin.setValue(
+            preset.scale_bar.label_scale * 100
+        )
+        self.publication_scale_thickness_scale_spin.setValue(
+            preset.scale_bar.thickness_scale * 100
+        )
+        self.publication_scale_margin_scale_spin.setValue(
+            preset.scale_bar.margin_scale * 100
+        )
+        self.publication_scale_box_padding_scale_spin.setValue(
+            preset.scale_bar.box_padding_scale * 100
+        )
         self.publication_scale_ticks_check.setChecked(preset.scale_bar.ticks)
         self.publication_scale_box_check.setChecked(preset.scale_bar.box)
         self.publication_show_roi_check.setChecked(preset.annotations.show_roi)
-        self.publication_show_channels_check.setChecked(preset.annotations.show_channels)
+        self.publication_show_channels_check.setChecked(
+            preset.annotations.show_channels
+        )
         self.publication_title_edit.setText(preset.annotations.custom_title)
         self.publication_annotation_position_combo.setCurrentIndex(
-            self.publication_annotation_position_combo.findData(preset.annotations.position)
+            self.publication_annotation_position_combo.findData(
+                preset.annotations.position
+            )
         )
         self.publication_annotation_font_spin.setValue(preset.annotations.font_size)
+        self.publication_annotation_margin_spin.setValue(preset.annotations.margin)
+        self.publication_annotation_box_padding_spin.setValue(
+            preset.annotations.box_padding
+        )
+        self.publication_title_scale_spin.setValue(preset.annotations.title_scale * 100)
+        self.publication_roi_scale_spin.setValue(preset.annotations.roi_scale * 100)
+        self.publication_channel_scale_spin.setValue(
+            preset.annotations.channel_scale * 100
+        )
+        self.publication_annotation_margin_scale_spin.setValue(
+            preset.annotations.margin_scale * 100
+        )
+        self.publication_colour_channels_check.setChecked(
+            preset.annotations.color_channels
+        )
+        self.publication_annotation_colour_edit.setText(preset.annotations.color)
+        self.publication_annotation_box_check.setChecked(preset.annotations.box)
+        self.publication_annotation_box_colour_edit.setText(
+            preset.annotations.box_color
+        )
+        self.publication_annotation_box_padding_scale_spin.setValue(
+            preset.annotations.box_padding_scale * 100
+        )
         resolution_index = self.publication_resolution_combo.findData(
             preset.output.resolution
         )
@@ -18261,27 +18482,39 @@ class NapariSBTController:
             return []
         aliases = build_image_channel_aliases(self.adata.var_names, self.adata.var)
         candidates: list[tuple[str, str]] = []
-        available_paths = dict(self.current_image_paths)
-        for roi_paths in self._roi_image_path_index.values():
-            for display_name, path in roi_paths.items():
-                available_paths.setdefault(display_name, path)
-        for display_name, path in available_paths.items():
-            names = (
-                str(display_name),
-                str(display_name).split(" [", 1)[0],
-                Path(path).stem,
-            )
-            canonical = None
-            for name in names:
-                key = "".join(
-                    character for character in name if character.isalnum()
-                ).casefold()
-                canonical = aliases.get(key)
+        seen_variables: set[str] = set()
+
+        def append_matched(paths: Mapping[str, Path]) -> None:
+            for display_name, path in paths.items():
+                names = (
+                    str(display_name),
+                    str(display_name).split(" [", 1)[0],
+                    Path(path).stem,
+                )
+                canonical = None
+                for name in names:
+                    key = "".join(
+                        character for character in name if character.isalnum()
+                    ).casefold()
+                    canonical = aliases.get(key)
+                    if canonical is not None:
+                        break
                 if canonical is not None:
-                    break
-            if canonical is not None:
-                candidates.append((str(display_name), str(canonical)))
-        return list(dict.fromkeys(candidates))
+                    canonical = str(canonical)
+                    if canonical in seen_variables:
+                        continue
+                    seen_variables.add(canonical)
+                    candidates.append((str(display_name), canonical))
+
+        # Prefer names available in the ROI being reviewed. If it provides
+        # enough matched channels, every suggestion can be selected directly.
+        append_matched(self.current_image_paths)
+        if len(candidates) >= 3:
+            return candidates
+        # Retain the dataset-wide index as a fallback for sparse/incomplete ROIs.
+        for roi_paths in self._roi_image_path_index.values():
+            append_matched(roi_paths)
+        return candidates
 
     def _population_qc_adata_view(self):
         """Return the AnnData rows that can actually appear in this workspace."""
@@ -18353,8 +18586,10 @@ class NapariSBTController:
         for index, colour in enumerate(("red", "green", "blue")):
             combo = self.population_qc_marker_combos[colour]
             value = suggestions[index] if index < len(suggestions) else ""
-            match = combo.findText(value)
-            combo.setCurrentIndex(max(0, match))
+            if value:
+                self._set_population_qc_combo_value(combo, value)
+            else:
+                combo.setCurrentIndex(0)
             self.population_qc_lower_spins[colour].setValue(lower)
             self.population_qc_upper_spins[colour].setValue(upper)
 
@@ -18391,9 +18626,26 @@ class NapariSBTController:
             self.set_status(f"Population QC marker suggestion unavailable: {message}")
             return
         self._apply_population_qc_marker_suggestions(suggestions)
+        if len(suggestions) < 3:
+            detail = (
+                f"Only {len(suggestions)} distinct image marker(s) could be matched; "
+                "the remaining RGB selector is blank."
+            )
+        else:
+            unavailable = [
+                marker
+                for marker in suggestions
+                if marker not in self.current_image_paths
+            ]
+            detail = (
+                "A dataset-wide fallback marker is unavailable in this ROI and is "
+                "shown in orange."
+                if unavailable
+                else "All three suggestions are available in the current ROI."
+            )
         self.population_qc_status_label.setText(
-            f"Suggested the highest-mean matched image markers for {population!r}. "
-            "Review the colours and contrast limits before loading the view."
+            f"Suggested the highest-mean distinct matched image markers for "
+            f"{population!r}. {detail} Review them before loading the view."
         )
 
     def _population_qc_recipe_from_controls(self) -> ExploreViewRecipe:
@@ -18941,6 +19193,45 @@ class NapariSBTController:
         self.set_status(
             f"ROIs ranked by abundance of {observation}={value}; cohort-empty ROIs "
             "remain excluded."
+        )
+
+    def rank_rois_by_marker(self) -> None:
+        selected = [item.text() for item in self.marker_overlay_list.selectedItems()]
+        if len(selected) != 1:
+            raise ValueError(
+                "Select exactly one cell-level marker before ranking ROIs."
+            )
+        marker = selected[0]
+        eligible = set(self.cohort["ROI"].astype(str))
+        if (
+            self.manifest.experiment_mode == "feature_discovery_trial"
+            and self.manifest.feature_trial is not None
+        ):
+            eligible &= set(self.manifest.feature_trial.selected_rois)
+        whole_dataset = self.overlay_full_dataset_check.isChecked()
+        adata_view = self.adata if whole_dataset else self._population_qc_adata_view()
+        ranking = rank_marker_rois(
+            adata_view,
+            marker=marker,
+            roi_obs=self.manifest.roi_obs,
+            eligible_rois=eligible,
+        )
+        ranked = [roi for roi, _mean in ranking]
+        if not ranked:
+            raise ValueError(
+                f"No eligible ROIs contain finite adata.X values for {marker!r}."
+            )
+        self.roi_combo.blockSignals(True)
+        self.roi_combo.clear()
+        self.roi_combo.addItems(ranked)
+        self.roi_combo.blockSignals(False)
+        self._refresh_roi_review_colours()
+        self.roi_combo.setCurrentIndex(0)
+        self.load_roi(ranked[0])
+        scope = "the whole AnnData" if whole_dataset else "the active cell scope"
+        self.set_status(
+            f"Ranked {len(ranked):,} ROIs by mean intracellular {marker} signal "
+            f"across {scope}; highest mean {ranking[0][1]:.4g}."
         )
 
     def use_population_as_cohort(self) -> None:

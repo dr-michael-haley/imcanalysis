@@ -84,6 +84,18 @@ def top_population_markers(
     )
     if not bool(selected.any()) or not candidates:
         return []
+    # A marker can have different image-channel aliases in different ROIs (for
+    # example, ``SOX2`` and ``191Ir_SOX2``). Rank each AnnData variable only
+    # once so aliases cannot consume multiple RGB suggestion slots.
+    unique_candidates: list[tuple[str, str]] = []
+    seen_variables: set[str] = set()
+    for display_name, var_name in candidates:
+        canonical = str(var_name)
+        if canonical in seen_variables:
+            continue
+        seen_variables.add(canonical)
+        unique_candidates.append((str(display_name), canonical))
+    candidates = unique_candidates
     var_names = pd.Index(adata.var_names.astype(str))
     positions = var_names.get_indexer([var_name for _display, var_name in candidates])
     valid = positions >= 0
@@ -136,7 +148,6 @@ def build_population_qc_recipe(
         cleaned_channels,
         colours,
         contrast_limits,
-        strict=True,
     ):
         lower, upper = (float(value) for value in limits)
         if not 0 <= lower < upper <= 1:

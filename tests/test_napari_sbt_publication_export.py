@@ -19,6 +19,7 @@ from SpatialBiologyToolkit.napari_sbt.publication_export import (
     compose_publication_image,
     detect_tiff_pixel_calibration,
     fit_frame_to_aspect,
+    publication_channel_colours,
     publication_render_geometry,
     publication_resolution_scale,
     resolve_publication_dpi,
@@ -112,6 +113,38 @@ def test_schema_v1_v2_output_remains_custom_sized() -> None:
         output,
         ResolvedPublicationFrame(50, 50, 100, 100),
     ) == (900, 700)
+
+
+def test_schema_v3_preset_receives_backward_compatible_annotation_defaults() -> None:
+    payload = _preset().model_dump(mode="json")
+    payload["schema_version"] = 3
+    for key in (
+        "show_label",
+        "label_scale",
+        "thickness_scale",
+        "margin_scale",
+        "box_padding_scale",
+    ):
+        payload["scale_bar"].pop(key, None)
+    for key in (
+        "title_scale",
+        "roi_scale",
+        "channel_scale",
+        "margin_scale",
+        "color_channels",
+        "box_padding_scale",
+    ):
+        payload["annotations"].pop(key, None)
+
+    restored = PublicationExportPreset.model_validate(payload)
+
+    assert restored.scale_bar.show_label is True
+    assert restored.scale_bar.label_scale == 1.0
+    assert restored.scale_bar.thickness_scale == 1.0
+    assert restored.annotations.title_scale == 1.0
+    assert restored.annotations.roi_scale == 1.0
+    assert restored.annotations.channel_scale == 1.0
+    assert restored.annotations.color_channels is False
 
 
 @pytest.mark.parametrize(
@@ -277,6 +310,121 @@ def test_compositor_preserves_size_and_records_annotations() -> None:
     assert np.any(composed[..., :3] != 0)
 
 
+def test_scale_bar_can_render_without_physical_length_text() -> None:
+    preset = _preset(
+        calibration=PixelCalibration(confirmed=True, x_size=1, y_size=1),
+        scale_bar=PublicationScaleBar(
+            visible=True,
+            length_mode="fixed",
+            length=20,
+            show_label=False,
+        ),
+    )
+    image = np.zeros((600, 800, 4), dtype=np.uint8)
+    image[..., 3] = 255
+
+    _composed, metadata = compose_publication_image(
+        image,
+        preset=preset,
+        frame=ResolvedPublicationFrame(50, 50, 100, 100),
+        roi="ROI-A",
+    )
+
+    assert metadata["scale_bar_label_visible"] is False
+    assert metadata["scale_bar_label"] is None
+    assert metadata["scale_bar_rendered_font_size"] == 0
+    assert metadata["scale_bar_rendered_text_width"] == 0
+    assert metadata["scale_bar_rendered_text_height"] == 0
+
+
+def test_relative_controls_multiply_automatic_annotation_sizes() -> None:
+    preset = _preset(
+        output=PublicationOutput(resolution="low"),
+        calibration=PixelCalibration(confirmed=True, x_size=1, y_size=1),
+        scale_bar=PublicationScaleBar(
+            visible=True,
+            length_mode="fixed",
+            length=50,
+            label_scale=1.5,
+            thickness_scale=2.0,
+            margin_scale=0.5,
+        ),
+        annotations=PublicationAnnotations(
+            custom_title="Lymphocytes",
+            show_roi=True,
+            show_channels=True,
+            title_scale=2.0,
+            roi_scale=0.5,
+            channel_scale=1.5,
+            margin_scale=0.5,
+        ),
+    )
+    image = np.zeros((600, 600, 4), dtype=np.uint8)
+    image[..., 3] = 255
+
+    _composed, metadata = compose_publication_image(
+        image,
+        preset=preset,
+        frame=ResolvedPublicationFrame(300, 300, 600, 600),
+        roi="ROI-A",
+    )
+
+    assert metadata["scale_bar_rendered_font_size"] == 24
+    assert metadata["scale_bar_rendered_thickness"] == 6
+    assert metadata["scale_bar_rendered_margin"] == 9
+    assert metadata["annotation_rendered_font_size"] == 18
+    assert metadata["annotation_rendered_font_sizes"] == {
+        "title": 36,
+        "roi": 9,
+        "channels": 27,
+    }
+    assert metadata["annotation_rendered_margin"] == 9
+
+
+def test_channel_name_colours_follow_frozen_recipe_colormaps() -> None:
+    recipe = ExploreViewRecipe(
+        image_mode="six_colour",
+        image_channels=["CD3", "CD8", "CD20"],
+        layer_colormaps={"image::CD8": "magenta"},
+        layer_colormap_specs={
+            "image::CD3": {
+                "kind": "continuous",
+                "name": "custom-CD3",
+                "colours": [[0, 0, 0, 1], [0.1, 0.2, 0.3, 1]],
+                "controls": [0, 1],
+                "interpolation": "linear",
+            }
+        },
+    )
+
+    colours = publication_channel_colours(recipe)
+
+    assert colours == {
+        "CD3": "#1a334c",
+        "CD8": "#ff00ff",
+        "CD20": "#0000ff",
+    }
+
+    preset = _preset(
+        recipe=recipe,
+        annotations=PublicationAnnotations(
+            show_channels=True,
+            color_channels=True,
+        ),
+    )
+    image = np.zeros((600, 800, 4), dtype=np.uint8)
+    image[..., 3] = 255
+    composed, metadata = compose_publication_image(
+        image,
+        preset=preset,
+        frame=ResolvedPublicationFrame(50, 50, 100, 100),
+        roi="ROI-A",
+    )
+    assert metadata["annotation_channel_colours"] == colours
+    assert np.any(np.all(composed[..., :3] == [26, 51, 76], axis=-1))
+    assert np.any(np.all(composed[..., :3] == [255, 0, 255], axis=-1))
+
+
 @pytest.mark.parametrize(
     (
         "resolution",
@@ -371,15 +519,33 @@ def test_atomic_png_save(tmp_path) -> None:
 
 
 def test_saved_publication_preset_keeps_frozen_recipe_snapshot() -> None:
-    preset = _preset()
+    preset = _preset(
+        scale_bar=PublicationScaleBar(
+            show_label=False,
+            label_scale=1.4,
+            thickness_scale=1.8,
+        ),
+        annotations=PublicationAnnotations(
+            title_scale=1.6,
+            roi_scale=0.8,
+            channel_scale=1.2,
+            color_channels=True,
+        ),
+    )
     state = PublicationExportState(
         presets={preset.preset_id: preset}, active_preset_id=preset.preset_id
     )
-    restored = PublicationExportState.model_validate(
-        state.model_dump(mode="json")
-    )
+    restored = PublicationExportState.model_validate(state.model_dump(mode="json"))
     assert restored.presets[preset.preset_id].recipe.image_channels == ["CD3", "CD8"]
     assert restored.active_preset_id == preset.preset_id
+    restored_preset = restored.presets[preset.preset_id]
+    assert restored_preset.scale_bar.show_label is False
+    assert restored_preset.scale_bar.label_scale == 1.4
+    assert restored_preset.scale_bar.thickness_scale == 1.8
+    assert restored_preset.annotations.title_scale == 1.6
+    assert restored_preset.annotations.roi_scale == 0.8
+    assert restored_preset.annotations.channel_scale == 1.2
+    assert restored_preset.annotations.color_channels is True
 
 
 def test_detects_calibrated_tiff_resolution_without_auto_confirming(tmp_path) -> None:
