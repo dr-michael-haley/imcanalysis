@@ -26,6 +26,7 @@ from SpatialBiologyToolkit.neighbour_signal import (
     _aggregate_source_target_attribution,
     build_output_anndata,
     build_source_target_table,
+    finalize_output_storage,
     calculate_marker_halo_maps,
     population_attribution_fractions,
     project_source_halos,
@@ -50,7 +51,7 @@ from SpatialBiologyToolkit.pipeline.assets import resolve_assets
 from SpatialBiologyToolkit.pipeline.planner import build_run_plan
 from SpatialBiologyToolkit.pipeline.project import initialize_project
 from SpatialBiologyToolkit.pipeline.registry import MODES, STAGE_REGISTRY
-from SpatialBiologyToolkit.scripts.neighbour_signal import run_pipeline
+from SpatialBiologyToolkit.scripts.neighbour_signal import _atomic_h5ad, run_pipeline
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -735,7 +736,7 @@ def _check_filtered_anndata_ignores_orphans_and_reports_counts(tmp_path: Path):
         calculate_classic_intensities=True,
         high_risk_threshold=0.5,
     )
-    assert output.uns["marker_halo"]["schema_version"] == 6
+    assert output.uns["marker_halo"]["schema_version"] == 7
     restored_backgrounds = output.uns["marker_halo"]["roi_marker_backgrounds"]
     assert "unmapped_strong_source_cells" in restored_backgrounds.columns
     assert "authoritative output AnnData row" in output.uns["marker_halo"][
@@ -964,6 +965,9 @@ def _check_config_registry_assets_wrapper_environment_and_plan_align(tmp_path: P
     assert settings.gallery_crop_margin_px == 8
     assert settings.max_halo_px == 8
     assert settings.n_jobs == "auto"
+    assert settings.output_mode == "compact"
+    assert settings.store_original_X is None
+    assert settings.h5ad_compression == "gzip"
     assert settings.qc_markers is None
     assert settings.max_qc_markers is None
     assert settings.umap_point_size is None
@@ -1134,6 +1138,17 @@ def _check_direct_stage_smoke_writes_asset_and_concise_qc(tmp_path: Path):
     restored = ad.read_h5ad(output_path)
     assert restored.obs_names.equals(source.obs_names)
     assert restored.var_names.equals(source.var_names)
+    assert "original_X" not in restored.layers
+    assert "existing_layer" not in restored.layers
+    assert "existing_metadata" not in restored.uns
+    assert restored.uns["marker_halo"]["output_storage"]["mode"] == "compact"
+    assert restored.uns["marker_halo"]["output_storage"]["finalized"]
+    assert "exemplar_selection" not in restored.uns["marker_halo"]
+    for reference in restored.uns["marker_halo"]["external_tables"].values():
+        assert Path(reference["path"]).is_file()
+    import h5py
+    with h5py.File(output_path) as handle:
+        assert handle["X"].compression == "gzip"
     assert restored.uns["marker_halo"]["source_target_table"]["path"] == str(
         source_target_path
     )
@@ -1298,6 +1313,70 @@ def _check_gallery_selection_is_stratified_unique_and_bounded(tmp_path: Path):
 
 
 class NeighbourSignalTests(unittest.TestCase):
+    def test_compact_storage_matches_full_without_inherited_data(self):
+        from scipy import sparse
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, result = _run(root, ["ROI_1"], n_jobs=1)
+            source.raw = source.copy()
+            source.obsm["spatial"] = np.zeros((source.n_obs, 2), dtype=np.float32)
+            source.obsm["X_pca"] = np.ones((source.n_obs, 20))
+            source.obsp["connectivities"] = sparse.eye(source.n_obs, format="csr")
+            source.varm["PCs"] = np.ones((source.n_vars, 20))
+            source.uns["Population_colors"] = np.array(["red", "blue"])
+            source.uns["large_unrelated"] = np.random.default_rng(0).random((256, 256))
+            kwargs = dict(parameters={"population_obs": "Population"},
+                          calculate_classic_intensities=True, high_risk_threshold=0.5)
+            full = build_output_anndata(source, result, **kwargs)
+            compact = build_output_anndata(source, result, output_mode="compact", **kwargs)
+            np.testing.assert_array_equal(compact.X, full.X)
+            for name in compact.layers:
+                np.testing.assert_array_equal(compact.layers[name], full.layers[name])
+            pd.testing.assert_frame_equal(compact.obs, full.obs)
+            pd.testing.assert_frame_equal(compact.var, full.var)
+            assert compact.raw is None and not compact.obsp and not compact.varm
+            assert set(compact.obsm) == {"X_umap", "spatial"}
+            assert set(compact.uns) == {"Population_colors", "marker_halo"}
+            assert "original_X" not in compact.layers and "existing_layer" not in compact.layers
+            assert full.raw is not None and "X_pca" in full.obsm
+            assert "connectivities" in full.obsp and "existing_layer" in full.layers
+            np.testing.assert_array_equal(full.layers["original_X"], source.X)
+            retained = build_output_anndata(source, result, output_mode="compact",
+                                            store_original_X=True, **kwargs)
+            np.testing.assert_array_equal(retained.layers["original_X"], source.X)
+            # Simulate transient QC access without duplicating expression.
+            compact.layers["original_X"] = source.X
+            assert compact.layers["original_X"] is source.X
+            with self.assertRaisesRegex(ValueError, "report table"):
+                finalize_output_storage(compact, [])
+            assert "exemplar_selection" in compact.uns["marker_halo"]
+            paths = []
+            for key, filename in (
+                ("exemplar_statistics", "exemplar_profile_statistics.csv"),
+                ("exemplar_profile_values", "exemplar_profile_values.csv"),
+                ("exemplar_selection", "exemplar_selection.csv"),
+            ):
+                path = root / filename
+                compact.uns["marker_halo"][key].to_csv(path, index=False)
+                paths.append(path)
+            finalize_output_storage(compact, paths)
+            finalize_output_storage(full, [])
+            finalize_output_storage(retained, paths)
+            assert "original_X" not in compact.layers
+            assert "original_X" in retained.layers
+            assert "exemplar_selection" in full.uns["marker_halo"]
+            assert "exemplar_selection" not in compact.uns["marker_halo"]
+            for output, name in ((compact, "compact"), (full, "full")):
+                _atomic_h5ad(output, root / f"{name}.h5ad")
+            assert (root / "compact.h5ad").stat().st_size < (root / "full.h5ad").stat().st_size
+            restored = ad.read_h5ad(root / "compact.h5ad")
+            np.testing.assert_array_equal(restored.X, full.X)
+            assert restored.obs_names.equals(source.obs_names)
+            assert restored.var_names.equals(source.var_names)
+            assert "large_unrelated" in source.uns and source.raw is not None
+            assert "existing_layer" in source.layers and "original_X" not in source.layers
+
     def test_population_components_unknown_and_missing_annotations(self):
         table = pd.DataFrame({
             "target_obs_index": [0, 0, 0, 1, 1, 2],

@@ -2173,13 +2173,39 @@ def build_output_anndata(
     high_risk_threshold: float,
     source_target_table: pd.DataFrame | None = None,
     source_target_table_path: str | Path | None = None,
+    output_mode: str = "full",
+    store_original_X: bool | None = None,
 ) -> Any:
-    """Copy input AnnData and attach scores, layers, summaries, and provenance."""
+    """Build results without copying unrelated data in compact mode.
 
+    The library default stays full for compatibility; the pipeline defaults to
+    compact. Detailed QC tables remain available until finalize_output_storage
+    is called after reporting.
+    """
+
+    if output_mode not in {"compact", "full"}:
+        raise ValueError("output_mode must be 'compact' or 'full'")
     if input_adata.X is None:
-        raise ValueError("Input AnnData.X is required so it can be preserved as original_X")
-    output = input_adata.copy()
-    original_x = input_adata.X.copy()
+        raise ValueError("Input AnnData.X is required for expression comparisons")
+    keep_original = output_mode == "full" if store_original_X is None else store_original_X
+    if output_mode == "full":
+        output = input_adata.copy()
+    else:
+        from anndata import AnnData
+        from copy import deepcopy
+
+        output = AnnData(
+            X=result.scores.astype(np.float32, copy=False),
+            obs=input_adata.obs.copy(), var=input_adata.var.copy(),
+        )
+        for key in ("X_umap", "spatial", "X_spatial"):
+            if key in input_adata.obsm:
+                output.obsm[key] = input_adata.obsm[key].copy()
+        # Retain small Scanpy category palettes, not arbitrary source .uns.
+        for column in input_adata.obs:
+            key = f"{column}_colors"
+            if key in input_adata.uns:
+                output.uns[key] = deepcopy(input_adata.uns[key])
     backup_layer = ""
     if "original_X" in output.layers:
         backup_layer = "preexisting_original_X"
@@ -2188,7 +2214,10 @@ def build_output_anndata(
             backup_layer = f"preexisting_original_X_{suffix}"
             suffix += 1
         output.layers[backup_layer] = output.layers["original_X"].copy()
-    output.layers["original_X"] = original_x
+    if keep_original:
+        output.layers["original_X"] = input_adata.X.copy()
+    else:
+        output.layers.pop("original_X", None)
     if calculate_classic_intensities:
         output.layers["classic_intensities"] = result.classic_intensities.astype(
             np.float32,
@@ -2291,7 +2320,13 @@ def build_output_anndata(
         ),
     }
     output.uns["marker_halo"] = {
-        "schema_version": 6,
+        "schema_version": 7,
+        "output_storage": {
+            "mode": output_mode,
+            "original_X_stored": bool(keep_original),
+            "retained_obsm": list(output.obsm),
+            "finalized": False,
+        },
         "score_name": "NeighbourAttributableFraction",
         "interpretation": (
             "Spatial explainability/QC score: the fraction of observed background-subtracted "
@@ -2379,6 +2414,40 @@ def build_output_anndata(
     return output
 
 
+def finalize_output_storage(adata: Any, report_tables: Sequence[Path]) -> None:
+    """Finalize the newly built output in place after QC, never the input.
+
+    Compact outputs reference existing report CSVs instead of duplicating their
+    potentially cell-by-marker-scale tables. Verify all paths before pruning.
+    """
+    halo = adata.uns["marker_halo"]
+    storage = halo["output_storage"]
+    external = {}
+    if storage["mode"] == "compact":
+        paths = {Path(path).name: Path(path) for path in report_tables}
+        for key, filename in (
+            ("exemplar_statistics", "exemplar_profile_statistics.csv"),
+            ("exemplar_profile_values", "exemplar_profile_values.csv"),
+            ("exemplar_selection", "exemplar_selection.csv"),
+        ):
+            if key not in halo:
+                continue
+            path = paths.get(filename)
+            if path is None or not path.is_file():
+                raise ValueError(f"Cannot finalize compact output: report table {filename} is missing")
+            table = halo[key]
+            external[key] = {
+                "path": str(path.resolve()), "format": "csv", "rows": len(table),
+                "columns": [str(column) for column in table.columns],
+            }
+        for key in external:
+            del halo[key]
+        halo.setdefault("external_tables", {}).update(external)
+    if not storage["original_X_stored"]:
+        adata.layers.pop("original_X", None)
+    storage["finalized"] = True
+
+
 __all__ = [
     "CandidateWorkerPayload",
     "ExemplarSelectionRecord",
@@ -2391,6 +2460,7 @@ __all__ = [
     "WorkerUsage",
     "aggregate_marker_profiles",
     "build_output_anndata",
+    "finalize_output_storage",
     "build_source_target_table",
     "calculate_marker_halo_maps",
     "population_attribution_fractions",

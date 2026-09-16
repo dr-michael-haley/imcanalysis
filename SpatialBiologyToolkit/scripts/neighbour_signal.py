@@ -43,11 +43,11 @@ def _runtime(argv: list[str] | None):
     return config, settings, reporter
 
 
-def _atomic_h5ad(adata, target: Path) -> None:
+def _atomic_h5ad(adata, target: Path, *, compression: str | None = "gzip") -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     temporary = target.with_name(f".{target.stem}.{uuid.uuid4().hex}.tmp.h5ad")
     try:
-        adata.write_h5ad(temporary)
+        adata.write_h5ad(temporary, compression=compression)
         temporary.replace(target)
     finally:
         if temporary.exists():
@@ -73,6 +73,7 @@ def run_pipeline(argv: list[str] | None = None) -> int:
         HaloParameters,
         build_output_anndata,
         build_source_target_table,
+        finalize_output_storage,
         run_neighbour_signal_analysis,
     )
     from SpatialBiologyToolkit.neighbour_signal_reports import (
@@ -207,7 +208,13 @@ def run_pipeline(argv: list[str] | None = None) -> int:
         high_risk_threshold=settings.high_risk_threshold,
         source_target_table=source_target_table,
         source_target_table_path=source_target_path,
+        output_mode=settings.output_mode,
+        store_original_X=settings.store_original_X,
     )
+    # Reports need original expression, but compact files need not duplicate it.
+    # This attaches an in-memory reference without copying the input array.
+    if "original_X" not in output.layers:
+        output.layers["original_X"] = adata.X
 
     direct_root = Path("neighbour_signal_report")
     figures_dir = optional_category_output_path(
@@ -240,8 +247,12 @@ def run_pipeline(argv: list[str] | None = None) -> int:
         gallery_examples_per_marker=settings.gallery_examples_per_marker,
         gallery_crop_margin_px=settings.gallery_crop_margin_px,
     )
+    finalize_output_storage(output, report.tables)
+    output.uns["marker_halo"]["output_storage"]["compression"] = (
+        settings.h5ad_compression or "none"
+    )
     _atomic_parquet(source_target_table, source_target_path)
-    _atomic_h5ad(output, output_path)
+    _atomic_h5ad(output, output_path, compression=settings.h5ad_compression)
     LOGGER.info(
         "Neighbour signal analysis complete: %d cells, %d markers, %d learned profiles, "
         "%d source-target relationships -> %s",
@@ -276,6 +287,8 @@ def run_pipeline(argv: list[str] | None = None) -> int:
         reporter.add_metric("roi_workers", result.worker_usage.effective)
         reporter.add_metric("cpu_limit", result.worker_usage.cpu_limit)
         reporter.add_metric("rois", len(roi_inputs))
+        reporter.add_metric("output_h5ad_bytes", output_path.stat().st_size)
+        reporter.add_metric("output_mode", settings.output_mode)
         reporter.add_metric(
             "unknown_exemplar_marker_values",
             len(result.unknown_exemplar_values),
@@ -284,7 +297,7 @@ def run_pipeline(argv: list[str] | None = None) -> int:
             "Neighbour-Attributable Fraction is a spatial explainability/QC score, not a calibrated probability or proof of artefact."
         )
         reporter.add_note(
-            "In automatic/augment mode, input AnnData.X was used only to identify marker-positive exemplar candidates. Halo values, source strengths, backgrounds, projected sources, and final scores were calculated from raw images and masks; X is preserved in layers['original_X']."
+            "In automatic/augment mode, input AnnData.X identifies marker-positive exemplar candidates and supports comparison QC. Halo values and final scores use raw images and masks. Saving original_X is optional; output storage choices are recorded in marker_halo.output_storage."
         )
         reporter.add_note(
             "A reported spatial source is a neighbouring cell whose projected marker halo explains signal inside the target mask; it is not proof of physical transfer."

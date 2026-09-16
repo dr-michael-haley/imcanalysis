@@ -6754,6 +6754,58 @@
           "type": "string",
           "ui_group": "Output asset"
         },
+        "output_mode": {
+          "advice": "Compact omits inherited layers, raw, graphs and unrelated metadata, and links detailed exemplar tables in the report. Full retains the previous copy-based layout.",
+          "default": "compact",
+          "description": "Compact keeps stage results, obs/var and UMAP/spatial coordinates; full copies the source AnnData.",
+          "enum": [
+            "compact",
+            "full"
+          ],
+          "level": "basic",
+          "stage": "neighsig",
+          "title": "Output Mode",
+          "type": "string",
+          "ui_group": "Output asset"
+        },
+        "store_original_X": {
+          "advice": "Null saves it in full mode only. Comparison plots always use the input expression during the run, regardless of storage.",
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Whether to save the input expression matrix in layers['original_X'].",
+          "level": "basic",
+          "stage": "neighsig",
+          "title": "Store Original X",
+          "ui_group": "Output asset"
+        },
+        "h5ad_compression": {
+          "advice": "Gzip reduces disk size at the cost of writing time; lzf is faster, and null disables compression. Compression does not reduce in-memory array sizes.",
+          "anyOf": [
+            {
+              "enum": [
+                "gzip",
+                "lzf"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "gzip",
+          "description": "Lossless compression for the neighbour-signal H5AD output.",
+          "level": "advanced",
+          "stage": "neighsig",
+          "title": "H5Ad Compression",
+          "ui_group": "Output asset"
+        },
         "source_target_table_path": {
           "advice": "Global AnnData row indices and obs_names are authoritative; ROI and mask labels are retained for provenance.",
           "default": "neighbour_signal_source_target.parquet",

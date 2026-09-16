@@ -48,7 +48,8 @@ than imposing one decay curve across the panel.
 By default the input expression matrix supplies only the marker-positive call
 used to find automatic exemplar candidates. This is normally a Nimbus inference
 score. Halo values, raw-image source selection, background estimation, and final
-scores do not use `X`. The original matrix is preserved for comparison, but the
+scores do not use `X`. The original matrix is used for comparison QC (and can
+optionally be saved in the output), but the
 selected training cells are not an independent validation of the `X` positivity
 call; held-out cells and ROIs remain useful comparisons.
 
@@ -98,11 +99,13 @@ rather than treating this expected filtering pattern as an error.
 The stage writes a separate AnnData to
 `neighbour_signal.output_adata_path` (default
 `neighbour_attributable_signal.h5ad`). The input AnnData is never overwritten.
-The output is a copy of the input, retaining `.obs`, `.var`, `.obsm`, `.uns`,
-and existing layers, with these changes:
+By default the output is built explicitly in **compact** mode, retaining all
+`.obs`/`.var` annotations and the exact original row/marker order, but not copying
+the entire source object. It contains:
 
 - `X`: float32 Neighbour-Attributable Fractions, bounded in `[0, 1]`;
-- `layers['original_X']`: the unmodified input expression/confidence matrix;
+- `layers['original_X']`: optionally, the unmodified input expression/confidence
+  matrix (`store_original_X: true`; omitted by default in compact mode);
 - `layers['classic_intensities']`: mean raw intensity inside each mask when
   enabled;
 - `layers['neighbour_attributable_intensity']`: mean observed excess intensity
@@ -126,10 +129,47 @@ and existing layers, with these changes:
   extent in `.var`;
 - `halo_max_score`, `halo_mean_score`, and the descriptive
   `halo_n_high_risk` summary in `.obs`;
-- profiles, IQRs, complete automatic/manual candidate decisions, exemplar
-  statistics, backgrounds, mapped/mask-only segmentation counts, parameters, worker
+- profiles, IQRs, candidate-selection summaries, backgrounds,
+  mapped/mask-only segmentation counts, parameters, worker
   allocation, score interpretation, and layer semantics in
   `.uns['marker_halo']`.
+
+Compact mode retains `obsm['X_umap']`, `obsm['spatial']` and
+`obsm['X_spatial']` when present, plus observation-category colour palettes.
+It omits inherited layers, `.raw`, neighbour graphs (`.obsp`), loadings (`.varm`),
+variable-pair matrices, other embeddings and unrelated `.uns` metadata.
+All **new halo-result layers** listed above remain; compact mode does not
+change scores, source attribution, population components or cell identities.
+
+Detailed exemplar statistics, individual profile values and complete candidate
+decisions are written to the existing report CSVs instead of being duplicated
+inside the compact H5AD. `.uns['marker_halo']['external_tables']` records their
+paths, columns and row counts. Keep these report tables alongside the output
+for the full audit trail. Moving the files can require updating their paths.
+Other halo metadata, including selected-exemplar counts and aggregate profiles,
+remains embedded. `.uns['marker_halo']['output_storage']` records the layout,
+original-expression retention and compression.
+
+Comparison plots and galleries still use the input expression **during the run**,
+even when `original_X` is not saved. To reproduce those comparisons later from
+a compact output, retain the original input AnnData or enable `store_original_X`.
+Re-running the full report from a compact file alone also requires its external
+audit tables; the in-run report uses those tables before compact finalization.
+
+`output_mode: full` restores the previous copy-based layout, including source
+layers, `.raw`, embeddings, graphs and unrelated metadata, and embeds the detailed
+audit tables. `store_original_X: null` (the default) saves original expression
+in full mode only; explicit `true`/`false` overrides this in either mode.
+The Python `build_output_anndata` library default remains full for compatibility;
+the pipeline explicitly selects compact. Library users selecting compact should
+call `finalize_output_storage` after writing the report tables, before saving.
+
+H5AD writing uses lossless gzip compression by default. `h5ad_compression: lzf`
+favours writing speed; `null` disables compression. Compression affects disk
+size, not in-memory array sizes. The new dense result layers still scale with
+cells × markers, and `.obs` itself can be substantial in heavily annotated inputs.
+This change avoids duplicating unrelated source data in memory, but does not
+make the input read or scientific calculation out-of-core.
 
 The stage also writes `neighbour_signal.source_target_table_path` (default
 `neighbour_signal_source_target.parquet`). This sparse long-form asset contains
@@ -142,7 +182,7 @@ labels are included when available. The Parquet path, schema, relationship
 count, identity semantics, and cautious interpretation are recorded in
 `.uns['marker_halo']['source_target_table']`.
 
-If the input already has an `original_X` layer, it is retained under a unique
+In full mode, if the input already has an `original_X` layer, it is retained under a unique
 `preexisting_original_X*` name before the current input `X` is stored.
 
 ### Homotypic and heterotypic attribution
@@ -260,6 +300,9 @@ where possible; image galleries require actual eligible examples.
 neighbour_signal:
   enabled: true
   output_adata_path: neighbour_attributable_signal.h5ad
+  output_mode: compact
+  store_original_X: null  # false in compact mode; true in full mode
+  h5ad_compression: gzip
   source_target_table_path: neighbour_signal_source_target.parquet
   exemplar_mode: automatic
   exemplar_obs: Exemplar_stains

@@ -1481,6 +1481,24 @@ class NeighbourSignalConfig(ConfigModel):
         ui_group="Output asset",
         advice="Use a path different from general.anndata_path; the input AnnData is never modified.",
     )
+    output_mode: Literal["compact", "full"] = config_field(
+        "compact",
+        description="Compact keeps stage results, obs/var and UMAP/spatial coordinates; full copies the source AnnData.",
+        level="basic", stage="neighsig", ui_group="Output asset",
+        advice="Compact omits inherited layers, raw, graphs and unrelated metadata, and links detailed exemplar tables in the report. Full retains the previous copy-based layout.",
+    )
+    store_original_X: Optional[bool] = config_field(
+        None,
+        description="Whether to save the input expression matrix in layers['original_X'].",
+        level="basic", stage="neighsig", ui_group="Output asset",
+        advice="Null saves it in full mode only. Comparison plots always use the input expression during the run, regardless of storage.",
+    )
+    h5ad_compression: Optional[Literal["gzip", "lzf"]] = config_field(
+        "gzip",
+        description="Lossless compression for the neighbour-signal H5AD output.",
+        level="advanced", stage="neighsig", ui_group="Output asset",
+        advice="Gzip reduces disk size at the cost of writing time; lzf is faster, and null disables compression. Compression does not reduce in-memory array sizes.",
+    )
     source_target_table_path: str = config_field(
         "neighbour_signal_source_target.parquet",
         description="Sparse Parquet asset containing non-zero target-marker-source attribution relationships.",

@@ -13,6 +13,9 @@
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
 | `output_adata_path` | `str` | `neighbour_attributable_signal.h5ad` | `basic` | Separate AnnData output whose X matrix contains neighbour-attributable fractions. | Use a path different from general.anndata_path; the input AnnData is never modified. |
+| `output_mode` | `Literal['compact', 'full']` | `compact` | `basic` | Compact keeps stage results, obs/var and UMAP/spatial coordinates; full copies the source AnnData. | Compact omits inherited layers, raw, graphs and unrelated metadata, and links detailed exemplar tables in the report. Full retains the previous copy-based layout. |
+| `store_original_X` | `Optional[bool]` | `null` | `basic` | Whether to save the input expression matrix in layers['original_X']. | Null saves it in full mode only. Comparison plots always use the input expression during the run, regardless of storage. |
+| `h5ad_compression` | `Optional[Literal['gzip', 'lzf']]` | `gzip` | `advanced` | Lossless compression for the neighbour-signal H5AD output. | Gzip reduces disk size at the cost of writing time; lzf is faster, and null disables compression. Compression does not reduce in-memory array sizes. |
 | `source_target_table_path` | `str` | `neighbour_signal_source_target.parquet` | `basic` | Sparse Parquet asset containing non-zero target-marker-source attribution relationships. | Global AnnData row indices and obs_names are authoritative; ROI and mask labels are retained for provenance. |
 | `calculate_classic_intensities` | `bool` | `True` | `basic` | Store conventional mean raw-marker intensity within each segmentation mask. | Internal raw-image reductions still run when this output layer is disabled. |
 
