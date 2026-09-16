@@ -27,12 +27,15 @@ from SpatialBiologyToolkit.neighbour_signal import (
     build_output_anndata,
     build_source_target_table,
     calculate_marker_halo_maps,
+    population_attribution_fractions,
     project_source_halos,
     project_source_halos_with_sources,
     run_neighbour_signal_analysis,
 )
 from SpatialBiologyToolkit.neighbour_signal_reports import (
     _plot_population_matrix,
+    _plot_ranked_score_distributions,
+    _increasing_naf_order,
     _plot_profiles,
     _plot_score_distributions,
     _plot_source_target_population_heatmaps,
@@ -269,7 +272,7 @@ def _check_learns_known_halo_scores_near_target_and_preserves_output_contract(tm
     output = build_output_anndata(
         source,
         result,
-        parameters={"exemplar_obs": "Exemplar_stains", "max_halo_px": 4},
+        parameters={"exemplar_obs": "Exemplar_stains", "max_halo_px": 4, "population_obs": "Population"},
         calculate_classic_intensities=True,
         high_risk_threshold=0.5,
         source_target_table=build_source_target_table(
@@ -295,7 +298,13 @@ def _check_learns_known_halo_scores_near_target_and_preserves_output_contract(tm
         "dominant_source_observed_fraction",
         "dominant_source_attributable_fraction",
         "existing_layer",
+        "homotypic_NAF",
+        "heterotypic_NAF",
+        "unknown_population_NAF",
     }.issubset(output.layers)
+    np.testing.assert_allclose(output.layers["heterotypic_NAF"], output.X)
+    assert not np.any(output.layers["homotypic_NAF"])
+    assert not np.any(output.layers["unknown_population_NAF"])
     np.testing.assert_array_equal(output.layers["original_X"], source.X)
     np.testing.assert_array_equal(output.obsm["X_umap"], source.obsm["X_umap"])
     assert output.uns["existing_metadata"]["retained"]
@@ -385,6 +394,10 @@ def _check_learns_known_halo_scores_near_target_and_preserves_output_contract(tm
     )
     assert len(profile_paths) == len(distribution_paths) == output.n_vars
     assert all(path.is_file() for path in [*profile_paths, *distribution_paths])
+    assert all(path.with_suffix(".svg").is_file() for path in [*profile_paths, *distribution_paths])
+    assert list(output.var_names[_increasing_naf_order(output)]) == ["CD3", "CD31"]
+    ranked_path = _plot_ranked_score_distributions(output, tmp_path)
+    assert ranked_path.is_file() and ranked_path.with_suffix(".svg").is_file()
     assert any("002_CD3" in path.name for path in profile_paths)
     assert any("002_CD3" in path.name for path in distribution_paths)
 
@@ -394,6 +407,9 @@ def _check_learns_known_halo_scores_near_target_and_preserves_output_contract(tm
     assert restored.obs_names.equals(source.obs_names)
     assert restored.var_names.equals(source.var_names)
     assert restored.X.dtype == np.float32
+    for name in ("homotypic_NAF", "heterotypic_NAF", "unknown_population_NAF"):
+        np.testing.assert_array_equal(restored.layers[name], output.layers[name])
+        assert restored.layers[name].dtype == np.float32
     assert restored.uns["marker_halo"]["score_name"] == "NeighbourAttributableFraction"
     assert restored.layers["dominant_source_index"].dtype == np.int64
     assert restored.uns["marker_halo"]["source_target_table"]["relationships"] == len(
@@ -507,6 +523,12 @@ def _check_per_marker_scanpy_qc_uses_point_size_dendrogram_and_native_scale(
     plotting.var["halo_profile_available"] = [True, False]
     plotting.obs["halo_max_score"] = np.max(plotting.X, axis=1)
     plotting.obs["halo_mean_score"] = np.mean(plotting.X, axis=1)
+    plotting.layers["homotypic_NAF"] = plotting.X * 0.25
+    plotting.layers["heterotypic_NAF"] = plotting.X * 0.75
+    plotting.layers["unknown_population_NAF"] = np.zeros_like(plotting.X)
+    plotting.uns["marker_halo"] = {"population_attribution": {
+        "available": True, "population_annotation_available": True,
+    }}
 
     umap_calls: list[dict[str, object]] = []
     matrix_calls: list[dict[str, object]] = []
@@ -552,12 +574,34 @@ def _check_per_marker_scanpy_qc_uses_point_size_dendrogram_and_native_scale(
     assert all(path.is_file() for path in umap_paths)
     assert len(dendrogram_calls) == 1
     assert dendrogram_calls[0]["var_names"] == ["CD31"]
-    assert len(population_paths) == len(matrix_calls) == 2
+    assert len(population_paths) == len(matrix_calls) == 3
+    assert all(call["var_names"] == ["CD3", "CD31"] for call in matrix_calls)
     assert all(call["dendrogram"] is True for call in matrix_calls)
     assert all(call["vmin"] == 0 for call in matrix_calls)
-    assert all("vmax" not in call for call in matrix_calls)
+    expected_max = pd.DataFrame(plotting.X).groupby(plotting.obs["Population"].to_numpy()).mean().max().max()
+    assert all(np.isclose(call["vmax"], expected_max) for call in matrix_calls)
+    assert all(call["use_raw"] is False for call in matrix_calls + umap_calls)
     assert all(path.is_file() for path in population_paths)
+    assert all(path.with_suffix(".svg").is_file() for path in population_paths + umap_paths)
     assert population_warnings == []
+
+    # Degenerate correlations still get a valid population tree, not an
+    # unexplained disappearance of the requested dendrogram.
+    plotting.X[:] = 0
+    plotting.var["halo_profile_available"] = False
+    matrix_calls.clear()
+    def undefined_dendrogram(*args, **kwargs):
+        raise ValueError("constant profiles")
+
+    fake_scanpy.tl.dendrogram = undefined_dendrogram
+    with patch.dict(sys.modules, {"scanpy": fake_scanpy}), patch("matplotlib.pyplot.close"):
+        fallback_paths, fallback_warnings = _plot_population_matrix(
+            plotting, ["CD31"], "Population", tmp_path / "constant_population_matrixplots",
+        )
+    assert len(fallback_paths) == 3
+    assert all(call["dendrogram"] is True for call in matrix_calls)
+    assert all(call["var_names"] == ["CD31", "CD3"] for call in matrix_calls)
+    assert any("Euclidean" in warning for warning in fallback_warnings)
 
 
 def _check_augment_mode_keeps_manual_exemplars_and_fills_automatically(tmp_path: Path):
@@ -691,7 +735,7 @@ def _check_filtered_anndata_ignores_orphans_and_reports_counts(tmp_path: Path):
         calculate_classic_intensities=True,
         high_risk_threshold=0.5,
     )
-    assert output.uns["marker_halo"]["schema_version"] == 5
+    assert output.uns["marker_halo"]["schema_version"] == 6
     restored_backgrounds = output.uns["marker_halo"]["roi_marker_backgrounds"]
     assert "unmapped_strong_source_cells" in restored_backgrounds.columns
     assert "authoritative output AnnData row" in output.uns["marker_halo"][
@@ -788,6 +832,19 @@ def _check_competing_sources_preserve_pixel_and_cell_provenance():
         dominant_attributable[2],
         expected_dominant.fraction_of_attributable_signal,
     )
+    table = pd.DataFrame([{
+        "target_obs_index": record.target_obs_index, "marker": "M",
+        "fraction_of_observed_signal": record.fraction_of_observed_signal,
+        "source_population": "A" if record.source_obs_index == 0 else "B",
+        "target_population": "A",
+    } for record in records])
+    scores = np.zeros((3, 1), dtype=np.float32)
+    scores[2, 0] = attributable_sums[3] / observed_sums[3]
+    components = population_attribution_fractions(scores, ["M"], table, provenance_available=True)
+    np.testing.assert_allclose(sum(components.values()), scores)
+    for record in target_records:
+        name = "homotypic_NAF" if record.source_obs_index == 0 else "heterotypic_NAF"
+        assert np.isclose(components[name][2, 0], record.fraction_of_observed_signal)
 
     summed = project_source_halos_with_sources(
         mask,
@@ -852,6 +909,10 @@ def _check_serial_and_roi_multiprocessing_are_numerically_equivalent(tmp_path: P
         population_obs="Population",
     )
     pd.testing.assert_frame_equal(serial_table, parallel_table)
+    serial_components = population_attribution_fractions(serial.scores, serial.marker_names, serial_table, provenance_available=True)
+    parallel_components = population_attribution_fractions(parallel.scores, parallel.marker_names, parallel_table, provenance_available=True)
+    for name in serial_components:
+        np.testing.assert_allclose(serial_components[name], parallel_components[name], atol=1e-7)
     for roi_index, roi in enumerate(("ROI_1", "ROI_2")):
         target_index = _source_serial.obs_names.get_loc(f"{roi}_cell_6")
         expected_source = _source_serial.obs_names.get_loc(f"{roi}_cell_1")
@@ -882,6 +943,12 @@ def _check_sum_aggregation_disables_source_resolved_provenance(tmp_path: Path):
     )
     assert table.empty
     assert "source_population" in table.columns
+    output = build_output_anndata(source, result, parameters={"population_obs": "Population"},
+                                  calculate_classic_intensities=True, high_risk_threshold=0.5,
+                                  source_target_table=table)
+    for name in ("homotypic_NAF", "heterotypic_NAF", "unknown_population_NAF"):
+        assert np.isnan(output.layers[name]).all()
+    assert not output.uns["marker_halo"]["population_attribution"]["available"]
 
 
 def _check_config_registry_assets_wrapper_environment_and_plan_align(tmp_path: Path):
@@ -1017,6 +1084,7 @@ def _check_direct_stage_smoke_writes_asset_and_concise_qc(tmp_path: Path):
                     "raw_images_folder": "tiffs",
                     "masks_folder": "masks",
                     "roi_obs": "ROI",
+                    "population_obs_primary": "Population",
                 },
                 "neighbour_signal": {
                     "output_adata_path": "halo_scores.h5ad",
@@ -1092,6 +1160,21 @@ def _check_direct_stage_smoke_writes_asset_and_concise_qc(tmp_path: Path):
     summary_text = summary_path.read_text(encoding="utf-8")
     assert "complete AnnData marker axis" in summary_text
     figures_root = report_root / "figures" / "neighbour_signal"
+    np.testing.assert_allclose(restored.layers["homotypic_NAF"] + restored.layers["heterotypic_NAF"]
+                               + restored.layers["unknown_population_NAF"], restored.X)
+    assert (figures_root / "neighbour_attributable_score_distributions.png").is_file()
+    for png in figures_root.rglob("*.png"):
+        assert png.with_suffix(".svg").is_file(), png
+    for component in ("homotypic", "heterotypic"):
+        assert (figures_root / "scanpy_population_marker_halo_matrixplots"
+                / f"scanpy_population_marker_halo_matrixplot_{component}.png").is_file()
+        for marker_index, marker in enumerate(("CD31", "CD3"), start=1):
+            assert (figures_root / "score_distributions" / component
+                    / f"neighbour_attributable_score_distribution_{marker_index:03d}_{marker}.png").is_file()
+    component_summary = pd.read_csv(report_root / "tables" / "neighbour_signal"
+                                    / "neighbour_attributable_component_summary.csv")
+    assert set(component_summary["component"]) == {"total", "homotypic", "heterotypic"}
+    assert len(component_summary) == 6
     for marker_index, marker in enumerate(("CD31", "CD3"), start=1):
         stem = f"{marker_index:03d}_{marker}"
         assert (
@@ -1215,6 +1298,29 @@ def _check_gallery_selection_is_stratified_unique_and_bounded(tmp_path: Path):
 
 
 class NeighbourSignalTests(unittest.TestCase):
+    def test_population_components_unknown_and_missing_annotations(self):
+        table = pd.DataFrame({
+            "target_obs_index": [0, 0, 0, 1, 1, 2],
+            "marker": ["B", "B", "B", "A", "A", "B"],
+            "fraction_of_observed_signal": [0.2, 0.3, 0.1, 0.25, 0.35, 0.4],
+            "source_population": ["T", "B", None, " ", "B", "T"],
+            "target_population": ["T", "T", "T", "T", None, ""],
+        })
+        scores = np.array([[0, 0.6], [0.6, 0], [0, 0.4], [0, 0]], dtype=np.float32)
+        components = population_attribution_fractions(scores, ["A", "B"], table, provenance_available=True)
+        np.testing.assert_allclose(sum(components.values()), scores)
+        np.testing.assert_allclose(components["homotypic_NAF"][0], [0, 0.2])
+        np.testing.assert_allclose(components["heterotypic_NAF"][0], [0, 0.3])
+        np.testing.assert_allclose(components["unknown_population_NAF"], [[0, 0.1], [0.6, 0], [0, 0.4], [0, 0]])
+        missing = population_attribution_fractions(
+            scores, ["A", "B"], table.drop(columns=["source_population", "target_population"]),
+            provenance_available=True,
+        )
+        np.testing.assert_allclose(missing["unknown_population_NAF"], scores)
+        assert not missing["homotypic_NAF"].any() and not missing["heterotypic_NAF"].any()
+        with self.assertRaisesRegex(ValueError, "reconstruct total NAF"):
+            population_attribution_fractions(scores, ["A", "B"], table.iloc[1:], provenance_available=True)
+
     def test_halo_learning_scoring_and_output(self):
         with tempfile.TemporaryDirectory() as temporary:
             _check_learns_known_halo_scores_near_target_and_preserves_output_contract(

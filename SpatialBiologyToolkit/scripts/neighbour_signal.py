@@ -256,7 +256,7 @@ def run_pipeline(argv: list[str] | None = None) -> int:
         reporter.add_asset(
             "neighbour_signal_anndata",
             output_path,
-            "Cell- and marker-aligned AnnData whose X contains Neighbour-Attributable Fractions.",
+            "Cell- and marker-aligned AnnData with total Neighbour-Attributable Fractions in X and homotypic, heterotypic and unknown-population component layers.",
         )
         reporter.add_asset(
             "neighbour_signal_source_target_table",
@@ -288,6 +288,9 @@ def run_pipeline(argv: list[str] | None = None) -> int:
         )
         reporter.add_note(
             "A reported spatial source is a neighbouring cell whose projected marker halo explains signal inside the target mask; it is not proof of physical transfer."
+        )
+        reporter.add_note(
+            "Under max aggregation, homotypic, heterotypic and unknown-population NAF partition total X using existing winning-source relationships and the same observed-signal denominator. Same-population sources are not discounted. Component layers are unavailable (NaN) under sum aggregation."
         )
     return 0
 

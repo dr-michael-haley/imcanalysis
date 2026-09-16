@@ -109,6 +109,12 @@ and existing layers, with these changes:
   per cell pixel captured by the neighbouring-halo model;
 - `layers['residual_excess_intensity']`: mean per-pixel excess remaining after
   the projected halo is subtracted and clipped at zero;
+- `layers['homotypic_NAF']`: fraction of observed target excess explained by
+  winning sources with the **same** population label;
+- `layers['heterotypic_NAF']`: fraction explained by winning sources with a
+  **different** population label;
+- `layers['unknown_population_NAF']`: fraction whose source or target population
+  label is missing or blank;
 - `layers['dominant_source_index']`: zero-based global AnnData row of the
   source contributing the largest attributable intensity for each target and
   marker, or `-1` when there is no attributable source;
@@ -139,6 +145,46 @@ count, identity semantics, and cautious interpretation are recorded in
 If the input already has an `original_X` layer, it is retained under a unique
 `preexisting_original_X*` name before the current input `X` is stored.
 
+### Homotypic and heterotypic attribution
+
+These components are calculated by default from the existing source-target
+relationships, using `neighbour_signal.population_obs` (falling back to
+`general.population_obs_primary`). No additional spatial search is required.
+Every component has the same denominator: the target cell's total observed
+background-subtracted signal for that marker. Under the recommended `max`
+aggregation:
+
+```text
+total NAF (X) = homotypic_NAF + heterotypic_NAF + unknown_population_NAF
+```
+
+For example, total NAF of 0.70 may comprise 0.20 explained by same-population
+sources and 0.50 by different-population sources. These are **fractions of the
+observed signal**, not fractions of the attributable component. The latter
+would require dividing each component by total NAF where total NAF is positive.
+
+Same-population sources are not discounted: being the same cell type does not
+make spatial overlap disappear. Conversely, high homotypic NAF does not prove
+that genuine marker expression is artefactual. The components support different
+QC questions without introducing cell-type priors into halo learning or scoring.
+The labels' resolution matters: merging populations can turn heterotypic into
+homotypic attribution, without changing total NAF.
+
+This is a partition of the **existing pixelwise winning-source assignment**,
+not a counterfactual calculation after excluding same-population sources. If
+one same-population source wins a pixel, a weaker different-population source
+does not also receive that pixel's attribution.
+
+Missing/blank labels are explicitly unknown, never silently classified as
+heterotypic. Without a population annotation all attribution is unknown and
+the report warns that homotypic/heterotypic interpretation is unavailable.
+With `halo_aggregation: sum`, all three component layers are NaN and component
+plots are skipped because source-resolved provenance is unavailable. See
+`.uns['marker_halo']['population_attribution']` for availability and semantics.
+Markers with unavailable halo profiles retain the existing zero-score sentinel;
+always check `var['halo_profile_available']` rather than interpreting it as an
+estimated absence of neighbour-attributable signal.
+
 ## Human-facing outputs produced
 
 The managed execution report contains:
@@ -146,7 +192,10 @@ The managed execution report contains:
 - one empirical halo-curve figure per marker with exemplar IQR, exemplar count,
   and source threshold; skipped markers receive an explicit unavailable-profile
   panel with the reason instead of silently disappearing;
-- one score-distribution figure per marker and an all-marker CSV with median,
+- `neighbour_attributable_score_distributions.png`: all-marker distributions
+  ordered by **increasing mean total NAF**, top to bottom (ties retain input
+  marker order), with aligned total, homotypic and heterotypic panels;
+- one score-distribution figure per marker and component and an all-marker CSV with mean, median,
   90th/95th percentiles, fractions above descriptive 0.25/0.5/0.75 thresholds,
   exemplar counts, and source thresholds; all-zero distributions explicitly
   distinguish unavailable profiles from valid profiles with no attributable
@@ -157,12 +206,20 @@ The managed execution report contains:
 - one plot per marker of input-X score versus nearest same-marker-positive
   distance, distinguishing rejected, eligible-unsampled, and selected
   candidates;
-- one Scanpy UMAP per marker, plus separate `halo_max_score` and
-  `halo_mean_score` UMAPs, when `X_umap` exists; point size is configurable;
-- one Scanpy population matrix plot per marker when a suitable categorical
-  population observation is available. Populations use a shared dendrogram
-  learned from all available halo-score markers, while each marker uses its own
-  native colour maximum;
+- one Scanpy UMAP per marker and component, plus max/mean-across-markers UMAPs
+  for each component, when `X_umap` exists; point size is configurable;
+- one **all-marker** Scanpy population matrix plot per component when a suitable
+  population observation is available. `scanpy_population_marker_halo_matrixplot.png`
+  shows total NAF; `_homotypic` and `_heterotypic` versions show the components.
+  Populations share a dendrogram based on mean total-NAF profiles from available
+  markers (correlation distance, with Euclidean fallback for constant profiles
+  or a single marker). Fewer than two populations skips clustering gracefully.
+  Components share the observed maximum of the total population means, **not a
+  fixed maximum of 1**, so the panels can be compared directly;
+- `neighbour_attributable_component_summary.csv` and
+  `population_marker_NAF_components.csv`, including all markers. Population
+  means average cell-level fractions over **all cells** in the population,
+  including zeros; they are not pooled, intensity-weighted fractions;
 - a source-population-to-target-population marker summary and one heatmap per
   marker, optionally excluding same-population routes;
 - a dominant-source summary reporting concentration above 50% of attributable
@@ -170,7 +227,8 @@ The managed execution report contains:
   routes;
 - bounded native-pixel contact sheets for every marker with suitable examples:
   target-source sheets compare raw signal, observed excess, projected halo,
-  attributable signal, residual signal, and the pixelwise winning source;
+  attributable signal, residual signal, the pixelwise winning source, and
+  same-/different-population attributable pixels inside the target;
   exemplar sheets show the source mask, unassigned radial pixels, and the
   individual profile against the marker median/IQR; automatic-decision sheets
   show selected and rejected X-positive candidates, nearby same-marker
@@ -178,13 +236,23 @@ The managed execution report contains:
 - `cell_gallery_manifest.csv`, linking every displayed crop to its marker, ROI,
   authoritative AnnData row/cell identifiers, selection category, crop bounds,
   source relationship, and relevant quantitative scores;
-- one sampled classic-intensity versus original-`X` plot per marker, coloured
-  by the halo score; and
+- one sampled classic-intensity versus original-`X` plot per marker and component,
+  coloured by that component's fraction; and
 - a concise interpretation/provenance summary linking the output AnnData and
   CPU allocation.
 
 The 0.25, 0.5, and 0.75 report thresholds are descriptive, not validated
 biological cutoffs.
+
+Figures are saved as **PNG and SVG** and both formats are registered in the
+existing report. Image panels remain embedded rasters within SVGs; axes and text
+remain vector elements. Total-score per-marker paths are retained; component
+UMAP, distribution and expression-comparison plots live in `homotypic/` and
+`heterotypic/` subfolders. An additional `unknown_population` view is generated
+when any attributed signal lacks population labels. Halo-learning and exemplar
+selection figures are shared across components because the underlying model is
+unchanged. Markers without valid profiles receive explicit diagnostic panels
+where possible; image galleries require actual eligible examples.
 
 ## Important configuration options
 
@@ -253,6 +321,7 @@ source regions, but multiple sources contribute simultaneously to a pixel.
 Source-resolved provenance is therefore disabled for `sum` with a clear
 warning: the sparse table is empty and dominant-source layers use `-1`/zero
 sentinels. Use the recommended `max` behavior when source identity is needed.
+Population component layers are NaN, not zero, in this mode.
 
 ## Environment and resources
 

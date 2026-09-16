@@ -2113,6 +2113,57 @@ def _safe_uns_value(value: Any) -> Any:
     return value
 
 
+def population_attribution_fractions(
+    scores: np.ndarray,
+    marker_names: Sequence[str],
+    source_target_table: pd.DataFrame,
+    *,
+    provenance_available: bool,
+) -> dict[str, np.ndarray]:
+    """Partition existing max-winner attribution; never reassign pixel winners.
+
+    Missing either population label gives unknown attribution. With summed
+    halos source attribution is unavailable, represented by NaN, not zero.
+    """
+    names = ("homotypic_NAF", "heterotypic_NAF", "unknown_population_NAF")
+    arrays = {
+        name: np.full(scores.shape, 0.0 if provenance_available else np.nan, dtype=np.float32)
+        for name in names
+    }
+    if not provenance_available:
+        return arrays
+    if not source_target_table.empty:
+        rows = source_target_table["target_obs_index"].to_numpy(dtype=np.int64)
+        columns = pd.Index(marker_names).get_indexer(source_target_table["marker"])
+        values = source_target_table["fraction_of_observed_signal"].to_numpy(dtype=float)
+        if (
+            np.any(rows < 0) or np.any(rows >= scores.shape[0])
+            or np.any(columns < 0) or not np.all(np.isfinite(values))
+            or np.any(values < 0)
+        ):
+            raise ValueError("Invalid target, marker or fraction in source population attribution")
+        known = np.zeros(len(rows), dtype=bool)
+        same = known.copy()
+        if {"source_population", "target_population"}.issubset(source_target_table.columns):
+            source = source_target_table["source_population"].astype("string")
+            target = source_target_table["target_population"].astype("string")
+            known = (
+                source.notna() & target.notna()
+                & source.str.strip().ne("") & target.str.strip().ne("")
+            ).fillna(False).to_numpy(dtype=bool)
+            same = source.eq(target).fillna(False).to_numpy(dtype=bool)
+        for name, selected in zip(names, (known & same, known & ~same, ~known), strict=True):
+            # Accumulate in float64 before saving float32, including multiple sources.
+            grouped = np.bincount(
+                rows[selected] * scores.shape[1] + columns[selected],
+                weights=values[selected], minlength=scores.size,
+            ).reshape(scores.shape)
+            arrays[name] = grouped.astype(np.float32)
+    if not np.allclose(sum(arrays.values()), scores, rtol=2e-5, atol=2e-6):
+        raise ValueError("Source population components do not reconstruct total NAF")
+    return arrays
+
+
 def build_output_anndata(
     input_adata: Any,
     result: NeighbourSignalResult,
@@ -2190,7 +2241,30 @@ def build_output_anndata(
     )
     source_table = source_target_table
     if source_table is None:
-        source_table = pd.DataFrame()
+        # Library callers need not materialize the public Parquet table first.
+        source_table = pd.DataFrame([
+            {
+                "target_obs_index": record.target_obs_index,
+                "source_obs_index": record.source_obs_index,
+                "marker": result.marker_names[record.marker_index],
+                "fraction_of_observed_signal": record.fraction_of_observed_signal,
+            }
+            for record in result.source_target_attributions
+        ], columns=["target_obs_index", "source_obs_index", "marker", "fraction_of_observed_signal"])
+        population_obs = parameters.get("population_obs")
+        if population_obs and population_obs in output.obs:
+            populations = output.obs[population_obs].astype("string").to_numpy()
+            source_table["source_population"] = populations[source_table["source_obs_index"].to_numpy(dtype=np.int64)]
+            source_table["target_population"] = populations[source_table["target_obs_index"].to_numpy(dtype=np.int64)]
+    components = population_attribution_fractions(
+        result.scores, result.marker_names, source_table,
+        provenance_available=result.source_provenance_available,
+    )
+    for name, values in components.items():
+        output.layers[name] = values
+    population_annotation_available = {
+        "source_population", "target_population"
+    }.issubset(source_table.columns)
     source_table_metadata = {
         "schema_version": 1,
         "available": bool(result.source_provenance_available),
@@ -2217,7 +2291,7 @@ def build_output_anndata(
         ),
     }
     output.uns["marker_halo"] = {
-        "schema_version": 5,
+        "schema_version": 6,
         "score_name": "NeighbourAttributableFraction",
         "interpretation": (
             "Spatial explainability/QC score: the fraction of observed background-subtracted "
@@ -2256,6 +2330,19 @@ def build_output_anndata(
         "roi_marker_backgrounds": background_table,
         "unknown_exemplar_markers": unknown_table,
         "source_target_table": source_table_metadata,
+        "population_attribution": {
+            "available": bool(result.source_provenance_available),
+            "population_annotation_available": population_annotation_available,
+            "population_obs": str(parameters.get("population_obs") or ""),
+            "layers": list(components),
+            "interpretation": (
+                "Partition of existing pixelwise max-winner attribution by source/target "
+                "population equality; not a re-projection excluding same-population sources. "
+                "All components use target observed excess as denominator. Missing or blank "
+                "labels are unknown; homotypic + heterotypic + unknown equals total X. "
+                "For sum aggregation components are unavailable (NaN)."
+            ),
+        },
         "parameters": _safe_uns_value(dict(parameters)),
         "worker_usage": {
             "requested": result.worker_usage.requested,
@@ -2272,6 +2359,9 @@ def build_output_anndata(
                 "Mean max(observed excess - projected neighbour halo, 0) per cell pixel."
             ),
             "original_X": "Unmodified input AnnData.X expression/confidence matrix.",
+            "homotypic_NAF": "Observed excess fraction assigned to same-population winning sources.",
+            "heterotypic_NAF": "Observed excess fraction assigned to different-population winning sources.",
+            "unknown_population_NAF": "Observed excess fraction assigned to sources with either population label missing.",
             "dominant_source_index": (
                 "Zero-based global AnnData row of the neighbouring source contributing the largest "
                 "attributable intensity for each cell and marker; -1 means no attributable source."
@@ -2303,6 +2393,7 @@ __all__ = [
     "build_output_anndata",
     "build_source_target_table",
     "calculate_marker_halo_maps",
+    "population_attribution_fractions",
     "estimate_roi_background",
     "exemplar_selection_summary_table",
     "exemplar_selection_table",

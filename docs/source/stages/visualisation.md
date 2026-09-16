@@ -87,7 +87,226 @@ Backgating supports a human checkpoint:
 2. A scientist can replace automatically selected channels with markers that better test the proposed identity.
 3. `load_markers` generates images from those reviewed settings. `full` performs selection and imaging in one run.
 
-When reviewing backgated cells, ask whether the source staining is correctly localised, whether the mask follows a credible cell, whether neighbouring cells have contaminated the measurement, and whether the examples are consistent across ROIs. The thumbnail gallery is sampled and should not be mistaken for the complete population. Limiting saved ROIs reduces output volume, but intensity normalisation still uses the full eligible ROI set for consistency.
+When reviewing backgated cells, ask whether the source staining is correctly localised, whether the mask follows a credible cell, whether neighbouring cells have contaminated the measurement, and whether the examples are consistent across ROIs. The thumbnail gallery is sampled and should not be mistaken for the complete population. Limiting saved ROIs reduces output volume and, for channels with fixed intensity bounds or individual quantiles (`i0.97`), reads only the saved ROI subset. Channels using cohort quantiles (`q0.97`, `m0.97`, or `x0.97`) still read the full eligible ROI set to calculate consistent shared bounds. This decision uses each channel's effective range, including overrides from the backgating settings CSV. `rescale_values.csv` records the bounds used for the saved ROIs.
+
+To reuse an existing marker settings CSV in Python, pass `mode='load_markers'`
+to `backgating_assessment`. Assigning a variable named `mode` without passing it
+does not change the default full assessment, which recalculates marker selection.
+`load_markers` leaves that input CSV untouched, including when channel overrides
+or missing-range defaults are applied for plotting. It requires saved settings
+for the requested populations. Use `update_settings_from_marker_dict` when you
+intend to persist new marker bounds. `full` can replace marker assignments and
+save the updated settings; `save_markers` creates/fills a template without plotting.
+When selection or an override changes a channel's marker, its saved range follows
+that marker from its previous channel within the same population. A newly introduced
+marker, or one with conflicting saved ranges, uses the global defaults. The previous
+channel occupant's limits are never silently attached to a different marker.
+
+### Thumbnail sampling and editable galleries
+
+The default gallery sampling remains `random`: up to `cells_per_group` eligible
+cells are selected reproducibly with seed 0. Eligibility excludes cells outside
+the saved ROI set, cells without usable images or required masks, and cells whose
+thumbnail crop would extend past an image edge. If fewer cells are available,
+all eligible cells are shown. ROI overviews, population overlays, image
+normalisation and `cells_list.csv` are not restricted to the gallery sample.
+
+Set `gallery_sampling="intelligent"` in `backgating_assessment(...)` to select
+typical cells from each population. The same option exists in `backgating(...)`,
+where callers should supply one population at a time. This is a deterministic
+selection of real cells, using the eligible cells as the reference pool:
+
+1. Calculate each marker's median and median absolute deviation (MAD). Scale
+   deviations by `1.4826 * MAD`, falling back to standard deviation when MAD is
+   zero. Constant markers do not contribute to the distance.
+2. Calculate each cell's root-mean-square distance from that median expression
+   profile in scaled marker units.
+3. Calculate Euclidean distance from the coordinate-wise median of the existing
+   `adata.obsm['X_umap']` coordinates. No embedding is fitted or changed.
+4. Convert both distances to percentile ranks and combine them: **80% expression
+   rank + 20% UMAP rank** by default. Lower scores indicate more typical cells,
+   with input order breaking ties.
+5. By default, balance the selection across eligible ROIs: take each ROI's
+   lowest-scoring cell, then each ROI's next lowest-scoring cell, and continue
+   in rounds until the gallery is full. Partial rounds favour lower scores;
+   ROIs with too few valid cells give their unused places to the others.
+   Gallery panels retain their usual ROI/cell-ID display order.
+
+For example, 50 thumbnails across five ROIs give 10 per ROI when each has enough
+valid cells. If there are more ROIs than thumbnail slots, choose one cell from
+each of the ROIs with the best-scoring candidates. `gallery_balance_rois=False`
+restores pooled selection of the globally lowest scores. This option has no
+effect on random sampling. Balancing uses the configured `roi_obs` column and
+only the ROIs already selected for saving: `max_rois_to_save=5` still limits the
+available pool to five ROIs. No additional image reads are needed for balancing.
+
+Expression is the primary signal: UMAP's geometry depends on its parameters and
+does not preserve all relationships in the original data ([UMAP documentation](https://umap-learn.readthedocs.io/en/latest/parameters.html)).
+The 80/20 split is a configurable display heuristic, not a biological confidence
+score. Median selection deliberately favours typical phenotypes and can miss
+minority subtypes; a multimodal population may not have one useful median.
+Use random galleries or assess the subtypes separately to inspect heterogeneity.
+ROI balancing can include less-central cells to improve ROI coverage. Scores
+still use the population-wide median, not a separate median per ROI; larger
+eligible groups can therefore dominate the reference profile. Equal ROI counts
+do not imply equal case counts or reflect population abundance. Set
+`gallery_balance_rois=False` when closeness to the median should take priority
+over ROI coverage.
+
+By default, expression comes from `adata.X` and all `adata.var_names` are used.
+Use `gallery_layer` for another expression layer and `gallery_markers` to restrict
+the marker set, for example to exclude DNA and technical channels. Use already
+normalised/transformed expression; this option does not log-transform raw counts.
+`gallery_umap_key` chooses another embedding and `gallery_umap_weight=0` selects
+on expression alone. A missing or wholly non-finite embedding triggers a logged
+fallback to expression only. Partially missing embedding coordinates receive the
+worst embedding rank. Cells with non-finite expression in any selected marker
+are excluded, which can yield fewer than the requested number of thumbnails.
+Missing layers/markers and populations without usable expression raise an error.
+
+For example:
+
+```python
+backgating.backgating_assessment(
+    adata,
+    image_folder="images",
+    pop_obs="population",
+    cells_per_group=50,
+    gallery_sampling="intelligent",
+    gallery_balance_rois=True,
+    gallery_umap_weight=0.2,
+    gallery_save_svg=True,
+)
+```
+
+The equivalent pipeline settings are:
+
+```yaml
+visualization:
+  backgating_gallery_sampling: intelligent
+  backgating_gallery_balance_rois: true
+  backgating_gallery_umap_weight: 0.2
+  backgating_gallery_save_svg: true
+```
+
+The other notebook options have matching `backgating_`-prefixed configuration
+keys. `gallery_random_state` controls the random-mode seed. Each population saves
+`gallery_cells.csv` with the exact selected cells, component distances, combined
+score, global score rank, within-ROI rank (`gallery_roi_rank`, when balancing)
+and panel display order. `gallery_sampling.json` records
+the settings, candidate/selection counts, effective embedding weight and marker
+median/scale profiles, whether ROI balancing was applied, and eligible/selected
+counts per ROI. In intelligent mode these ROI counts exclude cells rejected for
+non-finite expression. These files describe the actual eligible sampling pool;
+changing the ROI subset or crop radius can therefore change the selected cells.
+
+`Cells.svg` is now saved alongside `Cells.png` by default. Each thumbnail has
+its own embedded image and separate vector boundary and title groups; the
+gallery heading is also editable text. Disabled titles and unavailable masks
+produce no corresponding groups. Set `gallery_save_svg=False` to disable SVG
+gallery output. As with the population overlays, Illustrator may display these
+editable SVG groups beneath a single native layer.
+
+### Editable backgating overlays
+
+Population overlays trace each selected segmentation object separately, including
+shared boundaries between touching cells of the same population. PNG and SVG
+exports use the same cell paths and crop.
+
+To save editable SVGs alongside the existing PNG previews in the `vis` stage:
+
+```yaml
+visualization:
+  backgating_population_overlay_save_svg: true
+```
+
+For notebook calls, add `population_overlay_save_svg=True` to
+`backgating.backgating_assessment(...)`. Its existing
+`population_overlay_extension="svg"` option also writes SVGs and now keeps PNG
+companions so `create_population_overlay_galleries(...)` can read the previews.
+For an individual overlay, use `plotting.create_population_overlay(...,
+output_path="overlay.svg")`, or use `output_path="overlay.png",
+svg_output_path="overlay.svg"` to save both.
+
+Each SVG embeds the source composite as one raster image. Named groups separate
+the cell outlines (one compound vector path per cell), scale bar, scale-bar text,
+marker legend and population label. Text remains editable text; scale-bar lengths
+and outline widths use source-image pixels. The scale bar does not modify the
+embedded image. Without a mask, cell centers form a separate vector group.
+
+Open the SVG in Illustrator to edit the objects. SVG groups may appear beneath
+one native Illustrator layer; they can be selected independently or moved into
+new layers. Inkscape layer metadata is also included. Fonts must be available on
+the editing machine to retain the exact typography. These exports have been
+checked structurally and rendered in automated tests; Illustrator import is not
+part of those tests.
+
+### Galleries of editable population overlays
+
+All backgating exports now use `font_family="Arial"` by default. This writes one
+font-family name instead of Matplotlib's long fallback list, which some editors
+report as multiple unavailable fonts. Text remains editable; SVG references the
+font name and does **not** embed the font file. The chosen font should be installed
+on both the exporting and editing machines. Use another installed font name if
+preferred. The `vis` pipeline setting is `visualization.backgating_font_family`.
+
+`font_family` is supported by `backgating_assessment`, `backgating`,
+`plotting.create_population_overlay`, and `create_population_overlay_galleries`.
+For existing overlays, rerun **only the gallery function** with
+`font_family="Arial"`: it replaces legacy font lists (including font shorthand)
+in imported SVG text as well as setting the gallery titles. Original source
+files remain unchanged. Existing label-box positions are retained; regenerating
+source overlays also recalculates their label-box dimensions for the chosen font.
+Text baked into PNGs or already converted to paths cannot be changed this way.
+
+`create_population_overlay_galleries(...)` can combine the saved SVG overlays
+directly, preserving their embedded source images, vector cell paths, scale bars,
+text and named groups. It adds a named layer for each population panel and keeps
+the source groups inside it. Internal IDs and references are made unique per
+panel so clipping paths and reusable objects do not conflict across overlays.
+Source files are not modified.
+
+```python
+backgating.create_population_overlay_galleries(
+    backgating_output_folder="Figures/Backgating/population",
+    populations=["TAM-Mac-1", "TAM-Mac-2", "T cells", "B cells"],
+    ncols=2,
+    nrows=2,
+    output_format="svg",       # "png" (existing default), "svg", or "both"
+    font_family="Arial",
+    source_format="auto",      # prefer SVG for SVG/both output; otherwise PNG
+    row_spacing=12,
+    column_spacing=18,
+    panel_size=(288, 288),
+    population_title_fontsize=None,
+    roi_title_fontsize=None,
+)
+```
+
+The output directory contains one `<ROI>_population_gallery.svg` per ROI. SVG
+composition needs no additional renderer. `output_format="both"` also renders
+the composed SVG to PNG, using the actual SVG content rather than potentially
+older PNG companions. PNG rendering of SVG inputs requires the optional `svg`
+installation extra (CairoSVG and its Cairo runtime); PNG-only source galleries
+continue to work without it. If that renderer is unavailable in `both` mode, the
+SVG is saved and an actionable error reports why the PNG could not be rendered.
+
+`source_format="svg"` explicitly selects SVG sources. In `auto` mode, SVG/both
+output prefers SVGs and falls back to raster sources where necessary; PNG output
+prefers PNGs. A raster source embedded into an SVG remains a single raster object
+and cannot recover editable annotations. Use the layered SBT SVG exports for
+fully editable annotations. Unavailable or unreadable panels are labelled and
+reported in the log. Gallery titles remain editable text; set their font sizes
+to `None` to omit them.
+
+Spacing and panel size use **points (72 points = 1 inch)**, independent of PNG
+DPI. `column_spacing` is the gap between panel viewports. `row_spacing` is the gap
+between panel blocks, including the population title band when enabled. Values
+of zero make the slots adjacent. Images retain their aspect ratios and are
+centered in `panel_size`; a mismatched aspect ratio can leave additional space
+inside a slot. To place square overlays directly beside one another, use square
+panels, zero spacing, and disable the gallery titles. Source-overlay labels and
+legends are retained independently of these gallery-title settings.
 
 ## Population abundance analysis
 

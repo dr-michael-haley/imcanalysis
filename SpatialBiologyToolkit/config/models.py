@@ -4682,13 +4682,22 @@ class VisualizationConfig(ConfigModel):
     umap_marker_gallery_vmax: Optional[float] = Field(default=0.8, description="Optional common upper colour limit for marker UMAP galleries; use null to scale each gallery automatically.")
 
     # Backgating assessment settings
+    backgating_font_family: str = Field(default='Arial', description="Single font family for backgating labels and gallery titles. SVG exports reference this font without fallback lists and retain editable text; the font must be installed on the rendering/editing machine.")
     backgating_cells_per_group: int = Field(default=50, description="Maximum number of example cells sampled for each population's thumbnail gallery.")
+    backgating_gallery_sampling: Literal['random', 'intelligent'] = Field(default='random', description="Thumbnail selection: seeded random sampling, or intelligent selection of cells close to the eligible population's median marker profile with optional UMAP centrality.")
+    backgating_gallery_random_state: int = Field(default=0, description="Random seed for backgating thumbnail sampling; default 0 retains reproducible random selection.")
+    backgating_gallery_layer: Optional[str] = Field(default=None, description="AnnData expression layer for intelligent thumbnail selection; null uses adata.X. Use normalized or transformed marker measurements.")
+    backgating_gallery_markers: Optional[List[str]] = Field(default=None, description="Expression markers for intelligent thumbnail selection; null uses all adata.var_names. Exclude technical channels by supplying biological markers explicitly.")
+    backgating_gallery_umap_key: str = Field(default='X_umap', description="AnnData obsm embedding used as secondary evidence for intelligent thumbnail selection; missing embeddings fall back to expression only.")
+    backgating_gallery_umap_weight: float = Field(default=0.2, ge=0, le=1, description="Weight of embedding-distance percentile rank in intelligent thumbnail selection; remaining weight uses robust expression-distance rank. Set 0 for expression only.")
+    backgating_gallery_balance_rois: bool = Field(default=True, description="Balance intelligent thumbnail selection across eligible saved ROIs, taking each ROI's best-scoring cells in rounds and redistributing unused places. Scores retain the population-wide median reference. False selects the lowest scores across all cells; random sampling is unaffected.")
+    backgating_gallery_save_svg: bool = Field(default=True, description="Save Cells.svg alongside each population's Cells.png, with separate embedded thumbnail images, vector cell outlines and editable title groups.")
     backgating_radius: int = Field(default=15, description="Half-width in image pixels of the square crop around each backgated cell centroid.")
     backgating_output_folder: str = Field(default='Backgating', description="Subdirectory under the visualisation output root for image-based population validation outputs.")
     backgating_use_masks: bool = Field(default=True, description="Use segmentation masks to identify cells and draw cell boundaries in backgating images.")
     backgating_mask_folder: str = Field(default='masks', description="Mask directory passed to the backgating implementation; it must correspond to the source channel images and cell identifiers.")
     backgating_pops_list: Optional[Dict[str, Any]] = Field(default=None, description="Optional populations to backgate, supplied per population-observation column or under a 'default' key; null processes all populations.")
-    backgating_max_rois_to_save: Optional[int] = Field(default=None, description="Optional maximum number of randomly selected ROI image sets saved per population; intensity normalisation still uses all eligible ROIs.")
+    backgating_max_rois_to_save: Optional[int] = Field(default=None, description="Optional maximum number of randomly selected ROI image sets saved per population. Fixed intensity bounds and individual quantiles read only the saved subset; q/m/x quantile maxima use all eligible ROIs.")
 
     # Backgating intensity and marker settings
     backgating_minimum: float = Field(default=0.2, description="Lower display bound used when rescaling source-channel intensities for backgating composites.")
@@ -4709,6 +4718,7 @@ class VisualizationConfig(ConfigModel):
     backgating_mode: str = Field(default='full', description="Backgating workflow mode: 'full' selects markers and makes images, 'save_markers' only writes editable settings, and 'load_markers' makes images from existing settings.")
 
     # Population overlay visualization settings
+    backgating_population_overlay_save_svg: bool = Field(default=False, description="Save an additional editable SVG for each backgating population overlay, with separate source-image, per-cell-outline, scale-bar, legend, and label groups; retain raster previews for galleries.")
     backgating_population_overlay_outline_width: int = Field(default=1, description="Contour width in pixels around target cells in backgating population overlays.")
     backgating_population_overlay_legend_fontsize: int = Field(default=24, description="Font size for marker and population labels on backgating overlays.")
     backgating_population_overlay_crop_size: Optional[List[int]] = Field(default_factory=lambda: [300, 300], description="Optional overlay crop size as [width, height] pixels; null retains the complete ROI.")

@@ -12122,6 +12122,16 @@
           "title": "Umap Marker Gallery Vmax",
           "ui_group": "Visualization"
         },
+        "backgating_font_family": {
+          "advice": "",
+          "default": "Arial",
+          "description": "Single font family for backgating labels and gallery titles. SVG exports reference this font without fallback lists and retain editable text; the font must be installed on the rendering/editing machine.",
+          "level": "advanced",
+          "stage": "visualization",
+          "title": "Backgating Font Family",
+          "type": "string",
+          "ui_group": "Visualization"
+        },
         "backgating_cells_per_group": {
           "advice": "",
           "default": 50,
@@ -12130,6 +12140,109 @@
           "stage": "visualization",
           "title": "Backgating Cells Per Group",
           "type": "integer",
+          "ui_group": "Visualization"
+        },
+        "backgating_gallery_sampling": {
+          "advice": "",
+          "default": "random",
+          "description": "Thumbnail selection: seeded random sampling, or intelligent selection of cells close to the eligible population's median marker profile with optional UMAP centrality.",
+          "enum": [
+            "random",
+            "intelligent"
+          ],
+          "level": "advanced",
+          "stage": "visualization",
+          "title": "Backgating Gallery Sampling",
+          "type": "string",
+          "ui_group": "Visualization"
+        },
+        "backgating_gallery_random_state": {
+          "advice": "",
+          "default": 0,
+          "description": "Random seed for backgating thumbnail sampling; default 0 retains reproducible random selection.",
+          "level": "advanced",
+          "stage": "visualization",
+          "title": "Backgating Gallery Random State",
+          "type": "integer",
+          "ui_group": "Visualization"
+        },
+        "backgating_gallery_layer": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "AnnData expression layer for intelligent thumbnail selection; null uses adata.X. Use normalized or transformed marker measurements.",
+          "level": "advanced",
+          "stage": "visualization",
+          "title": "Backgating Gallery Layer",
+          "ui_group": "Visualization"
+        },
+        "backgating_gallery_markers": {
+          "advice": "",
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Expression markers for intelligent thumbnail selection; null uses all adata.var_names. Exclude technical channels by supplying biological markers explicitly.",
+          "level": "advanced",
+          "stage": "visualization",
+          "title": "Backgating Gallery Markers",
+          "ui_group": "Visualization"
+        },
+        "backgating_gallery_umap_key": {
+          "advice": "",
+          "default": "X_umap",
+          "description": "AnnData obsm embedding used as secondary evidence for intelligent thumbnail selection; missing embeddings fall back to expression only.",
+          "level": "advanced",
+          "stage": "visualization",
+          "title": "Backgating Gallery Umap Key",
+          "type": "string",
+          "ui_group": "Visualization"
+        },
+        "backgating_gallery_umap_weight": {
+          "advice": "",
+          "default": 0.2,
+          "description": "Weight of embedding-distance percentile rank in intelligent thumbnail selection; remaining weight uses robust expression-distance rank. Set 0 for expression only.",
+          "level": "advanced",
+          "maximum": 1,
+          "minimum": 0,
+          "stage": "visualization",
+          "title": "Backgating Gallery Umap Weight",
+          "type": "number",
+          "ui_group": "Visualization"
+        },
+        "backgating_gallery_balance_rois": {
+          "advice": "",
+          "default": true,
+          "description": "Balance intelligent thumbnail selection across eligible saved ROIs, taking each ROI's best-scoring cells in rounds and redistributing unused places. Scores retain the population-wide median reference. False selects the lowest scores across all cells; random sampling is unaffected.",
+          "level": "advanced",
+          "stage": "visualization",
+          "title": "Backgating Gallery Balance Rois",
+          "type": "boolean",
+          "ui_group": "Visualization"
+        },
+        "backgating_gallery_save_svg": {
+          "advice": "",
+          "default": true,
+          "description": "Save Cells.svg alongside each population's Cells.png, with separate embedded thumbnail images, vector cell outlines and editable title groups.",
+          "level": "advanced",
+          "stage": "visualization",
+          "title": "Backgating Gallery Save Svg",
+          "type": "boolean",
           "ui_group": "Visualization"
         },
         "backgating_radius": {
@@ -12201,7 +12314,7 @@
             }
           ],
           "default": null,
-          "description": "Optional maximum number of randomly selected ROI image sets saved per population; intensity normalisation still uses all eligible ROIs.",
+          "description": "Optional maximum number of randomly selected ROI image sets saved per population. Fixed intensity bounds and individual quantiles read only the saved subset; q/m/x quantile maxima use all eligible ROIs.",
           "level": "advanced",
           "stage": "visualization",
           "title": "Backgating Max Rois To Save",
@@ -12355,6 +12468,16 @@
           "stage": "visualization",
           "title": "Backgating Mode",
           "type": "string",
+          "ui_group": "Visualization"
+        },
+        "backgating_population_overlay_save_svg": {
+          "advice": "",
+          "default": false,
+          "description": "Save an additional editable SVG for each backgating population overlay, with separate source-image, per-cell-outline, scale-bar, legend, and label groups; retain raster previews for galleries.",
+          "level": "advanced",
+          "stage": "visualization",
+          "title": "Backgating Population Overlay Save Svg",
+          "type": "boolean",
           "ui_group": "Visualization"
         },
         "backgating_population_overlay_outline_width": {

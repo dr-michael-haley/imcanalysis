@@ -19,6 +19,7 @@ This reference is split by module so the site navigation stays compact.
    denoising
    denoising_contract
    distance_analysis
+   diversity
    image_analysis
    imc_import_bodenmiller
    imc_import_steinpose
@@ -28,6 +29,7 @@ This reference is split by module so the site navigation stays compact.
    napari_imc_explorer
    neighbour_signal
    neighbour_signal_reports
+   nimbus_cell_identity
    nimbus_normalization
    nimbus_normalization_scan
    pcf

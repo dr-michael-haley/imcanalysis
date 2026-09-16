@@ -3,10 +3,10 @@ from __future__ import annotations
 import os
 import re
 import logging
+import json
 import warnings
 from pathlib import Path
 from glob import glob
-from itertools import compress
 from typing import Dict, List, Union, Tuple, Optional
 from math import ceil
 from IPython.display import display
@@ -23,7 +23,8 @@ from skimage.util import img_as_ubyte
 from skimage.measure import find_contours
 
 # Import population overlay function from plotting module
-from .plotting import create_population_overlay
+from .plotting import (create_population_overlay, _population_cell_paths,
+                       _save_population_overlay_svg, _set_svg_font_family, _svg_font_family)
 
 
 def clean_text(text: str) -> str:
@@ -100,7 +101,9 @@ def load_single_img(filename: str) -> np.ndarray:
 def load_imgs_from_directory(
     load_directory: str,
     channel_name: str,
-    quiet: bool = False
+    quiet: bool = False,
+    *,
+    samples_list: Optional[List[str]] = None,
 ) -> Optional[Tuple[List[np.ndarray], List[str], List[str]]]:
     """
     Searches a directory (and any subfolders) for images whose filenames
@@ -110,6 +113,8 @@ def load_imgs_from_directory(
         load_directory (str): Directory or parent directory of images.
         channel_name (str): Channel name to search for in the filenames.
         quiet (bool): Whether to suppress print statements.
+        samples_list (List[str] or None): Restrict ROI folders before reading
+            image data. None searches all folders.
 
     Returns:
         Optional[Tuple[List[np.ndarray], List[str], List[str]]]:
@@ -120,9 +125,13 @@ def load_imgs_from_directory(
     """
     img_collect = []
     img_file_list = []
+    matched_folders = []
 
     # Find any subdirectories (one level down). If none found, use load_directory itself.
     img_folders = glob(os.path.join(load_directory, "*", "")) or [load_directory]
+    if samples_list is not None:
+        sample_set = set(_normalize_roi_names(samples_list))
+        img_folders = [folder for folder in img_folders if Path(folder).name in sample_set]
 
     if not quiet:
         logging.info(f'Loading image data for channel "{channel_name}" from ...')
@@ -155,6 +164,7 @@ def load_imgs_from_directory(
                     logging.debug(os.path.join(subfolder, candidate_file))
                 img_file_list.append(candidate_file)
                 img_collect.append(img_read)
+                matched_folders.append(subfolder)
                 # Break once we find the first matching file per subfolder.
                 break
 
@@ -165,7 +175,7 @@ def load_imgs_from_directory(
         logging.warning(f'No files found with channel name "{channel_name}".')
         return None
 
-    return img_collect, img_file_list, img_folders
+    return img_collect, img_file_list, matched_folders
 
 
 def load_rescale_images(
@@ -173,7 +183,9 @@ def load_rescale_images(
     samples_list: List[str],
     marker: str,
     minimum: float,
-    max_val: Union[float, str]
+    max_val: Union[float, str],
+    *,
+    save_samples_list: Optional[List[str]] = None,
 ) -> Tuple[List[np.ndarray], List[str], List[float]]:
     """
     Helper function that:
@@ -183,7 +195,8 @@ def load_rescale_images(
 
     Args:
         image_folder (str): Directory where images (and subfolders) are located.
-        samples_list (List[str]): List of ROI/sample names to filter by.
+        samples_list (List[str]): Eligible ROI/sample names. Cohort quantiles
+            use this full scope even when only a subset is saved.
         marker (str): The marker (channel name) to load from the image folder.
         minimum (float): Lower clip value.
         max_val (Union[float, str]): A numeric max or a string with prefix:
@@ -192,6 +205,9 @@ def load_rescale_images(
           - 'm': Minimum of quantiles
           - 'x': Maximum of quantiles
           Example: 'q0.97' => Use mean of the 97th percentile for all images.
+        save_samples_list (List[str] or None): Subset to return. Fixed numeric
+            bounds and individual quantiles read only these ROIs; q/m/x modes
+            read the full eligible scope to calculate the shared maximum.
 
     Returns:
         Tuple[List[np.ndarray], List[str], List[float]]:
@@ -199,14 +215,17 @@ def load_rescale_images(
             - Matching list of ROI names
             - List of max values used per ROI (same order)
     """
-    # Interpret the user-specified max_val mode
+    # Resolve the effective channel maximum before deciding which TIFFs to read.
     mode = 'value'
-    if isinstance(max_val, str):
-        prefix = max_val[0].lower()
+    max_spec = max_val.strip().lower() if isinstance(max_val, str) else max_val
+    if isinstance(max_spec, str) and max_spec[:1] in ('q', 'i', 'm', 'x'):
+        prefix = max_spec[0]
         try:
-            max_quantile = float(max_val[1:])
+            max_quantile = float(max_spec[1:])
         except ValueError:
-            raise ValueError(f"Could not parse quantile from '{max_val}'")
+            raise ValueError(f"Could not parse quantile from '{max_val}'") from None
+        if not np.isfinite(max_quantile) or not 0 <= max_quantile <= 1:
+            raise ValueError(f"Quantile must be between 0 and 1: '{max_val}'")
         if prefix == 'q':
             mode = 'mean_quantile'
         elif prefix == 'i':
@@ -215,9 +234,36 @@ def load_rescale_images(
             mode = 'minimum_quantile'
         elif prefix == 'x':
             mode = 'max_quantile'
+    else:
+        try:
+            max_value = float(max_spec)
+        except (TypeError, ValueError):
+            raise ValueError(f"Expected a numeric maximum or q/i/m/x quantile, got {max_val!r}") from None
+        if not np.isfinite(max_value):
+            raise ValueError(f"Maximum must be finite, got {max_val!r}")
 
-    # Load the images (quiet=True to suppress prints)
-    loaded = load_imgs_from_directory(image_folder, marker, quiet=True)
+    eligible_rois = _normalize_roi_names(samples_list)
+    output_rois = eligible_rois
+    if save_samples_list is not None:
+        save_set = set(_normalize_roi_names(save_samples_list))
+        output_rois = [roi for roi in eligible_rois if roi in save_set]
+    if not output_rois:
+        return [], [], []
+
+    cohort_quantile = mode in ('mean_quantile', 'minimum_quantile', 'max_quantile')
+    read_rois = eligible_rois if cohort_quantile else output_rois
+    if cohort_quantile:
+        logging.info(
+            "Marker=%s | %s requires the full normalization scope (%d eligible ROIs); "
+            "returning up to %d saved ROIs.", marker, max_val, len(read_rois), len(output_rois),
+        )
+    else:
+        logging.info(
+            "Marker=%s | %s; reading only %d requested ROI(s).",
+            marker, "Fixed bounds (no cohort calculation)" if mode == 'value'
+            else "Individual quantiles", len(read_rois),
+        )
+    loaded = load_imgs_from_directory(image_folder, marker, quiet=True, samples_list=read_rois)
     if not loaded:
         return [], [], []
 
@@ -226,18 +272,8 @@ def load_rescale_images(
     # ROI names are the last part of the subfolder path
     roi_list = [os.path.basename(Path(x)) for x in folder_list]
 
-    # Filter out any ROIs not in our samples_list
-    sample_filter = [r in samples_list for r in roi_list]
-    image_list = list(compress(image_list, sample_filter))
-    roi_list = list(compress(roi_list, sample_filter))
-
-    if not image_list:
-        # If nothing is loaded after filtering, return.
-        logging.warning(f"No images found for marker {marker} matching {samples_list}.")
-        return [], [], []
-
     # Compute maximum intensities
-    if mode in ('mean_quantile', 'minimum_quantile', 'max_quantile'):
+    if cohort_quantile:
         # For each image, find the quantile, then reduce them by mean, min, or max
         all_vals = [np.quantile(im, max_quantile) for im in image_list]
         if mode == 'mean_quantile':
@@ -252,6 +288,11 @@ def load_rescale_images(
 
         logging.debug(f"Marker={marker} | Mode={mode_str} | Min={minimum:.3f} | "
                       f"Calculated max={max_value:.3f}")
+        # Calibration requires all eligible images, but only saved images need rescaling.
+        output_set = set(output_rois)
+        selected = [(roi, im) for roi, im in zip(roi_list, image_list) if roi in output_set]
+        roi_list = [roi for roi, _ in selected]
+        image_list = [im for _, im in selected]
         image_list = [im.clip(minimum, max_value) for im in image_list]
         max_values = [max_value] * len(image_list)
 
@@ -267,7 +308,6 @@ def load_rescale_images(
     else:
         # Fixed numeric value
         logging.debug(f"Marker={marker} | Using numeric min={minimum}, max={max_val}")
-        max_value = float(max_val)
         image_list = [im.clip(minimum, max_value) for im in image_list]
         max_values = [max_value] * len(image_list)
 
@@ -323,12 +363,14 @@ def make_images(
         roi_folder_save (bool): Whether each ROI gets its own subfolder in output.
         simple_file_names (bool): If True, save images as 'ROI.png' only (otherwise includes channel info).
         save_samples_list (List[str] or None): Optional subset of ROI names to save.
-            If None, save all loaded ROIs. Intensity rescaling is still computed
-            from the full ``samples_list`` scope.
+            If None, save all loaded ROIs. Only q/m/x quantile maxima need the
+            full ``samples_list`` scope; fixed bounds and individual quantiles
+            read only the saved subset.
         save_subfolder (str): Subdirectory under output_folder for saving images.
 
     Returns:
-        DataFrame of rescaling values if save_rescale_csv is True, else None.
+        DataFrame of rescaling values for saved ROIs if save_rescale_csv is True,
+        else None.
     """
 
     # Create output folder if it doesn't exist
@@ -362,7 +404,8 @@ def make_images(
                 image_folder, samples_list,
                 marker=marker_name,
                 minimum=ch_min,
-                max_val=ch_max
+                max_val=ch_max,
+                save_samples_list=save_samples_list,
             )
             loaded_images[color_name] = imgs
             loaded_rois[color_name] = rois
@@ -380,50 +423,15 @@ def make_images(
             loaded_images[color_name] = []
             loaded_rois[color_name] = []
 
-    # Figure out how many ROIs total we have. We can unify by taking the max length across channels.
-    num_rois = max(len(r) for r in loaded_rois.values()) if loaded_rois else 0
-    logging.info(f'Found {num_rois} ROIs total (across requested channels).')
+    # Match by ROI name: channels can be absent from different folders.
+    images_by_roi = {
+        color: dict(zip(loaded_rois[color], loaded_images[color])) for color in color_configs
+    }
+    output_rois = list(dict.fromkeys(roi for rois in loaded_rois.values() for roi in rois))
+    logging.info('Saving composite images for %d ROI(s) across requested channels.', len(output_rois))
 
-    save_roi_set = None
-    if save_samples_list is not None:
-        save_roi_set = set(_normalize_roi_names(save_samples_list))
-        logging.info(
-            "Saving composite images for %d ROI(s) while retaining full normalization scope.",
-            len(save_roi_set),
-        )
-
-    # Build the final composite images ROI by ROI
-    # Note: The assumption here is that channels align in the same "ROI index" order,
-    # because we used the same sample_list for each. If your data is misaligned, you'll
-    # need more robust logic (e.g., matching by ROI name).
-    for i in range(num_rois):
-        # We pick whichever color has a valid ROI for indexing
-        # and assume they are the same ROI in the same i-th position
-        # in each channel's list. If any channel is missing that i-th ROI,
-        # we fill with zeros.
-
-        # A quick approach is to find a channel that has rois for index i
-        # and get the actual ROI name from there. Then we try to match
-        # which index that ROI is in the other channels. A more thorough
-        # approach would be to unify them by dictionary, but that requires
-        # more changes.
-
-        # For simplicity, let's pick the first non-empty color:
-        some_color = None
-        for c in color_configs:
-            if i < len(loaded_rois[c]):
-                some_color = c
-                break
-        if some_color is None:
-            continue  # no channels have i-th ROI (unlikely)
-
-        roi_name = str(loaded_rois[some_color][i])
-        if save_roi_set is not None and roi_name not in save_roi_set:
-            continue
-
-        # Now gather the images for each color, matching the ROI name
-        # by index if it matches, else a blank array of the same shape.
-        shape_ref = loaded_images[some_color][i].shape  # reference shape
+    for roi_name in output_rois:
+        shape_ref = next(images[roi_name].shape for images in images_by_roi.values() if roi_name in images)
         (h, w) = shape_ref
 
         # Initialize R, G, B as zeros
@@ -436,10 +444,8 @@ def make_images(
                 # Not used
                 continue
             # Attempt to find the ROI in that channel
-            if roi_name in loaded_rois[color_name]:
-                # find the index for that ROI
-                idx = loaded_rois[color_name].index(roi_name)
-                this_img = loaded_images[color_name][idx]
+            if roi_name in images_by_roi[color_name]:
+                this_img = images_by_roi[color_name][roi_name]
             else:
                 # no ROI found => fallback to zeros
                 this_img = np.zeros((h, w), dtype=np.float32)
@@ -516,6 +522,181 @@ def make_images(
 
     return None
 
+def _validate_gallery_options(sampling, max_cells, umap_weight, balance_rois=True):
+    if sampling not in ('random', 'intelligent'):
+        raise ValueError("gallery_sampling must be 'random' or 'intelligent'.")
+    if max_cells is not None and (int(max_cells) != max_cells or max_cells < 0):
+        raise ValueError('max_gallery_cells must be a nonnegative integer or None.')
+    if not np.isfinite(umap_weight) or not 0 <= umap_weight <= 1:
+        raise ValueError('gallery_umap_weight must be between 0 and 1.')
+    if not isinstance(balance_rois, (bool, np.bool_)):
+        raise ValueError('gallery_balance_rois must be True or False.')
+
+
+def _select_gallery_cells(
+    adata, candidates, max_cells, *, sampling='random', random_state=0,
+    layer=None, markers=None, umap_key='X_umap', umap_weight=0.2,
+    cell_index_obs='Master_Index', roi_obs='ROI', balance_rois=True,
+):
+    """Select actual cells nearest the eligible pool's robust median phenotype.
+
+    Expression distance is RMS deviation in per-marker robust scale units.
+    Component percentile ranks are combined to avoid comparing expression and
+    embedding units directly. Ties retain input order. Sparse matrices are read
+    one column at a time, without densifying the complete population matrix.
+    Intelligent selection balances ROI counts by taking the best remaining cell
+    from each ROI in rounds. Scores always use the population-wide reference.
+    """
+    from scipy import sparse
+
+    _validate_gallery_options(sampling, max_cells, umap_weight, balance_rois)
+    scored = candidates.copy()
+    n = len(scored)
+    limit = n if max_cells is None else min(int(max_cells), n)
+    metadata = dict(method=sampling, random_state=random_state, eligible_cells=n,
+                    expression_layer=layer, requested_umap_weight=umap_weight,
+                    umap_key=umap_key, effective_umap_weight=0.0,
+                    balance_rois=bool(balance_rois),
+                    effective_balance_rois=bool(balance_rois and sampling == 'intelligent'),
+                    roi_obs=roi_obs,
+                    reference='Eligible supplied cells after ROI, image, mask and crop filtering')
+    for column in ('gallery_expression_distance', 'gallery_umap_distance',
+                   'gallery_score', 'gallery_selection_rank', 'gallery_roi_rank'):
+        scored[column] = np.nan
+
+    def finish(selected, eligible):
+        metadata['selected_cells'] = len(selected)
+        if roi_obs in eligible.columns:
+            for label, frame in [('eligible', eligible), ('selected', selected)]:
+                counts = frame[roi_obs].dropna().astype(str).value_counts(sort=False)
+                metadata[f'{label}_cells_per_roi'] = {roi: int(count) for roi, count in counts.items()}
+            metadata['selected_rois'] = len(metadata['selected_cells_per_roi'])
+        return selected, metadata
+
+    if sampling == 'random' or not n or limit == 0:
+        eligible = scored
+        if n > limit:
+            scored = scored.sample(n=limit, random_state=random_state)
+        return finish(scored, eligible)
+
+    if balance_rois:
+        if roi_obs not in scored.columns:
+            raise ValueError(f'ROI-balanced intelligent sampling requires candidate column {roi_obs!r}.')
+        if scored[roi_obs].isna().any():
+            raise ValueError(f'ROI-balanced intelligent sampling requires nonmissing {roi_obs!r} values.')
+
+    identities = pd.Index(adata.obs[cell_index_obs])
+    if not identities.is_unique:
+        raise ValueError(f'Intelligent sampling requires unique adata.obs[{cell_index_obs!r}].')
+    positions = identities.get_indexer(scored[cell_index_obs])
+    if np.any(positions < 0):
+        raise ValueError('Gallery candidates must have matching cell IDs in adata.obs.')
+    if not adata.var_names.is_unique:
+        raise ValueError('Intelligent sampling requires unique adata.var_names.')
+    if markers is None:
+        markers = list(adata.var_names)
+    elif isinstance(markers, str):
+        markers = [markers]
+    else:
+        markers = list(dict.fromkeys(markers))
+    if not markers:
+        raise ValueError('Intelligent sampling requires at least one expression marker.')
+    marker_positions = adata.var_names.get_indexer(markers)
+    if np.any(marker_positions < 0):
+        missing = [marker for marker, pos in zip(markers, marker_positions) if pos < 0]
+        raise ValueError(f'Gallery markers not present in adata.var_names: {missing}')
+    if layer is not None and layer not in adata.layers:
+        raise ValueError(f'Gallery expression layer {layer!r} is not present in adata.layers.')
+    # AnnData slicing supports dense, sparse and backed inputs and keeps row IDs aligned.
+    subset = adata[positions, marker_positions]
+    matrix = subset.X if layer is None else subset.layers[layer]
+    if matrix is None:
+        raise ValueError('Intelligent sampling requires an expression matrix.')
+    if hasattr(matrix, 'to_memory'):
+        matrix = matrix.to_memory()
+    if sparse.issparse(matrix):
+        matrix = matrix.tocsc()
+    valid = np.ones(n, dtype=bool)
+    sum_squared = np.zeros(n, dtype=float)
+    profiles = []
+    varying = 0
+    for j, marker in enumerate(markers):
+        values = matrix[:, j:j + 1]
+        if sparse.issparse(values):
+            values = values.toarray()
+        values = np.asarray(values, dtype=float).reshape(-1)
+        finite = np.isfinite(values)
+        valid &= finite
+        if not finite.any():
+            raise ValueError(f'Gallery marker {marker!r} has no finite values in eligible cells.')
+        reference = values[finite]
+        median = float(np.median(reference))
+        scale = float(1.4826 * np.median(np.abs(reference - median)))
+        scale_method = 'MAD'
+        if scale == 0:
+            scale = float(np.std(reference))
+            scale_method = 'standard_deviation'
+        if scale > 0:
+            sum_squared += np.where(finite, ((values - median) / scale) ** 2, 0)
+            varying += 1
+        profiles.append(dict(marker=str(marker), median=median, scale=scale,
+                             scale_method=scale_method if scale else 'constant'))
+    if not valid.any():
+        raise ValueError('No eligible cells have finite expression across all gallery markers.')
+    if not valid.all():
+        logging.warning('Excluding %d gallery candidates with non-finite expression.', (~valid).sum())
+    distances = np.sqrt(sum_squared / max(1, varying))
+    distances[~valid] = np.nan
+    scored['gallery_expression_distance'] = distances
+    expression_ranks = pd.Series(distances).rank(method='average', pct=True).to_numpy()
+    combined = expression_ranks.copy()
+    weight = 0.0
+    if umap_weight > 0:
+        if umap_key not in adata.obsm:
+            logging.warning('Embedding %r is absent; using expression-only gallery sampling.', umap_key)
+        else:
+            embedding = adata.obsm[umap_key]
+            embedding = embedding.iloc[positions] if isinstance(embedding, pd.DataFrame) else embedding[positions]
+            if sparse.issparse(embedding):
+                embedding = embedding.toarray()
+            embedding = np.asarray(embedding, dtype=float)
+            if embedding.ndim != 2 or embedding.shape[1] == 0:
+                raise ValueError(f'Gallery embedding {umap_key!r} must be a nonempty 2D array.')
+            embedding_valid = np.isfinite(embedding).all(axis=1) & valid
+            if embedding_valid.any():
+                center = np.median(embedding[embedding_valid], axis=0)
+                embedding_distances = np.full(n, np.nan)
+                embedding_distances[embedding_valid] = np.linalg.norm(embedding[embedding_valid] - center, axis=1)
+                scored['gallery_umap_distance'] = embedding_distances
+                # Missing embedding rows receive the worst embedding rank.
+                ranks = pd.Series(embedding_distances).rank(method='average', pct=True).fillna(1).to_numpy()
+                weight = float(umap_weight)
+                combined = (1 - weight) * expression_ranks + weight * ranks
+                metadata['umap_median'] = center.tolist()
+                if np.any(valid & ~embedding_valid):
+                    logging.warning('Some gallery candidates lack finite embedding coordinates; assigning worst UMAP rank.')
+            else:
+                logging.warning('No finite %r coordinates; using expression-only gallery sampling.', umap_key)
+    scored['gallery_score'] = combined
+    scored['gallery_selection_rank'] = pd.Series(combined).rank(method='first').to_numpy()
+    metadata.update(effective_umap_weight=weight, marker_profiles=profiles,
+                    finite_expression_cells=int(valid.sum()))
+    # Stable sorting makes tied selections reproducible for the same input order.
+    eligible = scored.loc[valid].sort_values('gallery_score', kind='stable')
+    if balance_rois:
+        # The first round contains each ROI's best cell, the second its next
+        # best, etc. Within a partial round, lower global scores win. Exhausted
+        # ROIs naturally give their unused places to ROIs with more candidates.
+        eligible['gallery_roi_rank'] = eligible.groupby(
+            roi_obs, sort=False, observed=True).cumcount() + 1
+        selected = eligible.sort_values('gallery_roi_rank', kind='stable').head(limit)
+        # Preserve the existing score-rank ordering of this helper's result.
+        selected = selected.sort_values('gallery_score', kind='stable')
+    else:
+        selected = eligible.head(limit)
+    return finish(selected, eligible)
+
+
 def backgating(
     adata,
     cell_index,
@@ -563,6 +744,15 @@ def backgating(
     image_samples_list=None,
     # optional interactive training
     training=False,
+    gallery_sampling: str = 'random',
+    gallery_random_state: int = 0,
+    gallery_layer: Optional[str] = None,
+    gallery_markers: Optional[List[str]] = None,
+    gallery_umap_key: str = 'X_umap',
+    gallery_umap_weight: float = 0.2,
+    gallery_save_svg: bool = True,
+    font_family: str = 'Arial',
+    gallery_balance_rois: bool = True,
 ):
     """
     UPDATED
@@ -614,6 +804,32 @@ def backgating(
             When set, cells are sampled only for step 6. Overview images, mask
             overlays, and the saved cell list still use all provided cells.
 
+        gallery_sampling (str):
+            'random' (default) reproduces seeded random sampling. 'intelligent'
+            selects actual cells nearest the eligible pool's median expression
+            profile, with a smaller UMAP-centrality contribution. Call separately
+            per population (as backgating_assessment does).
+        gallery_random_state (int): Random seed for random sampling, default 0.
+        gallery_layer (str or None): Expression layer for intelligent sampling;
+            None uses adata.X. Supply appropriately normalized/transformed data.
+        gallery_markers (list or None): Markers used for intelligent sampling;
+            None uses all adata.var_names. Constant markers do not contribute.
+        gallery_umap_key (str): Embedding in adata.obsm, default 'X_umap'.
+        gallery_umap_weight (float): Weight on embedding distance percentile rank
+            (default 0.2); the remaining weight goes to robust expression distance
+            rank. Set 0 for expression only. Missing embeddings fall back to
+            expression only with a warning. Cells with non-finite expression are
+            excluded; missing embedding rows receive the worst embedding rank.
+        gallery_balance_rois (bool): For intelligent sampling, balance counts
+            across eligible ROIs by selecting their best-scoring cells in rounds
+            (default True). Scores still use the whole eligible population.
+            Spare slots from small ROIs are redistributed; partial rounds favour
+            lower scores. False restores pooled selection. Random mode is unchanged.
+        gallery_save_svg (bool): Also save Cells.svg (default True), with separate
+            image, vector outline and editable title groups per thumbnail.
+        font_family (str): Single font family used for gallery titles and SVG
+            text, default 'Arial'. Font files are not embedded.
+
         overview_images (bool):
             If True, saves an “overview” with bounding boxes for each cell.
 
@@ -621,9 +837,9 @@ def backgating(
             If provided, restrict downstream backgating to these ROIs.
 
         image_samples_list (list or None):
-            If provided, make_images will be run for these ROIs (e.g., all ROIs)
-            to normalize composites consistently. Downstream plotting still uses
-            only ROIs with the selected cells.
+            Eligible normalization scope (defaults to all dataset ROIs). Only
+            q/m/x quantile maxima read this full scope; fixed bounds and
+            individual quantiles read only ROIs with the selected cells.
 
         minimum, max_quantile (float or str):
             Global clipping parameters for channels, used by `make_images`.
@@ -633,11 +849,15 @@ def backgating(
 
     Returns:
         None.
-        Saves “Cells.png”, optional “_overview.png” images, and a CSV of used cells.
+        Saves Cells.png, optionally Cells.svg, gallery_cells.csv in display order,
+        gallery_sampling.json with selection settings, optional overview images,
+        and cells_list.csv containing all eligible supplied cells.
     """
     # ----------------------------------------------------------------
     # 1) Normalize cell_index to a list
     # ----------------------------------------------------------------
+    _validate_gallery_options(gallery_sampling, max_gallery_cells, gallery_umap_weight, gallery_balance_rois)
+    _svg_font_family(font_family)
     if isinstance(cell_index, (pd.Series, np.ndarray, tuple, set)):
         cell_index = list(cell_index)
     elif not isinstance(cell_index, list):
@@ -664,7 +884,8 @@ def backgating(
 
     logging.info(f"Backgating on {len(adata_obs_cells)} cells across {len(roi_list)} ROIs.")
     logging.info(
-        "Composite images will be normalized using %d ROI(s) and saved for %d ROI(s).",
+        "Composite image scope: %d eligible ROI(s), %d ROI(s) to save. "
+        "Only channels with q/m/x maxima require the full normalization scope.",
         len(_normalize_roi_names(image_samples_list)),
         len(_normalize_roi_names(roi_list)),
     )
@@ -824,21 +1045,24 @@ def backgating(
     # ----------------------------------------------------------------
     out_subdir.mkdir(parents=True, exist_ok=True)
 
-    gallery_cells = adata_obs_cells_filtered.copy()
-    if max_gallery_cells is not None:
-        max_gallery_cells = int(max_gallery_cells)
-        if max_gallery_cells < 0:
-            raise ValueError("max_gallery_cells must be >= 0 or None.")
-        if len(gallery_cells) > max_gallery_cells:
-            gallery_cells = gallery_cells.sample(n=max_gallery_cells, random_state=0)
-            logging.info(
-                "Sampling %d of %d valid cells for the thumbnail gallery.",
-                len(gallery_cells),
-                len(adata_obs_cells_filtered),
-            )
+    gallery_cells, gallery_metadata = _select_gallery_cells(
+        adata, adata_obs_cells_filtered, max_gallery_cells,
+        sampling=gallery_sampling, random_state=gallery_random_state,
+        layer=gallery_layer, markers=gallery_markers,
+        umap_key=gallery_umap_key, umap_weight=gallery_umap_weight,
+        cell_index_obs=cell_index_obs,
+        roi_obs=roi_obs, balance_rois=gallery_balance_rois,
+    )
 
     gallery_cells = gallery_cells.sort_values([roi_obs, cell_index_obs])
     total_gallery_cells = len(gallery_cells)
+    gallery_cells['gallery_display_order'] = np.arange(1, total_gallery_cells + 1)
+    gallery_cells.to_csv(out_subdir / 'gallery_cells.csv')
+    gallery_metadata['selected_cells'] = total_gallery_cells
+    (out_subdir / 'gallery_sampling.json').write_text(
+        json.dumps(gallery_metadata, indent=2), encoding='utf-8')
+    logging.info('Selected %d of %d eligible gallery cells using %s sampling.',
+                 total_gallery_cells, len(adata_obs_cells_filtered), gallery_sampling)
 
     if total_gallery_cells == 0:
         logging.warning("No cells selected for the thumbnail gallery; skipping Cells.png.")
@@ -848,6 +1072,7 @@ def backgating(
         axs = axs.flatten() if (rows > 1 or cells_per_row > 1) else [axs]
 
         ax_idx = 0
+        gallery_layers = {}
 
         logging.info(
             "Plotting thumbnail gallery (%d per row) for %d cells.",
@@ -877,9 +1102,15 @@ def backgating(
                 thumb = comp_img[(y_cell - radius):(y_cell + radius),
                                  (x_cell - radius):(x_cell + radius), :]
 
-                ax.imshow(thumb)
+                image_gid = f'gallery_image_{ax_idx}'
+                ax.imshow(thumb, interpolation='none', gid=image_gid)
+                cell_description = f'{roi_name}: cell {row[cell_index_obs]}'
+                gallery_layers[image_gid] = f'Image {ax_idx} ({cell_description})'
                 if show_gallery_titles:
-                    ax.set_title(f'{roi_name} - {i}', fontsize=8)
+                    title = ax.set_title(f'{roi_name} - {i}', fontsize=8, fontfamily=font_family)
+                    title_gid = f'gallery_title_{ax_idx}'
+                    title.set_gid(title_gid)
+                    gallery_layers[title_gid] = f'Title {ax_idx} ({cell_description})'
                 ax.set_xticks([])
                 ax.set_yticks([])
 
@@ -891,10 +1122,13 @@ def backgating(
                     # Ensure shape matches
                     if thumb_mask.shape[:2] == thumb.shape[:2]:
                         centre_label = thumb_mask[radius, radius]
-                        mask_filtered = np.where(thumb_mask == centre_label, thumb_mask, 0)
-                        boundaries = segmentation.find_boundaries(mask_filtered, mode='inner')
-                        boundaries = np.ma.masked_where(boundaries == 0, boundaries)
-                        ax.imshow(boundaries, cmap='gray', alpha=1, vmin=0, vmax=1)
+                        if centre_label != 0:
+                            from matplotlib.patches import PathPatch
+                            for _, path in _population_cell_paths(thumb_mask, {centre_label}):
+                                outline_gid = f'gallery_outline_{ax_idx}'
+                                ax.add_patch(PathPatch(path, facecolor='none', edgecolor='white',
+                                                       linewidth=1, gid=outline_gid))
+                                gallery_layers[outline_gid] = f'Outline {ax_idx} ({cell_description})'
 
                 # Optional training logic:
                 # if training:
@@ -908,12 +1142,27 @@ def backgating(
         fig.subplots_adjust(hspace=vspace, wspace=hspace)
 
         if show_gallery_titles:
-            fig.suptitle(f"Backgating: {total_gallery_cells} cells, radius={radius}")
+            fig.suptitle(f"Backgating: {total_gallery_cells} cells, radius={radius}",
+                         gid='gallery_heading', fontfamily=font_family)
+            gallery_layers['gallery_heading'] = 'Gallery heading'
+
+        fig.canvas.draw()
+        for ax in axs[:ax_idx]:
+            points_per_pixel = abs(ax.transData.transform((1, 0))[0] -
+                                   ax.transData.transform((0, 0))[0]) * 72 / fig.dpi
+            for patch in ax.patches:
+                patch.set_linewidth(points_per_pixel)
 
         # Save figure
         cell_fig_path = out_subdir / "Cells.png"
-        fig.savefig(cell_fig_path, bbox_inches='tight', dpi=200)
-        plt.close(fig)
+        try:
+            fig.savefig(cell_fig_path, bbox_inches='tight', dpi=200)
+            if gallery_save_svg:
+                _save_population_overlay_svg(fig, out_subdir / 'Cells.svg',
+                                             layers=gallery_layers, font_family=font_family,
+                                             bbox_inches='tight', dpi=200)
+        finally:
+            plt.close(fig)
         logging.info(f"Saved thumbnails to: {cell_fig_path}")
 
     # ----------------------------------------------------------------
@@ -1282,7 +1531,17 @@ def backgating_assessment(
     specify_red=None,
     specify_green=None,
     specify_blue=None,
-    specify_ranges: bool = True
+    specify_ranges: bool = True,
+    population_overlay_save_svg: bool = False,
+    gallery_sampling: str = 'random',
+    gallery_random_state: int = 0,
+    gallery_layer: Optional[str] = None,
+    gallery_markers: Optional[List[str]] = None,
+    gallery_umap_key: str = 'X_umap',
+    gallery_umap_weight: float = 0.2,
+    gallery_save_svg: bool = True,
+    font_family: str = 'Arial',
+    gallery_balance_rois: bool = True,
 ):
     """
     Perform a backgating assessment on a supplied adata.obs grouping (populations).
@@ -1304,9 +1563,26 @@ def backgating_assessment(
         backgating_settings_file: CSV with marker-to-channel assignments + min/max ranges
 
         pops_list:        Subset of population names to process; if None, uses all found in adata / files.
-        cells_per_group:  Maximum number of random cells from each pop to show
+        cells_per_group:  Maximum number of sampled cells from each pop to show
                   in the thumbnail gallery. Other backgating outputs use
                   all supplied population cells in the selected ROIs.
+        gallery_sampling: 'random' (default) or 'intelligent'. Intelligent sampling
+            selects cells closest to the eligible population's median phenotype.
+        gallery_random_state: Seed for random gallery sampling, default 0.
+        gallery_layer: Expression layer for intelligent sampling; None uses adata.X.
+        gallery_markers: Marker subset for intelligent sampling; None uses all variables.
+        gallery_umap_key: Embedding key in adata.obsm, default 'X_umap'.
+        gallery_umap_weight: Weight of UMAP-centrality rank, default 0.2; expression
+            rank receives the remaining weight. Missing embeddings use expression only.
+        gallery_balance_rois: Balance intelligent selections across eligible saved
+            ROIs (default True), taking each ROI's best cells in rounds. False
+            restores pooled selection. Does not change random sampling or the
+            ROI subset controlled by max_rois_to_save.
+        gallery_save_svg: Save layered Cells.svg alongside Cells.png (default True).
+            Selection scores and settings are saved in gallery_cells.csv and
+            gallery_sampling.json. See backgating for detailed selection behavior.
+        font_family: Single font family for thumbnail titles and population-overlay
+            labels, legends and scale-bar text, default 'Arial'. SVG text stays editable.
 
         radius:           Pixel radius for each cell’s bounding box.
         roi_obs,x_loc_obs,y_loc_obs,cell_index_obs:
@@ -1315,8 +1591,9 @@ def backgating_assessment(
         use_masks:        Bool or CSV path for ROI->mask mapping (passed to backgating).
         mask_folder:      Folder where we expect <ROI>.tif or <ROI>.tiff if use_masks=True.
         max_rois_to_save: Maximum number of ROIs to save per population.
-                          If None, save all population ROIs. Normalization still
-                          uses the full image_samples_list / full dataset scope.
+                          If None, save all population ROIs. Only q/m/x quantile
+                          maxima read all dataset ROIs for normalization; fixed
+                          bounds and individual quantiles read the saved subset.
         exclude_rois_without_mask:
                           If True, skip all ROIs that have no mask file.
 
@@ -1341,6 +1618,12 @@ def backgating_assessment(
         population_overlay_scale_bar_outline_thickness: Scale bar outline thickness in pixels.
         population_overlay_scale_bar_text: Optional text displayed above the scale bar.
         population_overlay_scale_bar_text_size: Font size for scale bar text.
+        population_overlay_extension: Overlay image extension (default 'png').
+            'svg' saves a layered SVG plus a PNG preview for overlay galleries.
+        population_overlay_save_svg: Also save a layered SVG beside each overlay.
+            The source image, individual cell outlines, scale bar, scale-bar text,
+            marker legend and population label are separate editable groups.
+            Illustrator may show these groups beneath a single native layer.
         show_gallery_titles:    Whether to show titles of ROIs and figure in cell gallery.
 
         minimum, max_quantile:
@@ -1363,10 +1646,15 @@ def backgating_assessment(
         mode:             One of ['full','save_markers','load_markers'].
                           - 'full': compute means + settings, then run backgating
                           - 'save_markers': compute means + settings only, no images
-                          - 'load_markers': load existing settings, then run backgating
+                          - 'load_markers': load existing settings without rewriting
+                            the source CSV, then run backgating. Overrides and
+                            missing-range defaults apply only to this run.
 
         specify_red/green/blue:
                           User overrides for which marker is used for each color channel.
+                          When a marker changes, its previous range in the same
+                          population follows it; new or ambiguous markers use
+                          the global defaults, never another marker's limits.
         specify_ranges:   If True, tries to read e.g. 'Red_min','Red_max' etc. from the settings file
                           or fill them if missing.
 
@@ -1374,6 +1662,8 @@ def backgating_assessment(
         None. (Or returns a DataFrame if you adapt it to do so.)
         Saves output to disk: CSV files, images, etc.
     """
+    _validate_gallery_options(gallery_sampling, cells_per_group, gallery_umap_weight, gallery_balance_rois)
+    _svg_font_family(font_family)
     if markers_exclude is None:
         markers_exclude = []
     if only_use_markers is None:
@@ -1422,7 +1712,19 @@ def backgating_assessment(
     # 2) Build or load backgating settings
     if backgating_settings_path.is_file():
         settings_df = pd.read_csv(backgating_settings_path, index_col=0)
+        settings_df.index = settings_df.index.map(str)
         logging.info(f"Loaded existing backgating settings from {backgating_settings_path}")
+        if mode == 'full':
+            logging.warning(
+                "mode='full' can reselect markers and overwrite %s. Use "
+                "mode='load_markers' to plot with existing settings unchanged.",
+                backgating_settings_path,
+            )
+    elif mode == 'load_markers':
+        raise FileNotFoundError(
+            f"Settings file not found: {backgating_settings_path}. "
+            "Create it with mode='save_markers' before using mode='load_markers'."
+        )
     else:
         logging.info(f"No existing settings file found; creating a new one at {backgating_settings_path}")
         settings_df = pd.DataFrame()
@@ -1435,7 +1737,6 @@ def backgating_assessment(
 
     # If we computed mean_df above, we can figure out which populations are relevant
     if mode in ['full','save_markers']:
-        mean_df = pd.read_csv(mean_expression_path, index_col=0)
         pop_categories = mean_df.index.tolist()
     else:
         # 'load_markers' mode => we rely on adata and/or settings
@@ -1447,17 +1748,30 @@ def backgating_assessment(
 
     # If user gave a subset of pops
     if pops_list:
-        pop_categories = [p for p in pop_categories if p in pops_list]
+        requested_pops = {str(p) for p in pops_list}
+        pop_categories = [p for p in pop_categories if p in requested_pops]
 
-    # Ensure each pop is in settings_df
-    for pop in pop_categories:
-        if pop not in settings_df.index:
-            settings_df.loc[pop, :] = None
+    if mode == 'load_markers':
+        missing_pops = [pop for pop in pop_categories if pop not in settings_df.index]
+        if missing_pops:
+            raise ValueError(
+                f"No saved backgating settings for populations: {missing_pops}. "
+                "Create their settings with mode='save_markers' first, or restrict pops_list."
+            )
 
     # Ensure we have needed columns
     for col in needed_columns:
         if col not in settings_df.columns:
             settings_df[col] = None
+        # Ranges can contain numeric bounds or quantile strings.
+        settings_df[col] = settings_df[col].astype(object)
+
+    # Ensure each pop is in settings_df (after creating columns for new templates).
+    for pop in pop_categories:
+        if pop not in settings_df.index:
+            settings_df.loc[pop, :] = None
+
+    original_settings = settings_df.copy(deep=True)
             
     logging.info(f"Settings DataFrame shape after initialization: {settings_df.shape}")
     logging.info(f"Population categories to process: {pop_categories}")
@@ -1506,7 +1820,6 @@ def backgating_assessment(
                     )
                 else:
                     # Fallback to mean expression (original method)
-                    mean_df = pd.read_csv(mean_expression_path, index_col=0)
                     top_str = get_top_columns(mean_df.loc[pop], number_top_markers)
                     top_markers = top_str.split('__')
                 
@@ -1539,6 +1852,36 @@ def backgating_assessment(
             if specify_blue is not None:
                 settings_df.loc[pop, 'Blue'] = specify_blue
 
+    # Ranges belong to markers, not RGB positions. Selection and overrides can
+    # move/replace markers; resolve against the original row so swaps are safe.
+    for pop in pop_categories:
+        original = original_settings.loc[pop]
+        for color in ['Red', 'Green', 'Blue']:
+            old_marker = original[color]
+            new_marker = settings_df.loc[pop, color]
+            if (pd.isna(old_marker) and pd.isna(new_marker)) or (
+                pd.notna(old_marker) and pd.notna(new_marker) and old_marker == new_marker
+            ):
+                continue
+            matching_ranges = [
+                (original[f'{source}_min'], original[f'{source}_max'])
+                for source in ['Red', 'Green', 'Blue']
+                if pd.notna(new_marker) and pd.notna(original[source])
+                and original[source] == new_marker
+            ]
+            unique_ranges = pd.DataFrame(matching_ranges, columns=['min', 'max']).drop_duplicates()
+            if len(unique_ranges) == 1:
+                new_min, new_max = unique_ranges.iloc[0]
+            else:
+                new_min, new_max = None, None
+            settings_df.loc[pop, [f'{color}_min', f'{color}_max']] = [new_min, new_max]
+            logging.info(
+                "Population=%s | %s marker changed from %s to %s; %s.",
+                pop, color, old_marker, new_marker,
+                "using that marker's saved range" if len(unique_ranges) == 1
+                else "clearing previous marker's range and using global defaults",
+            )
+
     # 4) Fill in missing ranges if specify_ranges
     if specify_ranges:
         for pop in pop_categories:
@@ -1551,9 +1894,12 @@ def backgating_assessment(
                 if pd.isna(settings_df.loc[pop, mx_col]):
                     settings_df.loc[pop, mx_col] = max_quantile
 
-    # Save the updated settings to CSV
-    settings_df.to_csv(backgating_settings_path)
-    logging.info(f"Saved backgating settings to: {backgating_settings_path}")
+    # Plotting from saved settings must not mutate the user's source CSV.
+    if mode != 'load_markers':
+        settings_df.to_csv(backgating_settings_path)
+        logging.info(f"Saved backgating settings to: {backgating_settings_path}")
+    else:
+        logging.info("Using saved backgating settings without modifying %s", backgating_settings_path)
 
     # 5) If mode='save_markers', we stop here (no imaging).
     if mode == 'save_markers':
@@ -1648,6 +1994,15 @@ def backgating_assessment(
             overview_images=overview_images,
             show_gallery_titles=show_gallery_titles,
             max_gallery_cells=cells_per_group,
+            gallery_sampling=gallery_sampling,
+            gallery_balance_rois=gallery_balance_rois,
+            gallery_random_state=gallery_random_state,
+            gallery_layer=gallery_layer,
+            gallery_markers=gallery_markers,
+            gallery_umap_key=gallery_umap_key,
+            gallery_umap_weight=gallery_umap_weight,
+            gallery_save_svg=gallery_save_svg,
+            font_family=font_family,
             roi_list=rois_to_save,
             # Output
             output_folder=output_folder,
@@ -1712,6 +2067,11 @@ def backgating_assessment(
                     
                     # Create overlay
                     overlay_output_path = overlay_dir / f"{roi}_population_overlay.{population_overlay_extension}"
+                    svg_output_path = None
+                    if population_overlay_save_svg or overlay_output_path.suffix.lower() == '.svg':
+                        svg_output_path = overlay_output_path.with_suffix('.svg')
+                    if overlay_output_path.suffix.lower() == '.svg':
+                        overlay_output_path = overlay_output_path.with_suffix('.png')
                     
                     create_population_overlay(
                         adata=adata,
@@ -1742,6 +2102,8 @@ def backgating_assessment(
                         scale_bar_outline_thickness=population_overlay_scale_bar_outline_thickness,
                         scale_bar_text=population_overlay_scale_bar_text,
                         scale_bar_text_size=population_overlay_scale_bar_text_size,
+                        svg_output_path=str(svg_output_path) if svg_output_path else None,
+                        font_family=font_family,
                     )
                     
                 except Exception as e:
@@ -1821,6 +2183,9 @@ def _find_population_overlay_image(
     backgating_output_folder: Union[str, Path],
     population: Union[str, int],
     roi: Union[str, int],
+    *,
+    source_format: str = 'auto',
+    prefer_svg: bool = False,
 ) -> Optional[Path]:
     """Locate a saved population overlay image for one population/ROI pair."""
     overlay_dir = Path(backgating_output_folder) / clean_text(str(population)) / "population_overlays"
@@ -1829,7 +2194,13 @@ def _find_population_overlay_image(
 
     matches = []
     roi_str = str(roi)
+    extensions = ['.svg', '.png'] if prefer_svg else ['.png', '.svg']
+    extensions += ['.tif', '.tiff', '.jpg', '.jpeg', '.bmp']
+    if source_format != 'auto':
+        extensions = [f'.{source_format}']
     for candidate in overlay_dir.glob("*_population_overlay.*"):
+        if candidate.suffix.lower() not in extensions:
+            continue
         parsed_roi = _parse_population_overlay_roi_name(candidate)
         if parsed_roi == roi_str:
             matches.append(candidate)
@@ -1837,14 +2208,164 @@ def _find_population_overlay_image(
     if not matches:
         return None
 
-    if len(matches) > 1:
-        logging.warning(
-            "Found multiple population overlay images for population '%s', ROI '%s'. Using %s.",
-            population,
-            roi,
-            matches[0],
-        )
+    matches.sort(key=lambda p: (extensions.index(p.suffix.lower()), p.name))
     return matches[0]
+
+
+def _gallery_svg_source(path, prefix, font_family='Arial'):
+    """Import a self-contained SVG, isolating IDs, local references and styles."""
+    from xml.etree import ElementTree as ET
+
+    root = ET.parse(path).getroot()
+    if root.tag != '{http://www.w3.org/2000/svg}svg':
+        raise ValueError('Overlay is not an SVG document.')
+    if 'viewBox' not in root.attrib:
+        def length(value):
+            match = re.fullmatch(r'\s*([\d.eE+\-]+)\s*(px|pt|pc|in|cm|mm)?\s*', value or '')
+            if match is None:
+                raise ValueError('SVG needs a viewBox or absolute width and height.')
+            factor = {None: 1, 'px': 1, 'pt': 96 / 72, 'pc': 16,
+                      'in': 96, 'cm': 96 / 2.54, 'mm': 96 / 25.4}[match[2]]
+            return float(match[1]) * factor
+        root.set('viewBox', f"0 0 {length(root.get('width'))} {length(root.get('height'))}")
+    viewbox = [float(v) for v in re.split(r'[\s,]+', root.get('viewBox').strip())]
+    if len(viewbox) != 4 or not np.isfinite(viewbox).all() or min(viewbox[2:]) <= 0:
+        raise ValueError('SVG viewBox must contain four finite values with positive dimensions.')
+    ids = [element.get('id') for element in root.iter() if element.get('id')]
+    if len(ids) != len(set(ids)):
+        raise ValueError('Source SVG contains duplicate IDs.')
+    id_map = {name: f'{prefix}{name}' for name in ids}
+    root_id = id_map.get(root.get('id'), f'{prefix}artwork')
+    if not root.get('id'):
+        while root_id in id_map.values():
+            root_id += '_root'
+
+    def references(value):
+        return re.sub(r'url\(\s*([\x22\x27]?)#([^\s)\x22\x27]+)\1\s*\)',
+                      lambda m: f'url(#{id_map.get(m[2], m[2])})', value)
+
+    def css_rule(match):
+        selectors, declarations = match.groups()
+        if selectors.lstrip().startswith('@'):
+            return match[0]
+        selectors = re.sub(r'#([\w.\-]+)', lambda m: '#' + id_map.get(m[1], m[1]), selectors)
+        selectors = ', '.join(f'#{root_id} {s.strip()}' for s in selectors.split(','))
+        return f'{selectors} {{{references(declarations)}}}'
+
+    for element in root.iter():
+        for key, value in list(element.attrib.items()):
+            if key == 'id':
+                element.set(key, id_map[value])
+            elif key in ('href', '{http://www.w3.org/1999/xlink}href') and value.startswith('#'):
+                element.set(key, '#' + id_map.get(value[1:], value[1:]))
+            else:
+                element.set(key, references(value))
+        if element.tag == '{http://www.w3.org/2000/svg}style' and element.text:
+            element.text = re.sub(r'([^{}]+)\{([^{}]*)\}', css_rule, element.text)
+    root.set('id', root_id)
+    _set_svg_font_family(root, font_family)
+    return root
+
+
+def _compose_overlay_gallery(panels, populations, roi, ncols, nrows, panel_size,
+                             row_spacing, column_spacing, population_fontsize, roi_fontsize,
+                             font_family='Arial'):
+    """Compose editable source trees and return SVG bytes and point-based layout."""
+    import base64
+    from io import BytesIO
+    from xml.etree import ElementTree as ET
+    from PIL import Image
+
+    svg = 'http://www.w3.org/2000/svg'
+    ink = 'http://www.inkscape.org/namespaces/inkscape'
+    xlink = 'http://www.w3.org/1999/xlink'
+    ET.register_namespace('', svg)
+    ET.register_namespace('inkscape', ink)
+    ET.register_namespace('xlink', xlink)
+    panel_w, panel_h = panel_size
+    title_height = 0 if population_fontsize is None else 1.5 * population_fontsize
+    heading_height = 0 if roi_fontsize is None else 1.75 * roi_fontsize
+    width = ncols * panel_w + (ncols - 1) * column_spacing
+    height = heading_height + nrows * (panel_h + title_height) + (nrows - 1) * row_spacing
+    root = ET.Element(f'{{{svg}}}svg', {'width': f'{width:g}pt', 'height': f'{height:g}pt',
+                                      'viewBox': f'0 0 {width:g} {height:g}', 'version': '1.1'})
+
+    def group(parent, gid, label):
+        return ET.SubElement(parent, f'{{{svg}}}g', {'id': gid, f'{{{ink}}}groupmode': 'layer',
+                                                   f'{{{ink}}}label': label})
+
+    def text(parent, value, x, baseline, fontsize):
+        element = ET.SubElement(parent, f'{{{svg}}}text', {
+            'x': f'{x:g}', 'y': f'{baseline:g}', 'text-anchor': 'middle',
+            'style': f'font-size:{fontsize:g}px;font-family:{_svg_font_family(font_family)};fill:black',
+        })
+        element.text = str(value)
+
+    background = group(root, 'gallery_background', 'Background')
+    ET.SubElement(background, f'{{{svg}}}rect', {'width': str(width), 'height': str(height), 'fill': 'white'})
+    if roi_fontsize is not None:
+        text(group(root, 'gallery_heading', 'ROI title'), roi, width / 2, roi_fontsize, roi_fontsize)
+    layout = []
+    for idx, (population, panel) in enumerate(zip(populations, panels)):
+        x = (idx % ncols) * (panel_w + column_spacing)
+        y = heading_height + (idx // ncols) * (panel_h + title_height + row_spacing)
+        prefix = f'panel_{idx + 1:03d}'
+        parent = group(root, prefix, str(population))
+        if population_fontsize is not None:
+            text(group(parent, f'{prefix}_title', 'Population title'), population,
+                 x + panel_w / 2, y + population_fontsize, population_fontsize)
+        image_y = y + title_height
+        layout.append((x, image_y, panel_w, panel_h))
+        path = panel['path']
+        if panel['error']:
+            text(parent, panel['error'], x + panel_w / 2, image_y + panel_h / 2, 12)
+        elif path.suffix.lower() == '.svg':
+            source = panel['svg']
+            # Nested SVG establishes a panel viewport while retaining all source
+            # groups, definitions, transforms, embedded pixels and clipping paths.
+            source.set('x', str(x))
+            source.set('y', str(image_y))
+            source.set('width', str(panel_w))
+            source.set('height', str(panel_h))
+            source.set('preserveAspectRatio', 'xMidYMid meet')
+            source.set('overflow', 'hidden')
+            parent.append(source)
+        else:
+            with BytesIO() as buffer:
+                Image.fromarray(panel['image']).save(buffer, format='PNG')
+                data = base64.b64encode(buffer.getvalue()).decode('ascii')
+            raster = group(parent, f'{prefix}_source_image', 'Raster overlay')
+            ET.SubElement(raster, f'{{{svg}}}image', {
+                'x': str(x), 'y': str(image_y), 'width': str(panel_w), 'height': str(panel_h),
+                'preserveAspectRatio': 'xMidYMid meet', f'{{{xlink}}}href': 'data:image/png;base64,' + data,
+            })
+    return ET.tostring(root, encoding='utf-8', xml_declaration=True), (width, height, layout)
+
+
+def _save_raster_overlay_gallery(panels, populations, roi, layout, output_path,
+                                 dpi, population_fontsize, roi_fontsize, font_family='Arial'):
+    """Render legacy raster panels at the same point-based positions as the SVG."""
+    width, height, positions = layout
+    fig = plt.figure(figsize=(width / 72, height / 72), dpi=dpi)
+    try:
+        if roi_fontsize is not None:
+            fig.text(0.5, 1, str(roi), ha='center', va='top', fontsize=roi_fontsize, fontfamily=font_family)
+        for panel, population, (x, y, w, h) in zip(panels, populations, positions):
+            ax = fig.add_axes([x / width, 1 - (y + h) / height, w / width, h / height])
+            if panel['error']:
+                ax.text(.5, .5, panel['error'], ha='center', va='center', transform=ax.transAxes,
+                        fontfamily=font_family)
+            else:
+                ax.imshow(panel['image'], interpolation='none')
+            ax.axis('off')
+            if population_fontsize is not None:
+                fig.text((x + w / 2) / width, 1 - (y - 1.5 * population_fontsize) / height,
+                         str(population), ha='center', va='top', fontsize=population_fontsize,
+                         fontfamily=font_family)
+        with plt.rc_context({'savefig.bbox': None}):
+            fig.savefig(output_path, dpi=dpi, facecolor='white')
+    finally:
+        plt.close(fig)
 
 
 def create_population_overlay_galleries(
@@ -1857,15 +2378,22 @@ def create_population_overlay_galleries(
     dpi: int = 200,
     population_title_fontsize: Optional[int] = 12,
     roi_title_fontsize: Optional[int] = 16,
+    *,
+    output_format: str = 'png',
+    source_format: str = 'auto',
+    row_spacing: float = 12,
+    column_spacing: float = 12,
+    panel_size: Tuple[float, float] = (288, 288),
+    font_family: str = 'Arial',
 ) -> Path:
     """
-    Create one per-ROI gallery grid from saved backgating population overlay images.
+    Create one per-ROI PNG and/or editable SVG gallery from saved overlays.
 
     Expected input layout is the output of ``backgating_assessment``:
       backgating_output_folder/
         <cleaned_population_name>/
           population_overlays/
-            <ROI>_population_overlay.png
+            <ROI>_population_overlay.png (or .svg)
 
     Parameters
     ----------
@@ -1880,12 +2408,37 @@ def create_population_overlay_galleries(
     roi_list : list, optional
         Optional explicit ROI order/subset. If None, all ROIs found across requested populations are used.
     dpi : int, optional
-        Output DPI for saved gallery figures.
+        Output DPI for PNG galleries; does not affect SVG geometry or spacing.
     population_title_fontsize : int or None, optional
         Title font size for each population panel. If None, population panel
         titles are not plotted.
     roi_title_fontsize : int or None, optional
         Suptitle font size for the ROI label. If None, ROI suptitle is not plotted.
+    output_format : {'png', 'svg', 'both'}, optional
+        Default 'png' preserves existing output behavior. SVG output copies source
+        vector objects, text and groups into a separate layer per population.
+        PNG rendering of SVG inputs requires the optional CairoSVG renderer
+        (install SpatialBiologyToolkit[svg]); SVG composition itself does not.
+    source_format : {'auto', 'png', 'svg'}, optional
+        'auto' prefers SVG for SVG/both output and PNG for PNG output, falling
+        back to the other format when needed. Explicit formats do not fall back.
+        PNG panels embedded in an SVG remain raster images; their annotations
+        cannot be recovered as editable objects. Use self-contained SBT SVGs
+        to retain the original source image and editable overlay components.
+    row_spacing, column_spacing : float, optional
+        Nonnegative gaps in points (72 points = 1 inch), default 12. Row gaps are
+        measured between panel blocks, including any population title band.
+        Column gaps are between panel viewports. Zero gives adjacent grid slots.
+    panel_size : (float, float), optional
+        Overlay viewport (width, height) in points, default (288, 288), i.e. 4x4
+        inches. Sources retain their aspect ratio and are centered within it;
+        differing aspect ratios may leave additional space inside each viewport.
+    font_family : str, optional
+        Single font name, default 'Arial'. Applied to gallery titles and all live
+        text in imported SVG panels, replacing legacy fallback lists. Source
+        files are not changed. Font files are not embedded; install the selected
+        font on the rendering/editing machine. Text already outlined as paths
+        and labels baked into PNGs cannot be changed this way.
 
     Returns
     -------
@@ -1893,11 +2446,26 @@ def create_population_overlay_galleries(
         Directory containing the saved ROI gallery images.
     """
     base_dir = Path(backgating_output_folder)
+    _svg_font_family(font_family)
     if not base_dir.exists():
         raise FileNotFoundError(f"Backgating output folder not found: {base_dir}")
 
-    if ncols <= 0 or nrows <= 0:
+    if ncols <= 0 or nrows <= 0 or int(ncols) != ncols or int(nrows) != nrows:
         raise ValueError("ncols and nrows must both be positive integers.")
+    ncols, nrows = int(ncols), int(nrows)
+    if output_format not in ('png', 'svg', 'both'):
+        raise ValueError("output_format must be 'png', 'svg' or 'both'.")
+    if source_format not in ('auto', 'png', 'svg'):
+        raise ValueError("source_format must be 'auto', 'png' or 'svg'.")
+    if not np.isfinite([row_spacing, column_spacing]).all() or min(row_spacing, column_spacing) < 0:
+        raise ValueError('row_spacing and column_spacing must be finite and nonnegative.')
+    if len(panel_size) != 2 or not np.isfinite(panel_size).all() or min(panel_size) <= 0:
+        raise ValueError('panel_size must contain two finite positive dimensions in points.')
+    if not np.isfinite(dpi) or dpi <= 0:
+        raise ValueError('dpi must be positive and finite.')
+    for fontsize in (population_title_fontsize, roi_title_fontsize):
+        if fontsize is not None and (not np.isfinite(fontsize) or fontsize <= 0):
+            raise ValueError('Title font sizes must be positive and finite, or None.')
 
     if not populations:
         raise ValueError("At least one population must be provided.")
@@ -1922,6 +2490,10 @@ def create_population_overlay_galleries(
                 )
                 continue
             for candidate in overlay_dir.glob("*_population_overlay.*"):
+                if source_format != 'auto' and candidate.suffix.lower() != f'.{source_format}':
+                    continue
+                if candidate.suffix.lower() not in ('.svg', '.png', '.tif', '.tiff', '.jpg', '.jpeg', '.bmp'):
+                    continue
                 roi_name = _parse_population_overlay_roi_name(candidate)
                 if roi_name:
                     discovered_rois.add(roi_name)
@@ -1936,35 +2508,23 @@ def create_population_overlay_galleries(
 
     missing_pairs: List[str] = []
     for roi in roi_names:
-        fig, axes = plt.subplots(
-            nrows=nrows,
-            ncols=ncols,
-            figsize=(max(1, ncols) * 4.0, max(1, nrows) * 4.0),
-        )
-        axes_array = np.atleast_1d(axes).ravel()
-
+        panels = []
         for idx, population in enumerate(populations):
-            ax = axes_array[idx]
-            overlay_path = _find_population_overlay_image(base_dir, population, roi)
+            overlay_path = _find_population_overlay_image(
+                base_dir, population, roi, source_format=source_format,
+                prefer_svg=output_format in ('svg', 'both'))
+            panel = {'path': overlay_path, 'error': None}
             if overlay_path is None:
-                ax.set_facecolor("white")
-                ax.text(
-                    0.5,
-                    0.5,
-                    "Missing",
-                    ha="center",
-                    va="center",
-                    fontsize=12,
-                    color="black",
-                )
+                panel['error'] = 'Missing'
                 missing_pairs.append(f"{population}::{roi}")
             else:
                 try:
-                    overlay_image = io.imread(str(overlay_path))
-                    if overlay_image.ndim == 2:
-                        ax.imshow(overlay_image, cmap="gray")
+                    if overlay_path.suffix.lower() == '.svg':
+                        panel['svg'] = _gallery_svg_source(overlay_path, f'panel_{idx + 1:03d}_source_', font_family)
                     else:
-                        ax.imshow(overlay_image)
+                        from PIL import Image
+                        with Image.open(overlay_path) as image:
+                            panel['image'] = np.asarray(image.convert('RGBA'))
                 except Exception as exc:
                     logging.warning(
                         "Failed to load population overlay image for population '%s', ROI '%s': %s",
@@ -1972,32 +2532,35 @@ def create_population_overlay_galleries(
                         roi,
                         exc,
                     )
-                    ax.set_facecolor("white")
-                    ax.text(
-                        0.5,
-                        0.5,
-                        "Load failed",
-                        ha="center",
-                        va="center",
-                        fontsize=12,
-                        color="black",
-                    )
+                    panel['error'] = 'Load failed'
+                    missing_pairs.append(f'{population}::{roi} (load failed)')
+            panels.append(panel)
 
-            if population_title_fontsize is not None:
-                ax.set_title(str(population), fontsize=population_title_fontsize)
-            ax.axis("off")
-
-        for ax in axes_array[len(populations):]:
-            ax.axis("off")
-
-        if roi_title_fontsize is not None:
-            fig.suptitle(str(roi), fontsize=roi_title_fontsize)
-            fig.tight_layout(rect=[0, 0, 1, 0.96])
-        else:
-            fig.tight_layout()
-        save_path = output_dir / f"{clean_text(str(roi))}_population_gallery.png"
-        fig.savefig(save_path, dpi=int(dpi), bbox_inches="tight")
-        plt.close(fig)
+        svg_bytes, layout = _compose_overlay_gallery(
+            panels, populations, roi, ncols, nrows, panel_size,
+            row_spacing, column_spacing, population_title_fontsize, roi_title_fontsize, font_family)
+        stem = output_dir / f"{clean_text(str(roi))}_population_gallery"
+        # Do not use with_suffix: a cleaned ROI could still contain a period in
+        # future naming rules, and the complete gallery stem must be preserved.
+        if output_format in ('svg', 'both'):
+            Path(f'{stem}.svg').write_bytes(svg_bytes)
+        if output_format in ('png', 'both'):
+            if any(panel.get('svg') is not None for panel in panels):
+                try:
+                    import cairosvg
+                except (ImportError, OSError) as exc:
+                    raise RuntimeError(
+                        'PNG previews of SVG overlays require CairoSVG and its Cairo runtime. '
+                        'Install SpatialBiologyToolkit[svg] or use output_format="svg". '
+                        'Any requested SVG gallery has already been saved.'
+                    ) from exc
+                # The gallery uses point units, so physical sizing and gaps are
+                # invariant while DPI controls only PNG pixel resolution.
+                cairosvg.svg2png(bytestring=svg_bytes, write_to=str(stem) + '.png', dpi=dpi)
+            else:
+                _save_raster_overlay_gallery(
+                    panels, populations, roi, layout, str(stem) + '.png', dpi,
+                    population_title_fontsize, roi_title_fontsize, font_family)
 
     if missing_pairs:
         preview = ", ".join(missing_pairs[:10])

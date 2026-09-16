@@ -28,6 +28,33 @@ def _dense_matrix(value: Any) -> np.ndarray:
     return np.asarray(value)
 
 
+def _save_figure(figure: Any, path: Path, *, dpi: int = 160) -> None:
+    """Save editable vector and raster versions through the same renderer."""
+    figure.savefig(path, dpi=dpi, bbox_inches="tight")
+    figure.savefig(path.with_suffix(".svg"), dpi=dpi, bbox_inches="tight")
+
+
+def _score_views(adata: Any) -> list[tuple[str, str | None]]:
+    """Available score views; never present unavailable components as zero."""
+    views: list[tuple[str, str | None]] = [("total", None)]
+    metadata = adata.uns.get("marker_halo", {}).get("population_attribution", {})
+    if metadata.get("available", False) and metadata.get("population_annotation_available", False):
+        views.extend((name, f"{name}_NAF") for name in ("homotypic", "heterotypic"))
+    if metadata.get("available", False) and "unknown_population_NAF" in adata.layers:
+        if np.any(adata.layers["unknown_population_NAF"] > 0):
+            views.append(("unknown_population", "unknown_population_NAF"))
+    return views
+
+
+def _view_matrix(adata: Any, layer: str | None) -> np.ndarray:
+    return _dense_matrix(adata.X if layer is None else adata.layers[layer])
+
+
+def _increasing_naf_order(adata: Any) -> np.ndarray:
+    """Ascending mean total NAF; ties retain the input marker order."""
+    return np.argsort(_dense_matrix(adata.X).mean(axis=0), kind="stable")
+
+
 def _mask_only_source_metrics(adata: Any) -> tuple[int, int]:
     """Return strong mask-only source occurrences and affected ROI-marker pairs."""
 
@@ -42,10 +69,10 @@ def _mask_only_source_metrics(adata: Any) -> tuple[int, int]:
     return int(counts.sum()), int((counts > 0).sum())
 
 
-def marker_score_summary(adata: Any) -> pd.DataFrame:
+def marker_score_summary(adata: Any, layer: str | None = None) -> pd.DataFrame:
     """Return the requested all-marker descriptive score table."""
 
-    scores: np.ndarray = _dense_matrix(adata.X).astype(float, copy=False)
+    scores: np.ndarray = _view_matrix(adata, layer)
     rows = []
     for index, marker in enumerate(adata.var_names.astype(str)):
         values = scores[:, index]
@@ -57,6 +84,7 @@ def marker_score_summary(adata: Any) -> pd.DataFrame:
                     adata.var.iloc[index]["halo_profile_available"]
                 ),
                 "median_score": float(np.median(values)),
+                "mean_score": float(np.mean(values)),
                 "p90_score": float(np.quantile(values, 0.90)),
                 "p95_score": float(np.quantile(values, 0.95)),
                 "fraction_above_0.25": float(np.mean(values >= 0.25)),
@@ -643,7 +671,7 @@ def _plot_profiles(adata: Any, output_dir: Path) -> list[Path]:
         path = output_dir / (
             f"marker_halo_profile_{_marker_plot_stem(marker_index, marker)}.png"
         )
-        fig.savefig(path, dpi=160, bbox_inches="tight")
+        _save_figure(fig, path)
         plt.close(fig)
         paths.append(path)
     return paths
@@ -741,7 +769,7 @@ def _plot_exemplar_selection(
             "automatic_exemplar_selection_"
             f"{_marker_plot_stem(marker_index, str(marker))}.png"
         )
-        fig.savefig(path, dpi=160, bbox_inches="tight")
+        _save_figure(fig, path)
         plt.close(fig)
         paths.append(path)
     return paths
@@ -819,11 +847,13 @@ def _render_target_source_contact_sheet(
         "Attributable",
         "Residual excess",
         "Winning source in target",
+        "Homotypic in target",
+        "Heterotypic in target",
     )
     fig, axes = plt.subplots(
         len(crops),
         len(columns),
-        figsize=(19.0, max(3.2, 3.15 * len(crops))),
+        figsize=(25.0, max(3.2, 3.15 * len(crops))),
         squeeze=False,
     )
     for row_index, crop in enumerate(crops):
@@ -924,6 +954,17 @@ def _render_target_source_contact_sheet(
             secondary_source_labels=secondary_labels,
         )
         identity_axis.set_axis_off()
+        for column_index, name in ((6, "homotypic"), (7, "heterotypic")):
+            axis = axes[row_index, column_index]
+            if crop.get("population_components_available", False):
+                axis.imshow(crop[f"{name}_attributable"], cmap="magma", vmin=0, vmax=scale,
+                            interpolation="nearest")
+                _draw_cell_outlines(axis, mask, target_label=target_label,
+                                    dominant_source_label=dominant_label,
+                                    secondary_source_labels=secondary_labels)
+            else:
+                axis.text(0.5, 0.5, "Population attribution\nunavailable", ha="center", va="center")
+            axis.set_axis_off()
         axes[row_index, 0].text(
             -0.06,
             0.5,
@@ -933,7 +974,13 @@ def _render_target_source_contact_sheet(
             f"({record.get('source_population', '')})\n"
             f"NAF={float(record['neighbour_attributable_fraction']):.2f}; "
             f"dominant obs={float(record['dominant_source_observed_fraction']):.2f}; "
-            f"n sources={int(record['contributing_source_count'])}",
+            f"n sources={int(record['contributing_source_count'])}"
+            + (
+                f"\nhomotypic={float(record.get('homotypic_NAF', 0)):.2f}; "
+                f"heterotypic={float(record.get('heterotypic_NAF', 0)):.2f}; "
+                f"unknown={float(record.get('unknown_population_NAF', 0)):.2f}"
+                if crop.get("population_components_available", False) else ""
+            ),
             transform=axes[row_index, 0].transAxes,
             fontsize=7.5,
             ha="right",
@@ -950,7 +997,7 @@ def _render_target_source_contact_sheet(
         fontsize=12,
     )
     fig.tight_layout()
-    fig.savefig(path, dpi=180, bbox_inches="tight")
+    _save_figure(fig, path, dpi=180)
     plt.close(fig)
     return path
 
@@ -1057,7 +1104,7 @@ def _render_exemplar_contact_sheet(
         fontsize=12,
     )
     fig.tight_layout()
-    fig.savefig(path, dpi=180, bbox_inches="tight")
+    _save_figure(fig, path, dpi=180)
     plt.close(fig)
     return path
 
@@ -1139,7 +1186,7 @@ def _render_automatic_decision_contact_sheet(
         fontsize=12,
     )
     fig.tight_layout()
-    fig.savefig(path, dpi=180, bbox_inches="tight")
+    _save_figure(fig, path, dpi=180)
     plt.close(fig)
     return path
 
@@ -1367,6 +1414,31 @@ def generate_cell_qc_galleries(
                     "background": maps.background,
                     "source_labels": source_labels,
                 }
+                component_metadata = halo.get("population_attribution", {})
+                component_available = bool(
+                    component_metadata.get("available", False)
+                    and component_metadata.get("population_annotation_available", False)
+                )
+                crop["population_components_available"] = component_available
+                target_index = int(record["target_obs_index"])
+                for component in ("homotypic", "heterotypic", "unknown_population"):
+                    layer_name = f"{component}_NAF"
+                    if layer_name in adata.layers:
+                        record[layer_name] = float(adata.layers[layer_name][target_index, marker_index])
+                if component_available:
+                    winning = crop["source_index"]
+                    target_pixels = crop["mask"] == int(record["target_segmentation_label"])
+                    valid = target_pixels & (winning >= 0) & (crop["attributable"] > 0)
+                    source_pops = pd.Series(populations[winning[valid]], dtype="string")
+                    target_pop = populations[target_index]
+                    known = source_pops.notna() & source_pops.str.strip().ne("")
+                    if pd.isna(target_pop) or not str(target_pop).strip():
+                        known[:] = False
+                    same = source_pops.eq(target_pop).fillna(False)
+                    for name, selected_pixels in (("homotypic", known & same), ("heterotypic", known & ~same)):
+                        values = np.zeros(crop["mask"].shape, dtype=np.float32)
+                        values[valid] = np.where(selected_pixels.fillna(False), crop["attributable"][valid], 0)
+                        crop[f"{name}_attributable"] = values
                 target_crops[marker].append(crop)
                 dominant_label = int(record.get("source_segmentation_label", -1))
                 boundary_distance = float("nan")
@@ -1560,6 +1632,10 @@ def generate_cell_qc_galleries(
             "winning-source identity panel is unavailable because summed pixel provenance "
             "is not source-resolved."
         )
+    if not manifest.empty:
+        manifest["figure_svg_path"] = manifest["figure_path"].map(
+            lambda value: str(Path(value).with_suffix(".svg"))
+        )
     return paths, manifest, warnings
 
 
@@ -1567,13 +1643,16 @@ def _plot_score_distributions(
     adata: Any,
     summary: pd.DataFrame,
     output_dir: Path,
+    *,
+    layer: str | None = None,
+    component: str = "total",
 ) -> list[Path]:
     """Write one explicit score-distribution figure for every marker."""
 
     import matplotlib.pyplot as plt
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    scores: np.ndarray = _dense_matrix(adata.X).astype(float, copy=False)
+    scores: np.ndarray = _view_matrix(adata, layer)
     summary_by_marker = summary.set_index("marker")
     if adata.n_obs > 50000:
         sampled = np.linspace(0, adata.n_obs - 1, 50000, dtype=int)
@@ -1581,8 +1660,8 @@ def _plot_score_distributions(
         sampled = np.arange(adata.n_obs)
     paths: list[Path] = []
     bins = np.linspace(0.0, 1.0, 41)
-    for marker_index, marker_value in enumerate(adata.var_names.astype(str)):
-        marker = str(marker_value)
+    for marker_index in _increasing_naf_order(adata):
+        marker = str(adata.var_names[marker_index])
         all_values = scores[:, marker_index]
         values = all_values[sampled]
         weights = np.full(values.shape, 100.0 / max(1, len(values)), dtype=float)
@@ -1600,7 +1679,7 @@ def _plot_score_distributions(
         axis.set_xlim(0, 1)
         axis.set_xlabel("Neighbour-Attributable Fraction")
         axis.set_ylabel("Cells (%)")
-        axis.set_title(f"{marker}: cell score distribution")
+        axis.set_title(f"{marker}: {component.replace('_', ' ')} NAF distribution")
         for threshold in (0.25, 0.5, 0.75):
             axis.axvline(threshold, color="#888888", linewidth=0.6, linestyle="--")
         status = "profile available" if profile_available else "profile unavailable"
@@ -1631,10 +1710,49 @@ def _plot_score_distributions(
             "neighbour_attributable_score_distribution_"
             f"{_marker_plot_stem(marker_index, marker)}.png"
         )
-        fig.savefig(path, dpi=160, bbox_inches="tight")
+        _save_figure(fig, path)
         plt.close(fig)
         paths.append(path)
     return paths
+
+
+def _plot_ranked_score_distributions(adata: Any, output_dir: Path) -> Path:
+    """All-marker overview with a common ascending total-mean order."""
+    import matplotlib.pyplot as plt
+
+    views = _score_views(adata)
+    order = _increasing_naf_order(adata)
+    fig, axes = plt.subplots(
+        1, len(views), figsize=(6 * len(views), max(4, 0.32 * adata.n_vars + 1.8)),
+        sharey=True, squeeze=False,
+    )
+    labels = [
+        str(adata.var_names[j]) + (
+            " [profile unavailable]" if not bool(adata.var.iloc[j]["halo_profile_available"]) else ""
+        ) for j in order
+    ]
+    for axis, (component, layer) in zip(axes[0], views, strict=True):
+        matrix = _view_matrix(adata, layer)
+        # Exact statistics; large data need not be serialized into a boxplot.
+        stats = []
+        for j in order:
+            q = np.quantile(matrix[:, j], [0.05, 0.25, 0.5, 0.75, 0.95])
+            stats.append(dict(whislo=q[0], q1=q[1], med=q[2], q3=q[3], whishi=q[4], fliers=[]))
+        axis.bxp(stats, vert=False, showfliers=False)
+        axis.scatter(matrix.mean(axis=0)[order], np.arange(1, len(order) + 1),
+                     color="#d95f02", s=15, label="Mean")
+        axis.set_xlim(0, 1)
+        axis.set_yticks(np.arange(1, len(order) + 1), labels)
+        axis.set_title(component.replace("_", " ").title())
+        axis.set_xlabel("Neighbour-attributable fraction")
+        axis.legend(loc="lower right", fontsize=8)
+    axes[0, 0].invert_yaxis()
+    fig.suptitle("Markers ordered by increasing mean total NAF; whiskers = P5–P95")
+    fig.tight_layout()
+    path = output_dir / "neighbour_attributable_score_distributions.png"
+    _save_figure(fig, path)
+    plt.close(fig)
+    return path
 
 
 def _plot_umap(
@@ -1643,13 +1761,22 @@ def _plot_umap(
     output_dir: Path,
     *,
     point_size: float | None,
+    layer: str | None = None,
+    component: str = "total",
 ) -> list[Path]:
     """Write one Scanpy UMAP for every marker and cell-level halo summary."""
 
     import matplotlib.pyplot as plt
     import scanpy as sc
+    from anndata import AnnData
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    # Only copy plotting metadata, rather than the full multi-layer analysis.
+    matrix = _view_matrix(adata, layer)
+    plotting = AnnData(X=matrix, obs=adata.obs[[]].copy(), var=adata.var[[]].copy())
+    plotting.obsm["X_umap"] = adata.obsm["X_umap"]
+    plotting.obs["halo_max_score"] = matrix.max(axis=1)
+    plotting.obs["halo_mean_score"] = matrix.mean(axis=1)
     marker_list = list(markers)
     colors = [*marker_list, "halo_max_score", "halo_mean_score"]
     paths: list[Path] = []
@@ -1660,18 +1787,21 @@ def _plot_umap(
             "show": False,
             "return_fig": True,
             "frameon": False,
-            "title": f"{color}: neighbour-attributable signal",
+            "title": f"{color}: {component.replace('_', ' ')} NAF",
+            "use_raw": False,
+            "vmin": 0,
+            "vmax": 1,
         }
         if point_size is not None:
             kwargs["size"] = float(point_size)
-        figure = sc.pl.umap(adata, **kwargs)
+        figure = sc.pl.umap(plotting, **kwargs)
         if color in marker_list:
             marker_index = marker_list.index(color)
             stem = _marker_plot_stem(marker_index, color)
         else:
             stem = f"summary_{_gallery_filename(color)}"
         path = output_dir / f"scanpy_umap_halo_{stem}.png"
-        figure.savefig(path, dpi=160, bbox_inches="tight")
+        _save_figure(figure, path)
         plt.close(figure)
         paths.append(path)
     return paths
@@ -1683,13 +1813,17 @@ def _plot_population_matrix(
     population_obs: str,
     output_dir: Path,
 ) -> tuple[list[Path], list[str]]:
-    """Write one natively scaled matrix plot per marker with clustered populations."""
+    """All markers in each component heatmap, sharing a total-NAF dendrogram."""
 
     import matplotlib.pyplot as plt
     import scanpy as sc
+    from anndata import AnnData
 
     output_dir.mkdir(parents=True, exist_ok=True)
-    plotting = adata.copy()
+    plotting = AnnData(
+        X=adata.X, obs=adata.obs[[population_obs]].copy(), var=adata.var[[]].copy()
+    )
+    markers = list(adata.var_names[_increasing_naf_order(adata)].astype(str))
     plotting.obs[population_obs] = (
         plotting.obs[population_obs].astype("category").cat.remove_unused_categories()
     )
@@ -1697,7 +1831,7 @@ def _plot_population_matrix(
     profile_markers = [
         marker
         for marker in markers
-        if bool(plotting.var.loc[marker, "halo_profile_available"])
+        if bool(adata.var.loc[marker, "halo_profile_available"])
     ]
     dendrogram_markers = profile_markers or list(markers)
     warnings: list[str] = []
@@ -1709,12 +1843,29 @@ def _plot_population_matrix(
                 groupby=population_obs,
                 var_names=dendrogram_markers,
                 use_raw=False,
+                cor_method="pearson",
             )
         except (FloatingPointError, ValueError) as exc:
-            dendrogram_enabled = False
+            # Correlation is undefined for a single usable marker or constant
+            # population profiles. Euclidean distance still gives a valid tree.
+            from scipy.cluster import hierarchy
+
+            categories = plotting.obs[population_obs].cat.categories
+            means = pd.DataFrame(
+                _dense_matrix(plotting[:, dendrogram_markers].X),
+                index=plotting.obs_names, columns=dendrogram_markers,
+            ).groupby(plotting.obs[population_obs], observed=True).mean().loc[categories]
+            linkage = hierarchy.linkage(means.to_numpy(), method="complete", metric="euclidean")
+            tree = hierarchy.dendrogram(linkage, labels=list(categories), no_plot=True)
+            plotting.uns[f"dendrogram_{population_obs}"] = {
+                "linkage": linkage, "groupby": [population_obs],
+                "categories_ordered": tree["ivl"],
+                "categories_idx_ordered": tree["leaves"], "dendrogram_info": tree,
+                "use_rep": None, "cor_method": None, "linkage_method": "complete",
+            }
             warnings.append(
-                "Population dendrogram could not be calculated from neighbour-attributable "
-                f"scores ({exc}); population marker plots use categorical order instead."
+                "Population correlation dendrogram was undefined "
+                f"({exc}); using Euclidean distances between mean total-NAF profiles."
             )
     else:
         warnings.append(
@@ -1722,24 +1873,30 @@ def _plot_population_matrix(
             "or no marker features were available."
         )
     paths: list[Path] = []
-    for marker_index, marker in enumerate(markers):
+    total_means = pd.DataFrame(
+        _dense_matrix(adata.X), index=adata.obs_names, columns=adata.var_names
+    ).groupby(adata.obs[population_obs], observed=True).mean()
+    native_max = float(total_means.max().max())
+    for component, layer in _score_views(adata):
+        plotting.X = _view_matrix(adata, layer)
         matrix_plot = sc.pl.matrixplot(
             plotting,
-            var_names=[marker],
+            var_names=markers,
             groupby=population_obs,
             use_raw=False,
             cmap="magma",
             vmin=0,
-            colorbar_title="Mean neighbour-attributable fraction",
+            vmax=native_max if native_max > 0 else None,
+            colorbar_title=f"Mean {component.replace('_', ' ')} NAF",
+            title=f"{component.replace('_', ' ').title()} neighbour-attributable fraction",
+            figsize=(max(8, 0.35 * len(markers) + 3), max(4, 0.3 * population_count + 2)),
             dendrogram=dendrogram_enabled,
             show=False,
             return_fig=True,
         )
-        path = output_dir / (
-            "scanpy_population_marker_halo_matrixplot_"
-            f"{_marker_plot_stem(marker_index, marker)}.png"
-        )
-        matrix_plot.savefig(path, dpi=160, bbox_inches="tight")
+        suffix = "" if component == "total" else f"_{component}"
+        path = output_dir / f"scanpy_population_marker_halo_matrixplot{suffix}.png"
+        _save_figure(matrix_plot, path)
         plt.close("all")
         paths.append(path)
     return paths, warnings
@@ -1831,7 +1988,7 @@ def _plot_source_target_population_heatmaps(
             "source_target_population_heatmap_"
             f"{_marker_plot_stem(marker_index, marker)}.png"
         )
-        fig.savefig(path, dpi=160, bbox_inches="tight")
+        _save_figure(fig, path)
         plt.close(fig)
         paths.append(path)
     return paths
@@ -1848,6 +2005,9 @@ def _plot_expression_comparison(
     adata: Any,
     markers: Sequence[str],
     output_dir: Path,
+    *,
+    layer: str | None = None,
+    component: str = "total",
 ) -> list[Path]:
     """Write one classic/original-X/halo comparison per marker."""
 
@@ -1864,7 +2024,7 @@ def _plot_expression_comparison(
         marker_index = adata.var_names.get_loc(marker)
         classic = _matrix_column(adata.layers["classic_intensities"], marker_index)[sampled]
         original = _matrix_column(adata.layers["original_X"], marker_index)[sampled]
-        halo = _matrix_column(adata.X, marker_index)[sampled]
+        halo = _matrix_column(adata.X if layer is None else adata.layers[layer], marker_index)[sampled]
         finite = np.isfinite(classic) & np.isfinite(original) & np.isfinite(halo)
         scatter = axis.scatter(
             np.log1p(classic[finite]),
@@ -1876,19 +2036,20 @@ def _plot_expression_comparison(
             s=7,
             alpha=0.55,
             linewidths=0,
+            rasterized=True,
         )
         axis.set_title(marker)
         axis.set_xlabel("log1p classic raw-mask intensity")
         axis.set_ylabel("Original X expression/confidence")
         colorbar = fig.colorbar(scatter, ax=axis, shrink=0.75)
-        colorbar.set_label("Neighbour-Attributable Fraction")
+        colorbar.set_label(f"{component.replace('_', ' ').title()} NAF")
         fig.suptitle("Raw mask intensity vs preserved input expression", y=1.01)
         fig.tight_layout()
         output_path = output_dir / (
             "classic_originalX_halo_comparison_"
             f"{_marker_plot_stem(axis_index, marker)}.png"
         )
-        fig.savefig(output_path, dpi=160, bbox_inches="tight")
+        _save_figure(fig, output_path)
         plt.close(fig)
         paths.append(output_path)
     return paths
@@ -1960,16 +2121,31 @@ def _write_summary(
         "",
         "## Cell-based image galleries",
         "",
-        "The exemplar galleries show the raw marker, unassigned radial pixels used for learning, and each exemplar curve against the aggregate profile. Target-source galleries show raw signal, observed excess, projected halo, attributable signal, residual excess, and the winning spatial source inside the target. Automatic-decision galleries show representative accepted and rejected X-positive candidates. These are targeted qualitative checks, not proof of physical signal transfer.",
+        "The exemplar galleries show the raw marker, unassigned radial pixels used for learning, and each exemplar curve against the aggregate profile. Target-source galleries show raw signal, observed excess, projected halo, attributable signal, residual excess, the winning spatial source, and homotypic/heterotypic attributable pixels inside the target. Automatic-decision galleries show representative accepted and rejected X-positive candidates. These are targeted qualitative checks, not proof of physical signal transfer.",
         "",
-        "## Most affected markers",
+        "## Population attribution components",
         "",
-        "| Marker | Median | P95 | Fraction ≥0.5 | Exemplars |",
-        "|---|---:|---:|---:|---:|",
+        "Total NAF in X is partitioned into homotypic_NAF, heterotypic_NAF and "
+        "unknown_population_NAF layers using the existing winning source at each pixel. "
+        "Each component uses observed target excess as denominator; no sources are "
+        "discounted or re-projected. Missing/blank source or target labels are unknown. "
+        "For sum aggregation these layers are unavailable (NaN). The interpretation "
+        "depends on the population annotation recorded in marker_halo.parameters.",
+        "",
+        "Score distributions are ordered by increasing mean total NAF. Population "
+        "matrix plots include every marker and share the total-NAF population dendrogram "
+        "and native colour maximum across components. All figures are saved as PNG and SVG. "
+        "Unavailable marker profiles are not evidence of zero spatial attribution; "
+        "consult halo_profile_available and the skipped-marker reasons.",
+        "",
+        "## All markers (increasing mean total NAF)",
+        "",
+        "| Marker | Mean | Median | P95 | Fraction ≥0.5 | Exemplars |",
+        "|---|---:|---:|---:|---:|---:|",
     ]
-    for _index, row in score_summary.sort_values("p95_score", ascending=False).head(10).iterrows():
+    for _index, row in score_summary.sort_values("mean_score", kind="stable").iterrows():
         lines.append(
-            f"| {row['marker']} | {row['median_score']:.3f} | {row['p95_score']:.3f} | "
+            f"| {row['marker']} | {row['mean_score']:.3f} | {row['median_score']:.3f} | {row['p95_score']:.3f} | "
             f"{row['fraction_above_0.50']:.3f} | {int(row['n_exemplars'])} |"
         )
     if len(skipped):
@@ -1992,7 +2168,7 @@ def _write_summary(
                 "|---|---:|---:|---:|---|",
             ]
         )
-        for _index, row in affected_dominant.head(10).iterrows():
+        for _index, row in affected_dominant.iterrows():
             lines.append(
                 f"| {row['marker']} | {int(row['affected_target_cells'])} | "
                 f"{row['fraction_affected_targets_dominant_source_gt_0.5']:.3f} | "
@@ -2048,6 +2224,36 @@ def generate_neighbour_signal_report(
     score_path = tables_dir / "neighbour_attributable_score_summary.csv"
     summary.to_csv(score_path, index=False)
     report.tables.append(score_path)
+    component_metadata = adata.uns["marker_halo"].get("population_attribution", {})
+    if not component_metadata.get("available", False):
+        report.warnings.append("Homotypic/heterotypic NAF is unavailable: source-resolved max provenance is required.")
+    elif not component_metadata.get("population_annotation_available", False):
+        report.warnings.append("Homotypic/heterotypic NAF cannot be classified without population annotations; all attribution is unknown.")
+    elif np.any(adata.layers["unknown_population_NAF"] > 0):
+        report.warnings.append(
+            "Some attribution has missing/blank source or target population labels. "
+            "It is retained in unknown_population_NAF and an additional QC view; "
+            "homotypic plus heterotypic alone does not reconstruct total NAF for those cells."
+        )
+    component_summaries = []
+    population_means = []
+    for component, layer in _score_views(adata):
+        component_summaries.append(marker_score_summary(adata, layer).assign(component=component))
+        if population_obs and population_obs in adata.obs:
+            frame = pd.DataFrame(_view_matrix(adata, layer), index=adata.obs_names, columns=adata.var_names)
+            means = frame.groupby(adata.obs[population_obs], observed=True).mean()
+            means.index.name = "population"
+            population_means.append(
+                means.reset_index().melt(id_vars="population", var_name="marker", value_name="mean_NAF")
+                .assign(component=component)
+            )
+    components_path = tables_dir / "neighbour_attributable_component_summary.csv"
+    pd.concat(component_summaries, ignore_index=True).to_csv(components_path, index=False)
+    report.tables.append(components_path)
+    if population_means:
+        population_path = tables_dir / "population_marker_NAF_components.csv"
+        pd.concat(population_means, ignore_index=True).to_csv(population_path, index=False)
+        report.tables.append(population_path)
     dominant_summary = dominant_source_summary(adata, source_target_table)
     dominant_path = tables_dir / "dominant_source_summary.csv"
     dominant_summary.to_csv(dominant_path, index=False)
@@ -2084,13 +2290,15 @@ def generate_neighbour_signal_report(
     report.figures.extend(
         _plot_profiles(adata, figures_dir / "marker_halo_profiles")
     )
-    report.figures.extend(
-        _plot_score_distributions(
-            adata,
-            summary,
-            figures_dir / "score_distributions",
-        )
-    )
+    report.figures.append(_plot_ranked_score_distributions(adata, figures_dir))
+    for component, layer in _score_views(adata):
+        score_dir = figures_dir / "score_distributions"
+        if component != "total":
+            score_dir = score_dir / component
+        report.figures.extend(_plot_score_distributions(
+            adata, marker_score_summary(adata, layer), score_dir,
+            layer=layer, component=component,
+        ))
     report.figures.extend(
         _plot_exemplar_selection(
             adata,
@@ -2135,14 +2343,14 @@ def generate_neighbour_signal_report(
         )
 
     if "X_umap" in adata.obsm:
-        report.figures.extend(
-            _plot_umap(
-                adata,
-                selected,
-                figures_dir / "scanpy_umap_halo_scores",
-                point_size=umap_point_size,
-            )
-        )
+        for component, layer in _score_views(adata):
+            umap_dir = figures_dir / "scanpy_umap_halo_scores"
+            if component != "total":
+                umap_dir = umap_dir / component
+            report.figures.extend(_plot_umap(
+                adata, selected, umap_dir, point_size=umap_point_size,
+                layer=layer, component=component,
+            ))
     elif "X_umap" not in adata.obsm:
         report.warnings.append("Skipped Scanpy UMAP QC because adata.obsm['X_umap'] is absent.")
     if population_obs:
@@ -2172,18 +2380,22 @@ def generate_neighbour_signal_report(
     else:
         report.warnings.append("Skipped population-by-marker QC because no population observation is configured.")
     if selected and "classic_intensities" in adata.layers:
-        report.figures.extend(
-            _plot_expression_comparison(
-                adata,
-                selected,
-                figures_dir / "classic_originalX_halo_comparisons",
-            )
-        )
+        for component, layer in _score_views(adata):
+            comparison_dir = figures_dir / "classic_originalX_halo_comparisons"
+            if component != "total":
+                comparison_dir = comparison_dir / component
+            report.figures.extend(_plot_expression_comparison(
+                adata, selected, comparison_dir, layer=layer, component=component,
+            ))
     elif "classic_intensities" not in adata.layers:
         report.warnings.append(
             "Skipped classic/original-X comparison because classic intensity storage is disabled."
         )
 
+    # Register both formats, including contact sheets returned as primary PNGs.
+    report.figures = [
+        output for path in report.figures for output in (path, path.with_suffix(".svg"))
+    ]
     summary_path = summaries_dir / "neighbour_signal_summary.md"
     report.summaries.append(
         _write_summary(
@@ -2217,7 +2429,7 @@ def generate_neighbour_signal_report(
             ),
             "cell_gallery_panels": int(len(gallery_manifest)),
             "cell_gallery_figures": int(
-                sum("cell_galleries" in str(path) for path in report.figures)
+                sum("cell_galleries" in str(path) and path.suffix == ".png" for path in report.figures)
             ),
             "unmapped_strong_source_occurrences": mask_only_occurrences,
             "roi_marker_pairs_with_unmapped_strong_sources": mask_only_pairs,

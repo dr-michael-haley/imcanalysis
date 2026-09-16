@@ -28,13 +28,22 @@
 | `umap_marker_colormap` | `str` | `viridis` | `advanced` | Matplotlib colormap used for continuous marker-expression UMAPs. | - |
 | `umap_marker_gallery_default_colorbar_label` | `str` | `Nimbus-Inference Score` | `advanced` | Colour-bar label for the adata.X marker gallery; change this when adata.X contains another measurement scale. | - |
 | `umap_marker_gallery_vmax` | `Optional[float]` | `0.8` | `advanced` | Optional common upper colour limit for marker UMAP galleries; use null to scale each gallery automatically. | - |
+| `backgating_font_family` | `str` | `Arial` | `advanced` | Single font family for backgating labels and gallery titles. SVG exports reference this font without fallback lists and retain editable text; the font must be installed on the rendering/editing machine. | - |
 | `backgating_cells_per_group` | `int` | `50` | `advanced` | Maximum number of example cells sampled for each population's thumbnail gallery. | - |
+| `backgating_gallery_sampling` | `Literal['random', 'intelligent']` | `random` | `advanced` | Thumbnail selection: seeded random sampling, or intelligent selection of cells close to the eligible population's median marker profile with optional UMAP centrality. | - |
+| `backgating_gallery_random_state` | `int` | `0` | `advanced` | Random seed for backgating thumbnail sampling; default 0 retains reproducible random selection. | - |
+| `backgating_gallery_layer` | `Optional[str]` | `null` | `advanced` | AnnData expression layer for intelligent thumbnail selection; null uses adata.X. Use normalized or transformed marker measurements. | - |
+| `backgating_gallery_markers` | `Optional[List[str]]` | `null` | `advanced` | Expression markers for intelligent thumbnail selection; null uses all adata.var_names. Exclude technical channels by supplying biological markers explicitly. | - |
+| `backgating_gallery_umap_key` | `str` | `X_umap` | `advanced` | AnnData obsm embedding used as secondary evidence for intelligent thumbnail selection; missing embeddings fall back to expression only. | - |
+| `backgating_gallery_umap_weight` | `float` | `0.2` | `advanced` | Weight of embedding-distance percentile rank in intelligent thumbnail selection; remaining weight uses robust expression-distance rank. Set 0 for expression only. | - |
+| `backgating_gallery_balance_rois` | `bool` | `True` | `advanced` | Balance intelligent thumbnail selection across eligible saved ROIs, taking each ROI's best-scoring cells in rounds and redistributing unused places. Scores retain the population-wide median reference. False selects the lowest scores across all cells; random sampling is unaffected. | - |
+| `backgating_gallery_save_svg` | `bool` | `True` | `advanced` | Save Cells.svg alongside each population's Cells.png, with separate embedded thumbnail images, vector cell outlines and editable title groups. | - |
 | `backgating_radius` | `int` | `15` | `advanced` | Half-width in image pixels of the square crop around each backgated cell centroid. | - |
 | `backgating_output_folder` | `str` | `Backgating` | `advanced` | Subdirectory under the visualisation output root for image-based population validation outputs. | - |
 | `backgating_use_masks` | `bool` | `True` | `advanced` | Use segmentation masks to identify cells and draw cell boundaries in backgating images. | - |
 | `backgating_mask_folder` | `str` | `masks` | `advanced` | Mask directory passed to the backgating implementation; it must correspond to the source channel images and cell identifiers. | - |
 | `backgating_pops_list` | `Optional[Dict[str, Any]]` | `null` | `advanced` | Optional populations to backgate, supplied per population-observation column or under a 'default' key; null processes all populations. | - |
-| `backgating_max_rois_to_save` | `Optional[int]` | `null` | `advanced` | Optional maximum number of randomly selected ROI image sets saved per population; intensity normalisation still uses all eligible ROIs. | - |
+| `backgating_max_rois_to_save` | `Optional[int]` | `null` | `advanced` | Optional maximum number of randomly selected ROI image sets saved per population. Fixed intensity bounds and individual quantiles read only the saved subset; q/m/x quantile maxima use all eligible ROIs. | - |
 | `backgating_minimum` | `float` | `0.2` | `advanced` | Lower display bound used when rescaling source-channel intensities for backgating composites. | - |
 | `backgating_max_quantile` | `str` | `i0.99` | `advanced` | Upper intensity-rescaling rule for backgating images; the default uses the 99th percentile. | - |
 | `backgating_number_top_markers` | `int` | `2` | `advanced` | Number of automatically selected discriminative markers assigned to RGB channels for each population. | - |
@@ -47,6 +56,7 @@
 | `backgating_max_pval_adj` | `float` | `0.05` | `advanced` | Adjusted-P-value threshold reported during backgating marker selection; it does not itself exclude markers from selection. | - |
 | `backgating_markers_exclude` | `Optional[List[str]]` | `['DNA1', 'DNA3']` | `advanced` | Markers excluded from automatic backgating marker selection, usually DNA or technical channels. | - |
 | `backgating_mode` | `str` | `full` | `advanced` | Backgating workflow mode: 'full' selects markers and makes images, 'save_markers' only writes editable settings, and 'load_markers' makes images from existing settings. | - |
+| `backgating_population_overlay_save_svg` | `bool` | `False` | `advanced` | Save an additional editable SVG for each backgating population overlay, with separate source-image, per-cell-outline, scale-bar, legend, and label groups; retain raster previews for galleries. | - |
 | `backgating_population_overlay_outline_width` | `int` | `1` | `advanced` | Contour width in pixels around target cells in backgating population overlays. | - |
 | `backgating_population_overlay_legend_fontsize` | `int` | `24` | `advanced` | Font size for marker and population labels on backgating overlays. | - |
 | `backgating_population_overlay_crop_size` | `Optional[List[int]]` | `[300, 300]` | `advanced` | Optional overlay crop size as [width, height] pixels; null retains the complete ROI. | - |

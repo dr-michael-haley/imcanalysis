@@ -1207,7 +1207,7 @@ def draw_voronoi_scatter(
     return areas
 
 
-def plot_stacked_graphs(dataframes, color_maps, plot_types, hide_axes=False, create_legends=True, order_by=0, ax_limits=None, y_labels=None, y_labels_rotations='vertical', height_ratios=None, figsize=(6, 2.5), graph_spacing=0.05):
+def plot_stacked_graphs(dataframes, color_maps, plot_types, hide_axes=False, create_legends=True, order_by=0, ax_limits=None, y_labels=None, y_labels_rotations='vertical', height_ratios=None, figsize=(6, 2.5), graph_spacing=0.05, *, bar_colorbars=True, show_case_labels=False, case_labelsize=8, legend_fontsize='x-small', legend_ncol=1):
     """
     Plot stacked graphs for given dataframes with various options.
 
@@ -1224,6 +1224,9 @@ def plot_stacked_graphs(dataframes, color_maps, plot_types, hide_axes=False, cre
     - height_ratios: List of height ratios for the subplots
     - figsize: Tuple representing the figure size
     - graph_spacing: Float representing the spacing between graphs
+    - bar_colorbars: Keep legacy continuous colourbars by default; False gives compact aligned tracks.
+    - show_case_labels: Show the shared case index on the bottom axis only.
+    - case_labelsize, legend_fontsize, legend_ncol: Tick and categorical legend styling.
 
     Returns:
     - matplotlib.figure.Figure object
@@ -1267,14 +1270,17 @@ def plot_stacked_graphs(dataframes, color_maps, plot_types, hide_axes=False, cre
         
         # Plot based on the specified type
         if plot_type == 'bar':
-            norm = plt.Normalize(df.dropna().values.min(), df.dropna().values.max())
+            finite = df.to_numpy(dtype=float)
+            finite = finite[np.isfinite(finite)]
+            norm = plt.Normalize(finite.min() if finite.size else 0, finite.max() if finite.size else 1)
             sm = plt.cm.ScalarMappable(cmap=color_map, norm=norm)
             for col in df.columns:
                 df[col].plot(kind='bar', width=1, ax=ax, color=sm.to_rgba(df[col]), legend=False)
             
             
-            cbar = fig.colorbar(sm, ax=ax, orientation='horizontal', pad=0.3)
-            cbar.set_label('Values')
+            if bar_colorbars:
+                cbar = fig.colorbar(sm, ax=ax, orientation='horizontal', pad=0.3)
+                cbar.set_label('Values')
         elif plot_type == 'stacked_bar':
             colors = [color_map.get(col, '#333333') for col in df.columns]
             df.plot(kind='bar', stacked=True, ax=ax, color=colors, width=1)
@@ -1297,12 +1303,14 @@ def plot_stacked_graphs(dataframes, color_maps, plot_types, hide_axes=False, cre
         
         # Create legend if specified
         if create_legend:
-            ax.legend(loc='upper left', bbox_to_anchor=(1, 1), fontsize='x-small', labelspacing=0.1)
+            ax.legend(loc='upper left', bbox_to_anchor=(1, 1), fontsize=legend_fontsize, labelspacing=0.1, ncol=legend_ncol)
         else:
             if ax.get_legend() is not None:
                 ax.get_legend().remove()
                 
         ax.tick_params(axis='x', length=0, labelbottom=False)
+        if show_case_labels and i == num_plots - 1:
+            ax.tick_params(axis='x', labelbottom=True, labelsize=case_labelsize, labelrotation=90)
         ax.set_xlabel('')
         ax.autoscale(enable=True, axis='x', tight=True)
 
@@ -2351,6 +2359,125 @@ def make_images(
         io.imsave(str(save_path), stack_ubyte)
 
 
+def _population_cell_paths(mask, target_cell_ids):
+    """Yield one compound path per selected label, preserving touching cells/holes.
+
+    Dense temporary labels avoid allocations proportional to potentially sparse
+    ObjectNumbers; contours are traced only inside each cell's bounding box.
+    Padding closes contours for cells touching the image boundary.
+    """
+    from scipy.ndimage import find_objects
+    from matplotlib.path import Path as MplPath
+
+    ids = np.intersect1d(np.unique(mask), list(target_cell_ids))
+    ids = ids[ids != 0].astype(mask.dtype)
+    if not len(ids):
+        return
+    labels = map_array(mask, ids, np.arange(1, len(ids) + 1, dtype=np.int32))
+    for label, slices in enumerate(find_objects(labels), start=1):
+        if slices is None:
+            continue
+        local = np.pad(labels[slices] == label, 1)
+        paths = []
+        for contour in find_contours(local, 0.5):
+            vertices = contour[:, ::-1] + [slices[1].start - 1, slices[0].start - 1]
+            paths.append(MplPath(vertices, closed=True))
+        if paths:
+            yield int(ids[label - 1]), MplPath.make_compound_path(*paths)
+
+
+def _svg_font_family(font_family):
+    """Validate and quote one family for CSS without emitting a fallback list."""
+    if not isinstance(font_family, str) or not font_family.strip() or ',' in font_family:
+        raise ValueError('font_family must be a single nonempty font name, e.g. Arial.')
+    return "'" + font_family.strip().replace('\\', '\\\\').replace("'", "\\'") + "'"
+
+
+def _set_svg_font_family(root, font_family):
+    """Normalize font declarations in new and legacy SVGs, preserving live text.
+
+    Handle both separate CSS font-family declarations and older Matplotlib font
+    shorthand while retaining size, weight, style, line height and positioning.
+    Text content and path/image data are never rewritten.
+    """
+    family = _svg_font_family(font_family)
+
+    def normalize(style):
+        style = re.sub(r'(?<![\w-])font-family\s*:[^;}]*',
+                       lambda _: f'font-family: {family}', style, flags=re.IGNORECASE)
+        return re.sub(
+            r'(?<![\w-])(font\s*:\s*[^;{}]*?\b[\d.]+(?:px|pt|em|rem|%|pc|in|cm|mm)'
+            r'(?:\s*/\s*[\d.]+(?:px|pt|em|rem|%)?)?\s+)[^;}]+',
+            lambda m: m[1] + family, style, flags=re.IGNORECASE)
+
+    for element in root.iter():
+        if 'style' in element.attrib:
+            element.set('style', normalize(element.get('style')))
+        if 'font-family' in element.attrib:
+            element.set('font-family', font_family.strip())
+        if element.tag == '{http://www.w3.org/2000/svg}style' and element.text:
+            element.text = normalize(element.text)
+        if element.tag in ('{http://www.w3.org/2000/svg}text', '{http://www.w3.org/2000/svg}tspan'):
+            # Explicitly cover text that previously inherited a generic family.
+            element.set('font-family', font_family.strip())
+
+
+def _save_population_overlay_svg(fig, output_path, *, layers=None, font_family='Arial', **save_kwargs):
+    """Save named, editable SVG groups with optional Inkscape layer metadata.
+
+    Illustrator can edit the groups and vector/text objects; its importer may
+    display the groups beneath a single native layer.
+    """
+    from io import BytesIO
+    from xml.etree import ElementTree as ET
+
+    _svg_font_family(font_family)
+    svg_ns = 'http://www.w3.org/2000/svg'
+    inkscape_ns = 'http://www.inkscape.org/namespaces/inkscape'
+    ET.register_namespace('', svg_ns)
+    ET.register_namespace('xlink', 'http://www.w3.org/1999/xlink')
+    ET.register_namespace('inkscape', inkscape_ns)
+    with BytesIO() as buffer:
+        with mpl.rc_context({'svg.fonttype': 'none', 'image.composite_image': False,
+                             'svg.image_inline': True}):
+            fig.savefig(buffer, format='svg', **save_kwargs)
+        root = ET.fromstring(buffer.getvalue())
+    _set_svg_font_family(root, font_family)
+
+    layers = layers if layers is not None else {
+        'source_image': 'Source image',
+        'cell_outlines': 'Cell outlines',
+        'cell_centers': 'Cell centers',
+        'scale_bar': 'Scale bar',
+        'scale_bar_text': 'Scale bar text',
+        'marker_legend': 'Marker legend',
+        'population_label': 'Population label',
+    }
+    # Keep backend transforms, clipping, and drawing order intact. Gather the
+    # individual cell paths and the two scale-bar rectangles at their parent.
+    for parent in list(root.iter()):
+        groups = {}
+        for child in list(parent):
+            gid = child.get('id', '')
+            key = ('cell_outlines' if gid.startswith('cell_outline_') else
+                   'scale_bar' if gid in ('scale_bar_fill', 'scale_bar_outline') else gid)
+            if key not in layers:
+                continue
+            if key not in groups:
+                group = ET.Element(f'{{{svg_ns}}}g', {
+                    'id': key,
+                    f'{{{inkscape_ns}}}groupmode': 'layer',
+                    f'{{{inkscape_ns}}}label': layers[key],
+                })
+                parent.insert(list(parent).index(child), group)
+                groups[key] = group
+            if gid == key:
+                child.set('id', f'{key}_content')
+            parent.remove(child)
+            groups[key].append(child)
+    ET.ElementTree(root).write(output_path, encoding='utf-8', xml_declaration=True)
+
+
 def create_population_overlay(
     adata,
     population: str,
@@ -2380,7 +2507,9 @@ def create_population_overlay(
     scale_bar_color: str = "white",
     scale_bar_outline_thickness: int = 2,
     scale_bar_text: str | None = None,
-    scale_bar_text_size: int = 10
+    scale_bar_text_size: int = 10,
+    svg_output_path: str | None = None,
+    font_family: str = 'Arial',
 ):
     """
     Create an overlay visualization showing all cells of a specific population
@@ -2395,8 +2524,12 @@ def create_population_overlay(
         mask_path: Path to the segmentation mask (optional)
         roi_obs: Column name for ROI identifiers
         object_index_obs: Column name for cell indices
-        output_path: Where to save the overlay image
-        contour_color: RGB color for cell contours (default: yellow)
+        output_path: Where to save the overlay image. A .svg suffix saves an
+            embedded source image plus named editable groups for individual cell
+            paths, scale bar, scale-bar text, marker legend and population label.
+            Text remains text. SVG groups may appear beneath a single native
+            layer in Illustrator; they can be edited or moved independently.
+        contour_color: RGB color for cell contours (default: white)
         contour_width: Width of contour lines in pixels
         verbose: Whether to print status messages (default: True)
         legend_markers: Optional list of marker names to show in a legend
@@ -2409,20 +2542,25 @@ def create_population_overlay(
         crop_size: Optional crop size (width, height) in pixels.
         crop_origin: Crop origin anchor: "upper_left", "upper_right",
             "lower_left", "lower_right", "center", or "intelligent".
-        show_scale_bar: Whether to draw a scale bar in the bottom-right.
+        show_scale_bar: Whether to draw a scale bar in the bottom-left.
         scale_bar_length: Length of the scale bar in pixels.
         scale_bar_thickness: Line thickness in pixels.
         scale_bar_color: Scale bar color (matplotlib color string).
         scale_bar_outline_thickness: Black outline thickness in pixels.
         scale_bar_text: Optional text displayed above the scale bar.
         scale_bar_text_size: Font size for scale bar text.
+        svg_output_path: Optional additional layered SVG output, e.g. alongside
+            a PNG output_path. Uses the same figure and crop.
+        font_family: Single font family for labels, legend and scale-bar text,
+            default 'Arial'. SVG keeps editable text and references this font;
+            the font must be installed on the machine rendering/editing it.
         
     Returns:
-        None. Saves overlay image to output_path if provided.
+        Matplotlib Figure, closed after saving if output_path is provided.
     """
     import matplotlib.pyplot as plt
-    from skimage.segmentation import find_boundaries
-    from scipy.ndimage import binary_dilation
+    from matplotlib.patches import PathPatch, Rectangle
+    _svg_font_family(font_family)
     
     # Load composite image
     if not Path(composite_image_path).exists():
@@ -2439,6 +2577,9 @@ def create_population_overlay(
     elif mask_path:
         if verbose:
             print(f"Warning: Mask file not found: {mask_path}")
+
+    if mask is not None and (mask.ndim != 2 or mask.shape != composite_img.shape[:2]):
+        raise ValueError('Segmentation mask must be 2D and match the composite image shape.')
     
     # Get cells of this population in this ROI
     roi_cells = adata.obs[
@@ -2455,7 +2596,10 @@ def create_population_overlay(
     fig, ax = plt.subplots(figsize=(12, 10), dpi=150)
 
     # Display composite image as background
-    base_image = ax.imshow(composite_img)
+    # SVG embeds original pixels without resampling; raster backends use nearest.
+    base_image = ax.imshow(composite_img, interpolation='none')
+    base_image.set_gid('source_image')
+    contour_artists = []
     
     # If we have a mask, draw contours for cells of this population
     if mask is not None:
@@ -2475,22 +2619,19 @@ def create_population_overlay(
         target_cell_ids.discard(0)
         
         if target_cell_ids:
-            target_mask = np.isin(mask, list(target_cell_ids))
-            if not target_mask.any():
+            for cell_id, path in _population_cell_paths(mask, target_cell_ids):
+                artist = PathPatch(path, facecolor='none',
+                                   edgecolor=np.asarray(contour_color) / 255.0,
+                                   linewidth=contour_width, zorder=2,
+                                   gid=f'cell_outline_{cell_id}')
+                ax.add_patch(artist)
+                contour_artists.append(artist)
+            if not contour_artists:
                 if verbose:
                     print("Warning: No matching labels found in mask for selected population.")
             else:
-                boundaries = find_boundaries(target_mask, mode='inner')
-                if contour_width > 1:
-                    iterations = max(1, contour_width // 2)
-                    boundaries = binary_dilation(boundaries, iterations=iterations)
-
-                overlay = np.zeros((*boundaries.shape, 4), dtype=float)
-                overlay[..., :3] = np.array(contour_color) / 255.0
-                overlay[..., 3] = boundaries.astype(float)
-                ax.imshow(overlay)
                 if verbose:
-                    print(f"Drew contours for {len(target_cell_ids)} cells")
+                    print(f"Drew contours for {len(contour_artists)} cells")
         else:
             if verbose:
                 print("Warning: No target cell IDs found; skipping contour overlay.")
@@ -2501,7 +2642,8 @@ def create_population_overlay(
             print(f"No mask available, plotting cell centers as points")
         if 'X_loc' in roi_cells.columns and 'Y_loc' in roi_cells.columns:
             ax.scatter(roi_cells['X_loc'], roi_cells['Y_loc'], 
-                      c=[np.array(contour_color)/255], s=20, alpha=0.8, marker='o')
+                      c=[np.array(contour_color)/255], s=20, alpha=0.8, marker='o',
+                      gid='cell_centers')
     
     # Apply optional central crop AFTER overlays but BEFORE legends/labels
     if crop_size is not None and composite_img is not None:
@@ -2576,11 +2718,9 @@ def create_population_overlay(
         ax.set_xlim(x_min, x_max)
         ax.set_ylim(y_max, y_min)
 
-    # Optional scale bar drawn into pixels AFTER crop (positioned bottom-left of cropped view)
+    # Scale bar remains vector geometry, separate from the source image.
     scale_bar_text_pos = None
     if show_scale_bar and composite_img is not None:
-        from matplotlib.colors import to_rgb
-
         img_h, img_w = composite_img.shape[:2]
         margin_px = 20
         pad_px = max(0, int(scale_bar_outline_thickness))
@@ -2611,25 +2751,13 @@ def create_population_overlay(
         y0p = max(0, y0 - pad_px)
         y1p = min(img_h - 1, y1 + pad_px)
 
-        rgb_bar = tuple(int(round(c * 255)) for c in to_rgb(scale_bar_color))
-        rgb_pad = (0, 0, 0)
-
-        def _apply_color(img, ys, xs, rgb):
-            if img.ndim == 2:
-                val = int(round(sum(rgb) / 3))
-                img[ys, xs] = np.clip(val, 0, 255)
-            else:
-                img[ys, xs, 0] = np.clip(rgb[0], 0, 255)
-                img[ys, xs, 1] = np.clip(rgb[1], 0, 255)
-                img[ys, xs, 2] = np.clip(rgb[2], 0, 255)
-            return img
-
-        if x1 > x0 and y1 > y0:
-            composite_img = _apply_color(composite_img, slice(y0p, y1p + 1), slice(x0p, x1p + 1), rgb_pad)
-            composite_img = _apply_color(composite_img, slice(y0, y1 + 1), slice(x0, x1 + 1), rgb_bar)
-
-            # Update the base image shown (keep current limits)
-            base_image.set_data(composite_img)
+        if x1 >= x0 and y1 >= y0:
+            ax.add_patch(Rectangle((x0p - 0.5, y0p - 0.5), x1p - x0p + 1, y1p - y0p + 1,
+                                   facecolor='black', edgecolor='none', zorder=3,
+                                   gid='scale_bar_outline'))
+            ax.add_patch(Rectangle((x0 - 0.5, y0 - 0.5), x1 - x0 + 1, y1 - y0 + 1,
+                                   facecolor=scale_bar_color, edgecolor='none', zorder=3,
+                                   gid='scale_bar_fill'))
 
             if scale_bar_text:
                 scale_bar_text_pos = ((x0 + x1) / 2, y0 - 6)
@@ -2638,6 +2766,11 @@ def create_population_overlay(
     try:
         fig.canvas.draw()
         renderer = fig.canvas.get_renderer()
+        # Matplotlib linewidths use points; the public option uses image pixels.
+        points_per_pixel = abs(ax.transData.transform((1, 0))[0] -
+                               ax.transData.transform((0, 0))[0]) * 72 / fig.dpi
+        for artist in contour_artists:
+            artist.set_linewidth(contour_width * points_per_pixel)
     except Exception:
         renderer = None
 
@@ -2649,8 +2782,11 @@ def create_population_overlay(
             str(scale_bar_text),
             color=scale_bar_color,
             fontsize=scale_bar_text_size,
+            fontfamily=font_family,
             ha='center',
-            va='bottom'
+            va='bottom',
+            gid='scale_bar_text',
+            zorder=4,
         )
 
     # Remove ticks for cleaner look
@@ -2690,7 +2826,7 @@ def create_population_overlay(
             gap_px = 15
 
             labels = [str(l).strip() for l in legend_markers]
-            fontprops = fm.FontProperties(size=legend_fontsize)
+            fontprops = fm.FontProperties(size=legend_fontsize, family=font_family)
             sizes = [renderer.get_text_width_height_descent(lbl, fontprops, False)[:2] for lbl in labels]
 
             if sizes:
@@ -2715,6 +2851,7 @@ def create_population_overlay(
             pos_y = max(0.0, ax_pos.y1 - height_frac - margin_y)
 
             inset_ax = fig.add_axes([pos_x, pos_y, width_frac, height_frac])
+            inset_ax.set_gid('marker_legend')
             inset_ax.set_facecolor((0, 0, 0, 1))
             inset_ax.set_xticks([])
             inset_ax.set_yticks([])
@@ -2730,6 +2867,7 @@ def create_population_overlay(
                 y_cursor -= h / 2
                 inset_ax.text(padding_px / inset_w_px, y_cursor / inset_h_px, lbl,
                               color=color, fontsize=legend_fontsize,
+                              fontfamily=font_family,
                               va='center', ha='left')
                 y_cursor -= h / 2 + gap_px
 
@@ -2740,6 +2878,7 @@ def create_population_overlay(
             # Fallback: simple inset in axes coords
             default_w, default_h = legend_box_size
             inset_ax = ax.inset_axes([1 - default_w - 0.02, 1 - default_h - 0.02, default_w, default_h])
+            inset_ax.set_gid('marker_legend')
             inset_ax.set_facecolor((0, 0, 0, 1))
             inset_ax.set_xticks([])
             inset_ax.set_yticks([])
@@ -2748,7 +2887,7 @@ def create_population_overlay(
             for (lbl, rgb) in zip(legend_markers, normalized_colors):
                 color = tuple(np.array(rgb) / 255.0)
                 inset_ax.text(0.05, 0.95 - 0.1 * legend_markers.index(lbl), str(lbl).strip(),
-                              color=color, fontsize=legend_fontsize, va='top', ha='left')
+                              color=color, fontsize=legend_fontsize, va='top', ha='left', fontfamily=font_family)
 
     # Optional label in top-left
     label_text = None
@@ -2785,7 +2924,7 @@ def create_population_overlay(
             padding_px = 15
             margin_px = 20
 
-            fontprops = fm.FontProperties(size=population_label_fontsize or legend_fontsize)
+            fontprops = fm.FontProperties(size=population_label_fontsize or legend_fontsize, family=font_family)
             w, h = renderer.get_text_width_height_descent(label_text, fontprops, False)[:2]
 
             box_w_px = w + 2 * padding_px
@@ -2804,6 +2943,7 @@ def create_population_overlay(
             pos_y = max(0.0, ax_pos.y1 - height_frac - margin_y)
 
             inset_ax = fig.add_axes([pos_x, pos_y, width_frac, height_frac])
+            inset_ax.set_gid('population_label')
             inset_ax.set_facecolor((0, 0, 0, 1))
             inset_ax.set_xticks([])
             inset_ax.set_yticks([])
@@ -2813,6 +2953,7 @@ def create_population_overlay(
 
             inset_ax.text(padding_px / box_w_px, 1 - padding_px / box_h_px,
                           label_text, color='white', fontsize=population_label_fontsize or legend_fontsize,
+                          fontfamily=font_family,
                           va='top', ha='left')
 
             for spine in inset_ax.spines.values():
@@ -2822,6 +2963,7 @@ def create_population_overlay(
             # Fallback: simple inset in axes coords (top-left)
             default_w, default_h = legend_box_size
             inset_ax = ax.inset_axes([0.02, 1 - default_h - 0.02, default_w, default_h])
+            inset_ax.set_gid('population_label')
             inset_ax.set_facecolor((0, 0, 0, 1))
             inset_ax.set_xticks([])
             inset_ax.set_yticks([])
@@ -2829,19 +2971,28 @@ def create_population_overlay(
             inset_ax.set_ylim(0, 1)
             inset_ax.text(0.05, 0.95, label_text,
                           color='white', fontsize=population_label_fontsize or legend_fontsize,
+                          fontfamily=font_family,
                           va='top', ha='left')
     
     # Save if output path provided
-    if output_path:
+    if output_path or svg_output_path:
         # Save tightly around the axes with no padding to avoid a white border
-        fig.savefig(
-            output_path,
+        save_kwargs = dict(
             bbox_inches='tight',
             pad_inches=0,
             dpi=200,
             transparent=False,
         )
-        plt.close(fig)
+        try:
+            if output_path:
+                if Path(output_path).suffix.lower() == '.svg':
+                    _save_population_overlay_svg(fig, output_path, font_family=font_family, **save_kwargs)
+                else:
+                    fig.savefig(output_path, **save_kwargs)
+            if svg_output_path and (not output_path or Path(svg_output_path) != Path(output_path)):
+                _save_population_overlay_svg(fig, svg_output_path, font_family=font_family, **save_kwargs)
+        finally:
+            plt.close(fig)
     else:
         plt.show()
         
@@ -3792,10 +3943,12 @@ def matrixplot_with_row_colors(
     groupby_key="population_grant",
     out_path=None,
     *,
+    layer=None,
     reorder_var_by_expression=False,
     cmap="viridis",
     standard_scale=None,
     vmax=0.5,
+    vmin=None,
     dendrogram=True,
     var_group_rotation=0,
     colorbar_title="Mean expression\nin group \n(Nimbus Score)",
@@ -3807,6 +3960,7 @@ def matrixplot_with_row_colors(
     angled_label_rotation=45,
     angled_label_dx=-0.5,
     add_row_color_bar=True,
+    secondary_colorbar: dict | None = None,
     row_bar_gap=0.005,
     row_bar_w=0.01,
     row_bar_x=-1,
@@ -3814,7 +3968,72 @@ def matrixplot_with_row_colors(
     row_bar_edgecolor="black",
     row_bar_linewidth=1,
     save_dpi=300,
+    additional_row_colors=None,
+    row_color_labels=False,
+    additional_row_bar_gap=None,
+    figsize=None,
 ):
+    """
+    Plot a Scanpy matrixplot with optional row colors and an optional second colorbar.
+
+    Parameters
+    ----------
+    adata : AnnData
+        Input AnnData object.
+    marker_groups : None, mapping, or sequence, optional
+        Genes to plot. A mapping is passed through to Scanpy as grouped genes,
+        while a sequence is treated as a flat list of genes. If None, all genes
+        are used.
+    groupby_key : str, optional
+        Observation key used to group rows in the matrixplot and to derive the
+        default row color strip.
+    out_path : str or Path, optional
+        If provided, save the resulting figure to this path.
+    layer : str, optional
+        AnnData layer to plot from.
+    reorder_var_by_expression : bool, optional
+        Reorder genes by expression before plotting when ``marker_groups`` is
+        not a grouped mapping.
+    cmap, standard_scale, vmax, vmin, dendrogram, var_group_rotation,
+    colorbar_title : optional
+        Passed through to ``scanpy.pl.matrixplot``.
+    x_labelsize, y_labelsize, y_pad, gene_group_labelsize : optional
+        Styling controls for the matrixplot axes and group labels.
+    angled_label_indices, angled_label_rotation, angled_label_dx : optional
+        Fine-grained control for selected variable-group labels.
+    add_row_color_bar : bool, optional
+        Add the existing categorical row color strip derived from
+        ``adata.uns[f"{groupby_key}_colors"]``.
+    secondary_colorbar : dict or None, optional
+        Optional extra colorbar specification. Supported keys include:
+        ``values`` (or ``array``/``data``), ``cmap``, ``vmin``, ``vmax``,
+        ``label``, ``orientation``, ``ticks``, ``ticklabels``, ``width``,
+        ``pad``, ``x0``, ``y0``, ``height``, and ``cax``. Missing keys fall
+        back to the function-level defaults where possible. A plain mapping of
+        labels to colors is also accepted as a backwards-compatible shorthand.
+    row_bar_gap, row_bar_w, row_bar_x, row_bar_width_data,
+    row_bar_edgecolor, row_bar_linewidth : optional
+        Appearance and placement of the categorical row color strip.
+    save_dpi : int, optional
+        DPI used when saving ``out_path``.
+    additional_row_colors : mapping or None, optional
+        Named extra strips, e.g. ``{'Family': {'T cell': 'blue', ...}}``.
+        Keys in each colour mapping must cover every displayed row label.
+        Strips are placed to the left of the population strip and follow the
+        actual dendrogram order. Existing calls retain their original layout.
+    row_color_labels : bool, optional
+        Label the population and additional strips below the matrix.
+    additional_row_bar_gap : float or None, optional
+        Gap between row strips in figure coordinates; defaults to row_bar_gap.
+    figsize : tuple or None, optional
+        Figure size forwarded to Scanpy before constructing the axes.
+
+    Returns
+    -------
+    tuple
+        ``(mp, fig)`` where ``mp`` is the Scanpy matrixplot object and
+        ``fig`` is the Matplotlib figure.
+    """
     def _resolve_var_names():
         # Default: all genes
         if marker_groups is None:
@@ -3854,9 +4073,12 @@ def matrixplot_with_row_colors(
         dendrogram=dendrogram,
         standard_scale=standard_scale,
         vmax=vmax,
+        vmin=vmin,
         var_group_rotation=var_group_rotation,
         colorbar_title=colorbar_title,
         return_fig=True,
+        layer=layer,
+        figsize=figsize,
         show=False,
     )
 
@@ -3886,6 +4108,122 @@ def matrixplot_with_row_colors(
         cax = axes["color_legend_ax"]
         cax.title.set_fontsize(12)
         cax.tick_params(labelsize=10)
+
+    scalar_colorbar_keys = {"values", "array", "data", "cax", "ticks", "ticklabels", "vmin", "vmax", "orientation", "cmap"}
+
+    def _add_secondary_colorbar(colorbar_spec: dict) -> None:
+        values = colorbar_spec.get("values")
+        if values is None:
+            values = colorbar_spec.get("array")
+        if values is None:
+            values = colorbar_spec.get("data")
+
+        cmap_value = colorbar_spec.get("cmap", cmap)
+        orientation = colorbar_spec.get("orientation", "vertical")
+        label = colorbar_spec.get("label", colorbar_title)
+        vmin_value = colorbar_spec.get("vmin", vmin)
+        vmax_value = colorbar_spec.get("vmax", vmax)
+
+        if values is not None:
+            values = np.asarray(values)
+            if vmin_value is None:
+                vmin_value = np.nanmin(values)
+            if vmax_value is None:
+                vmax_value = np.nanmax(values)
+
+        if vmin_value is None:
+            vmin_value = 0
+        if vmax_value is None:
+            vmax_value = 1
+
+        norm = Normalize(vmin=vmin_value, vmax=vmax_value)
+        if isinstance(cmap_value, str):
+            cmap_obj = plt.get_cmap(cmap_value)
+        else:
+            cmap_obj = cmap_value
+
+        sm = ScalarMappable(norm=norm, cmap=cmap_obj)
+        sm.set_array([])
+
+        if colorbar_spec.get("cax") is not None:
+            cbar_ax = colorbar_spec["cax"]
+        else:
+            anchor_ax = axes.get("color_legend_ax", ax)
+            anchor_pos = anchor_ax.get_position()
+            width = colorbar_spec.get("width", 0.02 if orientation == "vertical" else 0.20)
+            pad = colorbar_spec.get("pad", 0.01)
+            height = colorbar_spec.get("height", anchor_pos.height if orientation == "vertical" else 0.03)
+            x0 = colorbar_spec.get("x0", min(anchor_pos.x1 + pad, 0.98 - width))
+            y0 = colorbar_spec.get("y0", anchor_pos.y0 if orientation == "vertical" else max(anchor_pos.y0 - pad - height, 0.02))
+            cbar_ax = fig.add_axes([x0, y0, width, height])
+
+        cbar = fig.colorbar(sm, cax=cbar_ax, orientation=orientation)
+
+        if label:
+            cbar.set_label(label)
+
+        ticks = colorbar_spec.get("ticks")
+        if ticks is not None:
+            cbar.set_ticks(ticks)
+
+        ticklabels = colorbar_spec.get("ticklabels")
+        if ticklabels is not None:
+            cbar.set_ticklabels(ticklabels)
+
+    if secondary_colorbar:
+        if not isinstance(secondary_colorbar, Mapping):
+            raise TypeError("secondary_colorbar must be a dictionary when provided.")
+
+        spec_keys = set(secondary_colorbar.keys())
+        if spec_keys & scalar_colorbar_keys:
+            _add_secondary_colorbar(secondary_colorbar)
+        else:
+            # Backwards-compatible shorthand: interpret a plain label->color mapping
+            # as a categorical legend strip placed to the right of the matrixplot.
+            categorical_colors = {k: v for k, v in secondary_colorbar.items() if k not in {"label", "width", "pad", "x0", "y0", "height", "edgecolor", "linewidth", "labelsize"}}
+            anchor_ax = axes.get("color_legend_ax", ax)
+            anchor_pos = anchor_ax.get_position()
+            width = secondary_colorbar.get("width", row_bar_w)
+            pad = secondary_colorbar.get("pad", row_bar_gap)
+            x0 = secondary_colorbar.get("x0", min(anchor_pos.x1 + pad, 0.98 - width))
+            y0 = secondary_colorbar.get("y0", anchor_pos.y0)
+            height = secondary_colorbar.get("height", anchor_pos.height)
+            cbar_ax = fig.add_axes([x0, y0, width, height])
+            cbar_ax.set_xlim(0, 1)
+            cbar_ax.set_ylim(ax.get_ylim())
+            cbar_ax.axis("off")
+
+            yticks = ax.get_yticks()
+            ylabels = [t.get_text() for t in ax.get_yticklabels()]
+            step = np.diff(yticks).min() if len(yticks) > 1 else 1
+
+            for y, lab in zip(yticks, ylabels):
+                color = categorical_colors.get(lab)
+                if color is not None:
+                    cbar_ax.add_patch(
+                        plt.Rectangle(
+                            (row_bar_x, y - step / 2),
+                            row_bar_width_data,
+                            step,
+                            facecolor=color,
+                            transform=cbar_ax.transData,
+                            clip_on=False,
+                            edgecolor=secondary_colorbar.get("edgecolor", row_bar_edgecolor),
+                            linewidth=secondary_colorbar.get("linewidth", row_bar_linewidth),
+                        )
+                    )
+
+            label = secondary_colorbar.get("label")
+            if label:
+                cbar_ax.text(
+                    0.5,
+                    1.02,
+                    str(label),
+                    ha="center",
+                    va="bottom",
+                    transform=cbar_ax.transAxes,
+                    fontsize=secondary_colorbar.get("labelsize", 10),
+                )
 
     if add_row_color_bar:
         pos = ax.get_position()
@@ -3917,6 +4255,42 @@ def matrixplot_with_row_colors(
                         linewidth=row_bar_linewidth,
                     )
                 )
+
+    # Extra categorical strips are keyed by row label, never by pre-cluster order.
+    if additional_row_colors is not None:
+        if not isinstance(additional_row_colors, Mapping):
+            raise TypeError('additional_row_colors must map strip names to label/color mappings')
+        gap = row_bar_gap if additional_row_bar_gap is None else additional_row_bar_gap
+        if gap < 0 or row_bar_w <= 0:
+            raise ValueError('Row-strip width must be positive and gap nonnegative')
+        pos = ax.get_position()
+        labels = [tick.get_text() for tick in ax.get_yticklabels()]
+        ticks = ax.get_yticks()
+        step = np.diff(ticks).min() if len(ticks) > 1 else 1
+        x = pos.x0 - row_bar_gap - (row_bar_w if add_row_color_bar else 0)
+        for name, mapping in additional_row_colors.items():
+            if not isinstance(mapping, Mapping):
+                raise TypeError('Each additional row strip must be a label/color mapping')
+            missing = set(labels).difference(mapping)
+            if missing:
+                raise ValueError(f'Row colours missing for {sorted(missing)}')
+            x -= gap + row_bar_w
+            extra = fig.add_axes([x, pos.y0, row_bar_w, pos.height])
+            extra.set(xlim=(0, 1), ylim=ax.get_ylim())
+            extra.axis('off')
+            for y, label in zip(ticks, labels):
+                extra.add_patch(plt.Rectangle((0, y-step/2), 1, step,
+                    facecolor=mapping[label], edgecolor=row_bar_edgecolor,
+                    linewidth=row_bar_linewidth, clip_on=False))
+            axes[f'row_colors_{name}'] = extra
+            if row_color_labels:
+                extra.text(.5, -.015, str(name), ha='center', va='top', rotation=90,
+                           transform=extra.transAxes, fontsize=y_labelsize)
+    if add_row_color_bar:
+        axes['row_colors_population'] = row_ax
+        if row_color_labels:
+            row_ax.text(.5, -.015, 'Population', ha='center', va='top', rotation=90,
+                        transform=row_ax.transAxes, fontsize=y_labelsize)
 
     if out_path is not None:
         out_path = Path(out_path)

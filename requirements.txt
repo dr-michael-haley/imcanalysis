@@ -21,6 +21,7 @@ pydantic>=2.4,<3
 typer>=0.12,<1
 
 # Plotting and spatial tools
+# Optional SVG-to-PNG previews: install SpatialBiologyToolkit[svg] (CairoSVG + Cairo runtime).
 matplotlib
 seaborn
 imageio

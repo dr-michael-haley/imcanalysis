@@ -65,6 +65,8 @@ setup(
     ],
 
     extras_require={
+        # Optional SVG-to-PNG rendering; editable SVG composition uses stdlib XML.
+        "svg": ["cairosvg>=2.7"],
         "headless": [],
         "nodl": [],
         "nodev": [],
