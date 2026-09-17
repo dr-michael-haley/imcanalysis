@@ -793,6 +793,9 @@ def create_backgating_assessment(adata, population_columns, viz_config, general_
                         max_quantile=viz_config.backgating_max_quantile,
                         # Population overview setttings
                         population_overlay_save_svg=viz_config.backgating_population_overlay_save_svg,
+                        population_overlay_comparison_images=viz_config.backgating_population_overlay_comparison_images,
+                        population_overlay_primary_title=viz_config.backgating_population_overlay_primary_title,
+                        population_overlay_title_fontsize=viz_config.backgating_population_overlay_title_fontsize,
                         population_overlay_outline_width=viz_config.backgating_population_overlay_outline_width,
                         population_overlay_legend_fontsize=viz_config.backgating_population_overlay_legend_fontsize,
                         population_overlay_crop_size=tuple(viz_config.backgating_population_overlay_crop_size) if viz_config.backgating_population_overlay_crop_size is not None else None,

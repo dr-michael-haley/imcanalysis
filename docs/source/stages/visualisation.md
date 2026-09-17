@@ -120,6 +120,15 @@ and editable SVG output. Memory still needs to accommodate the input AnnData,
 one full-resolution ROI and its rendering buffers, plus the requested gallery.
 They do not guarantee that arbitrarily large individual ROIs will fit in RAM.
 
+File-only backgating plots run inside a temporary noninteractive Matplotlib
+context. This matters in Jupyter: the inline backend otherwise queues figures
+until the notebook cell finishes, even after `plt.close`, retaining render
+buffers across thousands of ROI overlays. The caller's interactive setting and
+existing figures are preserved. Direct `create_population_overlay` calls with
+no output paths still display interactively. Overlay population labels are
+converted to strings only after filtering to the current ROI. An overlay
+`MemoryError` stops the assessment rather than silently skipping more ROIs.
+
 ### Thumbnail sampling and editable galleries
 
 The default gallery sampling remains `random`: up to `cells_per_group` eligible
@@ -258,6 +267,81 @@ new layers. Inkscape layer metadata is also included. Fonts must be available on
 the editing machine to retain the exact typography. These exports have been
 checked structurally and rendered in automated tests; Illustrator import is not
 part of those tests.
+
+### Comparing other image modalities
+
+Add `population_overlay_comparison_images` to a notebook assessment call to
+place other modalities alongside each IMC population overlay. Each entry can be
+a folder path or a dictionary of panel settings:
+
+```python
+backgating.backgating_assessment(
+    # ...your existing arguments...
+    adata=adata,
+    image_folder="Images_panel1_cells",
+    pop_obs="Specific",
+    population_overlay_comparison_images=[
+        {"folder": "Images_HE", "title": "H&E"},
+        {
+            "folder": "Images_predictions",
+            "title": "Predicted tissue classes",
+            "legend": {"Tumour": "#e45756", "Stroma": [0, 180, 120]},
+            "interpolation": "nearest",
+            "show_cell_outlines": True,
+        },
+    ],
+    population_overlay_primary_title="IMC",
+    population_overlay_title_fontsize=30,
+    population_overlay_legend_fontsize=18,
+    population_overlay_save_svg=True,
+)
+```
+
+These are **already aligned images**, not inputs to a registration algorithm.
+They must cover the same full tissue extent and orientation as the corresponding
+IMC image. Different resolutions are resized to the IMC dimensions before
+applying the exact same crop, including an intelligent crop. This supports
+PNG, JPEG, BMP and single-plane grayscale/RGB/RGBA TIFF images. Multichannel
+scientific stacks must first be exported as a display image. Bilinear resizing
+is the default; use `nearest` for categorical colour maps to retain their colours.
+
+Folders are indexed recursively once per assessment. Matching prefers an exact
+ROI filename stem, then tolerates case, separators and leading zeroes, then
+prefixes/suffixes (for example, `HE_ROI-001_registered.png` for `ROI_1`). Numeric
+boundaries are preserved, so `ROI_1` cannot match `ROI_10`. Multiple matches at
+the best matching tier produce a labelled placeholder and a warning, as do
+missing or unreadable images; the IMC overlay is still saved. An invalid folder
+raises an error before plotting starts. Each saved overlay has a
+`.comparisons.json` sidecar recording matches, original/target dimensions and
+crop coordinates.
+
+Omit `title` to use the folder name, or set it to `""` to hide it. Optional
+`legend` entries appear in a black box at the top right, using colour strings or
+RGB triples in 0–255. The primary title can be hidden with `None` or `""`.
+Comparison panels have no additional scale bars. `show_cell_outlines=True`
+repeats the same backgated cell contours (or centers when no mask is available).
+It defaults to `False` to leave the other image unobscured.
+
+Set `population_overlay_title_fontsize` to control the shared IMC and comparison
+panel title size independently of `population_overlay_legend_fontsize` (both in
+points). Its default, `None`, preserves the previous behaviour of using the
+legend size for titles. This does not change the population label inside the
+image. For direct `plotting.create_population_overlay` calls, use
+`title_fontsize`; the pipeline key is
+`visualization.backgating_population_overlay_title_fontsize`.
+
+PNG previews contain all panels. SVGs keep each comparison image, title, legend
+and optional cell outlines in separate editable groups, which remain grouped
+when used in SVG population-overlay galleries. Image pixels remain raster;
+titles, legends and cell paths remain editable. Images are decoded one at a time
+and only the visible comparison crop is retained in the figure. Adding panels
+still increases the figure's rendering memory and width.
+
+For `plotting.create_population_overlay`, use the shorter arguments
+`comparison_images` and `primary_title`. The `vis` pipeline exposes identical
+settings under `visualization.backgating_population_overlay_comparison_images`
+and `visualization.backgating_population_overlay_primary_title`. With no
+comparison images, the existing single-panel layout is unchanged.
 
 ### Galleries of editable population overlays
 

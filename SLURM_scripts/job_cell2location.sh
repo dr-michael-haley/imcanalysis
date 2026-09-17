@@ -2,9 +2,7 @@
 #SBATCH -p gpuA
 #SBATCH -G 1
 #SBATCH -t 2-0
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
+#SBATCH -n 12
 
 set -euo pipefail
 

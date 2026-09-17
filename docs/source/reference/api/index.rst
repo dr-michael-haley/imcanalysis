@@ -11,6 +11,7 @@ This reference is split by module so the site navigation stays compact.
    :maxdepth: 1
 
    _napari_imc_normalization
+   _overlay_comparisons
    backgating
    cell2location_analysis
    cell2location_contract

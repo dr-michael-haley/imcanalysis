@@ -2447,7 +2447,7 @@ def _save_population_overlay_svg(fig, output_path, *, layers=None, font_family='
         root = ET.fromstring(buffer.getvalue())
     _set_svg_font_family(root, font_family)
 
-    layers = layers if layers is not None else {
+    layers = dict(layers) if layers is not None else {
         'source_image': 'Source image',
         'cell_outlines': 'Cell outlines',
         'cell_centers': 'Cell centers',
@@ -2455,7 +2455,17 @@ def _save_population_overlay_svg(fig, output_path, *, layers=None, font_family='
         'scale_bar_text': 'Scale bar text',
         'marker_legend': 'Marker legend',
         'population_label': 'Population label',
+        'primary_panel_title': 'Primary panel title',
     }
+    # Comparison image pixels, text, legends and cell paths stay independently
+    # editable, including when these SVGs are subsequently assembled into grids.
+    import re
+    for element in root.iter():
+        match = re.fullmatch(r'(comparison_\d+)_(image|title|legend|missing|cell_centers|cell_outline_.+)', element.get('id', ''))
+        if match:
+            prefix, component = match.groups()
+            component = 'cell_outlines' if component.startswith('cell_outline_') else component
+            layers.setdefault(f'{prefix}_{component}', f'{prefix.replace("_", " ").title()}: {component.replace("_", " ")}')
     # Keep backend transforms, clipping, and drawing order intact. Gather the
     # individual cell paths and the two scale-bar rectangles at their parent.
     for parent in list(root.iter()):
@@ -2464,6 +2474,8 @@ def _save_population_overlay_svg(fig, output_path, *, layers=None, font_family='
             gid = child.get('id', '')
             key = ('cell_outlines' if gid.startswith('cell_outline_') else
                    'scale_bar' if gid in ('scale_bar_fill', 'scale_bar_outline') else gid)
+            if re.fullmatch(r'comparison_\d+_cell_outline_.+', gid):
+                key = gid.split('_cell_outline_')[0] + '_cell_outlines'
             if key not in layers:
                 continue
             if key not in groups:
@@ -2593,6 +2605,9 @@ def create_population_overlay(
     scale_bar_text_size: int = 10,
     svg_output_path: str | None = None,
     font_family: str = 'Arial',
+    comparison_images=None,
+    primary_title: str | None = 'IMC',
+    title_fontsize: float | None = None,
 ):
     """
     Create an overlay visualization showing all cells of a specific population
@@ -2637,6 +2652,16 @@ def create_population_overlay(
         font_family: Single font family for labels, legend and scale-bar text,
             default 'Arial'. SVG keeps editable text and references this font;
             the font must be installed on the machine rendering/editing it.
+        comparison_images: List of image folders or dicts with folder, title,
+            legend (label to colour string or RGB triple in 0..255), interpolation
+            ('bilinear' or 'nearest'), and show_cell_outlines (default False).
+            ROI-matched images are resized to the full IMC grid then share its
+            crop. Images must cover the same tissue extent/orientation; no image
+            registration is performed. Missing/ambiguous matches show a placeholder.
+            Comparison components remain separate in SVG; only IMC has a scale bar.
+        primary_title: Title of the IMC panel when comparisons are enabled.
+        title_fontsize: Shared panel-title font size in points. None uses
+            legend_fontsize; explicit values do not change legend text size.
         
     Returns:
         Matplotlib Figure, closed after saving if output_path is provided.
@@ -2644,6 +2669,8 @@ def create_population_overlay(
     import matplotlib.pyplot as plt
     from matplotlib.patches import PathPatch, Rectangle
     _svg_font_family(font_family)
+    from ._overlay_comparisons import prepare_comparison_images, add_comparison_panels
+    comparison_sources = prepare_comparison_images(comparison_images)
     
     # Load composite image
     if not Path(composite_image_path).exists():
@@ -3031,6 +3058,15 @@ def create_population_overlay(
                           fontfamily=font_family,
                           va='top', ha='left')
     
+    comparison_metadata = []
+    if comparison_sources:
+        comparison_metadata = add_comparison_panels(
+            fig, ax, comparison_sources, roi_name, composite_img.shape[:2],
+            primary_title=primary_title, font_family=font_family,
+            fontsize=legend_fontsize, contour_artists=contour_artists,
+            title_fontsize=title_fontsize,
+        )
+
     # Save if output path provided
     if output_path or svg_output_path:
         # Save tightly around the axes with no padding to avoid a white border
@@ -3048,6 +3084,10 @@ def create_population_overlay(
                     fig.savefig(output_path, **save_kwargs)
             if svg_output_path and (not output_path or Path(svg_output_path) != Path(output_path)):
                 _save_population_overlay_svg(fig, svg_output_path, font_family=font_family, **save_kwargs)
+            if comparison_metadata:
+                import json
+                metadata_path = Path(output_path or svg_output_path).with_suffix('.comparisons.json')
+                metadata_path.write_text(json.dumps(comparison_metadata, indent=2), encoding='utf-8')
         finally:
             plt.close(fig)
     else:

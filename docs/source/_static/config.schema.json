@@ -1,5 +1,69 @@
 {
   "$defs": {
+    "BackgatingComparisonImageConfig": {
+      "additionalProperties": false,
+      "description": "One registered image modality shown alongside the IMC overlay.",
+      "properties": {
+        "folder": {
+          "description": "Folder searched recursively for ROI-matched raster images.",
+          "minLength": 1,
+          "title": "Folder",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Panel title; null uses the folder name and an empty string hides it.",
+          "title": "Title"
+        },
+        "legend": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              }
+            ]
+          },
+          "description": "Top-right colour legend: label to colour name/hex or RGB triple in 0..255.",
+          "title": "Legend",
+          "type": "object"
+        },
+        "interpolation": {
+          "default": "bilinear",
+          "description": "Resizing method; use nearest for categorical label images.",
+          "enum": [
+            "bilinear",
+            "nearest"
+          ],
+          "title": "Interpolation",
+          "type": "string"
+        },
+        "show_cell_outlines": {
+          "default": false,
+          "description": "Repeat the IMC cell outlines (or centers if no mask) on this panel.",
+          "title": "Show Cell Outlines",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "folder"
+      ],
+      "title": "BackgatingComparisonImageConfig",
+      "type": "object"
+    },
     "BasicProcessConfig": {
       "description": "Legacy process config retained for backward compatibility.\nAnnData path management now belongs in GeneralConfig.",
       "properties": {
@@ -13085,6 +13149,60 @@
           "stage": "visualization",
           "title": "Backgating Population Overlay Save Svg",
           "type": "boolean",
+          "ui_group": "Visualization"
+        },
+        "backgating_population_overlay_comparison_images": {
+          "advice": "",
+          "description": "Side-by-side image folders or panel settings (folder, title, legend, interpolation, show_cell_outlines). Match ROI filenames, resize to the IMC grid, then share its crop. Images must already cover the same tissue extent and orientation. Missing/ambiguous matches are labelled; no extra scale bars are added.",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "$ref": "#/$defs/BackgatingComparisonImageConfig"
+              }
+            ]
+          },
+          "level": "advanced",
+          "stage": "visualization",
+          "title": "Backgating Population Overlay Comparison Images",
+          "type": "array",
+          "ui_group": "Visualization"
+        },
+        "backgating_population_overlay_primary_title": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "IMC",
+          "description": "Primary panel title when comparison images are enabled; null or an empty string hides it.",
+          "level": "advanced",
+          "stage": "visualization",
+          "title": "Backgating Population Overlay Primary Title",
+          "ui_group": "Visualization"
+        },
+        "backgating_population_overlay_title_fontsize": {
+          "advice": "",
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Shared IMC and comparison panel title size in points, independent of legend text. Null uses backgating_population_overlay_legend_fontsize.",
+          "level": "advanced",
+          "stage": "visualization",
+          "title": "Backgating Population Overlay Title Fontsize",
           "ui_group": "Visualization"
         },
         "backgating_population_overlay_outline_width": {

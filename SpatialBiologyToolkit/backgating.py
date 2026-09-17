@@ -1512,6 +1512,9 @@ def backgating_assessment(
     gallery_save_svg: bool = True,
     font_family: str = 'Arial',
     gallery_balance_rois: bool = True,
+    population_overlay_comparison_images=None,
+    population_overlay_primary_title: Optional[str] = 'IMC',
+    population_overlay_title_fontsize: Optional[float] = None,
 ):
     """
     Perform a backgating assessment on a supplied adata.obs grouping (populations).
@@ -1594,6 +1597,18 @@ def backgating_assessment(
             The source image, individual cell outlines, scale bar, scale-bar text,
             marker legend and population label are separate editable groups.
             Illustrator may show these groups beneath a single native layer.
+        population_overlay_comparison_images: List of image folders or panel dicts
+            with folder, title, legend (label to colour string or RGB in 0..255),
+            interpolation ('bilinear' or 'nearest'), and show_cell_outlines
+            (default False). ROI-matched images are resized to the IMC grid and
+            share its crop; they must have the same tissue extent/orientation.
+            Titles and legends remain editable in SVG. Missing or ambiguous
+            matches show placeholders; a .comparisons.json sidecar records matches.
+        population_overlay_primary_title: IMC panel title when comparisons are
+            enabled (default 'IMC'); None or an empty string hides the title.
+        population_overlay_title_fontsize: Shared font size in points for the
+            IMC and comparison panel titles, independent of legend text. None
+            uses population_overlay_legend_fontsize for backward compatibility.
         show_gallery_titles:    Whether to show titles of ROIs and figure in cell gallery.
 
         minimum, max_quantile:
@@ -1634,6 +1649,10 @@ def backgating_assessment(
     """
     _validate_gallery_options(gallery_sampling, cells_per_group, gallery_umap_weight, gallery_balance_rois)
     _svg_font_family(font_family)
+    from ._overlay_comparisons import prepare_comparison_images
+    comparison_sources = prepare_comparison_images(population_overlay_comparison_images) if (
+        population_overlays and mode != 'save_markers'
+    ) else []
     if markers_exclude is None:
         markers_exclude = []
     if only_use_markers is None:
@@ -2074,6 +2093,9 @@ def backgating_assessment(
                         scale_bar_text_size=population_overlay_scale_bar_text_size,
                         svg_output_path=str(svg_output_path) if svg_output_path else None,
                         font_family=font_family,
+                        comparison_images=comparison_sources,
+                        primary_title=population_overlay_primary_title,
+                        title_fontsize=population_overlay_title_fontsize,
                     )
                     
                     if overlay_fig is not None:

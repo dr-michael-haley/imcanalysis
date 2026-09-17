@@ -161,6 +161,9 @@ def test_backgating_export_and_gallery_companion(tmp_path, scene, monkeypatch, e
         'Red_max': [1], 'Green_max': [1], 'Blue_max': [1],
     }, index=['T'])
     settings.to_csv(tmp_path / 'backgating_settings.csv')
+    comparison_folder = tmp_path / 'other_modality'
+    comparison_folder.mkdir()
+    io.imsave(comparison_folder / 'R1.png', scene[1], check_contrast=False)
 
     def fake_backgating(**kwargs):
         assert kwargs['font_family'] == 'Arial'
@@ -178,10 +181,22 @@ def test_backgating_export_and_gallery_companion(tmp_path, scene, monkeypatch, e
         mode='load_markers', pops_list=['T'], use_masks=False,
         population_overlay_extension=extension, population_overlay_save_svg=save_svg,
         gallery_sampling='intelligent', gallery_markers=['CD3'], gallery_umap_weight=0.1,
+        population_overlay_comparison_images=[dict(folder=comparison_folder, title='Other modality')],
+        population_overlay_primary_title='Original IMC',
     )
     folder = tmp_path / 'T' / 'population_overlays'
     assert (folder / 'R1_population_overlay.png').is_file()
     assert (folder / 'R1_population_overlay.svg').is_file() == (save_svg or extension == 'svg')
+    import json
+    record, = json.loads((folder / 'R1_population_overlay.comparisons.json').read_text())
+    assert record['status'] == 'matched'
+    assert record['title'] == 'Other modality'
     assert backgating._find_population_overlay_image(tmp_path, 'T', 'R1').suffix == '.png'
     gallery = backgating.create_population_overlay_galleries(tmp_path, ['T'], 1, 1)
     assert (gallery / 'R1_population_gallery.png').is_file()
+    if save_svg or extension == 'svg':
+        backgating.create_population_overlay_galleries(tmp_path, ['T'], 1, 1, output_format='svg')
+        root = ET.parse(gallery / 'R1_population_gallery.svg').getroot()
+        assert len(root.findall('.//s:image', SVG)) == 2
+        assert root.find('.//s:g[@id="panel_001_source_comparison_1_image"]', SVG) is not None
+        assert root.find('.//s:g[@id="panel_001_source_comparison_1_title"]', SVG) is not None

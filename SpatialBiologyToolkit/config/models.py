@@ -4643,6 +4643,26 @@ class BasicProcessConfig(BioBatchNetConfig):
     input_adata_path: str = 'anndata.h5ad'
     output_adata_path: str = 'anndata_processed.h5ad'
 
+class BackgatingComparisonImageConfig(ConfigModel):
+    """One registered image modality shown alongside the IMC overlay."""
+
+    model_config = ConfigDict(extra='forbid')
+    folder: str = Field(min_length=1, description="Folder searched recursively for ROI-matched raster images.")
+    title: Optional[str] = Field(default=None, description="Panel title; null uses the folder name and an empty string hides it.")
+    legend: Dict[str, Union[str, List[float]]] = Field(default_factory=dict, description="Top-right colour legend: label to colour name/hex or RGB triple in 0..255.")
+    interpolation: Literal['bilinear', 'nearest'] = Field(default='bilinear', description="Resizing method; use nearest for categorical label images.")
+    show_cell_outlines: bool = Field(default=False, description="Repeat the IMC cell outlines (or centers if no mask) on this panel.")
+
+    @model_validator(mode='after')
+    def validate_legend_rgb(self):
+        for label, color in self.legend.items():
+            if not isinstance(color, str) and (
+                len(color) != 3 or any(not math.isfinite(c) or not 0 <= c <= 255 for c in color)
+            ):
+                raise ValueError(f'Legend color for {label!r} must be an RGB triple in 0..255.')
+        return self
+
+
 @config_section("visualization")
 class VisualizationConfig(ConfigModel):
     # Input data settings
@@ -4737,6 +4757,9 @@ class VisualizationConfig(ConfigModel):
 
     # Population overlay visualization settings
     backgating_population_overlay_save_svg: bool = Field(default=False, description="Save an additional editable SVG for each backgating population overlay, with separate source-image, per-cell-outline, scale-bar, legend, and label groups; retain raster previews for galleries.")
+    backgating_population_overlay_comparison_images: List[Union[str, BackgatingComparisonImageConfig]] = Field(default_factory=list, description="Side-by-side image folders or panel settings (folder, title, legend, interpolation, show_cell_outlines). Match ROI filenames, resize to the IMC grid, then share its crop. Images must already cover the same tissue extent and orientation. Missing/ambiguous matches are labelled; no extra scale bars are added.")
+    backgating_population_overlay_primary_title: Optional[str] = Field(default='IMC', description="Primary panel title when comparison images are enabled; null or an empty string hides it.")
+    backgating_population_overlay_title_fontsize: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False, description="Shared IMC and comparison panel title size in points, independent of legend text. Null uses backgating_population_overlay_legend_fontsize.")
     backgating_population_overlay_outline_width: int = Field(default=1, description="Contour width in pixels around target cells in backgating population overlays.")
     backgating_population_overlay_legend_fontsize: int = Field(default=24, description="Font size for marker and population labels on backgating overlays.")
     backgating_population_overlay_crop_size: Optional[List[int]] = Field(default_factory=lambda: [300, 300], description="Optional overlay crop size as [width, height] pixels; null retains the complete ROI.")
