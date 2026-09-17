@@ -24,7 +24,8 @@ from skimage.measure import find_contours
 
 # Import population overlay function from plotting module
 from .plotting import (create_population_overlay, _population_cell_paths,
-                       _save_population_overlay_svg, _set_svg_font_family, _svg_font_family)
+                       _save_population_overlay_svg, _set_svg_font_family, _svg_font_family,
+                       _noninteractive_plotting)
 
 
 def clean_text(text: str) -> str:
@@ -98,34 +99,15 @@ def load_single_img(filename: str) -> np.ndarray:
     return img_in
 
 
-def load_imgs_from_directory(
+def _find_channel_files(
     load_directory: str,
     channel_name: str,
     quiet: bool = False,
     *,
     samples_list: Optional[List[str]] = None,
-) -> Optional[Tuple[List[np.ndarray], List[str], List[str]]]:
-    """
-    Searches a directory (and any subfolders) for images whose filenames
-    contain the given channel_name. Returns a list of those images and filenames.
-
-    Args:
-        load_directory (str): Directory or parent directory of images.
-        channel_name (str): Channel name to search for in the filenames.
-        quiet (bool): Whether to suppress print statements.
-        samples_list (List[str] or None): Restrict ROI folders before reading
-            image data. None searches all folders.
-
-    Returns:
-        Optional[Tuple[List[np.ndarray], List[str], List[str]]]:
-            - A list of images (2D numpy arrays)
-            - A list of corresponding filenames
-            - A list of the subfolders from which images were loaded
-              If no images are found, returns None.
-    """
-    img_collect = []
-    img_file_list = []
-    matched_folders = []
+) -> List[Tuple[str, str]]:
+    """Find (TIFF path, ROI folder) pairs without loading image pixels."""
+    matches = []
 
     # Find any subdirectories (one level down). If none found, use load_directory itself.
     img_folders = glob(os.path.join(load_directory, "*", "")) or [load_directory]
@@ -159,23 +141,63 @@ def load_imgs_from_directory(
 
             # Check if channel name matches any token or token-pair exactly
             if channel_lower in filename_tokens or channel_lower in token_pairs:
-                img_read = load_single_img(os.path.join(subfolder, candidate_file))
                 if not quiet:
                     logging.debug(os.path.join(subfolder, candidate_file))
-                img_file_list.append(candidate_file)
-                img_collect.append(img_read)
-                matched_folders.append(subfolder)
+                matches.append((os.path.join(subfolder, candidate_file), subfolder))
                 # Break once we find the first matching file per subfolder.
                 break
 
     if not quiet:
         logging.info('Image data loading completed!')
 
-    if not img_collect:
-        logging.warning(f'No files found with channel name "{channel_name}".')
-        return None
+    return matches
 
-    return img_collect, img_file_list, matched_folders
+
+def load_imgs_from_directory(
+    load_directory: str, channel_name: str, quiet: bool = False, *,
+    samples_list: Optional[List[str]] = None,
+) -> Optional[Tuple[List[np.ndarray], List[str], List[str]]]:
+    """Load matching TIFFs, filtering ROI folders before reading image data.
+
+    Returns parallel image, filename and folder lists, or None when absent.
+    """
+    matches = _find_channel_files(load_directory, channel_name, quiet, samples_list=samples_list)
+    if not matches:
+        logging.warning('No files found with channel name "%s".', channel_name)
+        return None
+    return ([load_single_img(path) for path, _ in matches],
+            [Path(path).name for path, _ in matches], [folder for _, folder in matches])
+
+
+def _parse_image_maximum(max_val):
+    # Resolve the effective channel maximum before deciding which TIFFs to read.
+    mode = 'value'
+    max_spec = max_val.strip().lower() if isinstance(max_val, str) else max_val
+    if isinstance(max_spec, str) and max_spec[:1] in ('q', 'i', 'm', 'x'):
+        prefix = max_spec[0]
+        try:
+            max_quantile = float(max_spec[1:])
+        except ValueError:
+            raise ValueError(f"Could not parse quantile from '{max_val}'") from None
+        if not np.isfinite(max_quantile) or not 0 <= max_quantile <= 1:
+            raise ValueError(f"Quantile must be between 0 and 1: '{max_val}'")
+        if prefix == 'q':
+            mode = 'mean_quantile'
+        elif prefix == 'i':
+            mode = 'individual_quantile'
+        elif prefix == 'm':
+            mode = 'minimum_quantile'
+        elif prefix == 'x':
+            mode = 'max_quantile'
+    else:
+        try:
+            max_value = float(max_spec)
+        except (TypeError, ValueError):
+            raise ValueError(f"Expected a numeric maximum or q/i/m/x quantile, got {max_val!r}") from None
+        if not np.isfinite(max_value):
+            raise ValueError(f"Maximum must be finite, got {max_val!r}")
+
+    return mode, max_value if mode == 'value' else max_quantile
 
 
 def load_rescale_images(
@@ -215,32 +237,8 @@ def load_rescale_images(
             - Matching list of ROI names
             - List of max values used per ROI (same order)
     """
-    # Resolve the effective channel maximum before deciding which TIFFs to read.
-    mode = 'value'
-    max_spec = max_val.strip().lower() if isinstance(max_val, str) else max_val
-    if isinstance(max_spec, str) and max_spec[:1] in ('q', 'i', 'm', 'x'):
-        prefix = max_spec[0]
-        try:
-            max_quantile = float(max_spec[1:])
-        except ValueError:
-            raise ValueError(f"Could not parse quantile from '{max_val}'") from None
-        if not np.isfinite(max_quantile) or not 0 <= max_quantile <= 1:
-            raise ValueError(f"Quantile must be between 0 and 1: '{max_val}'")
-        if prefix == 'q':
-            mode = 'mean_quantile'
-        elif prefix == 'i':
-            mode = 'individual_quantile'
-        elif prefix == 'm':
-            mode = 'minimum_quantile'
-        elif prefix == 'x':
-            mode = 'max_quantile'
-    else:
-        try:
-            max_value = float(max_spec)
-        except (TypeError, ValueError):
-            raise ValueError(f"Expected a numeric maximum or q/i/m/x quantile, got {max_val!r}") from None
-        if not np.isfinite(max_value):
-            raise ValueError(f"Maximum must be finite, got {max_val!r}")
+    mode, maximum = _parse_image_maximum(max_val)
+    max_value = max_quantile = maximum
 
     eligible_rois = _normalize_roi_names(samples_list)
     output_rois = eligible_rois
@@ -349,6 +347,8 @@ def make_images(
     Create composite RGB images from up to seven channels. Each channel can be
     mapped onto red/green/blue/magenta/cyan/yellow/white in an additive manner
     (as done by typical multi-channel viewers).
+    Processes one ROI and channel at a time. Cohort quantiles use a streaming
+    calibration pass, then reread only the ROIs being saved.
 
     Args:
         image_folder (str): Folder of subfolders where each ROI is stored.
@@ -387,96 +387,66 @@ def make_images(
         'white':   (white,   white_range),
     }
 
-    # For each color channel, load images & ROI lists
-    loaded_images = {}  # color -> list of scaled images
-    loaded_rois = {}    # color -> list of ROI names
+    # Keep paths and scalar bounds, never a collection of full-resolution images.
+    eligible_rois = _normalize_roi_names(samples_list)
+    save_set = set(eligible_rois if save_samples_list is None else _normalize_roi_names(save_samples_list))
+    sources = {}
     rescale_rows = []
-
-    for color_name, (marker_name, color_range) in color_configs.items():
-        if marker_name is not None:
-            # Determine the min/max for this channel if provided
-            if color_range is not None:
-                ch_min, ch_max = color_range
-            else:
-                ch_min, ch_max = (minimum, max_quantile)
-
-            imgs, rois, max_values = load_rescale_images(
-                image_folder, samples_list,
-                marker=marker_name,
-                minimum=ch_min,
-                max_val=ch_max,
-                save_samples_list=save_samples_list,
-            )
-            loaded_images[color_name] = imgs
-            loaded_rois[color_name] = rois
-            if rois and max_values:
-                for roi_name, max_used in zip(rois, max_values):
-                    rescale_rows.append({
-                        'roi': str(roi_name),
-                        'channel': str(color_name),
-                        'marker': str(marker_name),
-                        'min_used': ch_min,
-                        'max_used': max_used,
-                    })
+    for color, (marker, color_range) in color_configs.items():
+        if marker is None:
+            continue
+        ch_min, ch_max = color_range if color_range is not None else (minimum, max_quantile)
+        mode, maximum = _parse_image_maximum(ch_max)
+        cohort_quantile = mode in ('mean_quantile', 'minimum_quantile', 'max_quantile')
+        read_scope = eligible_rois if cohort_quantile else [roi for roi in eligible_rois if roi in save_set]
+        files = {Path(folder).name: path for path, folder in
+                 _find_channel_files(image_folder, marker, quiet=True, samples_list=read_scope)}
+        saved_files = {roi: path for roi, path in files.items() if roi in save_set}
+        if not saved_files:
+            continue
+        if cohort_quantile:
+            logging.info('Marker=%s | Calibrating %s across %d ROIs one image at a time.',
+                         marker, ch_max, len(files))
+            quantiles = []
+            for path in files.values():
+                image = load_single_img(path)
+                quantiles.append(np.quantile(image, maximum))
+                del image
+            reduce = {'mean_quantile': np.mean, 'minimum_quantile': np.min, 'max_quantile': np.max}[mode]
+            maximum = float(reduce(quantiles))
+            mode = 'value'
         else:
-            # This color not used
-            loaded_images[color_name] = []
-            loaded_rois[color_name] = []
+            logging.info('Marker=%s | %s; reading only %d requested ROI(s).',
+                         marker, 'Fixed bounds (no cohort calculation)' if mode == 'value'
+                         else 'Individual quantiles', len(saved_files))
+        sources[color] = (saved_files, ch_min, mode, maximum)
 
-    # Match by ROI name: channels can be absent from different folders.
-    images_by_roi = {
-        color: dict(zip(loaded_rois[color], loaded_images[color])) for color in color_configs
-    }
-    output_rois = list(dict.fromkeys(roi for rois in loaded_rois.values() for roi in rois))
-    logging.info('Saving composite images for %d ROI(s) across requested channels.', len(output_rois))
-
+    output_rois = list(dict.fromkeys(roi for files, *_ in sources.values() for roi in files))
+    logging.info('Saving composite images for %d ROI(s), one ROI at a time.', len(output_rois))
+    components = {'red': (0,), 'green': (1,), 'blue': (2,), 'magenta': (0, 2),
+                  'cyan': (1, 2), 'yellow': (0, 1), 'white': (0, 1, 2)}
     for roi_name in output_rois:
-        shape_ref = next(images[roi_name].shape for images in images_by_roi.values() if roi_name in images)
-        (h, w) = shape_ref
-
-        # Initialize R, G, B as zeros
-        channel_r = np.zeros((h, w), dtype=np.float32)
-        channel_g = np.zeros((h, w), dtype=np.float32)
-        channel_b = np.zeros((h, w), dtype=np.float32)
-
-        for color_name, (marker_name, _) in color_configs.items():
-            if marker_name is None:
-                # Not used
+        stack = None
+        for color, (files, ch_min, mode, maximum) in sources.items():
+            if roi_name not in files:
                 continue
-            # Attempt to find the ROI in that channel
-            if roi_name in images_by_roi[color_name]:
-                this_img = images_by_roi[color_name][roi_name]
-            else:
-                # no ROI found => fallback to zeros
-                this_img = np.zeros((h, w), dtype=np.float32)
-
-            if color_name == 'red':
-                channel_r = np.clip(channel_r + this_img, 0, 1)
-            elif color_name == 'green':
-                channel_g = np.clip(channel_g + this_img, 0, 1)
-            elif color_name == 'blue':
-                channel_b = np.clip(channel_b + this_img, 0, 1)
-            elif color_name == 'magenta':
-                # Magenta = Red + Blue
-                channel_r = np.clip(channel_r + this_img, 0, 1)
-                channel_b = np.clip(channel_b + this_img, 0, 1)
-            elif color_name == 'cyan':
-                # Cyan = Green + Blue
-                channel_g = np.clip(channel_g + this_img, 0, 1)
-                channel_b = np.clip(channel_b + this_img, 0, 1)
-            elif color_name == 'yellow':
-                # Yellow = Red + Green
-                channel_r = np.clip(channel_r + this_img, 0, 1)
-                channel_g = np.clip(channel_g + this_img, 0, 1)
-            elif color_name == 'white':
-                # White = Red + Green + Blue
-                channel_r = np.clip(channel_r + this_img, 0, 1)
-                channel_g = np.clip(channel_g + this_img, 0, 1)
-                channel_b = np.clip(channel_b + this_img, 0, 1)
-
-        # Stack channels
-        stack = np.dstack([channel_r, channel_g, channel_b])
+            image = load_single_img(files[roi_name])
+            max_used = float(np.quantile(image, maximum)) if mode == 'individual_quantile' else maximum
+            np.clip(image, ch_min, max_used, out=image)
+            image = exposure.rescale_intensity(image)
+            if stack is None:
+                stack = np.zeros((*image.shape, 3), dtype=np.float32)
+            if image.shape != stack.shape[:2]:
+                raise ValueError(f'Channel image shapes do not match for ROI {roi_name!r}.')
+            for component in components[color]:
+                plane = stack[:, :, component]
+                np.add(plane, image, out=plane)
+                np.clip(plane, 0, 1, out=plane)
+            del plane, image
+            rescale_rows.append(dict(roi=roi_name, channel=color,
+                                     marker=str(color_configs[color][0]), min_used=ch_min, max_used=max_used))
         stack_ubyte = img_as_ubyte(stack)
+        del stack
 
         # Build filename
         if not simple_file_names:
@@ -510,9 +480,11 @@ def make_images(
         with warnings.catch_warnings():
             warnings.filterwarnings('ignore', message='.*is a low contrast image')
             io.imsave(str(save_path), stack_ubyte)
+        del stack_ubyte
 
     if save_rescale_csv and rescale_rows:
-        rescale_df = pd.DataFrame(rescale_rows)
+        rescale_df = pd.DataFrame([row for color in color_configs for row in rescale_rows
+                                   if row['channel'] == color])
         rescale_dir = Path(output_folder)
         if save_subfolder:
             rescale_dir = rescale_dir / save_subfolder
@@ -607,21 +579,28 @@ def _select_gallery_cells(
         raise ValueError(f'Gallery markers not present in adata.var_names: {missing}')
     if layer is not None and layer not in adata.layers:
         raise ValueError(f'Gallery expression layer {layer!r} is not present in adata.layers.')
-    # AnnData slicing supports dense, sparse and backed inputs and keeps row IDs aligned.
-    subset = adata[positions, marker_positions]
-    matrix = subset.X if layer is None else subset.layers[layer]
+    # Read one marker vector at a time. AnnData views of all candidates/markers
+    # would materialize a complete candidate expression matrix here.
+    matrix = adata.X if layer is None else adata.layers[layer]
     if matrix is None:
         raise ValueError('Intelligent sampling requires an expression matrix.')
-    if hasattr(matrix, 'to_memory'):
-        matrix = matrix.to_memory()
     if sparse.issparse(matrix):
-        matrix = matrix.tocsc()
+        # Keep sparse row selection efficient; never densify this block.
+        matrix = matrix[positions][:, marker_positions].tocsc()
     valid = np.ones(n, dtype=bool)
     sum_squared = np.zeros(n, dtype=float)
     profiles = []
     varying = 0
     for j, marker in enumerate(markers):
-        values = matrix[:, j:j + 1]
+        marker_pos = marker_positions[j]
+        if sparse.issparse(matrix):
+            values = matrix[:, j:j + 1]
+        else:
+            # Backed AnnData handles unsorted candidate positions via its view.
+            view = adata[positions, marker_pos:marker_pos + 1]
+            values = view.X if layer is None else view.layers[layer]
+        if hasattr(values, 'to_memory'):
+            values = values.to_memory()
         if sparse.issparse(values):
             values = values.toarray()
         values = np.asarray(values, dtype=float).reshape(-1)
@@ -697,6 +676,7 @@ def _select_gallery_cells(
     return finish(selected, eligible)
 
 
+@_noninteractive_plotting()
 def backgating(
     adata,
     cell_index,
@@ -925,33 +905,23 @@ def backgating(
     # 3) Load those composite images from disk into a DataFrame
     # ----------------------------------------------------------------
     out_subdir = Path(output_folder) / save_subfolder
-    images = []
+    from PIL import Image
+    records = []
     for roi_name in roi_list:
         roi_path = out_subdir / f"{roi_name}.png"
         if roi_path.exists():
-            images.append(io.imread(str(roi_path)))
+            # PNG headers give dimensions without decoding/storing pixel arrays.
+            with Image.open(roi_path) as image_header:
+                width, height = image_header.size
+            records.append({roi_obs: roi_name, 'image_path': roi_path,
+                            'x_length': width, 'y_length': height})
         else:
-            images.append(None)
-
-    # Create df_images with object dtype so we can store arrays in cells.
-    df_images = pd.DataFrame({
-        roi_obs: roi_list,
-        'image': images
-    }, dtype=object)
-
-    # Drop any duplicates in case ROI names repeat
-    df_images.drop_duplicates(subset=roi_obs, inplace=True)
-    df_images.set_index(roi_obs, inplace=True)
-
-    # Create mask column with object dtype
-    df_images['mask'] = [None]*len(df_images)
-    df_images = df_images.astype({'mask': 'object'})
-
-    # For shapes
-    df_images['y_length'] = [img.shape[0] if img is not None else 0 for img in df_images['image']]
-    df_images['x_length'] = [img.shape[1] if img is not None else 0 for img in df_images['image']]
-
-    logging.info(f"DataFrame of images built for {len(df_images)} ROIs.")
+            records.append({roi_obs: roi_name, 'image_path': None,
+                            'x_length': 0, 'y_length': 0})
+    df_images = pd.DataFrame(records, columns=[roi_obs, 'image_path', 'x_length', 'y_length'])
+    df_images = df_images.drop_duplicates(subset=roi_obs).set_index(roi_obs)
+    df_images['mask_path'] = pd.Series(None, index=df_images.index, dtype=object)
+    logging.info('Indexed composite image paths for %d ROIs without loading pixels.', len(df_images))
 
     # ----------------------------------------------------------------
     # 4) Load segmentation masks, if requested
@@ -970,11 +940,11 @@ def backgating(
                 potential_tiff = Path(mask_folder) / f"{roi_name}.tiff"
 
                 if potential_tif.is_file():
-                    df_images.at[roi_name, 'mask'] = io.imread(str(potential_tif))
+                    df_images.at[roi_name, 'mask_path'] = potential_tif
                     #print(f"  Loaded mask for ROI='{roi_name}' -> {potential_tif}")
                 elif potential_tiff.is_file():
                     #print(roi_name)
-                    df_images.at[roi_name, 'mask'] = io.imread(str(potential_tiff))
+                    df_images.at[roi_name, 'mask_path'] = potential_tiff
                     #print(f"  Loaded mask for ROI='{roi_name}' -> {potential_tiff}")
                 else:
                     rois_to_exclude.append(roi_name)
@@ -991,7 +961,7 @@ def backgating(
                     if roi_name in mask_df.index:
                         mask_path = Path(mask_df.loc[roi_name, 'mask_path'])
                         if mask_path.is_file():
-                            df_images.at[roi_name, 'mask'] = io.imread(str(mask_path))
+                            df_images.at[roi_name, 'mask_path'] = mask_path
                             logging.debug(f"  Loaded mask for ROI='{roi_name}' -> {mask_path}")
                         else:
                             rois_to_exclude.append(roi_name)
@@ -1020,17 +990,11 @@ def backgating(
     adata_obs_cells['x_max'] = adata_obs_cells[roi_obs].map(df_images['x_length'])
     adata_obs_cells['y_max'] = adata_obs_cells[roi_obs].map(df_images['y_length'])
 
-    def in_range_func(row):
-        x = row[x_loc_obs]
-        y = row[y_loc_obs]
-        if pd.isna(row['x_max']) or pd.isna(row['y_max']) or row['x_max'] <= 0 or row['y_max'] <= 0:
-            return False
-        return (
-            (x - radius >= 0) and (x + radius < row['x_max']) and
-            (y - radius >= 0) and (y + radius < row['y_max'])
-        )
-
-    adata_obs_cells['in_range'] = adata_obs_cells.apply(in_range_func, axis=1)
+    x, y = adata_obs_cells[x_loc_obs], adata_obs_cells[y_loc_obs]
+    adata_obs_cells['in_range'] = (
+        (x - radius >= 0) & (x + radius < adata_obs_cells['x_max']) &
+        (y - radius >= 0) & (y + radius < adata_obs_cells['y_max'])
+    ).fillna(False)
     adata_obs_cells_filtered = adata_obs_cells[adata_obs_cells['in_range']].copy()
     out_of_bounds_count = len(adata_obs_cells) - len(adata_obs_cells_filtered)
     logging.info(f"{out_of_bounds_count} cells are out-of-bounds for plotting.")
@@ -1064,6 +1028,18 @@ def backgating(
     logging.info('Selected %d of %d eligible gallery cells using %s sampling.',
                  total_gallery_cells, len(adata_obs_cells_filtered), gallery_sampling)
 
+    overview_written = set()
+
+    def write_overview(roi_name, comp_img):
+        # Called only after thumbnail artists have copied their small crops.
+        for _, row in adata_obs_cells_filtered.loc[adata_obs_cells_filtered[roi_obs] == roi_name].iterrows():
+            x_cell, y_cell = int(round(row[x_loc_obs])), int(round(row[y_loc_obs]))
+            rr, cc = rectangle_perimeter((y_cell - radius, x_cell - radius),
+                                        extent=(radius * 2, radius * 2), shape=comp_img.shape)
+            comp_img[rr, cc, :] = 255
+        io.imsave(str(out_subdir / f'{roi_name}_overview.png'), img_as_ubyte(comp_img))
+        overview_written.add(roi_name)
+
     if total_gallery_cells == 0:
         logging.warning("No cells selected for the thumbnail gallery; skipping Cells.png.")
     else:
@@ -1087,8 +1063,10 @@ def backgating(
             if sub_cells.empty:
                 continue
 
-            comp_img = df_images.loc[roi_name, 'image']
-            mask_img = df_images.loc[roi_name, 'mask']
+            comp_img = io.imread(str(df_images.loc[roi_name, 'image_path']))
+            mask_path = df_images.loc[roi_name, 'mask_path']
+            mask_img = io.imread(str(mask_path)) if pd.notna(mask_path) else None
+            thumb_mask = None
 
             for i, row in sub_cells.iterrows():
                 if ax_idx >= len(axs):
@@ -1135,6 +1113,11 @@ def backgating(
                 #     answer = input("Enter label for cell, or skip: ")
                 #     sub_cells.loc[i, 'training_label'] = answer
 
+            if overview_images:
+                write_overview(roi_name, comp_img)
+            # Crop views must not keep the full ROI or mask alive.
+            del comp_img, mask_img, thumb, thumb_mask
+
         for ax in axs[ax_idx:]:
             ax.axis('off')
 
@@ -1170,25 +1153,11 @@ def backgating(
     # ----------------------------------------------------------------
     if overview_images:
         logging.info("Creating overview images with bounding boxes...")
-        overview_rois = adata_obs_cells_filtered[roi_obs].unique().tolist()
-        for roi_name in overview_rois:
-            sub_cells = adata_obs_cells_filtered[adata_obs_cells_filtered[roi_obs] == roi_name]
-            if sub_cells.empty:
-                continue
-            comp_img = df_images.loc[roi_name, 'image'].copy()
-            for _, row in sub_cells.iterrows():
-                x_cell = int(round(row[x_loc_obs]))
-                y_cell = int(round(row[y_loc_obs]))
-                rr, cc = rectangle_perimeter(
-                    (y_cell - radius, x_cell - radius),
-                    extent=(radius * 2, radius * 2),
-                    shape=comp_img.shape
-                )
-                comp_img[rr, cc, :] = 255  # white bounding box
-
-            overview_path = out_subdir / f"{roi_name}_overview.png"
-            io.imsave(str(overview_path), img_as_ubyte(comp_img))
-            #print(f"  Saved overview for ROI='{roi_name}' -> {overview_path}")
+        for roi_name in adata_obs_cells_filtered[roi_obs].unique():
+            if roi_name not in overview_written:
+                comp_img = io.imread(str(df_images.loc[roi_name, 'image_path']))
+                write_overview(roi_name, comp_img)
+                del comp_img
 
     # ----------------------------------------------------------------
     # 8) Save final CSV of included cells
@@ -1470,6 +1439,7 @@ def perform_differential_expression(
             return []
 
 
+@_noninteractive_plotting()
 def backgating_assessment(
     adata,
     image_folder: str,
@@ -2073,7 +2043,7 @@ def backgating_assessment(
                     if overlay_output_path.suffix.lower() == '.svg':
                         overlay_output_path = overlay_output_path.with_suffix('.png')
                     
-                    create_population_overlay(
+                    overlay_fig = create_population_overlay(
                         adata=adata,
                         population=pop,
                         pop_obs=pop_obs,
@@ -2106,6 +2076,18 @@ def backgating_assessment(
                         font_family=font_family,
                     )
                     
+                    if overlay_fig is not None:
+                        # No caller needs the returned figure in this batch path.
+                        # Release large image/artist buffers without waiting for GC.
+                        overlay_fig.clear()
+                        del overlay_fig
+
+                except MemoryError:
+                    logging.error(
+                        "Memory exhausted creating the population overlay for ROI '%s'; "
+                        "stopping the assessment instead of skipping further ROIs.", roi,
+                    )
+                    raise
                 except Exception as e:
                     logging.warning(f"Failed to create population overlay for ROI '{roi}': {e}")
                     continue
@@ -2368,6 +2350,7 @@ def _save_raster_overlay_gallery(panels, populations, roi, layout, output_path,
         plt.close(fig)
 
 
+@_noninteractive_plotting()
 def create_population_overlay_galleries(
     backgating_output_folder: Union[str, Path],
     populations: List[Union[str, int]],

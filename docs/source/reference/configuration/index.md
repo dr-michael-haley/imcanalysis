@@ -25,6 +25,7 @@ sections/neighbour_signal
 sections/batch_integration
 sections/rapids
 sections/maxfuse
+sections/cell2location
 sections/spatialdata
 sections/cellvision
 sections/hyperstac

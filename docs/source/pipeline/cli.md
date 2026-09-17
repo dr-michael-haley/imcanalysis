@@ -9,6 +9,13 @@ Normal CLI startup imports only lightweight packages such as Pydantic, PyYAML,
 and Typer. Scientific work still runs in the stage-specific Conda environments
 selected by the existing SLURM wrappers.
 
+For standalone spatial transcriptomics, `sbt run cell2location` supports reference
+signature fitting and joint multi-library Visium mapping. Set
+`cell2location.action` to `reference`, `map`, or `full`; it has no IMC pipeline
+prerequisites and uses its own environment. See the
+[cell2location guide](../stages/cell2location.md) for notebook functions, direct
+execution, count preprocessing and registered IMC spot-count priors.
+
 ## Install the lightweight launcher
 
 On HPC, keep the repository at `~/imcanalysis` and use the maintained bootstrap:

@@ -362,6 +362,10 @@ def stage_readiness(
 ) -> tuple[bool, list[str]]:
     mapped = asset_map(assets)
     messages: list[str] = []
+    if stage.name == "cell2location" and context is not None:
+        from SpatialBiologyToolkit.cell2location_contract import preflight_errors
+
+        messages.extend(preflight_errors(context.config.cell2location, context.root))
     for role in stage.requires_assets:
         asset = mapped.get(role)
         if asset is None or not asset_is_ready(asset):

@@ -35,6 +35,8 @@ autodoc_member_order = "bysource"
 # scientific/GUI runtimes while autodoc imports modules; source, signatures,
 # and docstrings remain available without installing several large envs.
 autodoc_mock_imports = [
+    "cell2location",
+    "pyro",
     "IMC_Denoise",
     "IPython",
     "colorcet",

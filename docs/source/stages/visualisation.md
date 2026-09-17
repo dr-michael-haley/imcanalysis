@@ -102,6 +102,24 @@ that marker from its previous channel within the same population. A newly introd
 marker, or one with conflicting saved ranges, uses the global defaults. The previous
 channel occupant's limits are never silently attached to a different marker.
 
+Backgating generates composites one ROI/channel at a time and indexes PNG sizes
+from their headers. Thumbnail and overview rendering load only one ROI image
+and mask at a time; overview images reuse the decoded thumbnail source when
+available. Fixed bounds and individual quantiles read each required channel
+image once. Shared `q/m/x` bounds use a streaming calibration pass, then reread
+the saved ROIs: this reduces memory at the cost of extra I/O for those modes.
+The public `load_rescale_images` helper still returns image lists; use
+`make_images` or `backgating_assessment` for streaming composite generation.
+
+Intelligent crop selection uses a sliding column histogram instead of full-image
+integral tables, retaining the same densest-window and centroid tie-breaking
+rules. Intelligent cell sampling reads dense/backed expression one marker at a
+time and retains sparse subsets without densifying them. These changes require
+no new settings and preserve intensity scaling, sampling scores, ROI balancing,
+and editable SVG output. Memory still needs to accommodate the input AnnData,
+one full-resolution ROI and its rendering buffers, plus the requested gallery.
+They do not guarantee that arbitrarily large individual ROIs will fit in RAM.
+
 ### Thumbnail sampling and editable galleries
 
 The default gallery sampling remains `random`: up to `cells_per_group` eligible

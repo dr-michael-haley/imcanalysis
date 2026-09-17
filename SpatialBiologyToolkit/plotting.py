@@ -4,6 +4,9 @@ import os
 import warnings
 from pathlib import Path
 from collections.abc import Mapping, Sequence
+from contextlib import contextmanager
+from functools import wraps
+from inspect import signature
 
 import anndata as ad
 import matplotlib.pyplot as plt
@@ -2478,6 +2481,86 @@ def _save_population_overlay_svg(fig, output_path, *, layers=None, font_family='
     ET.ElementTree(root).write(output_path, encoding='utf-8', xml_declaration=True)
 
 
+@contextmanager
+def _noninteractive_plotting():
+    """Keep file-only figures out of notebook display queues; restore caller mode.
+
+    Closing a pyplot figure does not remove it from matplotlib-inline's pending
+    display queue. That queue otherwise keeps renderer buffers alive until the
+    entire notebook cell finishes, including across thousands of saved overlays.
+    """
+    existing = set(plt.get_fignums())
+    with plt.ioff():
+        try:
+            yield
+        except BaseException:
+            # Failed renders must not leave our figures registered either.
+            # Leave figures created by the caller before this context untouched.
+            for number in set(plt.get_fignums()) - existing:
+                figure = plt.figure(number)
+                plt.close(figure)
+                figure.clear()
+            raise
+
+
+def _noninteractive_on_save(func):
+    """Preserve interactive display for calls without a file output path."""
+    call_signature = signature(func)
+
+    @wraps(func)
+    def wrapped(*args, **kwargs):
+        arguments = call_signature.bind(*args, **kwargs).arguments
+        if arguments.get('output_path') or arguments.get('svg_output_path'):
+            with _noninteractive_plotting():
+                return func(*args, **kwargs)
+        return func(*args, **kwargs)
+
+    return wrapped
+
+
+def _intelligent_crop_origin(xs, ys, width, height, crop_w, crop_h):
+    """Exact densest crop using O(width + height + cells) working memory.
+
+    Sweep vertical windows, maintaining a column histogram. Horizontal prefix
+    sums find the same windows as a full-image integral table, without allocating
+    image-sized count, integral, window-sum and tied-coordinate arrays.
+    """
+    xs, ys = np.asarray(xs, dtype=float), np.asarray(ys, dtype=float)
+    if not len(xs):
+        return (width - crop_w) // 2, (height - crop_h) // 2
+    xi = np.clip(np.round(xs).astype(int), 0, width - 1)
+    yi = np.clip(np.round(ys).astype(int), 0, height - 1)
+    order = np.argsort(yi, kind='stable')
+    xi, yi = xi[order], yi[order]
+    starts = np.searchsorted(yi, np.arange(height + 1))
+    counts = np.bincount(xi[:starts[crop_h]], minlength=width).astype(np.int64, copy=False)
+    prefix = np.empty(width + 1, dtype=np.int64)
+    prefix[0] = 0
+    sums = np.empty(width - crop_w + 1, dtype=np.int64)
+    centroid_x, centroid_y = float(xs.mean()), float(ys.mean())
+    best_count, best_distance = -1, np.inf
+    best = (0, 0)
+    for y in range(height - crop_h + 1):
+        if y:
+            np.add.at(counts, xi[starts[y - 1]:starts[y]], -1)
+            np.add.at(counts, xi[starts[y + crop_h - 1]:starts[y + crop_h]], 1)
+        np.cumsum(counts, out=prefix[1:])
+        np.subtract(prefix[crop_w:], prefix[:-crop_w], out=sums)
+        count = int(sums.max())
+        if count < best_count:
+            continue
+        candidates = np.flatnonzero(sums == count)
+        distances = ((candidates + crop_w / 2.0 - centroid_x) ** 2 +
+                     (y + crop_h / 2.0 - centroid_y) ** 2)
+        i = int(np.argmin(distances))
+        distance = float(distances[i])
+        if count > best_count or distance < best_distance:
+            best_count, best_distance = count, distance
+            best = (int(candidates[i]), y)
+    return best
+
+
+@_noninteractive_on_save
 def create_population_overlay(
     adata,
     population: str,
@@ -2582,10 +2665,10 @@ def create_population_overlay(
         raise ValueError('Segmentation mask must be 2D and match the composite image shape.')
     
     # Get cells of this population in this ROI
-    roi_cells = adata.obs[
-        (adata.obs[roi_obs] == roi_name) & 
-        (adata.obs[pop_obs].astype(str) == str(population))
-    ]
+    # Restrict rows first: converting a million-cell categorical column to text
+    # for every individual overlay needlessly allocates a dataset-sized array.
+    roi_cells = adata.obs.loc[adata.obs[roi_obs] == roi_name]
+    roi_cells = roi_cells.loc[roi_cells[pop_obs].astype(str) == str(population)]
     
     if len(roi_cells) == 0:
         if verbose:
@@ -2675,34 +2758,8 @@ def create_population_overlay(
                     xs = coords['X_loc'].astype(float)
                     ys = coords['Y_loc'].astype(float)
 
-                    xs_i = np.clip(np.round(xs).astype(int), 0, w - 1)
-                    ys_i = np.clip(np.round(ys).astype(int), 0, h - 1)
-
-                    counts = np.zeros((h, w), dtype=np.uint16)
-                    np.add.at(counts, (ys_i, xs_i), 1)
-
-                    integral = counts.cumsum(axis=0).cumsum(axis=1)
-                    integral = np.pad(integral, ((1, 0), (1, 0)), mode='constant', constant_values=0)
-
-                    sums = (
-                        integral[crop_h:, crop_w:]
-                        - integral[:-crop_h, crop_w:]
-                        - integral[crop_h:, :-crop_w]
-                        + integral[:-crop_h, :-crop_w]
-                    )
-
-                    max_val = sums.max()
-                    y_idxs, x_idxs = np.where(sums == max_val)
-                    if len(x_idxs) > 0:
-                        centroid_x = float(xs.mean())
-                        centroid_y = float(ys.mean())
-
-                        win_center_x = x_idxs + crop_w / 2.0
-                        win_center_y = y_idxs + crop_h / 2.0
-                        d2 = (win_center_x - centroid_x) ** 2 + (win_center_y - centroid_y) ** 2
-                        best_idx = int(np.argmin(d2))
-                        x_min = int(x_idxs[best_idx])
-                        y_min = int(y_idxs[best_idx])
+                    x_min, y_min = _intelligent_crop_origin(
+                        xs, ys, w, h, crop_w, crop_h)
         else:
             raise ValueError(
                 "crop_origin must be one of 'upper_left', 'upper_right', "

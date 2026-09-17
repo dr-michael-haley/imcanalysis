@@ -1,0 +1,23 @@
+# Separate RNA modelling runtime; never merge this into sbt-analysis.
+cell2location[tutorials]==0.1.5
+scvi-tools==1.3.3
+torch==2.7.1
+pyro-ppl==1.9.1
+lightning==2.5.5
+numpy==2.2.6
+pandas==2.3.1
+scipy==1.15.3
+anndata==0.12.0
+scanpy==1.11.4
+# scvi-tools 1.3 still imports its JAX family; keep a mutually compatible set.
+jax==0.6.2
+jaxlib==0.6.2
+flax==0.10.7
+optax==0.2.5
+numpyro==0.19.0
+orbax-checkpoint==0.11.22
+opencv-python==4.11.0.86
+pyyaml>=6,<7
+pydantic>=2.4,<3
+typer>=0.12,<1
+ipykernel>=6,<7

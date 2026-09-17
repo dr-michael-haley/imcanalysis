@@ -36,4 +36,5 @@ output_archive
 slurm_log_migration
 environment_diagnostics
 cell_features
+cell2location
 ```

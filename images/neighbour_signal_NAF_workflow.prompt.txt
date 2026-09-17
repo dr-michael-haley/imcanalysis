@@ -1,0 +1,59 @@
+Generated using the built-in image generation tool.
+
+Use case: scientific-educational.
+Create ONE publication-quality scientific explanatory figure as a high-resolution raster image, EXACT 16:9 landscape aspect ratio (ideally 3840 x 2160). Audience: a biomedical principal investigator. Original clean journal-style methods schematic, white background, precise flat vector-like cell diagrams, very crisp black sans-serif typography, delicate gray rules, restrained teal, violet and amber colors. No photorealism, no decorative microscopy, no invented experimental data, no logo, no watermark. No em dash characters anywhere.
+
+Title: "How we calculate Neighbour-Attributable Fraction (NAF)"
+Subtitle: "A marker-specific, pixel-level measure of spatial explainability"
+
+Composition: beautifully balanced six numbered panels in a 3-column by 2-row grid, read 1,2,3 across top then 4,5,6 across bottom. Thin unobtrusive dividers and ample whitespace. Small arrows between adjacent panels within each row. Titles and schematics dominate; concise captions legible at normal presentation size. Keep all content fully inside the canvas with generous outer margins. Footer caveat band. Use the exact concise text below, distributing captions naturally around illustrations. Do not add dense explanatory prose.
+
+Panel 1, title "1  Select positive exemplars"
+Schematic: small group of irregular segmented cells. Orange marker staining in a selected source, selected cell outline dark teal, a second positive cell sufficiently far away, a nearby unstained segmented cell allowed. A dashed clearance ring around exemplar and double-headed distance indicator, specifically distance from MASK boundary to nearest other positive MASK, not center-to-center.
+Labels: "Nimbus-positive candidates"; "No other same-marker-positive cell within 10 px"; "Sample across ROIs and positivity scores".
+Scientific meaning: other marker-negative cells may be nearby, completely isolated cells are NOT required.
+
+Panel 2, title "2  Learn the marker halo"
+Schematic on left: one conservative irregular segmentation mask with concentric outward 1 px radial bands; a neighboring gray segmented cell cuts a visible excluded hole through these bands. Retain background/unassigned tissue between cell masks. On right: clean small graph with x label "Distance outside mask (px)", x ticks 0,2,4,6,8, y label "Normalized excess signal". A teal median curve with a mild peak just beyond boundary then decay; translucent IQR band, legend "Median" and "Exemplar IQR". This is explicitly a schematic profile, not measured results.
+Captions: "Exclude other cell masks; retain unassigned pixels"; "Background-subtract and brightness-normalize"; "Median across at least 5 exemplars".
+Small anchor callout: "Brightness: 95th percentile within mask + 2 px".
+No imposed monotonic decay; source brightness includes allowed unassigned anchor pixels, excludes other masks.
+
+Panel 3, title "3  Identify strong sources"
+Schematic: several cell masks with differing amber staining brightness. Highlight only two sufficiently bright cells as eligible sources, faint other cell not selected.
+Captions: "Use raw-image brightness"; "Threshold: 10th percentile of exemplar brightness".
+Small label: "Nimbus selects exemplars, not halo intensity".
+This uses all retained cells in a region, not only the exemplar cells.
+
+Panel 4, title "4  Project neighbouring halos"
+Schematic: two strong neighboring sources with amber halos extending into a distinct target mask, target outlined dark charcoal and labelled "Target". Clearly render prediction as OUTSIDE each source's own mask only, leave interiors of the source masks unfilled in this predicted-halo schematic. Spatially overlapping halos inside the target must show a max-winner partition, not additive darkening.
+Captions: "Scale by source brightness; stop at 8 px"; "No self-attribution"; "Keep the strongest source at each pixel".
+Small labeled pointer to a colored pixel within target: "Winning source retained".
+Do not depict physical transfer or directional flow of molecules.
+
+Panel 5, title "5  Calculate NAF"
+Schematic: three miniature aligned pixel grids clipped to identical target mask shapes, labelled "Observed excess", "Predicted halo", "Attributable". Show a localized observed bright patch and predicted halo overlapping only part of it. The attributable grid contains only their overlapping pixels, capped by observed intensity.
+Exact formula prominently: "Attributable pixel = min(observed excess, predicted halo)"
+Then an elegant fraction equation, numerator "Sum of attributable signal", denominator "Sum of observed excess", prefixed "NAF =".
+Short caption: "Observed excess = raw signal minus background, clipped at zero".
+Small footnote: "No observed excess: NAF = 0".
+
+Panel 6, title "6  Interpret and identify sources"
+Worked example, large text "NAF = 0.70"
+Smaller sentence: "70% of observed excess is spatially explainable".
+A precisely proportional horizontal stacked bar from 0 to 1: teal first 10%, violet next 60%, light gray last 30%. Bracket over first 70% labelled "Neighbour-attributable". Legends:
+"Homotypic 0.10" with smaller "(same population)"
+"Heterotypic 0.60" with smaller "(different population)"
+"Unexplained 0.30"
+Use different adjacent source-cell icons with matched teal and violet outlines explaining same versus different population, target population matches teal.
+Caption: "Total NAF = homotypic + heterotypic + unknown".
+Small caption: "Missing population labels are unknown (0 in this example)".
+No claim that the gray component is necessarily genuine expression.
+
+Footer, readable across width:
+"Spatially explainable does not mean proven artefact."
+Second line: "Not a probability. Not isotopic channel compensation. Parameters shown are configurable defaults."
+Small final note: "Insufficient exemplars: profile unavailable, not evidence of no effect. Schematic illustration."
+
+Prioritize scientific accuracy, correct math, cell geometry and text legibility. Do NOT imply that source A physically contaminated target B. Use restrained professional figure styling rather than a marketing infographic.
+

@@ -1,0 +1,9 @@
+name: sbt-cell2location
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - setuptools<81
+  - libstdcxx-ng>=13
+  - libgcc-ng>=13

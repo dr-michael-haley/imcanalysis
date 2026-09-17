@@ -1,6 +1,19 @@
 schema_version: 1
 
 environments:
+  cell2location:
+    conda_name: sbt-cell2location
+    specification_directory: HPC_env_files/sbt-cell2location
+    platform: linux-64
+    toolkit_overlay: editable-no-deps
+    smoke_tests:
+      - [python, -c, "import cell2location, scvi, torch, pyro, scanpy; from SpatialBiologyToolkit.config import Cell2locationConfig"]
+      - [python, -c, "from importlib.metadata import version; assert version('cell2location') == '0.1.5'; assert version('scvi-tools') == '1.3.3'"]
+    notes:
+      - Dedicated Visium/reference-regression runtime; SBT is applied as an editable --no-deps overlay.
+      - Registered checks verify imports and versions. Run HPC_env_files/sbt-cell2location/smoke_test.py explicitly on a compute/development node for tiny CPU fits, indexed priors, export and reload.
+      - PyTorch Linux wheels supply CUDA libraries. Validate the target GPU driver before production fitting.
+
   analysis:
     conda_name: sbt-analysis
     specification_directory: HPC_env_files/sbt-analysis
@@ -159,6 +172,7 @@ environments:
       - The intent specification is committed, but no platform lock was generated without explicit lock-generation authority.
 
 stage_environments:
+  cell2location: [cell2location]
   prep: [analysis]
   vis: [analysis]
   nimbus: [analysis]

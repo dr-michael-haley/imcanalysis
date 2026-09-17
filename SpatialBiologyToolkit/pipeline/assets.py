@@ -59,6 +59,9 @@ class AssetSpec:
 
 
 ASSET_SPECS: tuple[AssetSpec, ...] = (
+    AssetSpec(
+        "cell2location_assets", "cell2location.asset_folder", "directory", "generated_output"
+    ),
     *(
         AssetSpec(
             role=role,
@@ -342,6 +345,25 @@ def resolve_assets(
             count_limit=count_limit,
         )
     )
+    assets.append(
+        inspect_asset(
+            role="cell2location_assets",
+            path=resolve_project_path(root, config.cell2location.asset_folder),
+            kind="directory",
+            lifecycle="generated_output",
+            count_limit=count_limit,
+        )
+    )
+    # Each input file gets its own identity rather than a synthetic aggregate path.
+    from SpatialBiologyToolkit.cell2location_contract import input_paths
+
+    for role, path in input_paths(config.cell2location, root).items():
+        assets.append(
+            inspect_asset(
+                role=role, path=path, kind="file",
+                lifecycle="optional_input", count_limit=count_limit,
+            )
+        )
     return assets
 
 

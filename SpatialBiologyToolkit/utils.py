@@ -900,15 +900,16 @@ def reorder_vars_by_expression(
     adata: ad.AnnData,
     vars_of_interest: List[str],
     distance_metric: str = 'euclidean',
-    linkage_method: str = 'ward'
+    linkage_method: str = 'ward',
+    layer: Optional[str] = None,
 ) -> List[str]:
     """
     Reorder variables (genes/markers) by hierarchical clustering based on expression patterns.
-    
+
     This function performs hierarchical clustering on a subset of variables to determine
     their optimal ordering based on expression similarity across cells. Useful for
     organizing heatmaps and visualizations.
-    
+
     Parameters
     ----------
     adata : AnnData
@@ -923,16 +924,20 @@ def reorder_vars_by_expression(
         Linkage method for hierarchical clustering. Options include 'ward', 'single',
         'complete', 'average', etc. See scipy.cluster.hierarchy.linkage for all options.
         Default is 'ward'.
-    
+    layer : str, optional
+        AnnData layer to use for the clustering. If None, uses adata.X. This allows
+        ordering variables based on normalized, transformed, or custom expression values.
+
     Returns
     -------
     list of str
         Ordered list of variable names based on hierarchical clustering.
-    
+
     Examples
     --------
     >>> markers = ['CD3', 'CD4', 'CD8', 'CD20', 'CD68']
     >>> ordered_markers = reorder_vars_by_expression(adata, markers)
+    >>> ordered_markers = reorder_vars_by_expression(adata, markers, layer='log1p')
     >>> # Use ordered markers for plotting
     >>> sc.pl.heatmap(adata, ordered_markers, groupby='leiden')
     """
@@ -940,7 +945,13 @@ def reorder_vars_by_expression(
     adata_subset = adata[:, vars_of_interest]
 
     # Extract the expression matrix for the vars of interest
-    expression_matrix = adata_subset.X
+    if layer is None:
+        expression_matrix = adata_subset.X
+    else:
+        if layer not in adata_subset.layers:
+            raise KeyError(f"Layer '{layer}' not found in AnnData layers.")
+        expression_matrix = adata_subset.layers[layer]
+
     if issparse(expression_matrix):
         expression_matrix = expression_matrix.toarray()
 

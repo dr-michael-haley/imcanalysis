@@ -125,7 +125,8 @@ def test_make_images_decides_read_scope_from_each_effective_channel_range(images
         red='CD14', red_range=(np.float64(1), np.float64(32.5)),
         green='MCT4', green_range=(0.5, green_max), save_samples_list=['R2'])
     assert [roi for roi, marker in reads if marker == 'CD14'] == ['R2']
-    expected_green = ['R2'] if isinstance(green_max, float) else ['R1', 'R2', 'R3']
+    # Cohort calibration streams all eligible files, then reloads saved ROIs.
+    expected_green = ['R2'] if isinstance(green_max, float) else ['R1', 'R2', 'R2', 'R3']
     assert sorted(roi for roi, marker in reads if marker == 'MCT4') == expected_green
     assert {file.name for file in output.glob('*.png')} == {'R2.png'}
     assert df['roi'].tolist() == ['R2', 'R2']

@@ -2,8 +2,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import anndata as ad
+import numpy as np
 import pandas as pd
 import pytest
+from scipy.cluster import hierarchy as sch
+from scipy.spatial import distance as ssd
 
 from SpatialBiologyToolkit.napari_sbt.variable_ordering import VariableOrderRegistry
 
@@ -77,3 +81,42 @@ def test_similarity_failure_falls_back_without_breaking_variable_lists():
 def test_unknown_variable_order_mode_is_rejected():
     with pytest.raises(ValueError, match="Unknown variable-order mode"):
         VariableOrderRegistry(mode="random")  # type: ignore[arg-type]
+
+
+def test_reorder_vars_by_expression_uses_selected_layer():
+    from SpatialBiologyToolkit.utils import reorder_vars_by_expression
+
+    adata = ad.AnnData(
+        X=np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+                [0.0, 0.0, 1.0],
+            ],
+            dtype=float,
+        ),
+        var=pd.Index(["marker_a", "marker_b", "marker_c"]),
+    )
+    adata.layers["alt"] = np.array(
+        [
+            [0.0, 2.0, 2.0],
+            [1.0, 1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [2.0, 0.0, 0.0],
+        ],
+        dtype=float,
+    )
+
+    expected_matrix = adata[:, ["marker_a", "marker_b", "marker_c"]].layers["alt"]
+    distance_matrix = ssd.pdist(expected_matrix.T, metric="euclidean")
+    linkage_matrix = sch.linkage(distance_matrix, method="ward")
+    expected_order = (
+        adata[:, ["marker_a", "marker_b", "marker_c"]]
+        .var_names[sch.dendrogram(linkage_matrix, no_plot=True)["leaves"]]
+        .tolist()
+    )
+
+    ordered = reorder_vars_by_expression(adata, ["marker_a", "marker_b", "marker_c"], layer="alt")
+
+    assert ordered == expected_order

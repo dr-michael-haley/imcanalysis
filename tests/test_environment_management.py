@@ -447,6 +447,7 @@ class RegistryTests(EnvironmentFixture):
         for retired in ("segmentation", "biobatchnet", "cellcharter"):
             self.assertNotIn(retired, central.environments)
         expected_names = {
+            "cell2location": "sbt-cell2location",
             "analysis": "sbt-analysis",
             "rapids": "rapids_singlecell",
             "napari": "sbt-napari",

@@ -50,6 +50,7 @@ for ordering and usage guidance.
 | [`spatialdata`](spatialdata.md) | Discover or explicitly select spatial assets and optionally build a validated SpatialData Zarr | `sbt-analysis` | general, spatialdata, logging |
 | [`neighsig`](neighsig.md) | Learn empirical marker halos, calculate neighbour-attributable fractions, and retain spatial source-cell provenance | `sbt-analysis` | general, neighbour_signal, logging |
 | [`nimbus-scan`](nimbus-scan.md) | Scan marker-wise Nimbus normalization values before AnnData or clustering | `sbt-analysis` | general, segmentation, nimbus, nimbus_normalization_scan, logging |
+| [`cell2location`](cell2location.md) | Fit reference signatures and map multiple Visium libraries with optional IMC spot-count priors | `sbt-cell2location` | general, cell2location, logging |
 
 ```{toctree}
 :maxdepth: 1
@@ -96,4 +97,5 @@ maxfuse
 spatialdata
 neighsig
 nimbus-scan
+cell2location
 ```

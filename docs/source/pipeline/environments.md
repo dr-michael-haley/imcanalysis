@@ -28,6 +28,7 @@ lightweight smoke tests.
 | Key | Fixed Conda name | Management |
 |---|---|---|
 | `analysis` | `sbt-analysis` | Repository-managed standard scientific runtime |
+| `cell2location` | `sbt-cell2location` | Dedicated reference-regression and multi-library Visium runtime |
 | `rapids` | `rapids_singlecell` | External official RAPIDS-singlecell runtime |
 | `napari` | `sbt-napari` | Explicit interactive bootstrap; Linux lock pending |
 | `denoise` | `sbt-denoise` | Legacy repository-managed rollback runtime |

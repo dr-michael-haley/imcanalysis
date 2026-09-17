@@ -12,6 +12,10 @@ This reference is split by module so the site navigation stays compact.
 
    _napari_imc_normalization
    backgating
+   cell2location_analysis
+   cell2location_contract
+   cell2location_prior
+   cell2location_reports
    cellvision
    cellvision_vicreg
    correlate_outcomes

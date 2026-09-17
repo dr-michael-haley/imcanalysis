@@ -314,6 +314,10 @@ def build_run_plan(
     completed_in_plan: set[str] = set()
     for stage in stages:
         script = stage_script_path(stage, root=toolkit_directory)
+        if stage.name == "cell2location":
+            from SpatialBiologyToolkit.cell2location_contract import preflight_errors
+
+            errors.extend(preflight_errors(context.config.cell2location, context.root))
         missing_assets, missing_files = _missing_requirements(
             stage, mapped_assets, produced_in_plan
         )

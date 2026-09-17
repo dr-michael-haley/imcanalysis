@@ -6380,6 +6380,210 @@ class LoggingConfig(ConfigModel):
     prevent_duplicate_console: bool = True  # Prevent double console output
     use_custom_format: bool = True  # Use custom format vs basicConfig default
 
+@config_section("cell2location")
+class VisiumInputConfig(ConfigModel):
+    path: str = Field(
+        min_length=1, description="Visium H5AD path, relative to the project."
+    )
+    library_id: Optional[str] = Field(
+        None,
+        min_length=1,
+        description="Assign this library to a single-library file; otherwise read library_key from obs.",
+    )
+
+
+@config_section("cell2location")
+class Cell2locationConfig(ConfigModel):
+    """Standalone reference regression and multi-library Visium mapping."""
+
+    action: Literal["reference", "map", "full"] = Field(
+        "full",
+        description="Fit reference only, map with saved signatures, or perform both.",
+    )
+    reference_adata_path: str = Field(
+        "reference.h5ad",
+        description="Annotated scRNA-seq H5AD containing untransformed counts.",
+    )
+    reference_labels_key: str = Field(
+        "cell_type",
+        min_length=1,
+        description="Reference obs column defining the cell types whose signatures are fitted.",
+    )
+    reference_batch_key: Optional[str] = Field(
+        None, description="Reference obs column for sample/batch correction."
+    )
+    reference_categorical_covariate_keys: List[str] = Field(
+        default_factory=list,
+        description="Additional reference technical covariates, e.g. sequencing technology.",
+    )
+    reference_counts_layer: Optional[str] = Field(
+        None,
+        description="Raw-count layer; null selects X. Use 'raw' to explicitly select adata.raw.",
+    )
+    reference_gene_id_key: Optional[str] = Field(
+        None,
+        description="Reference var column containing unique gene IDs; null uses var_names.",
+    )
+    visium_inputs: List[VisiumInputConfig] = Field(
+        default_factory=list,
+        description="One combined H5AD or several files, optionally with a library_id for each file.",
+    )
+    library_key: str = Field(
+        "library_id",
+        min_length=1,
+        description="Visium obs column identifying libraries/slides, used as the mapping batch key.",
+    )
+    barcode_key: Optional[str] = Field(
+        None,
+        description="Visium obs column with original spot barcodes; null uses input obs_names.",
+    )
+    visium_counts_layer: Optional[str] = Field(
+        None,
+        description="Visium raw-count layer, 'raw', or null for X. Normalized/log counts are rejected.",
+    )
+    visium_gene_id_key: Optional[str] = Field(
+        None,
+        description="Visium var column containing unique matching gene IDs; null uses var_names.",
+    )
+    gene_symbol_key: Optional[str] = Field(
+        None,
+        description="Optional var column of gene symbols, used for mitochondrial filtering in both inputs.",
+    )
+    mitochondrial_prefixes: List[str] = Field(
+        default_factory=lambda: ["MT-", "mt-"],
+        description="Exclude genes with these symbol prefixes; [] disables this filter.",
+    )
+    in_tissue_key: Optional[str] = Field(
+        "in_tissue",
+        description="If present, retain spots with value 1; null disables tissue filtering.",
+    )
+    filter_reference_genes: bool = Field(
+        True,
+        description="Apply the gene-expression filter from the cell2location tutorial.",
+    )
+    cell_count_cutoff: int = Field(
+        5,
+        ge=0,
+        description="Tutorial filter: threshold on the number of reference cells expressing a gene.",
+    )
+    cell_percentage_cutoff: float = Field(
+        0.03,
+        gt=0,
+        le=1,
+        description="Tutorial filter: genes expressed in more than this fraction of cells are retained.",
+    )
+    nonzero_mean_cutoff: float = Field(
+        1.12,
+        gt=0,
+        allow_inf_nan=False,
+        description="Tutorial filter: mean expression among expressing cells.",
+    )
+    min_shared_genes: int = Field(
+        100,
+        ge=1,
+        description="Fail mapping below this number of shared, expressed genes.",
+    )
+    signatures_path: Optional[str] = Field(
+        None,
+        description="Mapping signature CSV (genes x cell types); null uses asset_folder/reference/signatures.csv.",
+    )
+    asset_folder: str = Field(
+        "cell2location",
+        min_length=1,
+        description="Reusable reference and mapping models, H5ADs and signatures. Existing result directories are protected.",
+    )
+    n_cells_per_location: float = Field(
+        30.0,
+        gt=0,
+        allow_inf_nan=False,
+        description="Global expected cells per spot; choose for the tissue. Spot priors override this mean when supplied.",
+    )
+    detection_alpha: float = Field(
+        20.0,
+        gt=0,
+        allow_inf_nan=False,
+        description="Within-library RNA detection prior: typically 20 for high variability or 200 for low variability.",
+    )
+    detection_mean_per_sample: bool = Field(
+        True,
+        description="Initialize RNA detection sensitivity separately for each Visium library.",
+    )
+    cell_count_prior_obs_key: Optional[str] = Field(
+        None,
+        description="Visium obs column holding registered IMC counts/expected cells per spot.",
+    )
+    cell_count_prior_csv: Optional[str] = Field(
+        None,
+        description="Alternatively, a CSV with library_id, barcode and n_cells columns. Exact composite-key alignment is required.",
+    )
+    cell_count_prior_scale: float = Field(
+        1.0,
+        gt=0,
+        allow_inf_nan=False,
+        description="Explicit multiplicative adjustment for serial-section counts; record scientific justification.",
+    )
+    cell_count_prior_floor: float = Field(
+        0.1,
+        gt=0,
+        allow_inf_nan=False,
+        description="Positive floor for zero observed cells, required by the Gamma prior. Applied after scaling.",
+    )
+    cell_count_prior_mean_var_ratio: float = Field(
+        1.0,
+        gt=0,
+        allow_inf_nan=False,
+        description="Gamma prior mean/variance ratio. Lower values weaken the prior; this does not fix the posterior cell total.",
+    )
+    reference_max_epochs: int = Field(
+        250, ge=1, description="Reference regression training epochs."
+    )
+    reference_batch_size: int = Field(
+        2500, ge=1, description="Reference training minibatch size."
+    )
+    mapping_max_epochs: int = Field(
+        30000,
+        ge=1,
+        description="Mapping epochs; inspect convergence before interpretation.",
+    )
+    mapping_batch_size: Optional[int] = Field(
+        None,
+        ge=1,
+        description="Mapping minibatch size; null trains on all spots at once.",
+    )
+    posterior_samples: int = Field(
+        1000,
+        ge=2,
+        description="Posterior samples used for means, standard deviations and 5/95% quantiles.",
+    )
+    posterior_batch_size: int = Field(
+        2048,
+        ge=1,
+        description="Posterior sampling minibatch size, including spot-prior indexing.",
+    )
+    accelerator: Literal["cpu", "gpu", "auto"] = Field(
+        "gpu",
+        description="Training and posterior device. GPU requested explicitly fails if unavailable.",
+    )
+    seed: int = Field(
+        0, ge=0, description="Random seed for reproducible training setup."
+    )
+    plot_top_cell_types: int = Field(
+        12,
+        ge=1,
+        description="Maximum cell types shown per library in coordinate abundance maps.",
+    )
+
+    @model_validator(mode="after")
+    def _validate_prior_source(self) -> "Cell2locationConfig":
+        if self.cell_count_prior_obs_key and self.cell_count_prior_csv:
+            raise ValueError(
+                "Choose cell_count_prior_obs_key or cell_count_prior_csv, not both."
+            )
+        if self.library_key.startswith("_sbt_c2l_"):
+            raise ValueError("library_key must not use the reserved _sbt_c2l_ prefix.")
+        return self
+
+
 @config_section("pipeline")
 class PipelineConfig(ConfigModel):
     """Fully resolved, typed configuration for all pipeline stages."""
@@ -6398,6 +6602,7 @@ class PipelineConfig(ConfigModel):
     batch_integration: BatchIntegrationConfig = Field(default_factory=BatchIntegrationConfig)
     rapids: RapidsProcessConfig = Field(default_factory=RapidsProcessConfig)
     maxfuse: MaxFuseConfig = Field(default_factory=MaxFuseConfig)
+    cell2location: Cell2locationConfig = Field(default_factory=Cell2locationConfig)
     spatialdata: SpatialDataConfig = Field(default_factory=SpatialDataConfig)
     cellvision: CellVisionConfig = Field(default_factory=CellVisionConfig)
     hyperstac: HyperstacConfig = Field(default_factory=HyperstacConfig)
@@ -6429,6 +6634,7 @@ DEFAULT_CONFIG_CLASSES = {
     "batch_integration": BatchIntegrationConfig,
     "rapids": RapidsProcessConfig,
     "maxfuse": MaxFuseConfig,
+    "cell2location": Cell2locationConfig,
     "spatialdata": SpatialDataConfig,
     "cellvision": CellVisionConfig,
     "hyperstac": HyperstacConfig,
@@ -6453,6 +6659,8 @@ __all__ = [
     "BatchIntegrationConfig",
     "BioBatchNetConfig",
     "CellCharterConfig",
+    "Cell2locationConfig",
+    "VisiumInputConfig",
     "ConfigModel",
     "CoxConfig",
     "CoxFeatureSourceConfig",

@@ -765,6 +765,524 @@
       "title": "BioBatchNetConfig",
       "type": "object"
     },
+    "Cell2locationConfig": {
+      "description": "Standalone reference regression and multi-library Visium mapping.",
+      "properties": {
+        "action": {
+          "advice": "",
+          "default": "full",
+          "description": "Fit reference only, map with saved signatures, or perform both.",
+          "enum": [
+            "reference",
+            "map",
+            "full"
+          ],
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Action",
+          "type": "string",
+          "ui_group": "Cell2Location"
+        },
+        "reference_adata_path": {
+          "advice": "",
+          "default": "reference.h5ad",
+          "description": "Annotated scRNA-seq H5AD containing untransformed counts.",
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Reference Adata Path",
+          "type": "string",
+          "ui_group": "Cell2Location"
+        },
+        "reference_labels_key": {
+          "advice": "",
+          "default": "cell_type",
+          "description": "Reference obs column defining the cell types whose signatures are fitted.",
+          "level": "advanced",
+          "minLength": 1,
+          "stage": "cell2location",
+          "title": "Reference Labels Key",
+          "type": "string",
+          "ui_group": "Cell2Location"
+        },
+        "reference_batch_key": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reference obs column for sample/batch correction.",
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Reference Batch Key",
+          "ui_group": "Cell2Location"
+        },
+        "reference_categorical_covariate_keys": {
+          "advice": "",
+          "description": "Additional reference technical covariates, e.g. sequencing technology.",
+          "items": {
+            "type": "string"
+          },
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Reference Categorical Covariate Keys",
+          "type": "array",
+          "ui_group": "Cell2Location"
+        },
+        "reference_counts_layer": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Raw-count layer; null selects X. Use 'raw' to explicitly select adata.raw.",
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Reference Counts Layer",
+          "ui_group": "Cell2Location"
+        },
+        "reference_gene_id_key": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Reference var column containing unique gene IDs; null uses var_names.",
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Reference Gene Id Key",
+          "ui_group": "Cell2Location"
+        },
+        "visium_inputs": {
+          "advice": "",
+          "description": "One combined H5AD or several files, optionally with a library_id for each file.",
+          "items": {
+            "$ref": "#/$defs/VisiumInputConfig"
+          },
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Visium Inputs",
+          "type": "array",
+          "ui_group": "Cell2Location"
+        },
+        "library_key": {
+          "advice": "",
+          "default": "library_id",
+          "description": "Visium obs column identifying libraries/slides, used as the mapping batch key.",
+          "level": "advanced",
+          "minLength": 1,
+          "stage": "cell2location",
+          "title": "Library Key",
+          "type": "string",
+          "ui_group": "Cell2Location"
+        },
+        "barcode_key": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Visium obs column with original spot barcodes; null uses input obs_names.",
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Barcode Key",
+          "ui_group": "Cell2Location"
+        },
+        "visium_counts_layer": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Visium raw-count layer, 'raw', or null for X. Normalized/log counts are rejected.",
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Visium Counts Layer",
+          "ui_group": "Cell2Location"
+        },
+        "visium_gene_id_key": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Visium var column containing unique matching gene IDs; null uses var_names.",
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Visium Gene Id Key",
+          "ui_group": "Cell2Location"
+        },
+        "gene_symbol_key": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional var column of gene symbols, used for mitochondrial filtering in both inputs.",
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Gene Symbol Key",
+          "ui_group": "Cell2Location"
+        },
+        "mitochondrial_prefixes": {
+          "advice": "",
+          "description": "Exclude genes with these symbol prefixes; [] disables this filter.",
+          "items": {
+            "type": "string"
+          },
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Mitochondrial Prefixes",
+          "type": "array",
+          "ui_group": "Cell2Location"
+        },
+        "in_tissue_key": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "in_tissue",
+          "description": "If present, retain spots with value 1; null disables tissue filtering.",
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "In Tissue Key",
+          "ui_group": "Cell2Location"
+        },
+        "filter_reference_genes": {
+          "advice": "",
+          "default": true,
+          "description": "Apply the gene-expression filter from the cell2location tutorial.",
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Filter Reference Genes",
+          "type": "boolean",
+          "ui_group": "Cell2Location"
+        },
+        "cell_count_cutoff": {
+          "advice": "",
+          "default": 5,
+          "description": "Tutorial filter: threshold on the number of reference cells expressing a gene.",
+          "level": "advanced",
+          "minimum": 0,
+          "stage": "cell2location",
+          "title": "Cell Count Cutoff",
+          "type": "integer",
+          "ui_group": "Cell2Location"
+        },
+        "cell_percentage_cutoff": {
+          "advice": "",
+          "default": 0.03,
+          "description": "Tutorial filter: genes expressed in more than this fraction of cells are retained.",
+          "exclusiveMinimum": 0,
+          "level": "advanced",
+          "maximum": 1,
+          "stage": "cell2location",
+          "title": "Cell Percentage Cutoff",
+          "type": "number",
+          "ui_group": "Cell2Location"
+        },
+        "nonzero_mean_cutoff": {
+          "advice": "",
+          "default": 1.12,
+          "description": "Tutorial filter: mean expression among expressing cells.",
+          "exclusiveMinimum": 0,
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Nonzero Mean Cutoff",
+          "type": "number",
+          "ui_group": "Cell2Location"
+        },
+        "min_shared_genes": {
+          "advice": "",
+          "default": 100,
+          "description": "Fail mapping below this number of shared, expressed genes.",
+          "level": "advanced",
+          "minimum": 1,
+          "stage": "cell2location",
+          "title": "Min Shared Genes",
+          "type": "integer",
+          "ui_group": "Cell2Location"
+        },
+        "signatures_path": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Mapping signature CSV (genes x cell types); null uses asset_folder/reference/signatures.csv.",
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Signatures Path",
+          "ui_group": "Cell2Location"
+        },
+        "asset_folder": {
+          "advice": "",
+          "default": "cell2location",
+          "description": "Reusable reference and mapping models, H5ADs and signatures. Existing result directories are protected.",
+          "level": "advanced",
+          "minLength": 1,
+          "stage": "cell2location",
+          "title": "Asset Folder",
+          "type": "string",
+          "ui_group": "Cell2Location"
+        },
+        "n_cells_per_location": {
+          "advice": "",
+          "default": 30.0,
+          "description": "Global expected cells per spot; choose for the tissue. Spot priors override this mean when supplied.",
+          "exclusiveMinimum": 0,
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "N Cells Per Location",
+          "type": "number",
+          "ui_group": "Cell2Location"
+        },
+        "detection_alpha": {
+          "advice": "",
+          "default": 20.0,
+          "description": "Within-library RNA detection prior: typically 20 for high variability or 200 for low variability.",
+          "exclusiveMinimum": 0,
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Detection Alpha",
+          "type": "number",
+          "ui_group": "Cell2Location"
+        },
+        "detection_mean_per_sample": {
+          "advice": "",
+          "default": true,
+          "description": "Initialize RNA detection sensitivity separately for each Visium library.",
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Detection Mean Per Sample",
+          "type": "boolean",
+          "ui_group": "Cell2Location"
+        },
+        "cell_count_prior_obs_key": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Visium obs column holding registered IMC counts/expected cells per spot.",
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Cell Count Prior Obs Key",
+          "ui_group": "Cell2Location"
+        },
+        "cell_count_prior_csv": {
+          "advice": "",
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Alternatively, a CSV with library_id, barcode and n_cells columns. Exact composite-key alignment is required.",
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Cell Count Prior Csv",
+          "ui_group": "Cell2Location"
+        },
+        "cell_count_prior_scale": {
+          "advice": "",
+          "default": 1.0,
+          "description": "Explicit multiplicative adjustment for serial-section counts; record scientific justification.",
+          "exclusiveMinimum": 0,
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Cell Count Prior Scale",
+          "type": "number",
+          "ui_group": "Cell2Location"
+        },
+        "cell_count_prior_floor": {
+          "advice": "",
+          "default": 0.1,
+          "description": "Positive floor for zero observed cells, required by the Gamma prior. Applied after scaling.",
+          "exclusiveMinimum": 0,
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Cell Count Prior Floor",
+          "type": "number",
+          "ui_group": "Cell2Location"
+        },
+        "cell_count_prior_mean_var_ratio": {
+          "advice": "",
+          "default": 1.0,
+          "description": "Gamma prior mean/variance ratio. Lower values weaken the prior; this does not fix the posterior cell total.",
+          "exclusiveMinimum": 0,
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Cell Count Prior Mean Var Ratio",
+          "type": "number",
+          "ui_group": "Cell2Location"
+        },
+        "reference_max_epochs": {
+          "advice": "",
+          "default": 250,
+          "description": "Reference regression training epochs.",
+          "level": "advanced",
+          "minimum": 1,
+          "stage": "cell2location",
+          "title": "Reference Max Epochs",
+          "type": "integer",
+          "ui_group": "Cell2Location"
+        },
+        "reference_batch_size": {
+          "advice": "",
+          "default": 2500,
+          "description": "Reference training minibatch size.",
+          "level": "advanced",
+          "minimum": 1,
+          "stage": "cell2location",
+          "title": "Reference Batch Size",
+          "type": "integer",
+          "ui_group": "Cell2Location"
+        },
+        "mapping_max_epochs": {
+          "advice": "",
+          "default": 30000,
+          "description": "Mapping epochs; inspect convergence before interpretation.",
+          "level": "advanced",
+          "minimum": 1,
+          "stage": "cell2location",
+          "title": "Mapping Max Epochs",
+          "type": "integer",
+          "ui_group": "Cell2Location"
+        },
+        "mapping_batch_size": {
+          "advice": "",
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Mapping minibatch size; null trains on all spots at once.",
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Mapping Batch Size",
+          "ui_group": "Cell2Location"
+        },
+        "posterior_samples": {
+          "advice": "",
+          "default": 1000,
+          "description": "Posterior samples used for means, standard deviations and 5/95% quantiles.",
+          "level": "advanced",
+          "minimum": 2,
+          "stage": "cell2location",
+          "title": "Posterior Samples",
+          "type": "integer",
+          "ui_group": "Cell2Location"
+        },
+        "posterior_batch_size": {
+          "advice": "",
+          "default": 2048,
+          "description": "Posterior sampling minibatch size, including spot-prior indexing.",
+          "level": "advanced",
+          "minimum": 1,
+          "stage": "cell2location",
+          "title": "Posterior Batch Size",
+          "type": "integer",
+          "ui_group": "Cell2Location"
+        },
+        "accelerator": {
+          "advice": "",
+          "default": "gpu",
+          "description": "Training and posterior device. GPU requested explicitly fails if unavailable.",
+          "enum": [
+            "cpu",
+            "gpu",
+            "auto"
+          ],
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Accelerator",
+          "type": "string",
+          "ui_group": "Cell2Location"
+        },
+        "seed": {
+          "advice": "",
+          "default": 0,
+          "description": "Random seed for reproducible training setup.",
+          "level": "advanced",
+          "minimum": 0,
+          "stage": "cell2location",
+          "title": "Seed",
+          "type": "integer",
+          "ui_group": "Cell2Location"
+        },
+        "plot_top_cell_types": {
+          "advice": "",
+          "default": 12,
+          "description": "Maximum cell types shown per library in coordinate abundance maps.",
+          "level": "advanced",
+          "minimum": 1,
+          "stage": "cell2location",
+          "title": "Plot Top Cell Types",
+          "type": "integer",
+          "ui_group": "Cell2Location"
+        }
+      },
+      "title": "Cell2locationConfig",
+      "type": "object"
+    },
     "CellCharterConfig": {
       "properties": {
         "input_adata_path": {
@@ -11901,6 +12419,43 @@
       "title": "SubclusteringConfig",
       "type": "object"
     },
+    "VisiumInputConfig": {
+      "properties": {
+        "path": {
+          "advice": "",
+          "description": "Visium H5AD path, relative to the project.",
+          "level": "advanced",
+          "minLength": 1,
+          "stage": "cell2location",
+          "title": "Path",
+          "type": "string",
+          "ui_group": "Cell2Location"
+        },
+        "library_id": {
+          "advice": "",
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Assign this library to a single-library file; otherwise read library_key from obs.",
+          "level": "advanced",
+          "stage": "cell2location",
+          "title": "Library Id",
+          "ui_group": "Cell2Location"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "VisiumInputConfig",
+      "type": "object"
+    },
     "VisualizationConfig": {
       "properties": {
         "input_adata_path": {
@@ -12861,6 +13416,14 @@
       "$ref": "#/$defs/MaxFuseConfig",
       "advice": "",
       "description": "Configuration value for maxfuse.",
+      "level": "advanced",
+      "stage": "pipeline",
+      "ui_group": "Pipeline"
+    },
+    "cell2location": {
+      "$ref": "#/$defs/Cell2locationConfig",
+      "advice": "",
+      "description": "Configuration value for cell2location.",
       "level": "advanced",
       "stage": "pipeline",
       "ui_group": "Pipeline"

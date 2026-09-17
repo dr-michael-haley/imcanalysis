@@ -208,9 +208,13 @@ STAGE_PRESENTATION: dict[str, tuple[str, int, str, str]] = {
         "Nimbus_Normalization_Scan",
         "nimbus_normalization_scan.md",
     ),
+    "cell2location": (
+        "Cell2location Visium", 42, "Cell2location_Visium", "cell2location.md"
+    ),
 }
 
 STAGE_MODULES: dict[str, tuple[str, ...]] = {
+    "cell2location": ("SpatialBiologyToolkit.scripts.cell2location_analysis",),
     "prep": ("SpatialBiologyToolkit.scripts.preprocess",),
     "vis": ("SpatialBiologyToolkit.scripts.basic_visualizations",),
     "nimbus": ("SpatialBiologyToolkit.scripts.segmentation_nimbus",),
@@ -263,6 +267,7 @@ STAGE_MODULES: dict[str, tuple[str, ...]] = {
 }
 
 STAGE_CONFIG_SECTIONS: dict[str, tuple[str, ...]] = {
+    "cell2location": ("general", "cell2location"),
     "prep": ("general", "preprocess"),
     "vis": ("general", "visualization", "process"),
     "nimbus": ("general", "segmentation", "nimbus"),
@@ -923,6 +928,22 @@ STAGES: tuple[StageSpec, ...] = (
             "This read-only diagnostic never overwrites normalization_dict.csv, legacy JSON, cell tables, or AnnData.",
             "Recommendations identify locally stable Vmax ranges and do not establish biological ground truth.",
             "The default ROI subset bounds repeated GPU inference; set max_rois to zero only when full-cohort scanning is intentional.",
+        ),
+    ),
+    _stage(
+        "cell2location",
+        "job_cell2location.sh",
+        "Fit scRNA-seq reference signatures and map one or more Visium libraries, optionally using registered IMC spot-count priors.",
+        produces=("cell2location_assets", "human_outputs"),
+        outputs=(
+            "Reference signatures, posterior AnnData and reloadable regression model",
+            "Joint Visium posterior AnnData and reloadable mapping model",
+            "Training histories, gene/spot QC, library abundance maps and prior comparison",
+        ),
+        notes=(
+            "Standalone analysis: cell2location.action selects reference, map, or full; no IMC pipeline prerequisites.",
+            "Configured reference, Visium and prior files are checked before submission according to the selected action.",
+            "Serial-section counts are optional soft priors, not fixed cell totals; registration is performed upstream.",
         ),
     ),
 )
