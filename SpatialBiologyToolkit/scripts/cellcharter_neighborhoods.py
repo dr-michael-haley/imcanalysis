@@ -6,7 +6,7 @@ This stage:
 2. Selects an existing embedding or optionally computes TRVAE latent embeddings.
 3. Builds a spatial graph per ROI/sample.
 4. Aggregates neighborhood features with CellCharter.
-5. Clusters cells into spatial neighborhoods.
+5. Clusters cells into spatial neighborhoods for each requested cluster count.
 6. Optionally runs neighborhood enrichment analyses.
 7. Optionally runs shape characterisation analyses.
 8. Saves updated AnnData plus QC tables/plots.
@@ -2121,28 +2121,44 @@ def _save_roi_cluster_masks(
             )
 
 
-def run_cellcharter_neighborhoods(
+def _cellcharter_solution_configs(
+    config: CellCharterConfig,
+) -> List[CellCharterConfig]:
+    """Resolve independent label/component namespaces for an explicit count list."""
+    if not isinstance(config.n_clusters, list):
+        return [config.model_copy(deep=True)]
+    solutions = []
+    for count in config.n_clusters:
+        suffix = f"_k{count}"
+        updates: Dict[str, Any] = {
+            "n_clusters": count,
+            "cluster_key": f"{config.cluster_key}{suffix}",
+            "shape_component_key": f"{config.shape_component_key}{suffix}",
+        }
+        # Explicit references to the base cluster column follow the current
+        # solution; unrelated external annotations keep their configured meaning.
+        for field in ("shape_component_cluster_key", "shape_metrics_cluster_key"):
+            if getattr(config, field) == config.cluster_key:
+                updates[field] = updates["cluster_key"]
+        solutions.append(config.model_copy(deep=True, update=updates))
+    return solutions
+
+
+def _run_cellcharter_solution(
+    adata: ad.AnnData,
     general_config: GeneralConfig,
     cellcharter_config: CellCharterConfig,
-) -> Path:
-    """Run CellCharter neighborhood analysis and return output AnnData path."""
-    stage_name = "CellCharter"
-    resolved_sample_key = coalesce_config_text(
-        general_config.roi_obs,
-        default="ROI",
-    )
-    resolved_spatial_key = coalesce_config_text(
-        general_config.spatial_key,
-        default="spatial",
-    )
-    resolved_x_coord_col = coalesce_config_text(
-        general_config.x_coord_obs,
-        default="X_loc",
-    )
-    resolved_y_coord_col = coalesce_config_text(
-        general_config.y_coord_obs,
-        default="Y_loc",
-    )
+    *,
+    sample_key: str,
+    spatial_key: str,
+    input_path: Path,
+    output_path: Path,
+    qc_dir: Path,
+    aggregation_rep: Optional[str],
+    trvae_details: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Fit/reuse one cluster solution and run all its enabled downstream outputs."""
+    population_obs_primary = coalesce_config_text(general_config.population_obs_primary)
     resolved_case_obs = coalesce_config_text(
         general_config.case_obs,
     )
@@ -2196,40 +2212,6 @@ def run_cellcharter_neighborhoods(
         repeat_shape_characterisation_analysis,
     )
 
-    input_path = _resolve_input_adata_path(general_config, cellcharter_config)
-    output_path = _resolve_output_adata_path(general_config, cellcharter_config)
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    qc_dir = Path(general_config.qc_folder) / cellcharter_config.qc_output_subdir
-    qc_dir.mkdir(parents=True, exist_ok=True)
-
-    adata, _, skip_stage, _ = load_pipeline_anndata(
-        general_config=general_config,
-        stage_name=stage_name,
-        stage_config=cellcharter_config,
-        override_path=str(input_path),
-    )
-    if skip_stage:
-        logging.info("Skipping CellCharter stage based on AnnData stage policy.")
-        return output_path
-    if adata is None:
-        raise FileNotFoundError(f"AnnData could not be loaded for CellCharter stage: {input_path}")
-    logging.info("Loaded AnnData: %d cells x %d features", adata.n_obs, adata.n_vars)
-
-    sample_key_requested = str(resolved_sample_key)
-    spatial_key_requested = str(resolved_spatial_key)
-    x_coord_col = str(resolved_x_coord_col)
-    y_coord_col = str(resolved_y_coord_col)
-    population_obs_primary = coalesce_config_text(general_config.population_obs_primary)
-
-    sample_key = _resolve_sample_key(adata, sample_key_requested)
-    spatial_key = _ensure_spatial_coordinates(
-        adata,
-        spatial_key=spatial_key_requested,
-        x_coord_col=x_coord_col,
-        y_coord_col=y_coord_col,
-    )
-
     cluster_key = str(cellcharter_config.cluster_key)
     existing_cluster_non_null = 0
     if cluster_key in adata.obs.columns:
@@ -2244,111 +2226,10 @@ def run_cellcharter_neighborhoods(
             "while regenerating QC tables and plots."
         )
 
-    trvae_details: Dict[str, Any] = {"enabled": False}
-    aggregation_rep: Optional[str] = None
-
     if skip_existing_cluster_analysis:
-        logging.info(
-            "Reusing existing cluster key '%s' for %d/%d cells. "
-            "Skipping TRVAE/graph/aggregation/clustering.",
-            cluster_key,
-            existing_cluster_non_null,
-            adata.n_obs,
-        )
+        logging.info("Reusing existing cluster key '%s'.", cluster_key)
         _ensure_categorical_obs(adata, cluster_key)
-        trvae_details = {
-            "enabled": bool(cellcharter_config.use_trvae),
-            "ran": False,
-            "reused_existing_cluster_key": True,
-        }
-        prior_payload = adata.uns.get("cellcharter_pipeline")
-        if isinstance(prior_payload, dict):
-            aggregation_rep = prior_payload.get("aggregation_use_rep")
     else:
-        if cellcharter_config.use_trvae:
-            logging.info("TRVAE mode enabled (cellcharter.use_trvae=True).")
-            aggregation_rep, trvae_details = _compute_trvae_representation(
-                adata=adata,
-                cellcharter_config=cellcharter_config,
-                sample_key=sample_key,
-                qc_dir=qc_dir,
-            )
-            logging.info("Using TRVAE representation adata.obsm['%s'] for neighborhood aggregation.", aggregation_rep)
-        else:
-            feature_matrix, feature_rep_key, source_label = _select_feature_matrix(
-                adata,
-                cellcharter_config,
-                allow_auto_reduced=True,
-            )
-            feature_matrix = feature_matrix.astype(np.float32, copy=False)
-            if feature_matrix.shape[0] != adata.n_obs:
-                raise ValueError(
-                    f"Feature matrix rows ({feature_matrix.shape[0]}) must match adata.n_obs ({adata.n_obs})."
-                )
-
-            if cellcharter_config.scale_by_sample:
-                logging.info("Applying sample-wise feature scaling using '%s'.", sample_key)
-                sample_ids = adata.obs[sample_key].astype(str).to_numpy()
-                scaled = _zscore_by_sample(feature_matrix, sample_ids)
-                adata.obsm[cellcharter_config.scaled_rep_key] = scaled
-                aggregation_rep = cellcharter_config.scaled_rep_key
-                logging.info(
-                    "Stored scaled features in adata.obsm['%s'] (source: %s).",
-                    cellcharter_config.scaled_rep_key,
-                    source_label,
-                )
-            else:
-                if feature_rep_key is not None:
-                    aggregation_rep = feature_rep_key
-                    logging.info("Using feature representation %s without additional scaling.", source_label)
-                elif source_label == "X":
-                    aggregation_rep = None
-                    logging.info("Using adata.X for neighborhood aggregation.")
-                else:
-                    adata.obsm[cellcharter_config.scaled_rep_key] = feature_matrix
-                    aggregation_rep = cellcharter_config.scaled_rep_key
-                    logging.info(
-                        "Stored features from %s in adata.obsm['%s'] for aggregation.",
-                        source_label,
-                        cellcharter_config.scaled_rep_key,
-                    )
-
-        logging.info("Building spatial graph with Squidpy (delaunay=%s).", cellcharter_config.delaunay)
-        sq.gr.spatial_neighbors(
-            adata,
-            library_key=sample_key,
-            coord_type="generic",
-            delaunay=bool(cellcharter_config.delaunay),
-            spatial_key=spatial_key,
-        )
-
-        if cellcharter_config.remove_long_links:
-            logging.info(
-                "Removing long graph links above distance percentile %.2f.",
-                float(cellcharter_config.distance_percentile),
-            )
-            cc.gr.remove_long_links(
-                adata,
-                distance_percentile=float(cellcharter_config.distance_percentile),
-            )
-
-        n_layers = _parse_n_layers(cellcharter_config.n_layers)
-        aggregations = _parse_aggregations(cellcharter_config.aggregations)
-        logging.info(
-            "Aggregating neighborhoods (n_layers=%s, aggregations=%s, use_rep=%s).",
-            n_layers,
-            aggregations,
-            aggregation_rep,
-        )
-        cc.gr.aggregate_neighbors(
-            adata,
-            n_layers=n_layers,
-            aggregations=aggregations,
-            use_rep=aggregation_rep,
-            sample_key=sample_key,
-            out_key=cellcharter_config.aggregated_rep_key,
-        )
-
         trainer_params = {
             "accelerator": cellcharter_config.trainer_accelerator,
             "max_epochs": int(cellcharter_config.trainer_max_epochs),
@@ -2595,7 +2476,9 @@ def run_cellcharter_neighborhoods(
                 ),
             )
 
-    adata.uns["cellcharter_pipeline"] = {
+    return {
+        "n_clusters": int(cellcharter_config.n_clusters),
+        "qc_dir": str(qc_dir),
         "input_adata_path": str(input_path),
         "output_adata_path": str(output_path),
         "sample_key": sample_key,
@@ -2623,6 +2506,208 @@ def run_cellcharter_neighborhoods(
         "diff_nhood_enrichment": diff_nhood_details,
         "shape_characterisation": shape_details,
     }
+
+
+def run_cellcharter_neighborhoods(
+    general_config: GeneralConfig,
+    cellcharter_config: CellCharterConfig,
+) -> Path:
+    """Run CellCharter neighborhood analysis and return output AnnData path."""
+    stage_name = "CellCharter"
+    resolved_sample_key = coalesce_config_text(
+        general_config.roi_obs,
+        default="ROI",
+    )
+    resolved_spatial_key = coalesce_config_text(
+        general_config.spatial_key,
+        default="spatial",
+    )
+    resolved_x_coord_col = coalesce_config_text(
+        general_config.x_coord_obs,
+        default="X_loc",
+    )
+    resolved_y_coord_col = coalesce_config_text(
+        general_config.y_coord_obs,
+        default="Y_loc",
+    )
+    solution_configs = _cellcharter_solution_configs(cellcharter_config)
+    list_mode = isinstance(cellcharter_config.n_clusters, list)
+    repeat_cluster_analysis = _resolve_repeat_flag(
+        cellcharter_config.repeat_cluster_analysis, cellcharter_config.repeat_analysis,
+    )
+    input_path = _resolve_input_adata_path(general_config, cellcharter_config)
+    output_path = _resolve_output_adata_path(general_config, cellcharter_config)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    qc_dir = Path(general_config.qc_folder) / cellcharter_config.qc_output_subdir
+    qc_dir.mkdir(parents=True, exist_ok=True)
+
+    adata, _, skip_stage, _ = load_pipeline_anndata(
+        general_config=general_config,
+        stage_name=stage_name,
+        stage_config=cellcharter_config,
+        override_path=str(input_path),
+    )
+    if skip_stage:
+        logging.info("Skipping CellCharter stage based on AnnData stage policy.")
+        return output_path
+    if adata is None:
+        raise FileNotFoundError(f"AnnData could not be loaded for CellCharter stage: {input_path}")
+    logging.info("Loaded AnnData: %d cells x %d features", adata.n_obs, adata.n_vars)
+
+    sample_key_requested = str(resolved_sample_key)
+    spatial_key_requested = str(resolved_spatial_key)
+    x_coord_col = str(resolved_x_coord_col)
+    y_coord_col = str(resolved_y_coord_col)
+    sample_key = _resolve_sample_key(adata, sample_key_requested)
+    spatial_key = _ensure_spatial_coordinates(
+        adata,
+        spatial_key=spatial_key_requested,
+        x_coord_col=x_coord_col,
+        y_coord_col=y_coord_col,
+    )
+
+    counts_to_fit = [
+        config.n_clusters for config in solution_configs
+        if repeat_cluster_analysis
+        or config.cluster_key not in adata.obs.columns
+        or not adata.obs[config.cluster_key].notna().any()
+    ]
+    if any(count > adata.n_obs for count in counts_to_fit):
+        raise ValueError(
+            f"CellCharter n_clusters cannot exceed the number of cells ({adata.n_obs}); "
+            f"requested counts to fit: {counts_to_fit}."
+        )
+    skip_existing_cluster_analysis = not counts_to_fit
+    trvae_details: Dict[str, Any] = {"enabled": False}
+    aggregation_rep: Optional[str] = None
+
+    if skip_existing_cluster_analysis:
+        logging.info("All requested cluster keys exist; skipping TRVAE/graph/aggregation.")
+        trvae_details = {
+            "enabled": bool(cellcharter_config.use_trvae),
+            "ran": False,
+            "reused_existing_cluster_key": True,
+        }
+        prior_payload = adata.uns.get("cellcharter_pipeline")
+        if isinstance(prior_payload, dict):
+            aggregation_rep = prior_payload.get("aggregation_use_rep")
+    else:
+        if cellcharter_config.use_trvae:
+            logging.info("TRVAE mode enabled (cellcharter.use_trvae=True).")
+            aggregation_rep, trvae_details = _compute_trvae_representation(
+                adata=adata,
+                cellcharter_config=cellcharter_config,
+                sample_key=sample_key,
+                qc_dir=qc_dir,
+            )
+            logging.info("Using TRVAE representation adata.obsm['%s'] for neighborhood aggregation.", aggregation_rep)
+        else:
+            feature_matrix, feature_rep_key, source_label = _select_feature_matrix(
+                adata,
+                cellcharter_config,
+                allow_auto_reduced=True,
+            )
+            feature_matrix = feature_matrix.astype(np.float32, copy=False)
+            if feature_matrix.shape[0] != adata.n_obs:
+                raise ValueError(
+                    f"Feature matrix rows ({feature_matrix.shape[0]}) must match adata.n_obs ({adata.n_obs})."
+                )
+
+            if cellcharter_config.scale_by_sample:
+                logging.info("Applying sample-wise feature scaling using '%s'.", sample_key)
+                sample_ids = adata.obs[sample_key].astype(str).to_numpy()
+                scaled = _zscore_by_sample(feature_matrix, sample_ids)
+                adata.obsm[cellcharter_config.scaled_rep_key] = scaled
+                aggregation_rep = cellcharter_config.scaled_rep_key
+                logging.info(
+                    "Stored scaled features in adata.obsm['%s'] (source: %s).",
+                    cellcharter_config.scaled_rep_key,
+                    source_label,
+                )
+            else:
+                if feature_rep_key is not None:
+                    aggregation_rep = feature_rep_key
+                    logging.info("Using feature representation %s without additional scaling.", source_label)
+                elif source_label == "X":
+                    aggregation_rep = None
+                    logging.info("Using adata.X for neighborhood aggregation.")
+                else:
+                    adata.obsm[cellcharter_config.scaled_rep_key] = feature_matrix
+                    aggregation_rep = cellcharter_config.scaled_rep_key
+                    logging.info(
+                        "Stored features from %s in adata.obsm['%s'] for aggregation.",
+                        source_label,
+                        cellcharter_config.scaled_rep_key,
+                    )
+
+        logging.info("Building spatial graph with Squidpy (delaunay=%s).", cellcharter_config.delaunay)
+        sq.gr.spatial_neighbors(
+            adata,
+            library_key=sample_key,
+            coord_type="generic",
+            delaunay=bool(cellcharter_config.delaunay),
+            spatial_key=spatial_key,
+        )
+
+        if cellcharter_config.remove_long_links:
+            logging.info(
+                "Removing long graph links above distance percentile %.2f.",
+                float(cellcharter_config.distance_percentile),
+            )
+            cc.gr.remove_long_links(
+                adata,
+                distance_percentile=float(cellcharter_config.distance_percentile),
+            )
+
+        n_layers = _parse_n_layers(cellcharter_config.n_layers)
+        aggregations = _parse_aggregations(cellcharter_config.aggregations)
+        logging.info(
+            "Aggregating neighborhoods (n_layers=%s, aggregations=%s, use_rep=%s).",
+            n_layers,
+            aggregations,
+            aggregation_rep,
+        )
+        cc.gr.aggregate_neighbors(
+            adata,
+            n_layers=n_layers,
+            aggregations=aggregations,
+            use_rep=aggregation_rep,
+            sample_key=sample_key,
+            out_key=cellcharter_config.aggregated_rep_key,
+        )
+
+    solution_results: Dict[str, Any] = {}
+    for solution_config in solution_configs:
+        solution_dir = (
+            qc_dir / f"n_clusters_{solution_config.n_clusters}" if list_mode else qc_dir
+        )
+        solution_dir.mkdir(parents=True, exist_ok=True)
+        solution_results[solution_config.cluster_key] = _run_cellcharter_solution(
+            adata, general_config, solution_config,
+            sample_key=sample_key,
+            spatial_key=spatial_key,
+            input_path=input_path,
+            output_path=output_path,
+            qc_dir=solution_dir,
+            aggregation_rep=aggregation_rep,
+            trvae_details=trvae_details,
+        )
+
+    if list_mode:
+        adata.uns["cellcharter_pipeline"] = {
+            "input_adata_path": str(input_path),
+            "output_adata_path": str(output_path),
+            "n_clusters": list(cellcharter_config.n_clusters),
+            "cluster_key": cellcharter_config.cluster_key,
+            "cluster_keys": list(solution_results),
+            "aggregated_rep_key": cellcharter_config.aggregated_rep_key,
+            "aggregation_use_rep": aggregation_rep,
+            "trvae": trvae_details,
+            "solutions": solution_results,
+        }
+    else:
+        adata.uns["cellcharter_pipeline"] = next(iter(solution_results.values()))
 
     sanitized_changes = _sanitize_uns_for_h5ad_write(adata)
     if sanitized_changes > 0:

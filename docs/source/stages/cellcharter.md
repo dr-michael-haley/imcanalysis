@@ -143,8 +143,9 @@ The published CellCharter package also provides `ClusterAutoK`: it repeatedly
 fits GMMs over a range of cluster numbers and uses agreement between solutions at
 neighbouring values of *K*, summarized by the Fowlkes--Mallows index, to identify
 stable candidates. **SpatialBiologyToolkit does not run that stability search in
-this stage.** It fits one user-specified number, `n_clusters` (11 by default).
-Choosing and defending that number remains part of the analysis.
+this stage.** It fits each user-specified count in `n_clusters`, which accepts a
+single number (11 by default) or a list. Choosing and defending the retained
+solution remains part of the analysis.
 
 There may not be one uniquely correct *K*. In the paper's lung-cancer analysis,
 stable coarse, intermediate, and fine solutions represented different levels of
@@ -190,7 +191,8 @@ The CellCharter environment currently pins `cellcharter==0.3.7`. The stage:
 3. optionally z-scores features within samples;
 4. constructs one spatial graph per sample and optionally removes long links;
 5. concatenates the focal and hop-specific neighbourhood features;
-6. fits a fixed-*K* CellCharter GMM and records categorical cluster labels;
+6. fits a fixed-*K* CellCharter GMM for each requested count and records separate
+   categorical cluster labels;
 7. optionally calculates cell-type enrichment, cluster neighbourhood enrichment,
    differential neighbourhood enrichment, and component shapes;
 8. writes tables and diagnostic figures; and
@@ -206,6 +208,47 @@ that condition, so reused labels should be checked for missing cells. The other
 deprecated common fallback.
 
 ## Main inputs
+
+### Compare several environment counts
+
+Set `cellcharter.n_clusters` to one positive integer (default `11`) or a
+non-empty list of distinct positive integers:
+
+```yaml
+cellcharter:
+  n_clusters: [8, 11, 14]
+```
+
+Run the existing stage with `sbt run cchar`. For a list, the stage prepares the
+representation, spatial graph, and aggregated neighbourhood features once, then
+fits each requested count in the supplied order. Every enabled downstream
+analysis and plot runs for each count: cell-type enrichment, neighbourhood and
+differential enrichment, shape characterization, cluster counts, spatial and mask
+views, UMAP, and case/compartment composition. Existing metadata requirements and
+plot limits still apply. Fitting and downstream work increase with the number of
+requested counts; the list does not select an automatic best count.
+
+All solutions are saved together in the configured output AnnData. With the
+default `cluster_key`, this example creates `spatial_cluster_k8`,
+`spatial_cluster_k11`, and `spatial_cluster_k14`. Colours and enrichment results
+use those solution-specific keys. Shape component columns similarly become
+`component_k8`, etc., with separate `shape_component_k8` results in `adata.uns`.
+Explicit shape cluster references equal to the base `cluster_key` follow each
+solution; references to other annotation columns retain their configured meaning.
+Per-solution provenance is recorded in
+`adata.uns["cellcharter_pipeline"]["solutions"]`, indexed by the cluster column.
+
+Each solution's plots and tables go into `n_clusters_8`, `n_clusters_11`, or
+`n_clusters_14` beneath the stage's existing QC/report location. A scalar such as
+`n_clusters: 11` retains the original `spatial_cluster` column and output layout.
+An explicit one-item list, `[11]`, uses the suffixed list layout, so its names
+remain stable when more counts are added later. No unsuffixed default solution
+is selected for a list; downstream stages should specify the desired column.
+
+`repeat_cluster_analysis: false` checks each solution column independently and
+only fits missing solutions. Shared preparation is skipped when all requested
+columns already contain labels. The other repeat flags apply independently to
+each solution's stored results; plots and tables are regenerated on reuse.
 
 ### Cells and molecular features
 

@@ -298,6 +298,8 @@ def _api_modules(repo_root: Path) -> list[tuple[str, str]]:
     agent_population_qc_package = package_dir / "population_qc"
     if (agent_population_qc_package / "__init__.py").is_file():
         modules.append(("population_qc", "SpatialBiologyToolkit.population_qc"))
+    if (package_dir / "figures" / "__init__.py").is_file():
+        modules.append(("figures", "SpatialBiologyToolkit.figures"))
     return modules
 
 

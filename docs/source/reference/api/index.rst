@@ -68,3 +68,4 @@ This reference is split by module so the site navigation stays compact.
    environments_specification
    population_embedding_qc
    population_qc
+   figures

@@ -14,6 +14,7 @@ napari_sbt_help
 napari_sbt_migration
 project_console
 spatialdata
+figures
 spatial_permutation
 hyperstac_local_analysis
 agent_population_qc

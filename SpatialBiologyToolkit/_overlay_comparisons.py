@@ -6,19 +6,11 @@ time. Resizing assumes corresponding full image extents, not image registration.
 from dataclasses import dataclass
 import logging
 from pathlib import Path
-import re
 
 import numpy as np
 
 
-def _roi_tokens(name):
-    return tuple(str(int(token)) if token.isdigit() else token
-                 for token in re.findall(r'[a-z]+|\d+', str(name).casefold()))
-
-
-def _image_stem(path):
-    stem = path.stem
-    return stem[:-4] if stem.casefold().endswith('.ome') else stem
+from .figures.sources import roi_tokens as _roi_tokens, image_stem as _image_stem, roi_matches
 
 
 @dataclass
@@ -32,13 +24,7 @@ class _ComparisonSource:
 
     def match(self, roi):
         """Exact names win; token matching preserves numeric ROI boundaries."""
-        roi = str(roi)
-        exact = [p for p, stem, _ in self.files if stem.casefold() == roi.casefold()]
-        tokens = _roi_tokens(roi)
-        normalized = [p for p, _, parts in self.files if tokens and parts == tokens]
-        decorated = [p for p, _, parts in self.files if tokens and any(
-            parts[i:i + len(tokens)] == tokens for i in range(len(parts) - len(tokens) + 1))]
-        matches = exact or normalized or decorated
+        matches = roi_matches(self.files, roi)
         if len(matches) == 1:
             return matches[0], None
         if not matches:

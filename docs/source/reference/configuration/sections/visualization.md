@@ -6,6 +6,7 @@
 
 | Field | Type | Default | Level | Description | Advice |
 |---|---|---|---|---|---|
+| `figure_jobs` | `List[SpatialBiologyToolkit.config.models.FigureJobConfig]` | `[]` | `advanced` | Optional publication-figure recipes and dataset bindings. Uses the figures engine independently of backgating; final figures, manifests and review indexes are written under the visualisation report. | - |
 | `input_adata_path` | `Optional[str]` | `null` | `advanced` | Optional AnnData input override; when omitted, the stage uses general.anndata_path. | - |
 | `population_columns` | `Optional[List[str]]` | `null` | `advanced` | Observation columns to treat as population annotations. Defaults to general.population_obs_all, then general.population_obs_primary, then name-based auto-detection. | - |
 | `metadata_columns` | `Optional[List[str]]` | `null` | `advanced` | Categorical observation columns to visualise as sample or experimental metadata. Defaults to general.metadata_obs and then dictionary/name-based auto-detection. | - |

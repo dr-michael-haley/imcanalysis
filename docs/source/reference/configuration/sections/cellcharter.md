@@ -41,14 +41,14 @@
 | `n_layers` | `int` | `3` | `advanced` | Maximum graph-hop layer to aggregate; an integer L includes the focal cell and separate summaries for hops 1 through L. | - |
 | `aggregations` | `str` | `mean` | `advanced` | Neighbour feature summary, such as mean or var; comma-separated values request multiple summaries for every nonzero hop layer. | - |
 | `aggregated_rep_key` | `str` | `X_cellcharter` | `advanced` | AnnData obsm key receiving the concatenated focal-cell and hop-specific neighbourhood features used for clustering. | - |
-| `n_clusters` | `int` | `11` | `advanced` | Fixed number of Gaussian-mixture spatial clusters to fit; this pipeline stage does not run CellCharter's automatic stability scan. | - |
+| `n_clusters` | `Union[int, List[int]]` | `11` | `advanced` | Positive spatial-cluster count or non-empty list of distinct positive counts, e.g. [8, 11, 14]. Lists fit every count and run all enabled downstream analyses/plots in n_clusters_<K> folders, using <cluster_key>_k<K> labels. This does not run CellCharter's automatic stability scan. | - |
 | `random_state` | `int` | `12345` | `advanced` | Random seed used to initialize the CellCharter Gaussian-mixture clustering model. | - |
 | `covariance_type` | `str` | `full` | `advanced` | Gaussian-mixture covariance parameterization; full allows each cluster its own unrestricted covariance matrix. | - |
 | `batch_size` | `Optional[int]` | `null` | `advanced` | Optional number of cells per Gaussian-mixture fitting batch; null lets CellCharter process the full matrix according to its default. | - |
 | `trainer_accelerator` | `str` | `auto` | `advanced` | Lightning accelerator used for Gaussian-mixture fitting, for example auto, cpu, gpu, or cuda where supported. | - |
 | `trainer_devices` | `Optional[int]` | `null` | `advanced` | Optional number of devices supplied to the CellCharter clustering trainer. | - |
 | `trainer_max_epochs` | `int` | `100` | `advanced` | Maximum training epochs for the Gaussian-mixture clustering model. | - |
-| `cluster_key` | `str` | `spatial_cluster` | `advanced` | AnnData obs column receiving categorical CellCharter niche labels; the numeric labels are identifiers without intrinsic order. | - |
+| `cluster_key` | `str` | `spatial_cluster` | `advanced` | AnnData obs column receiving categorical CellCharter niche labels; list-valued n_clusters uses <cluster_key>_k<K> for each count, including a one-item list. Numeric labels are identifiers without intrinsic order. | - |
 | `repeat_analysis` | `Optional[bool]` | `null` | `advanced` | Deprecated fallback for unset stage-specific repeat flags; null means each stage-specific flag defaults to recomputation. | - |
 | `repeat_cluster_analysis` | `Optional[bool]` | `null` | `advanced` | Recompute TRVAE, graph, aggregation, and clustering; false reuses cluster_key when it contains any non-null labels, while null defaults to recomputation. | - |
 | `repeat_enrichment_analysis` | `Optional[bool]` | `null` | `advanced` | Recompute cluster-by-cell-type enrichment; false reuses an existing compatible AnnData uns result, while null defaults to recomputation. | - |
@@ -89,7 +89,7 @@
 | `diff_nhood_plot_ncols` | `int` | `2` | `advanced` | Number of columns in the grid of condition-pair differential neighbourhood-enrichment plots. | - |
 | `save_diff_nhood_enrichment_plot` | `bool` | `True` | `advanced` | Save CellCharter's differential neighbourhood-enrichment plot in addition to exported matrices. | - |
 | `run_shape_characterisation` | `bool` | `False` | `advanced` | Identify connected components of spatial clusters, reconstruct their boundaries, and calculate configured component-shape metrics. | - |
-| `shape_component_key` | `str` | `component` | `advanced` | AnnData obs column receiving connected-component identifiers for spatially contiguous regions of a cluster. | - |
+| `shape_component_key` | `str` | `component` | `advanced` | AnnData obs column receiving connected-component identifiers for spatially contiguous regions of a cluster; list-valued n_clusters uses <shape_component_key>_k<K> for each count. | - |
 | `shape_component_cluster_key` | `Optional[str]` | `null` | `advanced` | AnnData obs labels whose connected components are characterized; null uses cluster_key. | - |
 | `shape_connectivity_key` | `Optional[str]` | `null` | `advanced` | Optional AnnData obsp graph used to define connected components; null uses CellCharter's default spatial connectivity matrix. | - |
 | `shape_min_cells` | `int` | `250` | `advanced` | Minimum cells required for a same-cluster connected component to be retained for shape analysis. | - |

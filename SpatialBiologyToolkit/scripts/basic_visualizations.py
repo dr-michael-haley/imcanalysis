@@ -2605,6 +2605,10 @@ if __name__ == "__main__":
     qc_legend_dir = report_paths.color_legends
     qc_pop_dir = report_paths.population_images
 
+    if viz_config.figure_jobs:
+        from SpatialBiologyToolkit.figures.pipeline import run_figure_jobs
+        run_figure_jobs(adata, viz_config.figure_jobs, qc_pop_dir / 'PublicationFigures')
+
     # Resolve population columns (visualization/general resolved config > auto-detect)
     if viz_config.population_columns is not None:
         population_columns = [str(c) for c in viz_config.population_columns]

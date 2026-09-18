@@ -10,9 +10,11 @@
 
 #@DESC: Identify spatial neighborhoods with CellCharter from an existing embedding or optional TRVAE and save QC summaries
 #@IN:   cellcharter.input_adata_path (fallback: process.output_adata_path, then process.input_adata_path)
+#@IN:   cellcharter.n_clusters: one positive count or a list of distinct positive counts
 #@IN:   adata.obs sample key (default cellcharter.sample_key=ROI) and spatial coords (obsm['spatial'] or X_loc/Y_loc)
 #@OUT:  cellcharter.output_adata_path (default anndata_cellcharter.h5ad)
 #@OUT:  outputs/<execution_id>_CellCharter_Neighbourhoods/ (legacy direct fallback: general.qc_folder)
+#@OUT:  List-valued n_clusters: separate <cluster_key>_k<K> annotations and n_clusters_<K> QC folders
 #@ENV:  sbt-analysis
 #@MODULE:  SpatialBiologyToolkit.scripts.cellcharter_neighborhoods
 #@CONFIG: general, process, cellcharter, logging

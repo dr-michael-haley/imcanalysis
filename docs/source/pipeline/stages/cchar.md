@@ -11,12 +11,14 @@ Identify spatial neighborhoods with CellCharter from an existing embedding or op
 ## Inputs
 
 - cellcharter.input_adata_path (fallback: process.output_adata_path, then process.input_adata_path)
+- cellcharter.n_clusters: one positive count or a list of distinct positive counts
 - adata.obs sample key (default cellcharter.sample_key=ROI) and spatial coords (obsm['spatial'] or X_loc/Y_loc)
 
 ## Outputs
 
 - cellcharter.output_adata_path (default anndata_cellcharter.h5ad)
 - outputs/<execution_id>_CellCharter_Neighbourhoods/ (legacy direct fallback: general.qc_folder)
+- List-valued n_clusters: separate <cluster_key>_k<K> annotations and n_clusters_<K> QC folders
 
 ## Configuration
 

@@ -11,7 +11,7 @@ import logging
 import math
 from typing import Any, Dict, List, Literal, Optional, Tuple, Type, Union
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..denoising_contract import resolve_weights_name
 
@@ -4643,6 +4643,27 @@ class BasicProcessConfig(BioBatchNetConfig):
     input_adata_path: str = 'anndata.h5ad'
     output_adata_path: str = 'anndata_processed.h5ad'
 
+class FigureJobConfig(ConfigModel):
+    """A serialised figure recipe and its dataset binding for the vis stage."""
+    model_config = ConfigDict(extra='forbid')
+    name: str = Field(pattern=r'^[A-Za-z][A-Za-z0-9_-]*$', description="Output subfolder name within publication figures.")
+    recipe: str = Field(description="JSON/YAML figures.Figure recipe path; relative to the project working directory.")
+    imc_folder: Optional[str] = None
+    mask_folder: Optional[str] = None
+    image_folders: Dict[str, str] = Field(default_factory=dict)
+    label_folders: Dict[str, str] = Field(default_factory=dict)
+    reference_folder: Optional[str] = None
+    roi_obs: str = 'ROI'
+    label_obs: str = 'ObjectNumber'
+    x_obs: str = 'X_loc'
+    y_obs: str = 'Y_loc'
+    pixel_size_um: Optional[float] = Field(default=None, gt=0, allow_inf_nan=False)
+    cache_bytes: int = Field(default=134217728, ge=0)
+    rois: Optional[List[str]] = None
+    formats: List[Literal['png', 'svg', 'pdf', 'tif', 'tiff']] = Field(default_factory=lambda: ['png', 'svg'], min_length=1)
+    on_error: Literal['raise', 'skip'] = 'raise'
+
+
 class BackgatingComparisonImageConfig(ConfigModel):
     """One registered image modality shown alongside the IMC overlay."""
 
@@ -4665,6 +4686,7 @@ class BackgatingComparisonImageConfig(ConfigModel):
 
 @config_section("visualization")
 class VisualizationConfig(ConfigModel):
+    figure_jobs: List[FigureJobConfig] = Field(default_factory=list, description="Optional publication-figure recipes and dataset bindings. Uses the figures engine independently of backgating; final figures, manifests and review indexes are written under the visualisation report.")
     # Input data settings
     input_adata_path: Optional[str] = Field(
         default=None,
@@ -5182,10 +5204,29 @@ class CellCharterConfig(ConfigModel):
     )
 
     # Clustering
-    n_clusters: int = Field(
+    n_clusters: Union[int, List[int]] = Field(
         default=11,
-        description="Fixed number of Gaussian-mixture spatial clusters to fit; this pipeline stage does not run CellCharter's automatic stability scan.",
+        description="Positive spatial-cluster count or non-empty list of distinct positive counts, e.g. [8, 11, 14]. Lists fit every count and run all enabled downstream analyses/plots in n_clusters_<K> folders, using <cluster_key>_k<K> labels. This does not run CellCharter's automatic stability scan.",
     )
+
+    @field_validator("n_clusters", mode="before")
+    @classmethod
+    def _reject_boolean_cluster_counts(cls, value: Any) -> Any:
+        values = value if isinstance(value, (list, tuple)) else [value]
+        if any(isinstance(count, bool) for count in values):
+            raise ValueError("n_clusters must contain positive integers, not booleans")
+        return value
+
+    @field_validator("n_clusters")
+    @classmethod
+    def _validate_cluster_counts(cls, value: Union[int, List[int]]) -> Union[int, List[int]]:
+        values = value if isinstance(value, list) else [value]
+        if not values or any(count < 1 for count in values):
+            raise ValueError("n_clusters must be a positive integer or a non-empty list of positive integers")
+        if len(values) != len(set(values)):
+            raise ValueError("n_clusters list must contain distinct counts")
+        return value
+
     random_state: int = Field(
         default=12345,
         description="Random seed used to initialize the CellCharter Gaussian-mixture clustering model.",
@@ -5212,7 +5253,7 @@ class CellCharterConfig(ConfigModel):
     )
     cluster_key: str = Field(
         default="spatial_cluster",
-        description="AnnData obs column receiving categorical CellCharter niche labels; the numeric labels are identifiers without intrinsic order.",
+        description="AnnData obs column receiving categorical CellCharter niche labels; list-valued n_clusters uses <cluster_key>_k<K> for each count, including a one-item list. Numeric labels are identifiers without intrinsic order.",
     )
     repeat_analysis: Optional[bool] = Field(
         default=None,
@@ -5384,7 +5425,7 @@ class CellCharterConfig(ConfigModel):
     )
     shape_component_key: str = Field(
         default="component",
-        description="AnnData obs column receiving connected-component identifiers for spatially contiguous regions of a cluster.",
+        description="AnnData obs column receiving connected-component identifiers for spatially contiguous regions of a cluster; list-valued n_clusters uses <shape_component_key>_k<K> for each count.",
     )
     shape_component_cluster_key: Optional[str] = Field(
         default=None,

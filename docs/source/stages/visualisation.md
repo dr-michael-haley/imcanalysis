@@ -16,6 +16,10 @@ The stage mainly reads existing analyses. It does not compute a new UMAP, create
 
 ## Inputs and automatic annotation selection
 
+For reusable publication layouts combining IMC channels, populations, cell values,
+H&E and annotated tissue masks, see [Publication figures](../guides/figures.md).
+Saved recipes can run through `visualization.figure_jobs`, independently of backgating.
+
 The central input is an AnnData object containing cells in rows, measured markers in columns, and relevant annotations in `adata.obs`. Different visualisation modules also use:
 
 - `adata.obsm['X_umap']` for all UMAP plots;

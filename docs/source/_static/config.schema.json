@@ -1759,12 +1759,22 @@
         },
         "n_clusters": {
           "advice": "",
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            }
+          ],
           "default": 11,
-          "description": "Fixed number of Gaussian-mixture spatial clusters to fit; this pipeline stage does not run CellCharter's automatic stability scan.",
+          "description": "Positive spatial-cluster count or non-empty list of distinct positive counts, e.g. [8, 11, 14]. Lists fit every count and run all enabled downstream analyses/plots in n_clusters_<K> folders, using <cluster_key>_k<K> labels. This does not run CellCharter's automatic stability scan.",
           "level": "advanced",
           "stage": "cellcharter",
           "title": "N Clusters",
-          "type": "integer",
           "ui_group": "Cellcharter"
         },
         "random_state": {
@@ -1844,7 +1854,7 @@
         "cluster_key": {
           "advice": "",
           "default": "spatial_cluster",
-          "description": "AnnData obs column receiving categorical CellCharter niche labels; the numeric labels are identifiers without intrinsic order.",
+          "description": "AnnData obs column receiving categorical CellCharter niche labels; list-valued n_clusters uses <cluster_key>_k<K> for each count, including a one-item list. Numeric labels are identifiers without intrinsic order.",
           "level": "advanced",
           "stage": "cellcharter",
           "title": "Cluster Key",
@@ -2352,7 +2362,7 @@
         "shape_component_key": {
           "advice": "",
           "default": "component",
-          "description": "AnnData obs column receiving connected-component identifiers for spatially contiguous regions of a cluster.",
+          "description": "AnnData obs column receiving connected-component identifiers for spatially contiguous regions of a cluster; list-valued n_clusters uses <shape_component_key>_k<K> for each count.",
           "level": "advanced",
           "stage": "cellcharter",
           "title": "Shape Component Key",
@@ -4837,6 +4847,157 @@
         }
       },
       "title": "DenoisingConfig",
+      "type": "object"
+    },
+    "FigureJobConfig": {
+      "additionalProperties": false,
+      "description": "A serialised figure recipe and its dataset binding for the vis stage.",
+      "properties": {
+        "name": {
+          "description": "Output subfolder name within publication figures.",
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "recipe": {
+          "description": "JSON/YAML figures.Figure recipe path; relative to the project working directory.",
+          "title": "Recipe",
+          "type": "string"
+        },
+        "imc_folder": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Imc Folder"
+        },
+        "mask_folder": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mask Folder"
+        },
+        "image_folders": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Image Folders",
+          "type": "object"
+        },
+        "label_folders": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Label Folders",
+          "type": "object"
+        },
+        "reference_folder": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reference Folder"
+        },
+        "roi_obs": {
+          "default": "ROI",
+          "title": "Roi Obs",
+          "type": "string"
+        },
+        "label_obs": {
+          "default": "ObjectNumber",
+          "title": "Label Obs",
+          "type": "string"
+        },
+        "x_obs": {
+          "default": "X_loc",
+          "title": "X Obs",
+          "type": "string"
+        },
+        "y_obs": {
+          "default": "Y_loc",
+          "title": "Y Obs",
+          "type": "string"
+        },
+        "pixel_size_um": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Pixel Size Um"
+        },
+        "cache_bytes": {
+          "default": 134217728,
+          "minimum": 0,
+          "title": "Cache Bytes",
+          "type": "integer"
+        },
+        "rois": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rois"
+        },
+        "formats": {
+          "items": {
+            "enum": [
+              "png",
+              "svg",
+              "pdf",
+              "tif",
+              "tiff"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Formats",
+          "type": "array"
+        },
+        "on_error": {
+          "default": "raise",
+          "enum": [
+            "raise",
+            "skip"
+          ],
+          "title": "On Error",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "recipe"
+      ],
+      "title": "FigureJobConfig",
       "type": "object"
     },
     "GeneralConfig": {
@@ -12522,6 +12683,18 @@
     },
     "VisualizationConfig": {
       "properties": {
+        "figure_jobs": {
+          "advice": "",
+          "description": "Optional publication-figure recipes and dataset bindings. Uses the figures engine independently of backgating; final figures, manifests and review indexes are written under the visualisation report.",
+          "items": {
+            "$ref": "#/$defs/FigureJobConfig"
+          },
+          "level": "advanced",
+          "stage": "visualization",
+          "title": "Figure Jobs",
+          "type": "array",
+          "ui_group": "Visualization"
+        },
         "input_adata_path": {
           "advice": "",
           "anyOf": [

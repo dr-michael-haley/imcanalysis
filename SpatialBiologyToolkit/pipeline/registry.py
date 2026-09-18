@@ -545,11 +545,11 @@ STAGES: tuple[StageSpec, ...] = (
     _stage(
         "cchar",
         "job_cellcharter.sh",
-        "Identify spatial neighbourhoods with CellCharter.",
+        "Identify spatial neighbourhoods with CellCharter for one or more cluster counts.",
         groups=("spatial",),
         requires=("anndata",),
         produces=("anndata", "human_outputs"),
-        outputs=("CellCharter annotations and QC summaries",),
+        outputs=("CellCharter annotations, analyses, and QC plots for each requested cluster count",),
     ),
     _stage(
         "starling",
