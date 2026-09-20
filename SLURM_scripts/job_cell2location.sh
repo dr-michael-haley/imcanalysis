@@ -2,7 +2,8 @@
 #SBATCH -p gpuA
 #SBATCH -G 1
 #SBATCH -t 2-0
-#SBATCH -n 12
+#SBATCH -n 1
+#SBATCH -c 12
 
 set -euo pipefail
 
