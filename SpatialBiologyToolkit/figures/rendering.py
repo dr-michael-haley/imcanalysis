@@ -36,13 +36,13 @@ class PreparedFigure:
                 if panel.scale_bar.unit == 'um' and dataset.pixel_size_um is None:
                     raise ValueError('A micrometre scale bar needs Dataset(pixel_size_um=...).')
             for layer in panel.layers:
-                if isinstance(layer, Image) and layer.source not in dataset.images:
+                if isinstance(layer, Image) and not panel.legend_only and layer.source not in dataset.images:
                     raise ValueError(f'Unknown image source {layer.source!r}.')
-                if isinstance(layer, LabelMask) and layer.source not in dataset.labels:
+                if isinstance(layer, LabelMask) and not panel.legend_only and layer.source not in dataset.labels:
                     raise ValueError(f'Unknown label-mask source {layer.source!r}.')
-                if isinstance(layer, (Populations, Values)) and (dataset.adata is None or dataset.masks is None):
+                if isinstance(layer, (Populations, Values)) and (dataset.adata is None or (not panel.legend_only and dataset.masks is None)):
                     raise ValueError('Cell layers require AnnData and a cell-mask folder.')
-                if isinstance(layer, IMC) and not dataset.imc:
+                if isinstance(layer, IMC) and not panel.legend_only and not dataset.imc:
                     raise ValueError('IMC layers require an IMC image folder.')
                 if isinstance(layer, Populations):
                     palette = categorical_palette(dataset, layer.obs, layer.colors)
@@ -67,10 +67,12 @@ class PreparedFigure:
                 if isinstance(layer, IMC):
                     for channel in layer.channels:
                         to_rgba(channel.color)
-                        if channel.scale.mode == 'pooled_quantile':
+                        if not panel.legend_only and channel.scale.mode == 'pooled_quantile':
                             raise ValueError('Pooled quantiles are supported for cell values, not whole image cohorts.')
         calibrated = {}
         for panel in self.recipe.panels:
+            if panel.legend_only:
+                continue
             for layer in panel.layers:
                 items = [(str(i), channel.scale, ('image', channel.marker),
                           lambda roi, marker=channel.marker: read_image(dataset.channel_path(roi, marker)))
@@ -138,11 +140,18 @@ class PreparedFigure:
                 legends, colorbars = [], []
                 for layer_index, layer in enumerate(panel.layers):
                     state.zorder = 1 + layer_index * 3
-                    entries, bar = state.draw_layer(ax, layer)
+                    entries, bar = (state.legend_entries(layer), None) if panel.legend_only else state.draw_layer(ax, layer)
                     if layer.legend:
                         legends.extend(entries)
                     if bar is not None:
                         colorbars.append((layer, bar))
+                if panel.legend_only:
+                    if not legends:
+                        raise ValueError(f'Legend-only panel {panel.title or panel.id!r} has no categorical legend entries.')
+                    ax.set_facecolor(style.background)
+                    ax.set_xlim(0, 1)
+                    ax.set_ylim(0, 1)
+                    ax.set_aspect('auto')
                 state.decorate(ax, panel, legends, colorbars, x_mm, bottom, pw,
                                top, total_width, total_height, title_height)
             metadata = dict(roi=str(roi), reference_shape=list(context.shape),
@@ -167,6 +176,28 @@ class _RenderState:
         self.prepared, self.context, self.fig, self.view = prepared, context, figure, view
         self.groups, self.prefixes, self.scaling, self.paths = {}, {}, {}, {}
         self.zorder = 1
+
+    def legend_entries(self, layer):
+        """Categorical keys use metadata only; no image/mask reads or geometry."""
+        if isinstance(layer, IMC):
+            return [(channel.marker, channel.color) for channel in layer.channels]
+        if isinstance(layer, Image):
+            return list(layer.colors.items())
+        if isinstance(layer, LabelMask):
+            palette = self.label_palette(layer)
+            return [(name, palette[ident]) for ident, name in layer.labels.items()]
+        if isinstance(layer, Populations):
+            palette = self.prepared.palettes[layer.id]
+            groups = list(palette) if layer.groups is None else layer.groups
+            return [(group, palette[group]) for group in groups]
+        return []
+
+    @staticmethod
+    def label_palette(layer):
+        import matplotlib as mpl
+        from matplotlib.colors import to_hex
+        return {ident: layer.colors.get(ident, to_hex(mpl.colormaps['tab20'](i % 20)))
+                for i, ident in enumerate(layer.labels)}
 
     def image(self, ax, array, gid, **kwargs):
         x, y, w, h = self.view['bounds']
@@ -252,7 +283,7 @@ class _RenderState:
                 del crop, scaled, raw
             np.clip(composite, 0, 1, out=composite)
             self.image(ax, composite, layer.id + '_image', alpha=layer.opacity)
-            return [(c.marker, c.color) for c in layer.channels], None
+            return self.legend_entries(layer), None
         if isinstance(layer, Image):
             raw = self.context.read(data.images[layer.source].match(roi))
             if raw.ndim != 2 and not (raw.ndim == 3 and raw.shape[-1] in (3, 4)):
@@ -265,12 +296,11 @@ class _RenderState:
                     raise ValueError('Floating RGB images must use intensities in [0, 1].')
             kwargs = dict(cmap='gray', vmin=float(np.nanmin(raw)), vmax=float(np.nanmax(raw))) if crop.ndim == 2 else {}
             self.image(ax, crop, layer.id + '_image', alpha=layer.opacity, **kwargs)
-            return list(layer.colors.items()), None
+            return self.legend_entries(layer), None
         if isinstance(layer, LabelMask):
-            palette = {ident: layer.colors.get(ident, to_hex(mpl.colormaps['tab20'](i % 20)))
-                       for i, ident in enumerate(layer.labels)}
+            palette = self.label_palette(layer)
             self.draw_cells(ax, layer, palette, layer.source)
-            return [(name, palette[ident]) for ident, name in layer.labels.items()], None
+            return self.legend_entries(layer), None
         ids = cell_ids(data, roi)
         if isinstance(layer, Populations):
             palette = self.prepared.palettes[layer.id]
@@ -279,7 +309,7 @@ class _RenderState:
             colors = {int(ident): palette[str(value)] for ident, value in zip(ids, values)
                       if str(value) in groups}
             self.draw_cells(ax, layer, colors)
-            return [(group, palette[group]) for group in groups], None
+            return self.legend_entries(layer), None
         values = numeric_values(data, roi, layer.value)
         bounds = resolve_bounds(layer.scale, self.prepared.bounds[(layer.id, 'values')], values)
         # Equal-valued data has a defined display colour and a nondegenerate bar.
@@ -298,6 +328,9 @@ class _RenderState:
         import matplotlib.patheffects as effects
         style = self.prepared.recipe.style
         font = style.font_family
+        from matplotlib.colors import to_rgb
+        light_background = np.dot(to_rgb(style.background), [0.299, 0.587, 0.114]) > .5
+        legend_foreground = 'black' if light_background else 'white'
         if panel.title:
             gid = panel.id + '_title'
             self.groups[gid] = 'Panel title'
@@ -307,15 +340,20 @@ class _RenderState:
         if panel.letter:
             gid = panel.id + '_letter'
             self.groups[gid] = 'Panel letter'
-            ax.text(.02, .98, panel.letter, transform=ax.transAxes, va='top', color='white',
+            ax.text(.02, .98, panel.letter, transform=ax.transAxes, va='top',
+                    color=legend_foreground if panel.legend_only else 'white',
                     fontweight='bold', fontsize=style.letter_fontsize or style.title_fontsize,
                     fontfamily=font, gid=gid, zorder=10001)
         if panel.legend and legends:
             # Keep different colours with the same label visible; remove exact duplicates.
             legends = list(dict.fromkeys((label, str(color)) for label, color in legends))
             handles = [Patch(facecolor=color, edgecolor='none', label=label) for label, color in legends]
-            legend = ax.legend(handles=handles, loc='upper right', prop={'family': font, 'size': style.legend_fontsize},
-                               facecolor='black', edgecolor='white', framealpha=1, labelcolor='white', fancybox=False)
+            legend = ax.legend(handles=handles, loc='center' if panel.legend_only else 'upper right',
+                               ncol=panel.legend_ncols,
+                               prop={'family': font, 'size': panel.legend_fontsize or style.legend_fontsize},
+                               facecolor=style.background if panel.legend_only else 'black',
+                               edgecolor='white', framealpha=1, frameon=not panel.legend_only,
+                               labelcolor=legend_foreground if panel.legend_only else 'white', fancybox=False)
             legend.set_gid(panel.id + '_legend')
             legend.set_zorder(10000)
             self.groups[panel.id + '_legend'] = 'Colour legend'

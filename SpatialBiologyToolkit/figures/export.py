@@ -51,7 +51,7 @@ class RenderedFigure:
         recipe = Figure.model_validate(self.metadata['recipe'])
         for panel in recipe.panels:
             for layer in panel.layers:
-                if isinstance(layer, IMC):
+                if isinstance(layer, IMC) and not panel.legend_only:
                     for channel in layer.channels:
                         bounds = self.metadata['scaling'][f'{layer.id}/{channel.marker}']['limits']
                         channel.scale = Scale(mode='fixed', limits=bounds)

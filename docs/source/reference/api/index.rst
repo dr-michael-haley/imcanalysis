@@ -47,6 +47,7 @@ This reference is split by module so the site navigation stays compact.
    spatialdata
    utils
    visium
+   visium_comparison
    config_documentation
    config_editing
    config_export

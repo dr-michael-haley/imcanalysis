@@ -151,7 +151,8 @@ def preflight(recipe, dataset, *, rois=None):
     if not rois or len(set(rois)) != len(rois) or set(rois) - set(dataset.rois):
         raise ValueError('Supply nonempty, distinct, known ROIs.')
     layers = [layer for panel in recipe.panels for layer in panel.layers]
-    cell_layers = any(isinstance(layer, (Populations, Values)) for layer in layers)
+    image_layers = [layer for panel in recipe.panels if not panel.legend_only for layer in panel.layers]
+    cell_layers = any(isinstance(layer, (Populations, Values)) for layer in image_layers)
     crop = recipe.crop
     area_only = crop.mask_source and not crop.where and crop.score is None and not crop.denominator
     if (crop.mode == 'hotspot' and not area_only) or crop.mode == 'cell':
@@ -175,7 +176,7 @@ def preflight(recipe, dataset, *, rois=None):
         if panel.scale_bar and panel.scale_bar.unit == 'um' and dataset.pixel_size_um is None:
             raise ValueError('A micrometre scale bar requires pixel_size_um.')
     for layer in layers:
-        if isinstance(layer, IMC) and any(channel.scale.mode == 'pooled_quantile' for channel in layer.channels):
+        if layer in image_layers and isinstance(layer, IMC) and any(channel.scale.mode == 'pooled_quantile' for channel in layer.channels):
             raise ValueError('Pooled quantiles are supported for cell values, not image cohorts.')
         if isinstance(layer, Populations):
             if dataset.obs is None or layer.obs not in dataset.obs:
@@ -183,9 +184,9 @@ def preflight(recipe, dataset, *, rois=None):
             categories = set(dataset.obs[layer.obs].dropna().astype(str))
             if layer.groups and set(layer.groups) - categories:
                 raise ValueError(f'Unknown populations: {set(layer.groups) - categories}')
-        if isinstance(layer, Image) and layer.source not in dataset.images:
+        if layer in image_layers and isinstance(layer, Image) and layer.source not in dataset.images:
             raise ValueError(f'Unknown image source {layer.source!r}.')
-        if isinstance(layer, LabelMask) and layer.source not in dataset.labels:
+        if layer in image_layers and isinstance(layer, LabelMask) and layer.source not in dataset.labels:
             raise ValueError(f'Unknown label source {layer.source!r}.')
     if crop.mask_source and crop.mask_source not in dataset.labels:
         raise ValueError(f'Unknown crop label source {crop.mask_source!r}.')
@@ -210,7 +211,7 @@ def preflight(recipe, dataset, *, rois=None):
             if cell_layers:
                 cell_ids(dataset, roi)
                 checks.append((dataset.masks.match(roi), 'labels'))
-            for layer in layers:
+            for layer in image_layers:
                 if isinstance(layer, IMC):
                     checks += [(dataset.channel_path(roi, channel.marker), 'imc') for channel in layer.channels]
                 elif isinstance(layer, Image):

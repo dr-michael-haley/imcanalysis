@@ -17,6 +17,7 @@ spatialdata
 figures
 spatial_permutation
 hyperstac_local_analysis
+visium_comparison
 agent_population_qc
 ../diversity
 ```

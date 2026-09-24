@@ -227,6 +227,20 @@ class Panel(Spec):
     layers: list[LayerSpec] = Field(default_factory=list)
     scale_bar: ScaleBar | None = None
     legend: bool = True
+    legend_only: bool = False
+    legend_ncols: int = Field(default=1, ge=1, strict=True)
+    legend_fontsize: float | None = Field(default=None, gt=0, description='Legend text size in points; None inherits Style.legend_fontsize.')
+
+    @model_validator(mode='after')
+    def check_legend_only(self):
+        if self.legend_only:
+            if not self.legend or not any(layer.legend for layer in self.layers):
+                raise ValueError('A legend-only panel needs an enabled legend and at least one legend layer.')
+            if self.scale_bar is not None:
+                raise ValueError('A legend-only panel cannot have a spatial scale bar.')
+            if any(isinstance(layer, Values) for layer in self.layers):
+                raise ValueError('legend_only supports categorical legends, not continuous Values colour bars.')
+        return self
 
 
 class Crop(Spec):
@@ -339,7 +353,9 @@ class Figure(Spec):
                     placed = placed.model_copy(update={'letter': letter})
                 panels.append(placed)
         if scale_bar and not any(p.scale_bar for p in panels):
-            panels[0] = panels[0].model_copy(update={'scale_bar': ScaleBar.auto()})
+            first_image = next((i for i, p in enumerate(panels) if not p.legend_only), None)
+            if first_image is not None:
+                panels[first_image] = panels[first_image].model_copy(update={'scale_bar': ScaleBar.auto()})
         return cls(layout=(len(rows), len(rows[0])), panels=panels, **kwargs)
 
     def with_crop(self, crop):
@@ -353,6 +369,8 @@ class Figure(Spec):
         """Resolve shared channel settings without image reads or changing this recipe."""
         result = self.model_validate(self.model_dump(mode='json'))
         for panel in result.panels:
+            if panel.legend_only:
+                continue  # A categorical legend needs colours/names, not intensity calibration.
             for layer in panel.layers:
                 if isinstance(layer, IMC):
                     for channel in layer.channels:

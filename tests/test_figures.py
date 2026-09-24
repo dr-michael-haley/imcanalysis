@@ -226,6 +226,82 @@ def test_automatic_scale_bar_uses_calibration(dataset):
         assert '5 px' in texts
 
 
+def test_legend_only_reuses_population_palette_and_exports(dataset):
+    from matplotlib.colors import to_hex
+    data, root = dataset
+    layer = F.Populations(obs='population', mode='fill', colors={'A': '#ff0000', 'B': '#00ff00'})
+    figure = F.Figure.grid([[
+        F.Panel(title='Cells', layers=[layer], legend=False),
+        F.Panel(title='Population key', layers=[layer], legend_only=True, legend_ncols=2, legend_fontsize=9),
+    ]], scale_bar=False)
+    assert figure.preflight(data).eligible_rois == ['R1', 'R2']
+    with figure.preview(data, 'R1') as result:
+        cells, key = result.figure.axes
+        assert cells.get_legend() is None
+        assert cells.patches and not key.images and not key.patches
+        legend = key.get_legend()
+        assert legend._ncols == 2
+        assert [text.get_text() for text in legend.get_texts()] == ['B', 'A']
+        assert all(text.get_fontsize() == 9 for text in legend.get_texts())
+        assert [to_hex(handle.get_facecolor()) for handle in legend.legend_handles] == ['#00ff00', '#ff0000']
+        result.figure.canvas.draw()
+        outer, inner = key.get_window_extent(), legend.get_window_extent()
+        assert outer.contains(inner.x0, inner.y0) and outer.contains(inner.x1, inner.y1)
+        files = result.save_bundle(root/'legend_bundle', dpi=80)
+        svg = ET.parse(next(p for p in files if p.suffix == '.svg')).getroot()
+        legend_id = figure.panels[1].id + '_legend'
+        group = next(el for el in svg.iter() if el.get('id') == legend_id)
+        assert group.findall('.//{http://www.w3.org/2000/svg}text')
+        frozen = result.freeze()
+        assert frozen.panels[1].legend_only and frozen.panels[1].legend_ncols == 2
+        assert frozen.panels[0].layers[0].colors == frozen.panels[1].layers[0].colors
+        with frozen.preview(data, 'R1') as repeat:
+            assert repeat.figure.axes[1].get_legend()._ncols == 2
+
+
+def test_legend_only_has_no_mask_channel_or_calibration_dependency(dataset, monkeypatch):
+    import SpatialBiologyToolkit.figures.rendering as rendering
+    from SpatialBiologyToolkit.figures.sources import ROIContext
+    original, root = dataset
+    data = F.Dataset(original.adata, image_folders={'he': root/'he'})
+    monkeypatch.setattr(rendering, 'read_image', lambda *args: pytest.fail('Legend must not calibrate channel images'))
+    monkeypatch.setattr(ROIContext, 'mask', lambda *args: pytest.fail('Legend must not load segmentation masks'))
+    figure = F.Figure.grid([[
+        F.Panel(legend_only=True, legend_ncols=2, layers=[
+            F.Populations(obs='population', groups=['A']),
+            F.IMC.rgb('unavailable_red', 'unavailable_green', 'unavailable_blue'),
+            F.LabelMask(source='unavailable_masks', labels={1: 'Region'}),
+            F.Image(source='unavailable_image', colors={'Modality': 'pink'}),
+        ]),
+        F.Panel(layers=[F.Image(source='he')]),
+    ]], intensities=F.Intensities(limits={}))
+    assert figure.panels[0].scale_bar is None
+    assert figure.panels[1].scale_bar is not None
+    assert figure.preflight(data).eligible_rois == ['R1', 'R2']
+    with figure.preview(data, 'R1') as result:
+        texts = [text.get_text() for text in result.figure.axes[0].get_legend().get_texts()]
+        assert texts == ['A', 'unavailable_red', 'unavailable_green', 'unavailable_blue', 'Region', 'Modality']
+        assert result.metadata['scaling'] == {}
+        result.save_bundle(root/'metadata_only_legend', dpi=80)
+
+
+def test_legend_options_validation_and_existing_overlay_columns(dataset):
+    data, _ = dataset
+    layer = F.Populations(obs='population')
+    for kwargs in [dict(legend=False), dict(scale_bar=F.ScaleBar.auto()), dict(legend_ncols=0)]:
+        with pytest.raises(ValueError):
+            F.Panel(layers=[layer], legend_only=True, **kwargs)
+    with pytest.raises(ValueError, match='continuous'):
+        F.Panel(layers=[F.Values(value=F.obs('score'))], legend_only=True)
+    figure = F.Figure(panels=[F.Panel(layers=[layer], legend_ncols=2)])
+    with figure.preview(data, 'R1') as result:
+        assert result.figure.axes[0].get_legend()._ncols == 2
+        assert result.figure.axes[0].patches
+    empty = F.Figure(panels=[F.Panel(layers=[F.Image(source='he')], legend_only=True)])
+    with pytest.raises(ValueError, match='no categorical legend entries'):
+        empty.preview(data, 'R1')
+
+
 @pytest.mark.parametrize('letter_size,scale_size,expected_letter,expected_scale', [
     (None, None, 13, 7),
     (19, 11, 19, 11),

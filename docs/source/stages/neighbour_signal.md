@@ -225,6 +225,69 @@ Markers with unavailable halo profiles retain the existing zero-score sentinel;
 always check `var['halo_profile_available']` rather than interpreting it as an
 estimated absence of neighbour-attributable signal.
 
+#### Comparing multiple population annotations
+
+`population_obs` accepts either a single observation name or a list:
+
+```yaml
+neighbour_signal:
+  population_obs:
+    - CellType
+    - BroadPopulation
+    - leiden_0.5
+```
+
+Each name must be an exact `.obs` column name. Empty or duplicate names are
+rejected. A missing column is reported, with that annotation's attribution
+retained in its unknown component, not treated as heterotypic.
+`null` still falls back to `general.population_obs_primary`.
+
+For multiple annotations, the output has three float32 layers per annotation:
+
+- `homotypic_NAF__CellType`
+- `heterotypic_NAF__CellType`
+- `unknown_population_NAF__CellType`
+
+The same three layers are created for `BroadPopulation`, `leiden_0.5`, and any
+other configured names. Each annotation's three components sum to total `X`
+under `max` aggregation. **Do not sum across annotations**: these are alternative
+classifications of the same source contributions, not additional signal.
+A single string or a one-element list retains the original unsuffixed layer
+names for compatibility. Spaces and special characters in multi-annotation
+suffixes are percent-encoded, for example `Broad type` becomes `Broad%20type`.
+Use the recorded mapping rather than constructing names in downstream code:
+
+```python
+annotations = adata.uns["marker_halo"]["population_attribution"]["annotations"]
+spec = next(item for item in annotations.values() if item["population_obs"] == "CellType")
+heterotypic = adata.layers[spec["layers"]["heterotypic"]]
+```
+
+The source-target Parquet remains one row per non-zero target/marker/source
+relationship, with additional `source_population__CellType` and
+`target_population__CellType` columns for each available annotation. Its metadata
+records the exact column mappings. Missing annotations have no population table
+columns and are explicitly marked unavailable in the mapping. Total NAF,
+source identities, dominant-source layers and raw intensities remain shared.
+The halo model and winning sources are **not** recalculated for each label set.
+
+Each annotation gets a numbered `population_001_CellType/` QC folder under the
+existing figures, tables and summaries directories. These contain component
+distributions, UMAPs, expression comparisons, population matrix plots with a
+total-NAF dendrogram, source-to-target summaries and heatmaps, and target-source
+galleries. All measured markers receive the applicable plots. Target galleries
+reuse the same examples and projected pixel maps across annotations; their
+titles and shared manifest identify the annotation. Total per-cell QC, learned
+halo profiles and exemplar-selection galleries remain shared at the report
+root. PNG and SVG output is retained.
+
+Changing the annotation resolution can turn a heterotypic contribution into
+a homotypic one without changing its magnitude or total NAF. This remains a
+description of spatial explainability, not evidence of physical transfer.
+Each additional annotation requires three cell-by-marker component matrices,
+plus its QC outputs, even in compact mode. Choose only the label sets needed
+for comparison when output size is important.
+
 ## Human-facing outputs produced
 
 The managed execution report contains:
@@ -324,7 +387,7 @@ neighbour_signal:
   create_cell_galleries: true
   gallery_examples_per_marker: 6
   gallery_crop_margin_px: 8
-  population_obs: null
+  population_obs: null  # or CellType, or [CellType, BroadPopulation, leiden_0.5]
   source_target_qc_exclude_same_population: true
   high_risk_threshold: 0.5
 ```

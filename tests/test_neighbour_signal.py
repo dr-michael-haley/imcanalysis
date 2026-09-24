@@ -29,6 +29,8 @@ from SpatialBiologyToolkit.neighbour_signal import (
     finalize_output_storage,
     calculate_marker_halo_maps,
     population_attribution_fractions,
+    population_annotation_specs,
+    population_source_table,
     project_source_halos,
     project_source_halos_with_sources,
     run_neighbour_signal_analysis,
@@ -42,6 +44,7 @@ from SpatialBiologyToolkit.neighbour_signal_reports import (
     _plot_source_target_population_heatmaps,
     _plot_umap,
     dominant_source_summary,
+    generate_neighbour_signal_report,
     marker_score_summary,
     population_source_target_summary,
     select_qc_markers,
@@ -736,7 +739,7 @@ def _check_filtered_anndata_ignores_orphans_and_reports_counts(tmp_path: Path):
         calculate_classic_intensities=True,
         high_risk_threshold=0.5,
     )
-    assert output.uns["marker_halo"]["schema_version"] == 7
+    assert output.uns["marker_halo"]["schema_version"] == 8
     restored_backgrounds = output.uns["marker_halo"]["roi_marker_backgrounds"]
     assert "unmapped_strong_source_cells" in restored_backgrounds.columns
     assert "authoritative output AnnData row" in output.uns["marker_halo"][
@@ -1313,6 +1316,162 @@ def _check_gallery_selection_is_stratified_unique_and_bounded(tmp_path: Path):
 
 
 class NeighbourSignalTests(unittest.TestCase):
+    def test_multiple_population_config_and_safe_names(self):
+        for value in ("Population", ["Population"], ["Population", "Broad"]):
+            config = NeighbourSignalConfig(population_obs=value)
+            assert config.population_obs == value
+            assert NeighbourSignalConfig.model_validate_json(config.model_dump_json()).population_obs == value
+        for value in ([], " ", ["Population", ""], ["Population", "Population"], [None]):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                NeighbourSignalConfig(population_obs=value)
+        names = ["Cell/type", "Cell%2Ftype", "Cell type", "Cell_type", "cell_type"]
+        specs = population_annotation_specs(names)
+        assert len(specs) == len(names)
+        assert len({spec["qc_subdir"].casefold() for spec in specs.values()}) == len(names)
+        assert all("/" not in key for key in specs)
+        assert specs["Cell%2Ftype"]["layers"]["homotypic"] == "homotypic_NAF__Cell%2Ftype"
+        assert population_annotation_specs(["Population"]) == population_annotation_specs("Population")
+
+    def test_multiple_population_partitions_and_roundtrip(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, result = _run(root, ["ROI_1", "ROI_2"], n_jobs=1)
+            source.obs["Broad type"] = pd.Categorical(["Immune"] * source.n_obs)
+            source.obs["Partial"] = pd.Categorical(source.obs["Population"])
+            source.obs.loc[source.obs["ObjectNumber"].eq(6), "Partial"] = pd.NA
+            names = ["Population", "Broad type", "Partial", "Absent"]
+            table = build_source_target_table(source, result, roi_obs="ROI", object_id_obs="ObjectNumber",
+                                              population_obs=names)
+            single_table = build_source_target_table(source, result, roi_obs="ROI", object_id_obs="ObjectNumber",
+                                                     population_obs="Population")
+            assert len(table) == len(single_table)
+            pd.testing.assert_frame_equal(table.iloc[:, :12], single_table.iloc[:, :12])
+            table.to_parquet(root / "edges.parquet", index=False)
+            pd.testing.assert_frame_equal(pd.read_parquet(root / "edges.parquet"), table)
+            kwargs = dict(parameters={"population_obs": names}, calculate_classic_intensities=True,
+                          high_risk_threshold=0.5, output_mode="compact")
+            output = build_output_anndata(source, result, source_target_table=table, **kwargs)
+            direct = build_output_anndata(source, result, **kwargs)
+            specs = output.uns["marker_halo"]["population_attribution"]["annotations"]
+            assert "homotypic_NAF" not in output.layers  # No ambiguous/duplicated primary annotation.
+            np.testing.assert_array_equal(output.X, result.scores)
+            for spec in specs.values():
+                np.testing.assert_allclose(sum(output.layers[name] for name in spec["layers"].values()), output.X)
+                for name in spec["layers"].values():
+                    assert output.layers[name].dtype == np.float32
+                    np.testing.assert_array_equal(output.layers[name], direct.layers[name])
+            np.testing.assert_allclose(output.layers["heterotypic_NAF__Population"], output.X)
+            np.testing.assert_allclose(output.layers["homotypic_NAF__Broad%20type"], output.X)
+            np.testing.assert_allclose(output.layers["unknown_population_NAF__Partial"], output.X)
+            np.testing.assert_allclose(output.layers["unknown_population_NAF__Absent"], output.X)
+            assert not specs["Absent"]["population_annotation_available"]
+            assert specs["Partial"]["population_annotation_available"]
+            assert table["source_roi"].equals(table["target_roi"])
+            pop_summary = population_source_target_summary(population_source_table(table, specs["Broad%20type"]))
+            assert set(pop_summary["source_population"]) == {"Immune"}
+            assert set(pop_summary["target_population"]) == {"Immune"}
+            _atomic_h5ad(output, root / "multiple.h5ad")
+            restored = ad.read_h5ad(root / "multiple.h5ad")
+            assert restored.obs_names.equals(source.obs_names)
+            assert restored.var_names.equals(source.var_names)
+            for name in output.layers:
+                np.testing.assert_array_equal(restored.layers[name], output.layers[name])
+            stored = restored.uns["marker_halo"]["population_attribution"]["annotations"]
+            assert stored["Broad%20type"]["population_obs"] == "Broad type"
+            assert stored["Population"]["source_column"] in table
+            # Legacy string and a one-element list keep identical layers and tables.
+            single_kwargs = {**kwargs, "parameters": {"population_obs": "Population"}}
+            single = build_output_anndata(source, result, **single_kwargs)
+            one = build_output_anndata(source, result, **{**single_kwargs, "parameters": {"population_obs": ["Population"]}})
+            for name in single.layers:
+                np.testing.assert_array_equal(single.layers[name], one.layers[name])
+            pd.testing.assert_frame_equal(single_table, build_source_target_table(
+                source, result, roi_obs="ROI", object_id_obs="ObjectNumber", population_obs=["Population"]))
+            # Empty provenance (sum mode) has stable population columns and NaN partitions.
+            from dataclasses import replace
+            summed = replace(result, source_provenance_available=False, source_target_attributions=())
+            empty = build_source_target_table(source, summed, roi_obs="ROI", object_id_obs="ObjectNumber",
+                                              population_obs=names)
+            assert empty.columns.equals(table.columns)
+            summed_output = build_output_anndata(source, summed, source_target_table=empty, **kwargs)
+            for spec in specs.values():
+                assert all(np.isnan(summed_output.layers[name]).all() for name in spec["layers"].values())
+
+    def test_multiple_population_report_reuses_images_and_keeps_labels_separate(self):
+        from SpatialBiologyToolkit import neighbour_signal_reports as reporting
+
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source, result = _run(root, ["ROI_1"], n_jobs=1)
+            source.obs["Broad"] = pd.Categorical(["Immune"] * source.n_obs)
+            identity = select_source_cells(source, roi_obs="ROI", object_id_obs="ObjectNumber")
+            contexts, _ = discover_roi_inputs(root / "tiffs", root / "masks", identity,
+                                              roi_obs="ROI", markers=list(source.var_names))
+            names = ["Population", "Broad"]
+            table = build_source_target_table(source, result, roi_obs="ROI", object_id_obs="ObjectNumber",
+                                              population_obs=names)
+            output = build_output_anndata(
+                source, result, parameters={"population_obs": names, "max_halo_px": 4},
+                calculate_classic_intensities=True, high_risk_threshold=0.5,
+                source_target_table=table, output_mode="compact", store_original_X=True,
+            )
+            layers_before = set(output.layers)
+            with patch("SpatialBiologyToolkit.neighbour_signal.calculate_marker_halo_maps",
+                       wraps=calculate_marker_halo_maps) as maps, patch.object(
+                reporting, "_render_target_source_contact_sheet",
+                wraps=reporting._render_target_source_contact_sheet,
+            ) as gallery_renderer:
+                report = generate_neighbour_signal_report(
+                    output, figures_dir=root / "figures", tables_dir=root / "tables", summaries_dir=root / "summaries",
+                    output_adata_path=root / "output.h5ad", qc_markers=None, max_qc_markers=None,
+                    umap_point_size=3, population_obs=names, source_target_table=table,
+                    source_target_qc_exclude_same_population=True, roi_inputs=contexts,
+                    gallery_examples_per_marker=1,
+                )
+            assert 0 < maps.call_count <= len(contexts) * source.n_vars
+            assert report.metrics["population_annotations"] == 2
+            assert set(output.layers) == layers_before
+            assert "homotypic_NAF" not in output.layers  # Plot aliases never mutate the asset.
+            assert sum(path.name == "exemplar_selection.csv" for path in report.tables) == 1
+            assert all(path.is_file() for path in report.figures + report.tables + report.summaries)
+            assert all(path.with_suffix(".svg").is_file() for path in report.figures if path.suffix == ".png")
+            specs = output.uns["marker_halo"]["population_attribution"]["annotations"]
+            for key, spec in specs.items():
+                folder = root / "figures" / spec["qc_subdir"]
+                assert (folder / "scanpy_population_marker_halo_matrixplots"
+                        / "scanpy_population_marker_halo_matrixplot.png").is_file()
+                component_summary = pd.read_csv(root / "tables" / spec["qc_subdir"]
+                                                / "neighbour_attributable_component_summary.csv")
+                assert len(component_summary) == 6
+                for component in ("homotypic", "heterotypic"):
+                    assert (folder / "scanpy_population_marker_halo_matrixplots"
+                            / f"scanpy_population_marker_halo_matrixplot_{component}.png").is_file()
+                    for marker_index, marker in enumerate(output.var_names, start=1):
+                        assert (folder / "score_distributions" / component
+                                / f"neighbour_attributable_score_distribution_{marker_index:03d}_{marker}.png").is_file()
+                        assert (folder / "scanpy_umap_halo_scores" / component
+                                / f"scanpy_umap_halo_{marker_index:03d}_{marker}.png").is_file()
+                view = reporting._population_qc_view(output, spec)
+                assert np.shares_memory(view.X, output.X)
+                assert np.shares_memory(view.layers["homotypic_NAF"], output.layers[spec["layers"]["homotypic"]])
+            for call in gallery_renderer.call_args_list:
+                for crop in call.args[1]:
+                    record = crop["record"]
+                    if record["marker"] != "CD31":
+                        continue
+                    expected = "heterotypic" if record["population_obs"] == "Population" else "homotypic"
+                    other = "homotypic" if expected == "heterotypic" else "heterotypic"
+                    mask = crop["mask"] == record["target_segmentation_label"]
+                    np.testing.assert_allclose(crop[f"{expected}_attributable"][mask], crop["attributable"][mask])
+                    assert not np.any(crop[f"{other}_attributable"])
+            manifest = pd.read_csv(root / "tables" / "cell_gallery_manifest.csv")
+            targets = manifest.loc[manifest["gallery_type"].eq("target_source")]
+            assert set(targets["population_obs"]) == set(names)
+            assert all(Path(value).is_file() for value in targets["figure_path"])
+            finalize_output_storage(output, report.tables)
+            assert output.uns["marker_halo"]["external_tables"]["exemplar_selection"]["path"] == str(
+                (root / "tables" / "exemplar_selection.csv").resolve())
+
     def test_compact_storage_matches_full_without_inherited_data(self):
         from scipy import sparse
 

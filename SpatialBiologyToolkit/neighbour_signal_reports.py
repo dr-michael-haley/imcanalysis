@@ -12,6 +12,11 @@ import numpy as np
 import pandas as pd
 from scipy import ndimage
 
+from SpatialBiologyToolkit.neighbour_signal import (
+    population_annotation_specs,
+    population_source_table,
+)
+
 
 @dataclass
 class NeighbourSignalReport:
@@ -38,16 +43,50 @@ def _score_views(adata: Any) -> list[tuple[str, str | None]]:
     """Available score views; never present unavailable components as zero."""
     views: list[tuple[str, str | None]] = [("total", None)]
     metadata = adata.uns.get("marker_halo", {}).get("population_attribution", {})
+    if len(metadata.get("annotations", {})) > 1:
+        return views  # Component views require an explicitly selected annotation.
     if metadata.get("available", False) and metadata.get("population_annotation_available", False):
-        views.extend((name, f"{name}_NAF") for name in ("homotypic", "heterotypic"))
+        views.extend(
+            (name, f"{name}_NAF") for name in ("homotypic", "heterotypic")
+            if f"{name}_NAF" in adata.layers
+        )
     if metadata.get("available", False) and "unknown_population_NAF" in adata.layers:
         if np.any(adata.layers["unknown_population_NAF"] > 0):
             views.append(("unknown_population", "unknown_population_NAF"))
     return views
 
 
+def _population_qc_view(adata: Any, spec: dict[str, Any]) -> Any:
+    """Lightweight annotation-specific plotting facade, sharing all large arrays.
+
+    Legacy plotters see their original three layer names. These aliases are
+    never added to the output asset and no scientific computation is repeated.
+    """
+    from anndata import AnnData
+
+    layers = dict(adata.layers)
+    for component, name in spec["layers"].items():
+        layers[f"{component}_NAF"] = adata.layers[name]
+    halo = dict(adata.uns["marker_halo"])
+    halo["population_attribution"] = {
+        **halo["population_attribution"], **spec,
+        "annotations": {"selected": spec},
+    }
+    halo["parameters"] = {**halo["parameters"], "population_obs": spec["population_obs"]}
+    return AnnData(
+        X=adata.X, obs=adata.obs, var=adata.var, layers=layers,
+        obsm=dict(adata.obsm), uns={"marker_halo": halo},
+    )
+
+
 def _view_matrix(adata: Any, layer: str | None) -> np.ndarray:
     return _dense_matrix(adata.X if layer is None else adata.layers[layer])
+
+
+def _population_title(adata: Any) -> str:
+    """Identify the label set on exported, standalone component figures."""
+    name = adata.uns.get("marker_halo", {}).get("population_attribution", {}).get("population_obs")
+    return f"\nPopulation annotation: {name}" if name else ""
 
 
 def _increasing_naf_order(adata: Any) -> np.ndarray:
@@ -1191,6 +1230,43 @@ def _render_automatic_decision_contact_sheet(
     return path
 
 
+def _population_target_crop(
+    crop: dict[str, Any], adata: Any, spec: dict[str, Any],
+    populations: np.ndarray, marker_index: int,
+) -> dict[str, Any]:
+    """Classify an already calculated crop, sharing raw/halo pixel arrays."""
+    crop = {**crop, "record": dict(crop["record"])}
+    record = crop["record"]
+    target_index = int(record["target_obs_index"])
+    source_index = int(record.get("source_obs_index", -1))
+    record["population_obs"] = spec["population_obs"]
+    record["target_population"] = populations[target_index]
+    record["source_population"] = populations[source_index] if source_index >= 0 else pd.NA
+    available = bool(
+        adata.uns["marker_halo"].get("population_attribution", {}).get("available", False)
+        and spec["population_obs"] in adata.obs
+    )
+    crop["population_components_available"] = available
+    for component, layer_name in spec["layers"].items():
+        if layer_name in adata.layers:
+            record[f"{component}_NAF"] = float(adata.layers[layer_name][target_index, marker_index])
+    if available:
+        winning = crop["source_index"]
+        target_pixels = crop["mask"] == int(record["target_segmentation_label"])
+        valid = target_pixels & (winning >= 0) & (crop["attributable"] > 0)
+        source_pops = pd.Series(populations[winning[valid]], dtype="string")
+        target_pop = populations[target_index]
+        known = source_pops.notna() & source_pops.str.strip().ne("")
+        if pd.isna(target_pop) or not str(target_pop).strip():
+            known[:] = False
+        same = source_pops.eq(target_pop).fillna(False)
+        for name, selected in (("homotypic", known & same), ("heterotypic", known & ~same)):
+            values = np.zeros(crop["mask"].shape, dtype=np.float32)
+            values[valid] = np.where(selected.fillna(False), crop["attributable"][valid], 0)
+            crop[f"{name}_attributable"] = values
+    return crop
+
+
 def generate_cell_qc_galleries(
     adata: Any,
     source_target_table: pd.DataFrame,
@@ -1284,7 +1360,16 @@ def generate_cell_qc_galleries(
         else None
     )
     exemplar_selection = halo["exemplar_selection"]
-    target_crops: dict[str, list[dict[str, Any]]] = {marker: [] for marker in markers}
+    # Multiple label sets reuse the same examples, images and max-winner maps.
+    specs = halo.get("population_attribution", {}).get("annotations") or population_annotation_specs(population_obs)
+    populations_by_annotation = {
+        key: adata.obs[spec["population_obs"]].astype("string").to_numpy()
+        if spec["population_obs"] in adata.obs else np.full(adata.n_obs, pd.NA, dtype=object)
+        for key, spec in specs.items()
+    }
+    target_crops: dict[str, dict[str, list[dict[str, Any]]]] = {
+        key: {marker: [] for marker in markers} for key in specs
+    }
     exemplar_crops: dict[str, list[dict[str, Any]]] = {marker: [] for marker in markers}
     decision_crops: dict[str, list[dict[str, Any]]] = {marker: [] for marker in markers}
     manifest_records: list[dict[str, Any]] = []
@@ -1414,32 +1499,6 @@ def generate_cell_qc_galleries(
                     "background": maps.background,
                     "source_labels": source_labels,
                 }
-                component_metadata = halo.get("population_attribution", {})
-                component_available = bool(
-                    component_metadata.get("available", False)
-                    and component_metadata.get("population_annotation_available", False)
-                )
-                crop["population_components_available"] = component_available
-                target_index = int(record["target_obs_index"])
-                for component in ("homotypic", "heterotypic", "unknown_population"):
-                    layer_name = f"{component}_NAF"
-                    if layer_name in adata.layers:
-                        record[layer_name] = float(adata.layers[layer_name][target_index, marker_index])
-                if component_available:
-                    winning = crop["source_index"]
-                    target_pixels = crop["mask"] == int(record["target_segmentation_label"])
-                    valid = target_pixels & (winning >= 0) & (crop["attributable"] > 0)
-                    source_pops = pd.Series(populations[winning[valid]], dtype="string")
-                    target_pop = populations[target_index]
-                    known = source_pops.notna() & source_pops.str.strip().ne("")
-                    if pd.isna(target_pop) or not str(target_pop).strip():
-                        known[:] = False
-                    same = source_pops.eq(target_pop).fillna(False)
-                    for name, selected_pixels in (("homotypic", known & same), ("heterotypic", known & ~same)):
-                        values = np.zeros(crop["mask"].shape, dtype=np.float32)
-                        values[valid] = np.where(selected_pixels.fillna(False), crop["attributable"][valid], 0)
-                        crop[f"{name}_attributable"] = values
-                target_crops[marker].append(crop)
                 dominant_label = int(record.get("source_segmentation_label", -1))
                 boundary_distance = float("nan")
                 if dominant_label > 0 and np.any(mask == dominant_label):
@@ -1458,7 +1517,12 @@ def generate_cell_qc_galleries(
                         "roi_marker_background": maps.background,
                     }
                 )
-                manifest_records.append(manifest_record)
+                for key, spec in specs.items():
+                    annotated = _population_target_crop(
+                        crop, adata, spec, populations_by_annotation[key], marker_index,
+                    )
+                    target_crops[key][marker].append(annotated)
+                    manifest_records.append({**manifest_record, **annotated["record"]})
             for record in rows_for(exemplar_examples, roi, marker).to_dict(
                 orient="records"
             ):
@@ -1592,15 +1656,20 @@ def generate_cell_qc_galleries(
     manifest = pd.DataFrame(manifest_records)
     for marker in markers:
         safe_marker = _gallery_filename(marker)
-        if target_crops[marker]:
-            path = gallery_dir / f"{safe_marker}_target_source_gallery.png"
-            paths.append(_render_target_source_contact_sheet(marker, target_crops[marker], path))
-            if not manifest.empty:
-                manifest.loc[
-                    manifest["marker"].astype(str).eq(marker)
-                    & manifest["gallery_type"].eq("target_source"),
-                    "figure_path",
-                ] = str(path)
+        for key, spec in specs.items():
+            if target_crops[key][marker]:
+                target_dir = figures_dir / spec["qc_subdir"] / "cell_galleries"
+                target_dir.mkdir(parents=True, exist_ok=True)
+                path = target_dir / f"{safe_marker}_target_source_gallery.png"
+                title = f"{marker} (labels: {spec['population_obs']})" if spec["population_obs"] else marker
+                paths.append(_render_target_source_contact_sheet(title, target_crops[key][marker], path))
+                if not manifest.empty:
+                    manifest.loc[
+                        manifest["marker"].astype(str).eq(marker)
+                        & manifest["gallery_type"].eq("target_source")
+                        & manifest["population_obs"].eq(spec["population_obs"]),
+                        "figure_path",
+                    ] = str(path)
         if exemplar_crops[marker]:
             path = gallery_dir / f"{safe_marker}_exemplar_halo_gallery.png"
             paths.append(_render_exemplar_contact_sheet(adata, marker, exemplar_crops[marker], path))
@@ -1679,7 +1748,7 @@ def _plot_score_distributions(
         axis.set_xlim(0, 1)
         axis.set_xlabel("Neighbour-Attributable Fraction")
         axis.set_ylabel("Cells (%)")
-        axis.set_title(f"{marker}: {component.replace('_', ' ')} NAF distribution")
+        axis.set_title(f"{marker}: {component.replace('_', ' ')} NAF distribution" + _population_title(adata))
         for threshold in (0.25, 0.5, 0.75):
             axis.axvline(threshold, color="#888888", linewidth=0.6, linestyle="--")
         status = "profile available" if profile_available else "profile unavailable"
@@ -1747,7 +1816,7 @@ def _plot_ranked_score_distributions(adata: Any, output_dir: Path) -> Path:
         axis.set_xlabel("Neighbour-attributable fraction")
         axis.legend(loc="lower right", fontsize=8)
     axes[0, 0].invert_yaxis()
-    fig.suptitle("Markers ordered by increasing mean total NAF; whiskers = P5–P95")
+    fig.suptitle("Markers ordered by increasing mean total NAF; whiskers = P5–P95" + _population_title(adata))
     fig.tight_layout()
     path = output_dir / "neighbour_attributable_score_distributions.png"
     _save_figure(fig, path)
@@ -1787,7 +1856,7 @@ def _plot_umap(
             "show": False,
             "return_fig": True,
             "frameon": False,
-            "title": f"{color}: {component.replace('_', ' ')} NAF",
+            "title": f"{color}: {component.replace('_', ' ')} NAF" + _population_title(adata),
             "use_raw": False,
             "vmin": 0,
             "vmax": 1,
@@ -1888,7 +1957,7 @@ def _plot_population_matrix(
             vmin=0,
             vmax=native_max if native_max > 0 else None,
             colorbar_title=f"Mean {component.replace('_', ' ')} NAF",
-            title=f"{component.replace('_', ' ').title()} neighbour-attributable fraction",
+            title=f"{component.replace('_', ' ').title()} neighbour-attributable fraction\nPopulation annotation: {population_obs}",
             figsize=(max(8, 0.35 * len(markers) + 3), max(4, 0.3 * population_count + 2)),
             dendrogram=dendrogram_enabled,
             show=False,
@@ -1908,6 +1977,7 @@ def _plot_source_target_population_heatmaps(
     output_dir: Path,
     *,
     exclude_same_population: bool,
+    population_obs: str | None = None,
 ) -> list[Path]:
     """Write one source-population to target-population heatmap per marker."""
 
@@ -1982,6 +2052,7 @@ def _plot_source_target_population_heatmaps(
         title_suffix = " (cross-population only)" if exclude_same_population else ""
         axis.set_title(
             f"{marker}: spatial source population → target population{title_suffix}"
+            + (f"\nPopulation annotation: {population_obs}" if population_obs else "")
         )
         fig.tight_layout()
         path = output_dir / (
@@ -2043,7 +2114,7 @@ def _plot_expression_comparison(
         axis.set_ylabel("Original X expression/confidence")
         colorbar = fig.colorbar(scatter, ax=axis, shrink=0.75)
         colorbar.set_label(f"{component.replace('_', ' ').title()} NAF")
-        fig.suptitle("Raw mask intensity vs preserved input expression", y=1.01)
+        fig.suptitle("Raw mask intensity vs preserved input expression" + _population_title(adata), y=1.01)
         fig.tight_layout()
         output_path = output_dir / (
             "classic_originalX_halo_comparison_"
@@ -2127,12 +2198,25 @@ def _write_summary(
         "",
         "## Population attribution components",
         "",
-        "Total NAF in X is partitioned into homotypic_NAF, heterotypic_NAF and "
-        "unknown_population_NAF layers using the existing winning source at each pixel. "
+        "Total NAF in X is partitioned into homotypic, heterotypic and "
+        "unknown-population layers independently for each configured annotation, "
+        "using the same existing winning source at each pixel. "
         "Each component uses observed target excess as denominator; no sources are "
         "discounted or re-projected. Missing/blank source or target labels are unknown. "
         "For sum aggregation these layers are unavailable (NaN). The interpretation "
         "depends on the population annotation recorded in marker_halo.parameters.",
+        "",
+        "Layer names and annotation-specific QC folders are recorded in "
+        "`marker_halo.population_attribution.annotations`. Multiple annotations "
+        "use suffixed layer names, not extra copies of total NAF. Do not sum "
+        "components across different annotations.",
+        "",
+        *[
+            f"- obs[{spec['population_obs']!r}]: "
+            + ", ".join(f"`{name}`" for name in spec["layers"].values())
+            + f". QC folder: `{spec['qc_subdir'] or '.'}`."
+            for spec in halo.get("population_attribution", {}).get("annotations", {}).values()
+        ],
         "",
         "Score distributions are ordered by increasing mean total NAF. Population "
         "matrix plots include every marker and share the total-NAF population dendrogram "
@@ -2206,7 +2290,7 @@ def generate_neighbour_signal_report(
     qc_markers: Sequence[str] | None,
     max_qc_markers: int | None,
     umap_point_size: float | None,
-    population_obs: str | None,
+    population_obs: str | Sequence[str] | None,
     source_target_table: pd.DataFrame,
     source_target_qc_exclude_same_population: bool,
     roi_inputs: Sequence[Any] | None = None,
@@ -2215,8 +2299,50 @@ def generate_neighbour_signal_report(
     create_cell_galleries: bool = True,
     gallery_examples_per_marker: int = 6,
     gallery_crop_margin_px: int = 8,
+    _population_scope: str = "all",
 ) -> NeighbourSignalReport:
     """Generate compact tables and figures without altering the AnnData asset."""
+
+    specs = population_annotation_specs(population_obs)
+    if len(specs) > 1:
+        # Shared learning/total QC and image loading run only once. Each
+        # annotation gets its own component QC using references to saved arrays.
+        common: dict[str, Any] = dict(
+            output_adata_path=output_adata_path, qc_markers=qc_markers,
+            max_qc_markers=max_qc_markers, umap_point_size=umap_point_size,
+            source_target_qc_exclude_same_population=source_target_qc_exclude_same_population,
+            roi_inputs=roi_inputs, roi_obs=roi_obs, object_id_obs=object_id_obs,
+            create_cell_galleries=create_cell_galleries,
+            gallery_examples_per_marker=gallery_examples_per_marker,
+            gallery_crop_margin_px=gallery_crop_margin_px,
+        )
+        report = generate_neighbour_signal_report(
+            adata, figures_dir=figures_dir, tables_dir=tables_dir, summaries_dir=summaries_dir,
+            population_obs=None, source_target_table=source_target_table,
+            _population_scope="shared", **common,
+        )
+        stored_specs = adata.uns["marker_halo"]["population_attribution"]["annotations"]
+        for key, spec in specs.items():
+            view = _population_qc_view(adata, stored_specs[key])
+            section = generate_neighbour_signal_report(
+                view, figures_dir=figures_dir / spec["qc_subdir"],
+                tables_dir=tables_dir / spec["qc_subdir"],
+                summaries_dir=summaries_dir / spec["qc_subdir"],
+                population_obs=spec["population_obs"],
+                source_target_table=population_source_table(source_target_table, spec),
+                _population_scope="population", **common,
+            )
+            report.figures.extend(section.figures)
+            report.tables.extend(section.tables)
+            report.summaries.extend(section.summaries)
+            report.warnings.extend(f"{spec['population_obs']}: {message}" for message in section.warnings)
+        report.metrics["population_annotations"] = len(specs)
+        return report
+
+    # A one-element list behaves exactly like a single observation name.
+    population_obs = next(iter(specs.values()))["population_obs"] or None
+    population_only = _population_scope == "population"
+    shared_only = _population_scope == "shared"
 
     figures_dir.mkdir(parents=True, exist_ok=True)
     tables_dir.mkdir(parents=True, exist_ok=True)
@@ -2227,7 +2353,9 @@ def generate_neighbour_signal_report(
     summary.to_csv(score_path, index=False)
     report.tables.append(score_path)
     component_metadata = adata.uns["marker_halo"].get("population_attribution", {})
-    if not component_metadata.get("available", False):
+    if shared_only:
+        pass
+    elif not component_metadata.get("available", False):
         report.warnings.append("Homotypic/heterotypic NAF is unavailable: source-resolved max provenance is required.")
     elif not component_metadata.get("population_annotation_available", False):
         report.warnings.append("Homotypic/heterotypic NAF cannot be classified without population annotations; all attribution is unknown.")
@@ -2240,14 +2368,17 @@ def generate_neighbour_signal_report(
     component_summaries = []
     population_means = []
     for component, layer in _score_views(adata):
-        component_summaries.append(marker_score_summary(adata, layer).assign(component=component))
+        component_summary = marker_score_summary(adata, layer).assign(component=component)
+        if population_obs:
+            component_summary["population_obs"] = population_obs
+        component_summaries.append(component_summary)
         if population_obs and population_obs in adata.obs:
             frame = pd.DataFrame(_view_matrix(adata, layer), index=adata.obs_names, columns=adata.var_names)
             means = frame.groupby(adata.obs[population_obs], observed=True).mean()
             means.index.name = "population"
             population_means.append(
                 means.reset_index().melt(id_vars="population", var_name="marker", value_name="mean_NAF")
-                .assign(component=component)
+                .assign(component=component, population_obs=population_obs)
             )
     components_path = tables_dir / "neighbour_attributable_component_summary.csv"
     pd.concat(component_summaries, ignore_index=True).to_csv(components_path, index=False)
@@ -2257,31 +2388,37 @@ def generate_neighbour_signal_report(
         pd.concat(population_means, ignore_index=True).to_csv(population_path, index=False)
         report.tables.append(population_path)
     dominant_summary = dominant_source_summary(adata, source_target_table)
+    if population_obs:
+        dominant_summary["population_obs"] = population_obs
     dominant_path = tables_dir / "dominant_source_summary.csv"
     dominant_summary.to_csv(dominant_path, index=False)
     report.tables.append(dominant_path)
     population_provenance = population_source_target_summary(source_target_table)
+    if population_obs:
+        population_provenance["population_obs"] = population_obs
     population_provenance_path = (
         tables_dir / "source_target_population_marker_summary.csv"
     )
     population_provenance.to_csv(population_provenance_path, index=False)
     report.tables.append(population_provenance_path)
 
-    profiles = profile_values_table(adata)
-    profile_path = tables_dir / "marker_halo_profiles.csv"
-    profiles.to_csv(profile_path, index=False)
-    report.tables.append(profile_path)
-    marker_metadata_path = tables_dir / "marker_halo_metadata.csv"
-    adata.uns["marker_halo"]["marker_summary"].to_csv(marker_metadata_path)
-    report.tables.append(marker_metadata_path)
-    for key, filename in (
+    if not population_only:
+        profiles = profile_values_table(adata)
+        profile_path = tables_dir / "marker_halo_profiles.csv"
+        profiles.to_csv(profile_path, index=False)
+        report.tables.append(profile_path)
+        marker_metadata_path = tables_dir / "marker_halo_metadata.csv"
+        adata.uns["marker_halo"]["marker_summary"].to_csv(marker_metadata_path)
+        report.tables.append(marker_metadata_path)
+    shared_tables = (
         ("exemplar_statistics", "exemplar_profile_statistics.csv"),
         ("exemplar_profile_values", "exemplar_profile_values.csv"),
         ("exemplar_selection", "exemplar_selection.csv"),
         ("exemplar_selection_summary", "exemplar_selection_summary.csv"),
         ("roi_marker_backgrounds", "roi_marker_backgrounds.csv"),
         ("unknown_exemplar_markers", "unknown_exemplar_markers.csv"),
-    ):
+    )
+    for key, filename in (() if population_only else shared_tables):
         table = adata.uns["marker_halo"][key]
         path = tables_dir / filename
         table.to_csv(path, index=False)
@@ -2289,11 +2426,12 @@ def generate_neighbour_signal_report(
 
     selected, selection_warnings = select_qc_markers(adata, qc_markers, max_qc_markers)
     report.warnings.extend(selection_warnings)
-    report.figures.extend(
-        _plot_profiles(adata, figures_dir / "marker_halo_profiles")
-    )
+    if not population_only:
+        report.figures.extend(_plot_profiles(adata, figures_dir / "marker_halo_profiles"))
     report.figures.append(_plot_ranked_score_distributions(adata, figures_dir))
-    for component, layer in _score_views(adata):
+    plotted_views = [(component, layer) for component, layer in _score_views(adata)
+                     if not population_only or component != "total"]
+    for component, layer in plotted_views:
         score_dir = figures_dir / "score_distributions"
         if component != "total":
             score_dir = score_dir / component
@@ -2301,15 +2439,12 @@ def generate_neighbour_signal_report(
             adata, marker_score_summary(adata, layer), score_dir,
             layer=layer, component=component,
         ))
-    report.figures.extend(
-        _plot_exemplar_selection(
-            adata,
-            selected,
-            figures_dir / "automatic_exemplar_selection",
-        )
-    )
+    if not population_only:
+        report.figures.extend(_plot_exemplar_selection(
+            adata, selected, figures_dir / "automatic_exemplar_selection",
+        ))
     gallery_manifest = pd.DataFrame()
-    if create_cell_galleries:
+    if create_cell_galleries and not population_only:
         if roi_inputs is None:
             report.warnings.append(
                 "Skipped cell-based halo galleries because resolved ROI image inputs were not provided."
@@ -2345,7 +2480,7 @@ def generate_neighbour_signal_report(
         )
 
     if "X_umap" in adata.obsm:
-        for component, layer in _score_views(adata):
+        for component, layer in plotted_views:
             umap_dir = figures_dir / "scanpy_umap_halo_scores"
             if component != "total":
                 umap_dir = umap_dir / component
@@ -2377,12 +2512,13 @@ def generate_neighbour_signal_report(
                     exclude_same_population=(
                         source_target_qc_exclude_same_population
                     ),
+                    population_obs=population_obs,
                 )
             )
-    else:
+    elif not shared_only:
         report.warnings.append("Skipped population-by-marker QC because no population observation is configured.")
     if selected and "classic_intensities" in adata.layers:
-        for component, layer in _score_views(adata):
+        for component, layer in plotted_views:
             comparison_dir = figures_dir / "classic_originalX_halo_comparisons"
             if component != "total":
                 comparison_dir = comparison_dir / component

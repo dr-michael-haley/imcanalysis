@@ -1704,13 +1704,13 @@ class NeighbourSignalConfig(ConfigModel):
         ge=0,
         le=128,
     )
-    population_obs: Optional[str] = config_field(
+    population_obs: Optional[Union[str, List[str]]] = config_field(
         None,
-        description="Optional categorical population observation used for population-by-marker QC.",
+        description="Population observation name or list of names for independent homotypic/heterotypic NAF and population QC.",
         level="basic",
         stage="neighsig",
         ui_group="QC report",
-        advice="Null falls back to general.population_obs_primary; missing annotations are skipped cleanly.",
+        advice="Null falls back to general.population_obs_primary. A list creates separate component layers and QC for each annotation, without recalculating total NAF. Missing annotations are reported as unknown.",
     )
     source_target_qc_exclude_same_population: bool = config_field(
         True,
@@ -1733,6 +1733,12 @@ class NeighbourSignalConfig(ConfigModel):
 
     @model_validator(mode="after")
     def validate_neighbour_signal(self) -> "NeighbourSignalConfig":
+        if self.population_obs is not None:
+            names = [self.population_obs] if isinstance(self.population_obs, str) else self.population_obs
+            if not names or any(not name.strip() for name in names):
+                raise ValueError("neighbour_signal.population_obs requires non-empty observation names")
+            if len(set(names)) != len(names):
+                raise ValueError("neighbour_signal.population_obs names must be unique")
         if isinstance(self.n_jobs, int) and self.n_jobs < 1:
             raise ValueError("neighbour_signal.n_jobs must be 'auto' or a positive integer")
         if not math.isfinite(self.automatic_positive_threshold):

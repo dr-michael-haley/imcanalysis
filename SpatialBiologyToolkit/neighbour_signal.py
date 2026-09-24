@@ -14,6 +14,7 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence, TypeAlias
+from urllib.parse import quote
 
 import numpy as np
 import pandas as pd
@@ -1927,13 +1928,74 @@ def exemplar_selection_summary_table(result: NeighbourSignalResult) -> pd.DataFr
     return pd.DataFrame(rows)
 
 
+def population_annotation_specs(
+    population_obs: str | Sequence[str] | None,
+) -> dict[str, dict[str, Any]]:
+    """Stable HDF-safe names for independent partitions of the same source edges.
+
+    Single annotations retain the legacy layer/table names. Percent encoding
+    avoids collisions between punctuation, slashes and literal escape sequences.
+    Numbered report folders also distinguish case-only names on Windows.
+    """
+    names = [population_obs] if isinstance(population_obs, str) else (
+        list(population_obs) if population_obs is not None else []
+    )
+    if population_obs is not None and (
+        not names or any(not isinstance(name, str) or not name.strip() for name in names)
+        or len(set(names)) != len(names)
+    ):
+        raise ValueError("population_obs requires unique non-empty observation names")
+    multiple = len(names) > 1
+    specs = {}
+    for index, name in enumerate(names or [""]):
+        key = quote(name, safe="-_") if name else "unconfigured"
+        if key in {".", ".."}:
+            key = key.replace(".", "%2E")
+        suffix = f"__{key}" if multiple else ""
+        specs[key] = {
+            "population_obs": name,
+            "layers": {
+                component: f"{component}_NAF{suffix}"
+                for component in ("homotypic", "heterotypic", "unknown_population")
+            },
+            "source_column": f"source_population{suffix}",
+            "target_column": f"target_population{suffix}",
+            "qc_subdir": f"population_{index + 1:03d}_{key}" if multiple else "",
+        }
+    return specs
+
+
+def population_source_table(table: pd.DataFrame, spec: Mapping[str, Any]) -> pd.DataFrame:
+    """Expose one annotation to existing population reducers without duplicating edges."""
+    if spec["source_column"] != "source_population" and (
+        "source_population" in table or "target_population" in table
+    ):
+        table = table.drop(columns=["source_population", "target_population"], errors="ignore")
+    return table.rename(columns={
+        spec["source_column"]: "source_population",
+        spec["target_column"]: "target_population",
+    }, copy=False)
+
+
+def _annotate_source_populations(
+    table: pd.DataFrame, obs: pd.DataFrame, specs: Mapping[str, Mapping[str, Any]],
+) -> None:
+    for spec in specs.values():
+        name = spec["population_obs"]
+        if name and name in obs:
+            populations = obs[name].astype("string").to_numpy()
+            for side in ("source", "target"):
+                rows = table[f"{side}_obs_index"].to_numpy(dtype=np.int64)
+                table[spec[f"{side}_column"]] = pd.array(populations[rows], dtype="string")
+
+
 def build_source_target_table(
     adata: Any,
     result: NeighbourSignalResult,
     *,
     roi_obs: str,
     object_id_obs: str,
-    population_obs: str | None = None,
+    population_obs: str | Sequence[str] | None = None,
 ) -> pd.DataFrame:
     """Build the sparse source-target provenance table from worker reductions."""
 
@@ -1944,12 +2006,11 @@ def build_source_target_table(
     ]
     if missing:
         raise KeyError(f"AnnData is missing source-target identity columns: {missing}")
-    include_population = bool(
-        population_obs is not None and population_obs in adata.obs.columns
-    )
+    specs = population_annotation_specs(population_obs)
     columns = list(SOURCE_TARGET_COLUMNS)
-    if include_population:
-        columns.extend(["target_population", "source_population"])
+    for spec in specs.values():
+        if spec["population_obs"] in adata.obs.columns:
+            columns.extend([spec["target_column"], spec["source_column"]])
     records = result.source_target_attributions
     if not records:
         if result.source_provenance_available and np.any(result.scores > 2e-6):
@@ -1974,7 +2035,7 @@ def build_source_target_table(
             "source_population": "string",
         }
         return pd.DataFrame(
-            {column: pd.Series(dtype=dtypes[column]) for column in columns}
+            {column: pd.Series(dtype=dtypes.get(column, "string")) for column in columns}
         )
 
     target_indices = np.fromiter(
@@ -2083,14 +2144,7 @@ def build_source_target_table(
     )
     if not frame["target_roi"].equals(frame["source_roi"]):
         raise RuntimeError("Source-target provenance crosses ROI boundaries")
-    if include_population and population_obs is not None:
-        populations = adata.obs[population_obs].astype("string").to_numpy()
-        frame["target_population"] = pd.array(
-            populations[target_indices], dtype="string"
-        )
-        frame["source_population"] = pd.array(
-            populations[source_indices], dtype="string"
-        )
+    _annotate_source_populations(frame, adata.obs, specs)
     frame["_marker_index"] = marker_indices
     frame = frame.sort_values(
         ["target_obs_index", "_marker_index", "source_obs_index"],
@@ -2268,6 +2322,7 @@ def build_output_anndata(
     unknown_table = pd.DataFrame(
         {"unknown_exemplar_marker": list(result.unknown_exemplar_values)}
     )
+    specs = population_annotation_specs(parameters.get("population_obs"))
     source_table = source_target_table
     if source_table is None:
         # Library callers need not materialize the public Parquet table first.
@@ -2280,22 +2335,30 @@ def build_output_anndata(
             }
             for record in result.source_target_attributions
         ], columns=["target_obs_index", "source_obs_index", "marker", "fraction_of_observed_signal"])
-        population_obs = parameters.get("population_obs")
-        if population_obs and population_obs in output.obs:
-            populations = output.obs[population_obs].astype("string").to_numpy()
-            source_table["source_population"] = populations[source_table["source_obs_index"].to_numpy(dtype=np.int64)]
-            source_table["target_population"] = populations[source_table["target_obs_index"].to_numpy(dtype=np.int64)]
-    components = population_attribution_fractions(
-        result.scores, result.marker_names, source_table,
-        provenance_available=result.source_provenance_available,
+        _annotate_source_populations(source_table, output.obs, specs)
+    component_layers = []
+    component_semantics = {}
+    for spec in specs.values():
+        spec["population_annotation_available"] = {
+            spec["source_column"], spec["target_column"]
+        }.issubset(source_table.columns)
+        components = population_attribution_fractions(
+            result.scores, result.marker_names, population_source_table(source_table, spec),
+            provenance_available=result.source_provenance_available,
+        )
+        for component, name in spec["layers"].items():
+            output.layers[name] = components[f"{component}_NAF"]
+            component_layers.append(name)
+            component_semantics[name] = (
+                f"{component} fraction of target observed excess, using obs[{spec['population_obs']!r}]. "
+                "Partition of existing max-winner contributions; no re-projection or discounting."
+            )
+    population_annotation_available = any(
+        spec["population_annotation_available"] for spec in specs.values()
     )
-    for name, values in components.items():
-        output.layers[name] = values
-    population_annotation_available = {
-        "source_population", "target_population"
-    }.issubset(source_table.columns)
     source_table_metadata = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "population_annotations": specs,
         "available": bool(result.source_provenance_available),
         "path": str(source_target_table_path) if source_target_table_path else "",
         "format": "parquet",
@@ -2320,7 +2383,7 @@ def build_output_anndata(
         ),
     }
     output.uns["marker_halo"] = {
-        "schema_version": 7,
+        "schema_version": 8,
         "output_storage": {
             "mode": output_mode,
             "original_X_stored": bool(keep_original),
@@ -2368,8 +2431,10 @@ def build_output_anndata(
         "population_attribution": {
             "available": bool(result.source_provenance_available),
             "population_annotation_available": population_annotation_available,
-            "population_obs": str(parameters.get("population_obs") or ""),
-            "layers": list(components),
+            "population_obs": next(iter(specs.values()))["population_obs"] if len(specs) == 1 else "",
+            "population_obs_columns": [spec["population_obs"] for spec in specs.values() if spec["population_obs"]],
+            "annotations": specs,
+            "layers": component_layers,
             "interpretation": (
                 "Partition of existing pixelwise max-winner attribution by source/target "
                 "population equality; not a re-projection excluding same-population sources. "
@@ -2394,9 +2459,7 @@ def build_output_anndata(
                 "Mean max(observed excess - projected neighbour halo, 0) per cell pixel."
             ),
             "original_X": "Unmodified input AnnData.X expression/confidence matrix.",
-            "homotypic_NAF": "Observed excess fraction assigned to same-population winning sources.",
-            "heterotypic_NAF": "Observed excess fraction assigned to different-population winning sources.",
-            "unknown_population_NAF": "Observed excess fraction assigned to sources with either population label missing.",
+            **component_semantics,
             "dominant_source_index": (
                 "Zero-based global AnnData row of the neighbouring source contributing the largest "
                 "attributable intensity for each cell and marker; -1 means no attributable source."
@@ -2464,6 +2527,8 @@ __all__ = [
     "build_source_target_table",
     "calculate_marker_halo_maps",
     "population_attribution_fractions",
+    "population_annotation_specs",
+    "population_source_table",
     "estimate_roi_background",
     "exemplar_selection_summary_table",
     "exemplar_selection_table",

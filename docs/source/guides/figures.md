@@ -102,6 +102,31 @@ scale-bar text independently, in points. Both default to `None`, inheriting
 `title_fontsize` and `legend_fontsize`, respectively, to preserve existing
 recipes. Changing either override does not change titles or legend text.
 
+## Separate and multi-column legends
+
+Set `Panel(legend_only=True, layers=[population_layer])` to dedicate a grid slot
+to a categorical legend. Reuse the same layer in the image panel and set
+`legend=False` on that **panel** to hide its overlaid key. Keep the shared
+layer's `legend` enabled. Colours, category order and any `groups` selection
+match the image panel, including categories absent from a particular ROI.
+
+`Panel.legend_ncols` sets the column count (default 1); entries run down each
+column before the next. `Panel.legend_fontsize` optionally overrides the global
+legend text size in points. Both options also work on ordinary image panels.
+Dedicated legends are centred on the figure background with contrasting text
+and no frame. Their patches and text remain editable in SVG, and all panel
+options survive recipe saving, freezing and batch export.
+
+Legend-only panels obtain names and colours without loading channel images,
+segmentation masks or calculating channel normalisation. They support
+`Populations`, `IMC`, `LabelMask` and `Image` layers with categorical legend
+entries; continuous `Values` colour bars are not supported in this mode.
+The containing figure still uses its dataset reference grid and crop.
+Spatial scale bars are not allowed on a legend-only panel; `Figure.grid`
+places its automatic scale bar on the first image panel instead. For very
+long labels, adjust the column count, panel dimensions or panel-specific
+legend font size to fit the available space.
+
 ## A reusable recipe
 
 ```python

@@ -7842,17 +7842,23 @@
           "ui_group": "QC report"
         },
         "population_obs": {
-          "advice": "Null falls back to general.population_obs_primary; missing annotations are skipped cleanly.",
+          "advice": "Null falls back to general.population_obs_primary. A list creates separate component layers and QC for each annotation, without recalculating total NAF. Missing annotations are reported as unknown.",
           "anyOf": [
             {
               "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "Optional categorical population observation used for population-by-marker QC.",
+          "description": "Population observation name or list of names for independent homotypic/heterotypic NAF and population QC.",
           "level": "basic",
           "stage": "neighsig",
           "title": "Population Obs",
