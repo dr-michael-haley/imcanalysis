@@ -12,9 +12,9 @@
 
 set -euo pipefail
 
-source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
+source "${SBT_TOOLKIT_ROOT:-$HOME/imcanalysis}/SLURM_scripts/job_env.sh"
 
-BASE_DIR="$HOME/imcanalysis"
+BASE_DIR="${SBT_TOOLKIT_ROOT:-$HOME/imcanalysis}"
 JOB_DIR="$BASE_DIR/SLURM_scripts"
 IMPORT_MAP="$JOB_DIR/env_imports.yaml"
 
@@ -28,15 +28,12 @@ echo
 ############################################
 # Load base job hygiene
 ############################################
-module purge
-unset DISPLAY
-export MPLBACKEND="Agg"
-export QT_QPA_PLATFORM="offscreen"
+# Already applied by job_env.sh above.
 
 ############################################
 # Load conda properly (CRITICAL)
 ############################################
-source "$HOME/miniconda3/etc/profile.d/conda.sh"
+source "${SBT_CONDA_SH:-$HOME/miniconda3/etc/profile.d/conda.sh}"
 
 ############################################
 # Helper: test a single job

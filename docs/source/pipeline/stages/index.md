@@ -30,7 +30,7 @@ for ordering and usage guidance.
 | [`cellpose`](cellpose.md) | DNA preprocessing + CellPose-SAM mask generation | `sbt-analysis, sbt-cellpose-sam` | general, createmasks, logging |
 | [`reint`](reint.md) | Reintegrate markers previously removed from the processed AnnData | `sbt-analysis` | general, segmentation, logging |
 | [`zipqc`](zipqc.md) | Zip selected sequential execution output directories for download | `-` | none |
-| [`scport`](scport.md) | Generate single-cell portrait outputs via external scPortrait converter | `sbt-scportrait` | none (does not read config.yaml) |
+| [`scport`](scport.md) | Generate single-cell portrait outputs via external scPortrait converter | `sbt-scportrait` | general, scportrait |
 | [`debug`](debug.md) | Run environment + module import diagnostics for SLURM job scripts | `-` | none |
 | [`pairsp`](pairsp.md) | Run pairwise spatial analyses (Squidpy interactions, distance bootstrap, and PCF) with plots/raw exports | `sbt-analysis` | general, process, pairwise_spatial, logging |
 | [`nxsp`](nxsp.md) | Run per-ROI Squidpy/NetworkX spatial graph metrics (assortativity, per-population clustering, bootstrapped nulls, and case aggregation) | `sbt-analysis` | general, process, networkx_spatial, logging |

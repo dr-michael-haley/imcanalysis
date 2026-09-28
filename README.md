@@ -50,6 +50,7 @@ for interactive work.
 | Use case | Platform | Starting point |
 | --- | --- | --- |
 | Reproducible end-to-end pipeline | Linux HPC with SLURM | [`sbt` CLI guide](https://imcanalysis.readthedocs.io/en/latest/pipeline/cli.html) ([CSF3 beginner setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/hpc.html)) |
+| Sequential pipeline commands | Linux server or EC2 without SLURM | [Linux/EC2 guide](docs/source/getting_started/ec2.md) and [editable runner](run_local.sh) |
 | Local analysis and notebooks | Windows | [Local analysis setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/local.html) |
 | Local analysis and notebooks | Apple Silicon macOS | [Local analysis setup](https://imcanalysis.readthedocs.io/en/latest/getting_started/local.html) |
 

@@ -2,7 +2,9 @@
 
 set -eo pipefail
 
-module purge
+if command -v module >/dev/null 2>&1; then
+    module purge
+fi
 export MPLBACKEND="Agg"
 export QT_QPA_PLATFORM="offscreen"
 unset DISPLAY

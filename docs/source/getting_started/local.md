@@ -6,6 +6,9 @@ is designed for Linux HPC with SLURM. University of Manchester beginners should
 start with [CSF3 setup](hpc.md); experienced HPC users can use the
 [`sbt` CLI guide](../pipeline/cli.md).
 
+For pipeline execution on a Linux server without SLURM, use the
+[Linux/EC2 runner](ec2.md).
+
 ## What you will set up
 
 - a local Conda environment named `sbt`;

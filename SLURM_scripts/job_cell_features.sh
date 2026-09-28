@@ -16,7 +16,7 @@ set -e
 #@MODULE:  SpatialBiologyToolkit.scripts.cell_features
 #@CONFIG: general, napari_sbt, logging
 
-source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
+source "${SBT_TOOLKIT_ROOT:-$HOME/imcanalysis}/SLURM_scripts/job_env.sh"
 conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_ANALYSIS:-sbt-analysis}}"
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1

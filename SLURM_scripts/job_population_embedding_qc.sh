@@ -17,7 +17,7 @@
 #@MODULE:  SpatialBiologyToolkit.scripts.population_embedding_qc
 #@CONFIG: general, population_embedding_qc, logging
 
-source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
+source "${SBT_TOOLKIT_ROOT:-$HOME/imcanalysis}/SLURM_scripts/job_env.sh"
 
 echo "Population embedding QC is using ${SLURM_CPUS_PER_TASK:-1} CPU core(s); no GPU is requested"
 

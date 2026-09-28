@@ -10,7 +10,7 @@
 #@OUT:  outputs/<execution_id>_Output_Archive/files/<dataset>_<set>_<date>.zip under sbt
 #@CONFIG: none
 
-source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
+source "${SBT_TOOLKIT_ROOT:-$HOME/imcanalysis}/SLURM_scripts/job_env.sh"
 
 echo "ZIP folder job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 

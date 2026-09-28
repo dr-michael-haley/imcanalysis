@@ -6,7 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Directory where your job scripts live by default
-JOBDIR=${PIPELINE_DIR:-"$HOME/imcanalysis/SLURM_scripts"}
+JOBDIR=${PIPELINE_DIR:-"${SBT_TOOLKIT_ROOT:-$HOME/imcanalysis}/SLURM_scripts"}
 
 # Central config mapping stage -> script
 CONFIG=${PIPELINE_CONFIG:-"$JOBDIR/pipeline.conf"}

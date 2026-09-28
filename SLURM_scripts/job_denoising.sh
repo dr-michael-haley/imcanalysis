@@ -16,7 +16,7 @@
 #@MODULE:  SpatialBiologyToolkit.scripts.denoising
 #@CONFIG: general, denoising, logging
 
-source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
+source "${SBT_TOOLKIT_ROOT:-$HOME/imcanalysis}/SLURM_scripts/job_env.sh"
 
 echo "Denoising job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 

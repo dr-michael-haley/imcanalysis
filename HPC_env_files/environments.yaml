@@ -130,8 +130,10 @@ environments:
     toolkit_overlay: editable-no-deps
     smoke_tests:
       - [python, -c, "import SpatialBiologyToolkit, starling, torch"]
+      - [python, -c, "import tempfile; from pytorch_lightning.loggers import TensorBoardLogger; TensorBoardLogger(save_dir=tempfile.gettempdir(), name='sbt-starling-smoke')"]
     notes:
       - External environment; no repository lockfile is currently maintained.
+      - Default STARLING logging requires tensorboard or tensorboardX; install it in sbt-starling, or disable starling.tensorboard_logging for runs without TensorBoard logs.
 
   scportrait:
     conda_name: sbt-scportrait

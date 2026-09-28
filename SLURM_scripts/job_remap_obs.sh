@@ -14,7 +14,7 @@
 #@MODULE:  SpatialBiologyToolkit.scripts.remap_obs
 #@CONFIG: general, remap_obs, logging
 
-source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
+source "${SBT_TOOLKIT_ROOT:-$HOME/imcanalysis}/SLURM_scripts/job_env.sh"
 
 echo "Remap obs job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 

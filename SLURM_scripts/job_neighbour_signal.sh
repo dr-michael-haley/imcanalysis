@@ -20,7 +20,7 @@ set -euo pipefail
 #@MODULE:  SpatialBiologyToolkit.scripts.neighbour_signal
 #@CONFIG: general, neighbour_signal, logging
 
-source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
+source "${SBT_TOOLKIT_ROOT:-$HOME/imcanalysis}/SLURM_scripts/job_env.sh"
 
 conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_ANALYSIS:-sbt-analysis}}"
 export OMP_NUM_THREADS=1

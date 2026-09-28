@@ -19,7 +19,7 @@ set -euo pipefail
 #@MODULE:  SpatialBiologyToolkit.scripts.maxfuse_matching
 #@CONFIG: general, maxfuse, logging
 
-source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
+source "${SBT_TOOLKIT_ROOT:-$HOME/imcanalysis}/SLURM_scripts/job_env.sh"
 
 conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_MAXFUSE:-sbt-maxfuse}}"
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"

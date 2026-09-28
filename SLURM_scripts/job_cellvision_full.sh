@@ -25,7 +25,7 @@ set -e
 #@MODULE:  SpatialBiologyToolkit.scripts.cellvision_plot
 #@CONFIG: general, cellvision, logging
 
-source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
+source "${SBT_TOOLKIT_ROOT:-$HOME/imcanalysis}/SLURM_scripts/job_env.sh"
 
 echo "CellVision full job is using ${SLURM_GPUS:-0} GPU(s) with ID(s) ${CUDA_VISIBLE_DEVICES:-none} and ${SLURM_NTASKS:-1} CPU core(s)"
 

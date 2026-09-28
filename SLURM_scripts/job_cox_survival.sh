@@ -16,6 +16,6 @@ set -e
 #@MODULE:  SpatialBiologyToolkit.scripts.cox_survival
 #@CONFIG: general, cox, logging
 
-source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
+source "${SBT_TOOLKIT_ROOT:-$HOME/imcanalysis}/SLURM_scripts/job_env.sh"
 conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_TENSORFLOW:-sbt-tensorflow}}"
 python -m SpatialBiologyToolkit.scripts.cox_survival

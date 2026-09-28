@@ -2,7 +2,7 @@
 set -e
 source "$(dirname "$0")/common.sh"
 
-IMC_DIR="$HOME/imcanalysis"
+IMC_DIR="${SBT_TOOLKIT_ROOT:-$HOME/imcanalysis}"
 BASH_DIR="$IMC_DIR/Bash_scripts"
 SLURM_DIR="$IMC_DIR/SLURM_scripts"
 CONFIG="$HOME/.imc_config"
@@ -15,7 +15,7 @@ echo "🔧 Installing IMC Analysis tools..."
 if [[ ! -d "$IMC_DIR" ]]; then
     echo "❌ ERROR: $IMC_DIR does not exist."
     echo "Clone first:"
-    echo "  git clone <repo> ~/imcanalysis"
+    echo '  Clone to ~/imcanalysis or export SBT_TOOLKIT_ROOT=/path/to/imcanalysis'
     exit 1
 fi
 
@@ -33,14 +33,18 @@ echo "✔ Script permissions updated."
 ###############################################
 # 3. Add PATH entry to ~/.profile
 ###############################################
-PATH_LINE="export PATH=\"$BASH_DIR:\$PATH\""
+printf -v ROOT_LINE 'export SBT_TOOLKIT_ROOT=%q # SBT shell helpers' "$IMC_DIR"
+append_if_missing "$ROOT_LINE" "$HOME/.profile"
+append_if_missing "$ROOT_LINE" "$HOME/.bashrc"
+printf -v PATH_LINE 'export PATH=%q:"$PATH" # SBT shell helpers' "$BASH_DIR"
 append_if_missing "$PATH_LINE" "$HOME/.profile"
 echo "✔ Added Bash_scripts to PATH."
 
 ###############################################
 # 4. Add cds alias to ~/.bashrc
 ###############################################
-ALIAS_LINE='alias cds=". \"$HOME/imcanalysis/Bash_scripts/cds\""'
+printf -v CDS_COMMAND '. %q' "$BASH_DIR/cds"
+printf -v ALIAS_LINE 'alias cds=%q' "$CDS_COMMAND"
 append_if_missing "$ALIAS_LINE" "$HOME/.bashrc"
 echo "✔ Added alias 'cds'."
 

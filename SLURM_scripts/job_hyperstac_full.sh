@@ -17,7 +17,7 @@ set -e
 #@MODULE:  SpatialBiologyToolkit.scripts.hyperstac_full
 #@CONFIG: general, hyperstac, cox, logging
 
-source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
+source "${SBT_TOOLKIT_ROOT:-$HOME/imcanalysis}/SLURM_scripts/job_env.sh"
 conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_TENSORFLOW:-sbt-tensorflow}}"
 
 python -m SpatialBiologyToolkit.scripts.hyperstac_full

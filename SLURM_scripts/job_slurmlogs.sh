@@ -16,7 +16,7 @@
 #@MODULE:  SpatialBiologyToolkit.scripts.slurmlogs
 #@CONFIG: general, logging
 
-source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
+source "${SBT_TOOLKIT_ROOT:-$HOME/imcanalysis}/SLURM_scripts/job_env.sh"
 
 echo "SLURM log organizer is using $SLURM_NTASKS CPU core(s)"
 

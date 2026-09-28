@@ -10,6 +10,8 @@
 name: sbt-analysis
 channels:
   - rapidsai
+  # RAPIDS 24.12's XGBoost builds were moved out of the main channel.
+  - rapidsai/label/legacy-xgboost
   - nvidia
   - conda-forge
   - bioconda

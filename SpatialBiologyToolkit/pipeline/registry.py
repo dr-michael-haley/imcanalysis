@@ -295,7 +295,7 @@ STAGE_CONFIG_SECTIONS: dict[str, tuple[str, ...]] = {
     "cellpose": ("general", "createmasks"),
     "reint": ("general", "segmentation", "process"),
     "zipqc": ("general",),
-    "scport": ("general",),
+    "scport": ("general", "scportrait"),
     "debug": (),
     "pairsp": ("general", "process", "pairwise_spatial"),
     "nxsp": ("general", "process", "networkx_spatial"),
@@ -638,7 +638,7 @@ STAGES: tuple[StageSpec, ...] = (
         groups=("spatial",),
         requires=("denoised_images", "masks"),
         outputs=("scPortrait project outputs",),
-        notes=("This wrapper currently uses fixed processed/ and masks/ arguments.",),
+        notes=("Uses general image/mask paths and scportrait.projects_root; SBT_SCPORTRAIT_CONVERTER selects the external converter.",),
     ),
     _stage(
         "debug",

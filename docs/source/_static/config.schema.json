@@ -11182,6 +11182,23 @@
       "title": "RemapObsConfig",
       "type": "object"
     },
+    "ScPortraitConfig": {
+      "properties": {
+        "projects_root": {
+          "advice": "",
+          "default": "scPortrait",
+          "description": "Output folder for the external scPortrait converter; relative to the project working directory.",
+          "level": "advanced",
+          "minLength": 1,
+          "stage": "scportrait",
+          "title": "Projects Root",
+          "type": "string",
+          "ui_group": "Scportrait"
+        }
+      },
+      "title": "ScPortraitConfig",
+      "type": "object"
+    },
     "SegmentationConfig": {
       "properties": {
         "celltable_output": {
@@ -13737,6 +13754,14 @@
       "$ref": "#/$defs/CellVisionConfig",
       "advice": "",
       "description": "Configuration value for cellvision.",
+      "level": "advanced",
+      "stage": "pipeline",
+      "ui_group": "Pipeline"
+    },
+    "scportrait": {
+      "$ref": "#/$defs/ScPortraitConfig",
+      "advice": "",
+      "description": "Configuration value for scportrait.",
       "level": "advanced",
       "stage": "pipeline",
       "ui_group": "Pipeline"

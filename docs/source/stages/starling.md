@@ -269,6 +269,22 @@ directory by default. `limit_train_batches` is mainly useful for diagnostics; a
 model fitted to only part of each epoch should not be treated as a complete
 biological result without deliberate validation.
 
+TensorBoard logging requires either `tensorboard` or `tensorboardX` in the
+`sbt-starling` environment. This runtime is externally managed, so updating the
+toolkit alone does not install the backend. To repair a missing-backend error:
+
+```bash
+conda activate sbt-starling
+python -m pip install tensorboard
+sbt env test starling
+```
+
+Alternatively, set `tensorboard_logging: false` under `starling` in the project
+configuration to train without TensorBoard logs. The stage checks logger
+construction before creating the STARLING model and reports both remedies if a
+logging dependency is missing. A pandas `Series.__getitem__` `FutureWarning`
+from STARLING's cell-size conversion is separate from this missing-backend error.
+
 ## Reusable assets produced
 
 With the default prefix `starling`, the saved AnnData receives the following

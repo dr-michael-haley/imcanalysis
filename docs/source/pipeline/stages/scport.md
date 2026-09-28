@@ -9,16 +9,16 @@ Generate single-cell portrait outputs via external scPortrait converter
 
 ## Inputs
 
-- processed/ and masks/ (hard-coded CLI args in this job)
+- general.denoised_images_folder and general.masks_folder
 
 ## Outputs
 
-- scPortrait/ project outputs (--projects-root scPortrait)
+- scportrait.projects_root (default scPortrait/) project outputs
 - outputs/<execution_id>_scPortrait_Export/ stage report under sbt
 
 ## Configuration
 
-- none (does not read config.yaml)
+- general, scportrait
 
 ## Run
 

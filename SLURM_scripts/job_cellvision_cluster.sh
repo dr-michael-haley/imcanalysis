@@ -18,7 +18,7 @@ set -e
 #@MODULE:  SpatialBiologyToolkit.scripts.cellvision_cluster
 #@CONFIG: general, cellvision, logging
 
-source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
+source "${SBT_TOOLKIT_ROOT:-$HOME/imcanalysis}/SLURM_scripts/job_env.sh"
 conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_ANALYSIS:-sbt-analysis}}"
 export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
 python -m SpatialBiologyToolkit.scripts.cellvision_cluster

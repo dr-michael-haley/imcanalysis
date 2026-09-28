@@ -32,10 +32,11 @@ demand by a real `sbt run`.
 ## `setup.sh` and `make install`
 
 `make install` runs `install/setup.sh`. This optional compatibility installer
-expects the checkout at exactly `~/imcanalysis` and:
+uses `SBT_TOOLKIT_ROOT` (default `~/imcanalysis`) and:
 
 - makes files in `Bash_scripts/` and `SLURM_scripts/` executable;
-- adds `~/imcanalysis/Bash_scripts` to `PATH` in `~/.profile`;
+- saves the selected `SBT_TOOLKIT_ROOT` in `~/.profile` and `~/.bashrc` and adds
+  its `Bash_scripts` directory to `PATH` in `~/.profile`;
 - adds the `cds` alias to `~/.bashrc`;
 - creates `~/.imc_config` when absent, prompting for `IMC_EMAIL` and an optional
   `OPENAI_API_KEY`, then sets mode `600`;
@@ -46,6 +47,12 @@ The script preserves an existing `~/.imc_config` and avoids adding exact
 duplicate lines. It does not install the `sbt` launcher or create scientific
 Conda environments. Its main purpose is to expose the legacy `cds`, `pl`,
 `pll`, and `pls` helpers.
+
+For a checkout elsewhere, export `SBT_TOOLKIT_ROOT=/path/to/checkout` before
+running the installer. The generated PATH and alias lines support spaces.
+`SBT_DATA_ROOT` changes the `cds` search directory (default `~/scratch`).
+See [Linux and EC2 without SLURM](../getting_started/ec2.md) for direct execution
+without this optional installer.
 
 The same file can contain the SBT-managed `SBT_PROJECTS_JSON` block used by
 `sbt project register` and the Project Console. Registry updates preserve the

@@ -43,12 +43,15 @@ def sbt_environment(
     stage_name: str,
 ) -> dict[str, str]:
     stage = get_stage(stage_name)
+    planned_stage = next(item for item in run.plan.resolved_stages if item.name == stage_name)
+    toolkit_root = planned_stage.slurm_script.parent.parent
     execution = run.execution_for_stage(stage_name)
     outputs_root = Path(context.config.general.outputs_folder).expanduser()
     if not outputs_root.is_absolute():
         outputs_root = context.root / outputs_root
     outputs_root = outputs_root.resolve(strict=False)
     environment = {
+        "SBT_TOOLKIT_ROOT": str(toolkit_root),
         "SBT_PROJECT_ROOT": str(context.root),
         "SBT_PROJECT_ID": context.project_metadata.project_id,
         "SBT_CONFIG": str(run.resolved_config_path),

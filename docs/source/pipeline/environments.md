@@ -229,6 +229,26 @@ The lockfiles that pre-date pip-extra separation can contain legacy pip records.
 `sbt env validate-spec` rejects these for synchronization; regenerate them on
 the Linux HPC with `sbt env lock --all` before using the cleaned separation.
 
+### Analysis installation fails with an XGBoost HTTP 404
+
+RAPIDS moved the older `libxgboost`, `py-xgboost`, `xgboost`, and
+`rapids-xgboost` builds to `rapidsai/label/legacy-xgboost`. Older analysis
+locks still point at their former main-channel URLs. The repaired lock uses
+the new URLs for the same builds and checksums, and `environment.yml` includes
+the label for future lock generation.
+
+Update the checkout on the installation host to include the repaired analysis
+specification, then retry:
+
+```bash
+sbt env sync analysis --dry-run
+sbt env sync analysis
+```
+
+If the failed installation left an environment that the dry run reports as
+drifted, review it before using `sbt env sync analysis --recreate`. Adding a
+channel to `.condarc` alone cannot repair URLs already recorded in a lock.
+
 ## Reviewed HPC-to-repository capture
 
 Capture is deliberately explicit because an installed environment cannot

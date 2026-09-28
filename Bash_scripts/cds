@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Change directory into ~/scratch/<user> using case-insensitive prefix matching.
+# Change directory below SBT_DATA_ROOT (default ~/scratch) by prefix.
 
 prefix="$1"
 
@@ -9,7 +9,7 @@ if [[ -z "${prefix}" ]]; then
     return 1 2>/dev/null || exit 1
 fi
 
-base_dir="$HOME/scratch"
+base_dir="${SBT_DATA_ROOT:-$HOME/scratch}"
 
 if [[ ! -d "$base_dir" ]]; then
     echo "Error: $base_dir does not exist"

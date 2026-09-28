@@ -18,7 +18,7 @@
 #@MODULE:  SpatialBiologyToolkit.scripts.starling_analysis
 #@CONFIG: general, starling, logging
 
-source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
+source "${SBT_TOOLKIT_ROOT:-$HOME/imcanalysis}/SLURM_scripts/job_env.sh"
 
 echo "STARLING job is using ${SLURM_GPUS:-0} GPU(s) with ID(s) ${CUDA_VISIBLE_DEVICES:-none} and ${SLURM_NTASKS:-${SLURM_NTASKS_PER_NODE:-1}} CPU core(s)"
 

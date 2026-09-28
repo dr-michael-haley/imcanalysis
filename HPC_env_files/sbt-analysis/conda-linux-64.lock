@@ -13,9 +13,11 @@
 version: 1
 metadata:
   content_hash:
-    linux-64: 474c29c42186c989a5349d921ff039fc9adda9641d93e6e01e849ce26d2d1a01
+    linux-64: d18c15101c0d5ad116ef4387d19afa69d3b79eb362c792c1659b511d57832fc4
   channels:
   - url: rapidsai
+    used_env_vars: []
+  - url: rapidsai/label/legacy-xgboost
     used_env_vars: []
   - url: nvidia
     used_env_vars: []
@@ -5035,7 +5037,7 @@ package:
     libgcc: '>=12'
     libstdcxx: '>=12'
     nccl: '>=2.23.4.1,<3.0a0'
-  url: https://conda.anaconda.org/rapidsai/linux-64/libxgboost-2.1.2-rapidsai_ha30df50_0.conda
+  url: https://conda.anaconda.org/rapidsai/label/legacy-xgboost/linux-64/libxgboost-2.1.2-rapidsai_ha30df50_0.conda
   hash:
     md5: 1151c6604613530334f6f273022eaf72
     sha256: 77db6cb70a86b91cd701d0cdb4c4709b7ddef483e358086a8efa7e50c7cf80ee
@@ -6270,7 +6272,7 @@ package:
     python: '>=3.9'
     scikit-learn: ''
     scipy: ''
-  url: https://conda.anaconda.org/rapidsai/noarch/py-xgboost-2.1.2-rapidsai_pyh981730f_0.conda
+  url: https://conda.anaconda.org/rapidsai/label/legacy-xgboost/noarch/py-xgboost-2.1.2-rapidsai_pyh981730f_0.conda
   hash:
     md5: d9be9591938b199679cc9ca8ca2f7d3f
     sha256: 53850324fd3571f5488b259576c32b2db8dd687c47c0313f86bcb9a907a30baa
@@ -7016,7 +7018,7 @@ package:
     python: '>=3.11,<3.12.0a0'
     python_abi: 3.11.*
     xgboost: 2.1.2
-  url: https://conda.anaconda.org/rapidsai/linux-64/rapids-xgboost-24.12.00-cuda12_py311_241211_gd51ff77_0.conda
+  url: https://conda.anaconda.org/rapidsai/label/legacy-xgboost/linux-64/rapids-xgboost-24.12.00-cuda12_py311_241211_gd51ff77_0.conda
   hash:
     md5: f6a4f903c932eba9105d1053322d5a13
     sha256: 9a1014e6dddb95afb7d8bc3532646ed4097c22dfc31f0824922a0b63c3925e31
@@ -8262,7 +8264,7 @@ package:
   dependencies:
     py-xgboost: '*,>=2.1.2,<2.1.3.0a0'
     python: '>=3.9'
-  url: https://conda.anaconda.org/rapidsai/noarch/xgboost-2.1.2-rapidsai_pyh9f47a55_0.conda
+  url: https://conda.anaconda.org/rapidsai/label/legacy-xgboost/noarch/xgboost-2.1.2-rapidsai_pyh9f47a55_0.conda
   hash:
     md5: 9de82dcb114e01bc1603d8c647d7b552
     sha256: 2cdeb8189ad23a3a81bd77cdd12a7d6b02096f36850c83eafc0b1b37781ca1f4

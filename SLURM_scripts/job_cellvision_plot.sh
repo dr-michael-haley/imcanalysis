@@ -16,6 +16,6 @@ set -e
 #@MODULE:  SpatialBiologyToolkit.scripts.cellvision_plot
 #@CONFIG: general, cellvision, logging
 
-source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
+source "${SBT_TOOLKIT_ROOT:-$HOME/imcanalysis}/SLURM_scripts/job_env.sh"
 conda activate "${SBT_CONDA_ENV_SCPORTRAIT:-sbt-scportrait}"
 python -m SpatialBiologyToolkit.scripts.cellvision_plot

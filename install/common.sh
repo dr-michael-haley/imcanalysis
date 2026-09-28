@@ -13,5 +13,5 @@ remove_matching() {
     local pattern="$1"
     local file="$2"
 
-    sed -i "/$pattern/d" "$file" 2>/dev/null
+    sed -i "\|$pattern|d" "$file" 2>/dev/null
 }

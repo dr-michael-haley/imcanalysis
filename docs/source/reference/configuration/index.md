@@ -28,6 +28,7 @@ sections/maxfuse
 sections/cell2location
 sections/spatialdata
 sections/cellvision
+sections/scportrait
 sections/hyperstac
 sections/cox
 sections/biobatchnet

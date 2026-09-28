@@ -14,7 +14,7 @@
 #@MODULE:  SpatialBiologyToolkit.scripts.pairwise_spatial
 #@CONFIG: general, process, pairwise_spatial, logging
 
-source "$HOME/imcanalysis/SLURM_scripts/job_env.sh"
+source "${SBT_TOOLKIT_ROOT:-$HOME/imcanalysis}/SLURM_scripts/job_env.sh"
 
 echo "Pairwise spatial job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 

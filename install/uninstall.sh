@@ -5,6 +5,8 @@ source "$(dirname "$0")/common.sh"
 echo "🧹 Uninstalling IMC Analysis..."
 
 # Remove PATH entry
+remove_matching "# SBT shell helpers" "$HOME/.profile"
+remove_matching "# SBT shell helpers" "$HOME/.bashrc"
 remove_matching "imcanalysis/Bash_scripts" "$HOME/.profile"
 
 # Remove alias

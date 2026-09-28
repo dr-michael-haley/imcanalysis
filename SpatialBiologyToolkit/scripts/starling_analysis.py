@@ -519,6 +519,18 @@ def _train(
     early_stopping_cls: Any,
     tensorboard_logger_cls: Any,
 ) -> Any:
+    logger: Any = False
+    if bool(cfg.tensorboard_logging):
+        try:
+            logger = tensorboard_logger_cls(save_dir=str(qc_dir / "lightning_logs"), name="starling")
+        except ModuleNotFoundError as exc:
+            raise ModuleNotFoundError(
+                "STARLING TensorBoard logging could not initialize. Install a logging backend "
+                "in the STARLING runtime with `python -m pip install tensorboard` "
+                "(activate sbt-starling first), or set starling.tensorboard_logging: false "
+                f"to train without TensorBoard logs. Original error: {exc}"
+            ) from exc
+
     st = starling_module.ST(
         fadata,
         dist_option=str(cfg.dist_option),
@@ -532,10 +544,6 @@ def _train(
     callbacks = None
     if bool(cfg.early_stopping):
         callbacks = [early_stopping_cls(monitor=str(cfg.early_stopping_monitor), mode="min", verbose=False)]
-    logger: Any = False
-    if bool(cfg.tensorboard_logging):
-        logger = tensorboard_logger_cls(save_dir=str(qc_dir / "lightning_logs"), name="starling")
-
     kwargs: Dict[str, Any] = {
         "callbacks": callbacks,
         "logger": logger,

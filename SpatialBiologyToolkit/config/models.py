@@ -6654,6 +6654,15 @@ class Cell2locationConfig(ConfigModel):
         return self
 
 
+@config_section("scportrait")
+class ScPortraitConfig(ConfigModel):
+    projects_root: str = Field(
+        default="scPortrait",
+        min_length=1,
+        description="Output folder for the external scPortrait converter; relative to the project working directory.",
+    )
+
+
 @config_section("pipeline")
 class PipelineConfig(ConfigModel):
     """Fully resolved, typed configuration for all pipeline stages."""
@@ -6675,6 +6684,7 @@ class PipelineConfig(ConfigModel):
     cell2location: Cell2locationConfig = Field(default_factory=Cell2locationConfig)
     spatialdata: SpatialDataConfig = Field(default_factory=SpatialDataConfig)
     cellvision: CellVisionConfig = Field(default_factory=CellVisionConfig)
+    scportrait: ScPortraitConfig = Field(default_factory=ScPortraitConfig)
     hyperstac: HyperstacConfig = Field(default_factory=HyperstacConfig)
     cox: CoxConfig = Field(default_factory=CoxConfig)
     biobatchnet: BioBatchNetConfig = Field(default_factory=BioBatchNetConfig)
@@ -6707,6 +6717,7 @@ DEFAULT_CONFIG_CLASSES = {
     "cell2location": Cell2locationConfig,
     "spatialdata": SpatialDataConfig,
     "cellvision": CellVisionConfig,
+    "scportrait": ScPortraitConfig,
     "hyperstac": HyperstacConfig,
     "cox": CoxConfig,
     "biobatchnet": BioBatchNetConfig,
@@ -6754,6 +6765,7 @@ __all__ = [
     "RebuildMetadataConfig",
     "RemapObsConfig",
     "SegmentationConfig",
+    "ScPortraitConfig",
     "StarlingConfig",
     "SpatialDataConfig",
     "SpatialDataHistologyConfig",
