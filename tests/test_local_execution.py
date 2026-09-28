@@ -54,7 +54,7 @@ python() {
     )
     result = subprocess.run(
         [BASH, (ROOT / "run_local.sh").as_posix(), project.as_posix()],
-        env=env, capture_output=True, text=True,
+        env=env, capture_output=True, encoding="utf-8", timeout=30,
     )
     assert result.returncode == (17 if fail_stage else 0), result.stderr
     logs = list((tmp_path / "saved logs").glob("run-*.log"))
@@ -100,7 +100,7 @@ def test_scportrait_converter_receives_paths_and_preserves_exit(tmp_path, config
         env["SBT_CONFIG"] = str(config)
     result = subprocess.run(
         [sys.executable, "-c", code], cwd=tmp_path, env=env,
-        capture_output=True, text=True,
+        capture_output=True, encoding="utf-8", timeout=30,
     )
     assert result.returncode == 23, result.stderr
     assert json.loads(result.stdout) == [
@@ -114,7 +114,7 @@ def test_scportrait_converter_receives_paths_and_preserves_exit(tmp_path, config
         config.unlink()
         missing = subprocess.run(
             [sys.executable, "-c", code], cwd=tmp_path, env=env,
-            capture_output=True, text=True,
+            capture_output=True, encoding="utf-8", timeout=30,
         )
         assert missing.returncode != 0
         assert "Configuration file not found" in missing.stderr
@@ -140,7 +140,7 @@ def test_legacy_install_repeat_and_uninstall_at_custom_location(tmp_path):
     for _ in range(2):
         result = subprocess.run(
             [BASH, (checkout / "install/setup.sh").as_posix()],
-            env=env, input="", capture_output=True, text=True,
+            env=env, input="", capture_output=True, encoding="utf-8", timeout=30,
         )
         assert result.returncode == 0, result.stderr
     profile = (home / ".profile").read_text(encoding="utf-8")
@@ -148,13 +148,13 @@ def test_legacy_install_repeat_and_uninstall_at_custom_location(tmp_path):
     assert profile.count("export PATH=") == 1
     use_alias = subprocess.run(
         [BASH, "-c", 'shopt -s expand_aliases; source "$HOME/.bashrc"; eval "cds proj"; pwd'],
-        env=env, capture_output=True, text=True,
+        env=env, capture_output=True, encoding="utf-8", timeout=30,
     )
     assert use_alias.returncode == 0, use_alias.stderr
     assert use_alias.stdout.strip().endswith("/data/Project One")
     uninstall = subprocess.run(
         [BASH, (checkout / "install/uninstall.sh").as_posix()],
-        env=env, input="n\n", capture_output=True, text=True,
+        env=env, input="n\n", capture_output=True, encoding="utf-8", timeout=30,
     )
     assert uninstall.returncode == 0, uninstall.stderr
     assert (home / ".profile").read_text(encoding="utf-8") == "# Unrelated settings\n"

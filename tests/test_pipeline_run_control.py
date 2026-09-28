@@ -158,6 +158,22 @@ class RunControlTests(unittest.TestCase):
             self.assertEqual(exported["SBT_CONDA_ENV"], "sbt-analysis")
             self.assertEqual(exported["SBT_CONDA_ENV_ANALYSIS"], "sbt-analysis")
 
+    def test_submission_exports_the_planned_toolkit_location(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context, _ = self._project_and_plan(temp_dir, ["prep"])
+            toolkit = Path(temp_dir) / "custom toolkit"
+            wrappers = toolkit / "SLURM_scripts"
+            wrappers.mkdir(parents=True)
+            (wrappers / "job_preprocess.sh").write_text("#!/bin/bash\n", encoding="utf-8")
+            plan = build_run_plan(context, ["prep"], toolkit_directory=toolkit)
+            self.assertTrue(plan.ready, plan.errors)
+            run = create_run_record(context, plan, command="sbt run prep")
+            runner = FakeSbatchRunner(["750"])
+            submit_run(context, plan, run, runner=runner)
+            self.assertEqual(
+                runner.calls[0][1]["env"]["SBT_TOOLKIT_ROOT"], str(toolkit.resolve())
+            )
+
     def test_single_stage_environment_override_is_exported_and_persisted(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             context, plan = self._project_and_plan(temp_dir, ["prep"])
