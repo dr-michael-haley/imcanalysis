@@ -13,7 +13,7 @@
 #@IN:   rapids.filter_obs_key plus optional rapids.filter_min_value/filter_max_value filters cells after load
 #@OUT:  rapids.output_adata_path (default general.anndata_path)
 #@OUT:  outputs/<execution_id>_RAPIDS_Processing/ figures, tables, and parameter scans
-#@ENV:  sbt-analysis
+#@ENV:  rapids_singlecell
 #@MODULE:  SpatialBiologyToolkit.scripts.basic_process_rapids
 #@CONFIG: general, rapids, visualization, logging
 
@@ -21,8 +21,6 @@ source "${SBT_TOOLKIT_ROOT:-$HOME/imcanalysis}/SLURM_scripts/job_env.sh"
 
 echo "RAPIDS single-cell job is using $SLURM_GPUS GPU(s) with ID(s) $CUDA_VISIBLE_DEVICES and $SLURM_NTASKS CPU core(s)"
 
-conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_ANALYSIS:-sbt-analysis}}"
-# Fix ctypes error
-export LD_LIBRARY_PATH="$CONDA_PREFIX/lib:${LD_LIBRARY_PATH:-}"
+conda activate "${SBT_CONDA_ENV:-${SBT_CONDA_ENV_RAPIDS:-rapids_singlecell}}"
 
 python -m SpatialBiologyToolkit.scripts.basic_process_rapids

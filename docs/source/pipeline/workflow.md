@@ -201,7 +201,7 @@ stage facts in the wrapper metadata.
 - Managed runs resolve environment keys and fixed names from
   `HPC_env_files/environments.yaml`; direct wrappers use the same
   `SBT_CONDA_ENV_<KEY>` names and standardized defaults.
-- `sbt-analysis` supplies the standard RAPIDS runtime. `sbt-starling` and
-  `sbt-scportrait` remain external/pre-existing environments rather than
-  environments synchronized by `sbt env`.
+- `rapids_singlecell` supplies the default RAPIDS runtime. It is externally
+  managed, as are `sbt-starling` and `sbt-scportrait`; `sbt env` does not
+  synchronize their installations.
 - If executable bits are missing, run `chmod +x ~/imcanalysis/SLURM_scripts/*.sh`.

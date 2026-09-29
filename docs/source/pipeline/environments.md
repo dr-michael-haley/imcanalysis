@@ -54,7 +54,8 @@ The stage mapping is also centralized:
 
 | Environment key | Pipeline stages |
 |---|---|
-| `analysis` | `prep`, `vis`, `nimbus`, `nimbus-scan`, `bint`, `rapids`, `cellvision-cluster`, `cellvision-full`, `bbn`, `subcl`, `cchar`, `dnqc`, `aiinter`, `config`, `cellpose`, `reint`, `pairsp`, `nxsp`, `remap`, `slogs`, `rebuildmeta`, `popqc`, `cellfeat`, `spatialdata`, `neighsig` |
+| `analysis` | `prep`, `vis`, `nimbus`, `nimbus-scan`, `bint`, `cellvision-cluster`, `cellvision-full`, `bbn`, `subcl`, `cchar`, `dnqc`, `aiinter`, `config`, `cellpose`, `reint`, `pairsp`, `nxsp`, `remap`, `slogs`, `rebuildmeta`, `popqc`, `cellfeat`, `spatialdata`, `neighsig` |
+| `rapids` | `rapids` |
 | `tensorflow` | `denoise`, `dnqc`, `hyperstac-preprocess`, `hyperstac-model`, `hyperstac-permutation`, `hyperstac-visualise`, `cox`, `hyperstac-stability`, `hyperstac-full` |
 | `cellposesam` | `cellpose` |
 | `starling` | `starling` |

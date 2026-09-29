@@ -35,6 +35,7 @@ from SpatialBiologyToolkit.pipeline.planner import build_run_plan
 from SpatialBiologyToolkit.pipeline.project import initialize_project
 from SpatialBiologyToolkit.pipeline.registry import STAGES
 from SpatialBiologyToolkit.pipeline.runs import create_run_record
+from SpatialBiologyToolkit.pipeline.runtime import sbt_environment
 from SpatialBiologyToolkit.pipeline.status import (
     inspect_run_status,
     refresh_project_status,
@@ -105,6 +106,44 @@ def test_local_plan_does_not_require_slurm_wrappers(project, tmp_path):
     )
     assert not unsupported.ready
     assert any("no local scientific command" in item for item in unsupported.errors)
+
+
+@pytest.mark.parametrize("backend", ["local", "slurm"])
+def test_rapids_defaults_to_external_environment_in_mixed_workflow(project, backend):
+    plan = build_run_plan(
+        project,
+        ["bbn", "rapids", "vis"],
+        backend=backend,
+        dependency_policy="none",
+        ignore_missing_assets=True,
+    )
+    assert plan.ready, plan.errors
+    run = create_run_record(project, plan, command="sbt run bbn rapids vis")
+    expected = {"bbn": "sbt-analysis", "rapids": "rapids_singlecell", "vis": "sbt-analysis"}
+    commands = local_commands(plan, validate=False)
+    for stage, name in expected.items():
+        exported = sbt_environment(project, run, stage)
+        assert exported["SBT_CONDA_ENV"] == name
+        assert "SBT_ENVIRONMENT_OVERRIDE" not in exported
+        command = commands[stage][0]
+        assert command.argv[command.argv.index("-n") + 1] == name
+        assert command.variables["SBT_CONDA_ENV"] == name
+    assert sbt_environment(project, run, "rapids")["SBT_ENVIRONMENT_KEY"] == "rapids"
+
+
+def test_missing_external_rapids_does_not_fall_back_to_analysis(project, tmp_path):
+    prefix = tmp_path / "sbt-analysis"
+    (prefix / "bin").mkdir(parents=True)
+    (prefix / "bin" / "python").touch()
+    with (
+        patch("SpatialBiologyToolkit.pipeline.local.find_conda_executable", return_value="conda"),
+        patch(
+            "SpatialBiologyToolkit.pipeline.local.conda_environment_names",
+            return_value={"sbt-analysis": prefix},
+        ),
+        pytest.raises(ValueError, match="Python environment is missing: rapids_singlecell"),
+    ):
+        local_commands(plan_for(project, ["rapids"]))
 
 
 def test_dry_run_uses_local_commands_and_creates_no_records(project):

@@ -1,5 +1,13 @@
 # RAPIDS Processing
 
+## Runtime environment
+
+`sbt run rapids` uses the externally managed Conda environment
+`rapids_singlecell` (registry key `rapids`) on both local and SLURM backends.
+Install the SBT checkout into that environment with `pip install --editable
+<toolkit-path> --no-deps`. SBT requires the environment to exist and does not
+create, repair, or lock it. No environment override is needed for normal runs.
+
 ## What this stage does
 
 This stage uses
@@ -188,8 +196,8 @@ false. The stage also inspects the installed RAPIDS-singlecell Harmony API.
 Modern runtimes receive `harmony1` or `harmony2` unchanged. The consolidated
 RAPIDS 24.12 runtime exposes the older API: `harmony1` maps explicitly to its
 original correction method, while `harmony2` is rejected rather than silently
-substituted with a scientifically different algorithm. Use the newer legacy
-RAPIDS environment when Harmony2 is required.
+substituted with a scientifically different algorithm. The default external
+`rapids_singlecell` environment supplies the newer API.
 
 Important advanced parameters include:
 
@@ -443,9 +451,9 @@ human-facing report.
 - The active wrapper requests one NVIDIA GPU. Although RAPIDS-singlecell supports
   Dask, out-of-core, and multi-GPU workflows, this stage does not automatically
   configure the paper's multi-GPU setup.
-- RAPIDS runs in the repository-managed `sbt-analysis` environment. Its lock
-  fixes the RAPIDS, CUDA, CuPy, cuML, cuGraph, Dask, AnnData, and Scanpy stack;
-  managed reports capture the observed runtime as additional evidence.
+- RAPIDS runs in the externally managed `rapids_singlecell` environment.
+  SBT does not maintain its package lock; managed reports capture the observed
+  runtime as evidence of the installed scientific stack.
 - GPU memory must hold the active data and algorithm intermediates. Host-memory
   spilling can allow an oversized analysis to continue but may remove much of
   the speed advantage.

@@ -60,8 +60,8 @@ sbt env lock --all
 ```
 
 No lockfile is regenerated silently during migration, capture, or comparison.
-RAPIDS is now part of the repository-managed `sbt-analysis` runtime. STARLING
-and scPortrait remain explicitly external under the standardized
+The RAPIDS stage uses the externally managed `rapids_singlecell` runtime.
+STARLING and scPortrait remain explicitly external under the standardized
 `sbt-starling` and `sbt-scportrait` names until curated specifications are
 added. Superseded specifications and the pre-standardization registry are
 retained under `image_migration/archive/retired_hpc_environments/`.

@@ -5,8 +5,8 @@
 `rapids_singlecell` is an intentional exception to the repository-managed
 `sbt-*` naming and lock convention. Its unchanged upstream name makes ownership
 clear: the scverse recipe creates the scientific environment, while SBT only
-adds a source overlay, verifies the runtime, and selects it for jobs after
-acceptance.
+adds a source overlay, verifies the runtime, and selects it by default for the
+RAPIDS stage on local and SLURM backends.
 
 SBT must not lock, recreate, repair, upgrade or remove this environment.
 
@@ -77,10 +77,13 @@ must pass before GPU testing or stage activation. A Pandas downgrade or other
 official-recipe inconsistency is a failed acceptance result, not something SBT
 should silently repair.
 
-## Acceptance boundary
+## Runtime verification
 
 After the registered tests pass, run
 `image_migration/smoke_tests/rapids_singlecell_2608_gpu_smoke.py` on a CSF3
-A100. Only after direct cuGraph Leiden, the complete small RAPIDS-singlecell
-workflow, and a representative managed run pass should the `rapids` and
-CellVision clustering mappings move from `sbt-analysis` to this environment.
+A100. Direct cuGraph Leiden, the complete small RAPIDS-singlecell workflow, and
+a representative managed run verify GPU readiness on the target host.
+
+The `rapids` stage now defaults to this external environment. CellVision
+clustering retains its separate existing mapping. SBT does not fall back to
+`sbt-analysis` when `rapids_singlecell` is missing.

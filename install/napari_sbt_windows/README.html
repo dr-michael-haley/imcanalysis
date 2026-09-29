@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>NapariSBT for Windows — Startup guide</title>
+<style>
+:root { color-scheme: light; font-family: "Segoe UI", Arial, sans-serif; color: #23343f; background: #eef3f5; line-height: 1.65; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 36px 20px; }
+main { max-width: 950px; margin: auto; background: #fff; border: 1px solid #dce5e8; border-top: 7px solid #087f73; border-radius: 14px; padding: 36px 48px; box-shadow: 0 8px 30px #16393d0a; }
+.eyebrow { color: #087268; text-transform: uppercase; letter-spacing: .12em; font-size: .78rem; font-weight: 700; margin: 0; }
+h1 { font-size: clamp(1.9rem, 5vw, 2.7rem); line-height: 1.15; letter-spacing: -.03em; margin: 10px 0 22px; color: #133e3a; }
+h2 { font-size: 1.4rem; line-height: 1.3; color: #075e57; border-top: 1px solid #dce5e8; padding-top: 28px; margin-top: 38px; scroll-margin-top: 20px; }
+h3 { font-size: 1.1rem; margin-top: 26px; }
+p, li { max-width: 78ch; }
+li { padding-left: 4px; margin: 10px 0; }
+li::marker { color: #087268; font-weight: 700; }
+a { color: #006f66; text-underline-offset: 3px; }
+a:focus-visible { outline: 3px solid #087f73; outline-offset: 4px; }
+nav { background: #eff8f5; border: 1px solid #cce4dc; border-radius: 9px; padding: 18px 22px; margin: 28px 0; }
+nav strong { display: block; margin-bottom: 9px; }
+nav a { display: block; padding: 4px 0; }
+code { font-family: Consolas, "Courier New", monospace; font-size: .92em; background: #edf2f4; padding: 2px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+pre { background: #172e36; color: #f1f8f8; padding: 18px 20px; border-radius: 8px; overflow-x: auto; line-height: 1.5; }
+pre code { background: none; padding: 0; color: inherit; overflow-wrap: normal; white-space: pre; }
+footer { border-top: 1px solid #dce5e8; margin-top: 36px; padding-top: 18px; color: #566a73; font-size: .88rem; }
+@media (max-width: 600px) { body { padding: 12px; } main { padding: 25px 20px; } pre { padding: 14px; } ol { padding-left: 22px; } }
+@media print { body { background: white; padding: 0; } main { border: 0; box-shadow: none; padding: 0; max-width: none; } nav { display: none; } h2, h3 { break-after: avoid; } pre { white-space: pre-wrap; background: #f0f3f4; color: #111; } pre code { white-space: pre-wrap; } }
+</style>
+</head>
+<body>
+<main>
+<p class="eyebrow">Windows startup guide</p>
+<h1>NapariSBT for Windows</h1>
+<p>The ZIP includes NapariSBT and its Python environment. You do not need to install
+Python or Conda, or run as administrator. Choose one of the three startup options
+below, depending on what your computer permits.</p>
+<nav aria-label="Guide sections"><strong>In this guide</strong><a href="#start-naparisbt">Start NapariSBT</a><a href="#backup-start-with-the-batch-file">Backup: start with the batch file</a><a href="#start-directly-from-command-prompt">Start directly from Command Prompt</a><a href="#moving-or-updating-the-application">Moving or updating the application</a><a href="#if-startup-fails">If startup fails</a><a href="#for-the-distributor">For the distributor</a></nav><h2 id="start-naparisbt">Start NapariSBT</h2>
+<ol>
+<li>Extract the entire ZIP into a writable local folder, such as
+<code>%LOCALAPPDATA%\NapariSBT\app</code>. Paste <code>%LOCALAPPDATA%</code> into File Explorer's
+address bar to find your personal application-data folder.</li>
+<li>Open the extracted folder and double-click <strong>NapariSBT.exe</strong>. It should be
+beside <code>python.exe</code>, with <code>Lib</code>, <code>Library</code>, and <code>Scripts</code> folders alongside it.
+Do not run the launcher from inside the ZIP.</li>
+<li>On first launch, a small progress window says <strong>Preparing NapariSBT</strong> while
+the environment is configured for its new location. This can take a little
+time. Later launches skip that preparation.</li>
+<li>Use Home to choose a dataset or open a workspace. Images and masks may remain
+on a network drive. There is no command window to manage.</li>
+</ol>
+<p>Keep datasets and saved workspaces outside the application folder so they can be
+reused with future versions.</p>
+<h2 id="backup-start-with-the-batch-file">Backup: start with the batch file</h2>
+<p>If your computer permits batch files, double-click <strong>Start_NapariSBT.bat</strong> in the
+extracted folder. Keep its command window open while using NapariSBT. First-run
+setup is automatic; errors stay visible in that window.</p>
+<p>The batch file needs <code>start_naparisbt.py</code> alongside it. It uses the same setup
+record as <code>NapariSBT.exe</code>, so you can switch between these updated launchers
+without repeating setup. If Windows blocks batch files, use the command-prompt
+instructions below only where your organisation permits running the bundled Python.</p>
+<h2 id="start-directly-from-command-prompt">Start directly from Command Prompt</h2>
+<p>This option does not run <code>NapariSBT.exe</code>, <code>Start_NapariSBT.bat</code>, or
+<code>Scripts\activate.bat</code>. It still runs the bundled <strong>python.exe</strong>, which must be
+allowed by your computer's security policy. If that is blocked too, your IT team
+will need to approve a deployment; these commands do not override the policy.</p>
+<ol>
+<li>
+<p>Extract the entire ZIP into the folder you intend to keep.</p>
+</li>
+<li>
+<p>Open the Windows Start menu, type <strong>Command Prompt</strong>, and open it normally.
+Do not choose <strong>Run as administrator</strong>. These instructions use Command Prompt
+(<code>cmd.exe</code>), rather than PowerShell.</p>
+</li>
+<li>
+<p>Enter the following command, replacing the example with your extracted folder.
+Keep the quotation marks if the path contains spaces:</p>
+<pre><code class="language-bat">cd /d "C:\Users\YourName\AppData\Local\NapariSBT\app"
+</code></pre>
+<p>If Windows says it cannot find that path, correct it before continuing.</p>
+</li>
+<li>
+<p>Enter:</p>
+<pre><code class="language-bat">.\python.exe -E -s .\start_naparisbt.py
+</code></pre>
+</li>
+</ol>
+<p>The helper prepares the environment on first use, then opens NapariSBT Home.
+Use these same two commands for later launches; setup is skipped automatically.
+Keep the command window open until you finish using NapariSBT. No separately
+installed Python, Conda activation, or manual <code>conda-unpack</code> command is needed.</p>
+<p>If startup fails, copy the error text from this window when asking for help. To
+save the output to a file instead, replace the last command with:</p>
+<pre><code class="language-bat">.\python.exe -E -s .\start_naparisbt.py &gt; "%USERPROFILE%\NapariSBT-startup.log" 2&gt;&amp;1
+</code></pre>
+<p>This overwrites <code>NapariSBT-startup.log</code> in your user folder each time. Progress
+messages go to the file, so the command window may appear quiet during startup.</p>
+<h2 id="moving-or-updating-the-application">Moving or updating the application</h2>
+<p>Keep the extracted application folder in the same location after first launch.
+To move it or install an update, extract the original/new ZIP into a fresh folder
+and run the included launcher. You can reopen your separately saved workspaces.</p>
+<p>The launcher detects folders moved or renamed after its own first setup. It also
+asks for a fresh extraction if an older batch launcher prepared the folder,
+because that launcher did not record the installation location. Do not delete
+the setup marker files to bypass either check.</p>
+<h2 id="if-startup-fails">If startup fails</h2>
+<p>The executable launcher shows an error with an <strong>Open logs folder</strong> button.
+Its logs are saved in
+<code>%LOCALAPPDATA%\NapariSBT\logs</code>. Send the latest <code>launcher-*.log</code> file to the person
+who provided NapariSBT. The batch and command-prompt options show errors in their
+command window instead. Logs can include local paths and application output.</p>
+<p>First setup needs write access to the extracted folder. Use a folder in your own
+user account; running as administrator is unnecessary.</p>
+<p>Institutional Windows security policies may block executables, batch files, or
+Python scripts even though they do not require admin rights. If Windows blocks them,
+ask your IT team or distributor about an approved/signed build. The launcher does
+not disable or change Windows security settings.</p>
+<h2 id="for-the-distributor">For the distributor</h2>
+<p>Pack a Windows environment with <code>conda-pack</code>, with SpatialBiologyToolkit installed
+normally rather than in editable mode. Add these files at the ZIP's root:</p>
+<pre><code class="language-text">NapariSBT.exe
+Start_NapariSBT.bat
+start_naparisbt.py
+README.html
+python.exe
+Lib/
+Library/
+Scripts/
+</code></pre>
+<p>Include all four files from this launcher's <code>dist/</code> folder: <code>NapariSBT.exe</code>,
+<code>Start_NapariSBT.bat</code>, <code>start_naparisbt.py</code>, and <code>README.html</code>. The Python helper is
+required for both backup options; it uses only Python's standard library.
+No C# source or build tools need to be distributed.
+Distribute the original packed archive with those four files added, rather than
+rezipping an environment already initialised on another machine.</p>
+<p>The launcher targets Windows with .NET Framework 4.5 or later (including the
+.NET Framework 4.x runtime shipped with Windows 10/11). It is compiled as a GUI
+application with an explicit <code>asInvoker</code> manifest. It never requests elevation,
+installs system components, changes the system PATH, or writes to HKLM.
+Environment changes apply only to the launched processes. Numba's cache and
+diagnostic logs stay in the user's Local AppData.</p>
+<p>The build is unsigned. Code signing/organisational approval is a separate release
+step where required by the recipient's Windows policy.</p>
+<p>The batch and executable launchers run the environment's activation hooks. The
+direct command-prompt helper deliberately does not execute batch files: it sets
+the bundled library/search paths, Python isolation, Numba cache, and available
+OpenSSL certificate defaults itself. Environments that require additional
+package-specific activation settings need those settings reviewed and supplied
+before using the direct route. Test the workflows you intend to distribute with
+each startup option, especially plugins that depend on activation hooks.</p>
+<h3 id="rebuild">Rebuild</h3>
+<p>On a Windows development machine with the .NET Framework C# compiler:</p>
+<pre><code class="language-powershell">.\install\napari_sbt_windows\build_launcher.ps1
+</code></pre>
+<p>This builds <code>dist/NapariSBT.exe</code> and copies the batch file, Python helper, and this
+README alongside it. No external NuGet packages, Python freezing, or administrator
+access are used for the build.</p>
+<h3 id="developer-checks">Developer checks</h3>
+<pre><code class="language-powershell">.\install\napari_sbt_windows\test_launcher.ps1 -PythonEnvironment C:\path\to\python-environment
+</code></pre>
+<p>These checks use a real Python interpreter with disposable fixture scripts and
+small temporary environments. They cover first/subsequent runs, failed setup,
+path changes, activation, Python isolation, log output and application failures.
+They also compare the child and parent security tokens. The test runner is an
+unsigned executable; an organisational execution policy may block it.</p>
+<p>The Python helper also has focused tests that do not start Napari or execute a
+newly compiled binary:</p>
+<pre><code class="language-powershell">$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
+python -m pytest install/napari_sbt_windows/tests/test_python_launcher.py -q
+</code></pre>
+<p>Before release, test the finished ZIP under a standard Windows user account on a
+representative target computer. Check Home, network dataset loading,
+normalisation, workspace save/reopen, and any required background feature or
+export jobs. A successful compile does not verify those workflows.</p>
+
+<footer>This guide works offline. Double-click README.html to open it in your web browser.</footer>
+</main>
+</body>
+</html>

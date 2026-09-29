@@ -400,7 +400,7 @@ before submission when a blocking asset is absent, unless the explicit
 `--ignore-missing-assets` escape hatch is used:
 
 ```bash
-sbt run rapids --environment sbt-analysis --no-deps --after 006 --ignore-missing-assets
+sbt run rapids --environment rapids_singlecell --no-deps --after 006 --ignore-missing-assets
 ```
 
 This downgrades absent blocking asset roles to prominent plan warnings while

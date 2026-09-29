@@ -13,7 +13,7 @@ for ordering and usage guidance.
 | [`vis`](vis.md) | Generate UMAP/matrix/overlay/population visualization outputs | `sbt-analysis` | general, visualization, process, logging |
 | [`nimbus`](nimbus.md) | Segment/quantify cells with Nimbus and build AnnData outputs | `sbt-analysis` | general, segmentation, nimbus, logging |
 | [`bint`](bint.md) | Batch integration with Harmony and/or BBKNN, followed by UMAP/Leiden post-processing | `sbt-analysis` | general, batch_integration, logging |
-| [`rapids`](rapids.md) | GPU processing with rapids-singlecell: optional cell filtering, PCA, optional Harmony, neighbors, UMAP, Leiden, optional parameter scan | `sbt-analysis` | general, rapids, visualization, logging |
+| [`rapids`](rapids.md) | GPU processing with rapids-singlecell: optional cell filtering, PCA, optional Harmony, neighbors, UMAP, Leiden, optional parameter scan | `rapids_singlecell` | general, rapids, visualization, logging |
 | [`cellvision-extract`](cellvision-extract.md) | Extract selected identity-tracked IMC cells into one 36 px H5SC dataset with scPortrait | `sbt-scportrait` | general, cellvision, logging |
 | [`cellvision-embed`](cellvision-embed.md) | Train the PyTorch CellVision VICReg encoder and extract identity-aligned cell embeddings | `sbt-scportrait` | general, cellvision, logging |
 | [`cellvision-cluster`](cellvision-cluster.md) | Fuse CellVision morphology and BioBatchNet intensity graphs, then run RAPIDS UMAP and Leiden | `sbt-analysis` | general, cellvision, logging |

@@ -28,18 +28,17 @@ environments:
       - [python, -c, "import cellpose, nimbus_inference, readimc, skimage, pyarrow, spatialdata"]
       - [python, -c, "import biobatchnet, cellcharter, squidpy"]
       - [python, -c, "import pkg_resources; from importlib.metadata import version; assert int(version('setuptools').split('.', 1)[0]) < 81; assert version('rapids-singlecell') == '0.12.0'; assert version('numba') == '0.60.0'; assert version('cugraph').startswith('24.12'); assert version('dask-cudf').startswith('24.12'); assert version('dask') == '2024.11.2'; assert version('distributed') == '2024.11.2'; assert version('dask-expr') == '1.1.19'; assert version('cellcharter') == '0.3.7'; assert version('torch').split('+', 1)[0] == '2.9.1'; assert version('numpy') == '1.26.4'; assert version('scikit-image') == '0.24.0'; assert version('spatialdata') == '0.4.0'; assert version('multiscale-spatial-image') == '2.0.2'; assert version('zarr') == '2.18.7'; assert version('numcodecs') == '0.15.1'; assert version('squidpy') == '1.6.5'"]
-      - [python, -c, "import SpatialBiologyToolkit.scripts.basic_process_rapids"]
       - [python, -c, "import SpatialBiologyToolkit.scripts.basic_process_biobatchnet"]
       - [python, -c, "import SpatialBiologyToolkit.scripts.cellcharter_neighborhoods"]
       - [python, -c, "import SpatialBiologyToolkit.scripts.segmentation_nimbus"]
       - [python, -c, "import SpatialBiologyToolkit.scripts.spatialdata_builder"]
     notes:
-      - Standard consolidated runtime for segmentation, BioBatchNet, CellCharter, and SpatialData stages; the older RAPIDS stack remains temporarily installed only while its dedicated replacement is validated.
+      - Standard consolidated runtime for segmentation, BioBatchNet, CellCharter, and SpatialData stages; the RAPIDS stage uses the external rapids_singlecell environment.
       - CellCharter is supported through its default existing-embedding route; optional TRVAE/scArches mode is deliberately excluded from the standard runtime.
       - RAPIDS 24.12 and RAPIDS-singlecell 0.12.0 retain the shared Dask 2024.11 generation required by SpatialData 0.4 and Squidpy 1.6.5. This runtime supports original Harmony only; Harmony2 is outside the standard catalogue.
       - Numba 0.60.0 is required by RAPIDS-singlecell 0.12.0; newer Numba generations are outside this runtime's supported RAPIDS 24.12 dependency set.
       - Stage-module smoke tests use separate Python processes, matching SLURM execution; importing the RAPIDS/Scanpy and SpatialData 0.4 stacks sequentially in one interpreter can select incompatible Dask DataFrame backends.
-      - Direct cuGraph and RAPIDS-singlecell Leiden calls segfault in the native RAPIDS 24.12 UCX/CUDA path on CSF3. Production mappings remain here only as rollback state until the external rapids_singlecell environment passes GPU and representative workflow validation.
+      - Direct cuGraph and RAPIDS-singlecell Leiden calls segfault in the native RAPIDS 24.12 UCX/CUDA path on CSF3. The older packages remain installed for compatibility; they are not the default runtime for the RAPIDS stage.
       - Nimbus is included on Python 3.11, within its documented Python 3.9 through 3.11 range.
       - STARLING, MaxFuse, scPortrait, Cellpose-SAM, HyPERSTAC, and denoising remain separate.
 
@@ -62,7 +61,7 @@ environments:
       - Externally managed official RAPIDS-singlecell environment; SBT verifies and uses it but never locks, creates, repairs or removes it.
       - Install from the immutable upstream recipe snapshot at scverse/rapids-singlecell commit eb8f5ae6f7cdf171a1014d9a40e0ed8c5a6b1b21, retaining its physical Conda name rapids_singlecell.
       - Install the current SBT checkout as an editable --no-deps overlay so its broad package metadata cannot modify the official scientific stack.
-      - No production stage uses this key until dependency, import, direct cuGraph, full RAPIDS-singlecell and representative managed-job validation pass.
+      - Default runtime for the RAPIDS stage on local and SLURM backends. Provision this external environment and the SBT overlay before running the stage.
 
   napari:
     conda_name: sbt-napari
@@ -180,7 +179,7 @@ stage_environments:
   nimbus: [analysis]
   nimbus-scan: [analysis]
   bint: [analysis]
-  rapids: [analysis]
+  rapids: [rapids]
   cellvision-extract: [scportrait]
   cellvision-embed: [scportrait]
   cellvision-cluster: [analysis]

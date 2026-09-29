@@ -277,11 +277,11 @@ class RegistryTests(EnvironmentFixture):
             "prep",
             "bbn",
             "cchar",
-            "rapids",
             "cellvision-cluster",
             "spatialdata",
         ):
             self.assertIn(stage, analysis_stages)
+        self.assertNotIn("rapids", analysis_stages)
         self.assertIn("segmentation", " ".join(definition.notes).casefold())
         self.assertIn("biobatchnet", " ".join(definition.notes).casefold())
         self.assertIn("cellcharter", " ".join(definition.notes).casefold())
@@ -344,7 +344,6 @@ class RegistryTests(EnvironmentFixture):
             and "SpatialBiologyToolkit.scripts." in command[-1]
         ]
         for module in (
-            "basic_process_rapids",
             "basic_process_biobatchnet",
             "cellcharter_neighborhoods",
             "segmentation_nimbus",
@@ -363,7 +362,7 @@ class RegistryTests(EnvironmentFixture):
         self.assertIsNone(definition.specification_directory)
         self.assertEqual(definition.conda_channel_priority, "flexible")
         self.assertEqual(definition.toolkit_overlay, "editable-no-deps")
-        self.assertEqual(associated_stages(central, "rapids"), [])
+        self.assertEqual(associated_stages(central, "rapids"), ["rapids"])
 
         upstream_path = (
             root
