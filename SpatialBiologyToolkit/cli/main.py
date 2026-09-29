@@ -161,7 +161,7 @@ DOCUMENTATION_URL = "https://imcanalysis.readthedocs.io/en/latest/"
 app = typer.Typer(
     name="sbt",
     help=(
-        "Spatial Biology Toolkit project and SLURM control interface.\n\n"
+        "Spatial Biology Toolkit project and execution control interface.\n\n"
         f"Repository: {REPOSITORY_URL}\n\n"
         f"Documentation: {DOCUMENTATION_URL}"
     ),
@@ -341,6 +341,8 @@ def gui_napari_command(
     anndata: Path | None = typer.Option(None, "--anndata"),
     masks: Path | None = typer.Option(None, "--masks"),
     images: list[Path] | None = typer.Option(None, "--images"),
+    welcome: bool = typer.Option(False, "--welcome", help="Open Home without discovering a project from the launch folder."),
+    dataset: Path | None = typer.Option(None, "--dataset", help="Prefill setup from a standalone dataset folder."),
     check: bool = typer.Option(
         False,
         "--check",
@@ -362,12 +364,18 @@ def gui_napari_command(
 
     if check_format not in {"text", "json"}:
         _fail("--check-format must be 'text' or 'json'.")
+    if sum((project is not None, dataset is not None, welcome)) > 1:
+        _fail("Choose one of --project, --dataset, or --welcome.")
     try:
         command = _napari_gui_command(gui_environment)
     except Exception as exc:
         _fail(exc)
     if project is not None:
         command.extend(["--project", str(project)])
+    if welcome:
+        command.append("--welcome")
+    if dataset is not None:
+        command.extend(["--dataset", str(dataset)])
     if experiment is not None:
         command.extend(["--experiment", str(experiment)])
     if anndata is not None:
@@ -2053,6 +2061,10 @@ def plan_command(
     targets: list[str] = typer.Argument(..., help="Stage aliases or workflow modes."),
     project: Path | None = typer.Option(None, "--project"),
     config: Path | None = typer.Option(None, "--config"),
+    backend: str = typer.Option(
+        "slurm", "--backend", envvar="SBT_BACKEND",
+        help="Execution backend: slurm or local.",
+    ),
     dependency_policy: DependencyPolicyOption = typer.Option(
         DependencyPolicyOption.assets,
         "--dependency-policy",
@@ -2078,6 +2090,7 @@ def plan_command(
             targets,
             dependency_policy=dependency_policy.value,
             ignore_missing_assets=ignore_missing_assets,
+            backend=backend,
         )
     except Exception as exc:
         _fail(exc)
@@ -2155,12 +2168,23 @@ def _prompt_external_dependency(
 
 @app.command(
     "run",
-    help="Allocate execution IDs and submit validated stages to SLURM.",
+    help="Allocate execution IDs and run validated stages with SLURM or locally.",
 )
 def run_command(
     targets: list[str] = typer.Argument(..., help="Stage aliases or workflow modes."),
     project: Path | None = typer.Option(None, "--project"),
     config: Path | None = typer.Option(None, "--config"),
+    backend: str = typer.Option(
+        "slurm", "--backend", envvar="SBT_BACKEND",
+        help="Execution backend: slurm or local.",
+    ),
+    detach: bool = typer.Option(
+        False, "--detach", help="Run a local workflow independently of the terminal.",
+    ),
+    use_active_env: bool = typer.Option(
+        False, "--use-active-env",
+        help="Use the activated Conda environment for every local stage.",
+    ),
     environment: str | None = typer.Option(
         None,
         "--environment",
@@ -2230,6 +2254,14 @@ def run_command(
         _fail("--no-deps cannot be combined with --dependency-policy.")
     if after and no_after:
         _fail("--after cannot be combined with --no-after.")
+    if backend != "local" and (detach or use_active_env):
+        _fail("--detach and --use-active-env require --backend local.")
+    if use_active_env and environment:
+        _fail("--use-active-env cannot be combined with --environment.")
+    if backend == "local" and after:
+        _fail(
+            "--after is a SLURM dependency. Local runs execute sequentially within one workflow."
+        )
     selected_policy = DependencyPolicyOption.none if no_deps else dependency_policy
     try:
         context = _project(project, config)
@@ -2238,13 +2270,32 @@ def run_command(
             targets,
             dependency_policy=selected_policy.value,
             ignore_missing_assets=ignore_missing_assets,
+            backend=backend,
         )
         plan = apply_environment_override(plan, environment)
+        plan.use_active_environment = use_active_env
     except Exception as exc:
         _fail(exc)
     if not plan.ready:
         _print_plan(plan)
         raise typer.Exit(1)
+
+    if backend == "local":
+        from .local import run_local_command
+
+        try:
+            run_local_command(
+                context, plan, detach=detach, dry_run=dry_run, reason=reason, notes=note,
+                plan_token=plan_token, provenance_stdin=provenance_stdin,
+                output_format=output_format.value, command=command_text(sys.argv),
+            )
+        except typer.Exit:
+            raise
+        except KeyboardInterrupt:
+            raise typer.Exit(130)
+        except Exception as exc:
+            _fail(exc)
+        return
 
     preview_dependency: ExternalDependency | None = None
     if after and (dry_run or plan_token):
@@ -2597,7 +2648,7 @@ def squeue_command(
 
 @app.command(
     "cancel",
-    help="Preview or cancel one exact current-user SLURM job or SBT execution.",
+    help="Preview or cancel a SLURM job or a local execution workflow.",
 )
 def cancel_command(
     reference: str = typer.Argument(..., help="Job ID, or execution ID with --project."),
@@ -2610,6 +2661,13 @@ def cancel_command(
 ) -> None:
     try:
         context = _project(project) if project is not None else None
+        from .local import try_cancel_local
+
+        if try_cancel_local(
+            context, reference, reason=reason, dry_run=dry_run, plan_token=plan_token,
+            provenance_stdin=provenance_stdin, output_format=output_format.value,
+        ):
+            return
         if dry_run:
             payload = preview_cancellation(reference, reason=reason, context=context)
         else:
@@ -2654,14 +2712,14 @@ def _print_project_refresh(result: ProjectStatusRefresh) -> None:
     else:
         typer.echo("  No status changes.")
     if result.unknown_count:
-        typer.echo(f"  Unknown scheduler state: {result.unknown_count} execution(s).")
+        typer.echo(f"  Unknown execution state: {result.unknown_count} execution(s).")
     for warning in result.warnings:
         typer.echo(f"Warning: {warning}")
 
 
 @app.command(
     "refresh",
-    help="Refresh scheduler status for every active execution in the project.",
+    help="Refresh execution status from each workflow's recorded backend.",
 )
 def refresh_command(
     project: Path | None = typer.Option(None, "--project"),
@@ -2681,7 +2739,7 @@ def refresh_command(
 @app.command(
     "status",
     help=(
-        "Refresh and show scheduler status for one project execution; use "
+        "Refresh and show status for one project execution; use "
         "'sbt refresh' for the whole project."
     ),
 )
@@ -2714,6 +2772,14 @@ def status_command(
             ),
             None,
         )
+        local_resources = None
+        if details and stage_status and stage_status.source == "local":
+            from SpatialBiologyToolkit.pipeline.local import load_local_run
+            from SpatialBiologyToolkit.pipeline.local_process import resource_snapshot
+
+            state = load_local_run(run_dir)
+            active = next((item for item in state.stages if item.status == "running"), None)
+            local_resources = resource_snapshot(active.process if active else None)
     except Exception as exc:
         _fail(exc)
     if output_format != OutputFormat.text:
@@ -2721,6 +2787,8 @@ def status_command(
             {
                 "schema_version": 1,
                 "execution": selected.model_dump(mode="json"),
+                "workflow_status": report.model_dump(mode="json"),
+                "resources": local_resources,
                 "status": stage_status.model_dump(mode="json")
                 if stage_status
                 else None,
@@ -2729,8 +2797,22 @@ def status_command(
         )
         return
     typer.echo(f"Execution {selected.execution_label} — {selected.stage_display_name}")
-    typer.echo(f"Status: {selected.status}")
-    typer.echo(f"SLURM job: {selected.slurm_job_id or '-'}")
+    typer.echo(f"Status: {stage_status.status if stage_status else selected.status}")
+    if stage_status and stage_status.source == "local":
+        typer.echo(f"Backend: local; workflow: {report.overall_status}")
+        for item in report.stages:
+            typer.echo(
+                f"  {item.execution_id:03d} {item.stage}: {item.status}; "
+                f"PID/group {item.process_id or '-'}; environment {item.environment}"
+            )
+        if stage_status.started_at:
+            typer.echo(f"Started: {stage_status.started_at}; elapsed: {stage_status.elapsed_seconds:.0f}s")
+        if local_resources is not None:
+            from .local import print_resources
+
+            print_resources(local_resources)
+    else:
+        typer.echo(f"SLURM job: {selected.slurm_job_id or '-'}")
     if stage_status and stage_status.detail:
         typer.echo(f"Detail: {stage_status.detail}")
     if details:
@@ -2757,9 +2839,15 @@ def logs_command(
     stdout: bool = typer.Option(False, "--stdout"),
     stderr: bool = typer.Option(False, "--stderr"),
     tail: int = typer.Option(40, "--tail", min=0),
+    follow: bool = typer.Option(
+        False, "--follow", "-f",
+        help="Stream new output until this execution finishes; Ctrl+C stops viewing.",
+    ),
     path_only: bool = typer.Option(False, "--path-only"),
     output_format: OutputFormat = typer.Option(OutputFormat.text, "--format"),
 ) -> None:
+    if follow and (path_only or output_format != OutputFormat.text):
+        _fail("--follow requires text output and cannot be combined with --path-only.")
     include_stdout = stdout or not stderr
     include_stderr = stderr or not stdout
     try:
@@ -2805,6 +2893,15 @@ def logs_command(
         return
     if not logs:
         typer.echo("No recorded logs match the selection.")
+        return
+    if follow:
+        from SpatialBiologyToolkit.pipeline.logs import follow_logs
+
+        try:
+            for chunk in follow_logs(context, run_dir, selected.technical_run_id, logs, tail):
+                typer.echo(chunk, nl=False)
+        except KeyboardInterrupt:
+            pass
         return
     for record in logs:
         if path_only:
@@ -2875,7 +2972,7 @@ def summary_command(
     refresh: bool = typer.Option(
         True,
         "--refresh/--no-refresh",
-        help="Refresh all active execution statuses from SLURM before summarizing.",
+        help="Refresh execution statuses from their recorded backend before summarizing.",
     ),
     output_format: SummaryFormat = typer.Option(SummaryFormat.table, "--format"),
 ) -> None:
@@ -2953,7 +3050,7 @@ def summary_command(
 
 @app.command(
     "cleanup",
-    help="Refresh SLURM status, then remove failed and dependency-blocked executions.",
+    help="Refresh execution status, then remove failed and dependency-blocked executions.",
 )
 def cleanup_command(
     project: Path | None = typer.Option(None, "--project"),

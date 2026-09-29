@@ -33,7 +33,7 @@ from SpatialBiologyToolkit.qc_classifier.io import (
     load_mask,
 )
 
-from .cohort import eligible_ids_by_roi, validate_frozen_cohort
+from .cohort import eligible_ids_by_roi, validate_frozen_cohort, validate_mask_coverage
 from .feature_refinement import refine_trial_features
 from .feature_sources import combine_feature_sources, load_feature_source
 from .features import build_feature_dictionary, build_roi_features
@@ -160,6 +160,9 @@ def _roi_task(payload: dict) -> dict:
     started = time.monotonic()
     roi = str(payload["roi"])
     mask = load_mask(payload["mask_path"])
+    missing, _ = validate_mask_coverage(mask, payload["eligible_ids"], roi=roi)
+    if missing:
+        raise ValueError(f"{roi}: {len(missing)} eligible cell IDs are missing from the mask.")
     normalization = payload["normalization"]
     recipe = SyntheticFeatureRecipe.model_validate(payload["recipe"])
     combined_table: pd.DataFrame | None = None
@@ -380,6 +383,10 @@ def run_feature_build(
     frozen_cohort = read_dataframe(paths.root / manifest.cell_scope.snapshot_path)
     validate_frozen_cohort(frozen_cohort, manifest.cell_scope)
     cohort = _feature_build_cohort(manifest, frozen_cohort)
+    from .storage import save_experiment
+
+    manifest.active_feature_set_id = None
+    save_experiment(manifest, paths.root, audit_action="feature_build_started")
     eligible = eligible_ids_by_roi(cohort)
     input_root = (
         Path(manifest.project_root).expanduser().resolve(strict=False)
@@ -476,6 +483,17 @@ def run_feature_build(
         fragment = paths.feature_fragments / f"{safe_roi}.parquet"
         sidecar = paths.feature_fragments / f"{safe_roi}.json"
         if _fragment_is_valid(fragment, sidecar, fingerprint):
+            missing_ids, _ = validate_mask_coverage(
+                load_mask(mask_path), object_ids, roi=roi
+            )
+            if missing_ids:
+                failures.append(
+                    {
+                        "ROI": roi,
+                        "error": f"{len(missing_ids)} eligible cell IDs are missing from the mask.",
+                    }
+                )
+                continue
             metadata = _read_json(sidecar)
             completed.append(
                 {
@@ -611,6 +629,12 @@ def run_feature_build(
         read_dataframe(result["fragment"])
         for result in sorted(completed, key=lambda item: item["roi"])
     ]
+    if failures:
+        failed_path = write_dataframe(paths.features / "failed_rois.csv", pd.DataFrame(failures))
+        raise RuntimeError(
+            f"Feature build incomplete: {len(failures)} region(s) failed validation or extraction. "
+            f"Repair the inputs and resume before training; see {failed_path}."
+        )
     if not fragment_tables:
         failed_path = write_dataframe(
             paths.features / "failed_rois.csv", pd.DataFrame(failures)
@@ -717,8 +741,6 @@ def run_feature_build(
         and manifest.feature_trial is not None
     ):
         manifest.feature_trial.status = "features_built"
-    from .storage import save_experiment
-
     save_experiment(manifest, paths.root, audit_action="feature_build_completed")
     manifest_path = write_feature_manifest(paths, provenance)
     notify({"event": "build_completed", **provenance})

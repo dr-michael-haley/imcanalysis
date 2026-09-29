@@ -314,7 +314,7 @@ def prepare_execution_output(
     run: RunRecord,
     execution: ExecutionRecord,
 ) -> StageManifest:
-    """Create a truthful pending report only after SLURM accepts the stage."""
+    """Create a pending report after the backend accepts the stage."""
     output = execution_output_path(context, execution)
     output.mkdir(parents=True, exist_ok=True)
     spec = get_stage(execution.stage)
@@ -327,12 +327,15 @@ def prepare_execution_output(
         snapshot_stage_environment_specifications,
     )
 
-    environment_reference = snapshot_stage_environment_specifications(
-        stage=execution.stage,
-        output_directory=output,
-        repository_root=toolkit_root(),
-        environment_keys=effective_environment_keys(run.plan, execution.stage),
-        default_environment_keys=get_stage(execution.stage).environment_keys,
+    environment_reference = (
+        None if run.plan.use_active_environment
+        else snapshot_stage_environment_specifications(
+            stage=execution.stage,
+            output_directory=output,
+            repository_root=toolkit_root(),
+            environment_keys=effective_environment_keys(run.plan, execution.stage),
+            default_environment_keys=get_stage(execution.stage).environment_keys,
+        )
     )
     manifest = StageManifest(
         project_id=context.project_metadata.project_id,
@@ -365,6 +368,30 @@ def prepare_execution_output(
     )
     refresh_project_index(context)
     return manifest
+
+
+def finalize_unstarted_execution(
+    context: ProjectContext,
+    output: Path,
+    technical_id: str,
+    run_dir: Path,
+    *,
+    status: str,
+    detail: str,
+) -> None:
+    """Record a local stage that never started without inventing a runtime."""
+    from SpatialBiologyToolkit.pipeline.manifests import read_model, utc_now
+
+    manifest = read_model(output / "stage_manifest.yaml", StageManifest)
+    manifest.status = status
+    manifest.completed_at = utc_now()
+    manifest.duration_seconds = None
+    manifest.asset_effect = "none"
+    manifest.notes.append(detail)
+    write_yaml(output / "stage_manifest.yaml", manifest)
+    write_yaml(run_dir / "stage_events" / f"{technical_id}.yaml", manifest)
+    write_text(output / "README.md", render_run_readme(manifest, output / "README.md"))
+    refresh_project_index(context)
 
 
 def initialize_output_layout(

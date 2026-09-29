@@ -7,56 +7,77 @@ does not save and restore the complete Napari window layout.
 
 ## Start or resume
 
-The first box is the normal starting point, even when NapariSBT was launched
-without command-line path options. **Project or dataset** shows the current folder
-and projects already present in the SBT project register. Use **Choose project
-folder…** for an unregistered or standalone dataset. When an initialized SBT
-project is selected, its configured AnnData, masks, image folder, normalization
-file, and NapariSBT workspace location are proposed automatically.
+The dock always includes **Home** and **Workspace**. Home offers **Create a
+workspace**, **Open a workspace…**, recent workspaces, and **Return to current
+workspace**. Visiting Home leaves the current workspace open.
 
-For standalone folders, or when a configured source is missing, Setup performs a
-cheap automatic lookup for conventional assets. It checks `.h5ad` files at the
-project root and in conventional immediate data folders, and recognizes immediate
-mask and image folders by names such as `masks`, `cell_masks`, `images`,
-`processed`, or `matrix_images_alligned`. It does not inspect their contents. One
-unambiguous AnnData is filled automatically; if several are found, a chooser is
-shown and Setup remains incomplete if it is cancelled. Existing valid configured
-or manually selected sources take precedence. Use **Automatically detect missing
-inputs** to repeat this lookup after adding or moving assets.
+Workspace setup shows one page at a time: **Dataset**, **Task**, **Check data**,
+and **Save workspace**. Back and Continue stay visible beneath the scrolling
+page. Supplied Python paths and live notebook AnnData prefill these pages.
+Analysis tabs appear after a workspace opens.
 
-NapariSBT looks only in the configured workspace folder (normally
-`<project>/napari_sbt`) and one directory level below it for `experiment.yaml`.
-This bounded lookup is deliberately cheap and is not a recursive scan of the
-dataset. The workspace list shows its workflow, eligible-cell and ROI counts,
-last modification time, and a green, amber, or red state. Amber workspaces can
-open but have a missing configured source; red entries contain an unreadable
-manifest and remain visible so the problem is not hidden.
+Choose the dataset folder, or use the supplied inputs. An initialized SBT project
+provides configured defaults. Standalone folders use bounded discovery: immediate
+conventional folders and `.h5ad` files, with a chooser for ambiguous cell data.
+The source dataset can be on a shared drive while saved work is in a separate,
+writable location. Desktop welcome mode defaults saved work to
+`~/NapariSBT Workspaces`; it does not inspect the application's launch folder.
 
-Select a workspace and click **Open selected workspace**, or use **Browse
-elsewhere…**. To create one, enter a descriptive **New workspace name**. Its folder
-is generated automatically under the configured workspace location; **Change
-location…** is available when required. NapariSBT refuses to overwrite an
-existing workspace. The readiness banner explains why **Create workspace and
-start** is disabled and enables it only after all required checks pass.
+Choose a task before checking data. Exploration, Population QC, manual labeling,
+population curation, and dataset maintenance offer **Open quickly (check as I go)**.
+Quick opening prepares and freezes cell identities without a
+complete image/mask scan. Each opened mask is checked against that region's cell
+IDs. A persistent status explains that the complete dataset has not been checked.
+A live notebook AnnData is still saved as a workspace-owned snapshot at creation;
+copying a large cell table can take time independently of asset validation.
 
-When a workspace is open, its immutable name and location are protected from
-accidental edits. **Set up a new workspace** leaves the current saved files
-untouched and returns to new-workspace setup using the same dataset as a starting
-point. Experiment-specific state is not inherited: the cohort preview, integrity
-result, current ROI, Population QC selections, and classification scope are
-cleared. The new workspace starts explicitly at **All cells**, so a restricted
-cohort from the previous workspace cannot silently carry into the new one.
+**Check entire dataset** explicitly scans file paths, reads masks, and checks cell
+IDs and image coverage. It runs in the background; cancellation takes effect
+between discovery/region operations, after any current filesystem read finishes.
+Missing masks, images, or eligible cell IDs produce **Needs review**, never a
+successful validation status. This coverage check does not decode every image;
+feature extraction checks image contents when it consumes them.
+
+**Find files only** builds the path index without reading mask contents. This is
+useful for flat or irregular layouts that direct region lookup cannot resolve.
+It does not count as full validation. Nested `images/<ROI>/` folders and directly
+named masks support lazy lookup without a dataset-wide index.
+
+Classification and the combined full workspace require a successful full check
+before creation. Feature workers also check their inputs independently; a build
+with failed regions cannot activate a feature set for training. Training rejects
+confirmed cells without feature rows. Derived mask exports validate the requested
+cell identities before writing outputs.
+
+On the final page, name the workspace and review its save location. **Saved
+normalisation dictionary** lets you reuse channel intensity limits. **Other
+display settings** contains automatic brightness and contrast controls. Existing
+workspace files are never overwritten by creation. Once open, Workspace becomes
+a summary with links to task controls, settings, checks, and the results folder.
+
+Validation history is stored separately from the file index. A reopened workspace
+reports previous checks without claiming that externally changed files were
+rescanned. Changing inputs invalidates the current check. A workspace switch is
+blocked while background work or unsaved maintenance/population edits remain.
+
+## Advanced controls
+
+The Dataset page contains **Additional image folders**, **Show advanced
+cell-identity settings**, registered projects, and **Troubleshooting**. Reloading
+components and detecting missing paths remain available there. Neither action
+counts as full validation. The Task page retains classification cell selection,
+class definitions, and expandable Feature Discovery Trial settings. **Prepare
+cell selection** updates trial-region choices without scanning image assets.
 
 ## Workflow selection
 
-Choose the plain-language card that describes the main task. **Explore my images
+Choose the plain-language task from the menu. **Explore my images
 and cells** shows images, overlays, recipes, regions, and layer tools. **Check
 existing cell populations** concentrates on population-specific RGB review.
 **Train a cell classifier** adds feature building, active learning, and prediction
 export. **Manually collect labelled cells** creates hand-assigned identity lists,
 while **Rename, merge, or subcluster populations** opens population curation.
-**Show every tool** is hidden behind the advanced-workflow checkbox because it
-exposes the most complicated interface.
+**Advanced: show every tool** exposes the complete interface.
 
 Changing this selection hides irrelevant tabs; it does not delete their data or
 saved recipes. The selection is stored in the experiment manifest, so reopening
@@ -89,8 +110,7 @@ from conventional names such as `ROI` and `ObjectNumber`. Their current meaning
 is summarized in plain language. Use **Show advanced cell-identity settings** only
 when the proposed columns are wrong.
 
-After choosing AnnData, masks, and image folders, click **Check dataset integrity
-and build the fast image index**. This is the explicit expensive check: it scans
+For an explicit full check, use **Check entire dataset** on the Check data page. This is the explicit expensive check: it scans
 the configured folders, validates eligible object IDs against all relevant masks,
 reports missing coverage, and builds an ROI-to-file index. The index is stored at
 `inputs/integrity_index.json` after workspace creation and reused when its
@@ -99,13 +119,12 @@ configured inputs still match.
 Normal ROI navigation never performs another complete folder scan. It uses the
 saved index, or fast direct lookups for conventionally named masks and nested
 `images/<ROI>/` folders. Re-run validation deliberately after changing files or
-folders. Creating a new workspace requires a current validation result, avoiding
-an unexpected repeat of the expensive scan when **Create workspace and start** is
-pressed.
+folders. Creating a classification workspace requires a current successful check. Quick
+exploration can create a workspace without that scan.
 
 Use **Reload all selected components** to reread a loaded workspace, AnnData,
 normalization values, saved review state, and current ROI without running the
-expensive folder scan. Use the integrity button separately after files, folders,
+expensive folder scan. Use Check entire dataset separately after files, folders,
 or identity columns change. **Automatically detect missing inputs** is also cheap:
 it searches only bounded conventional locations and never substitutes for the
 integrity check.
@@ -121,17 +140,17 @@ subprocesses. Opening the dock alone does not write the object.
 
 ## Image normalization and default display
 
-Choose the preferred Nimbus CSV containing `marker`, `vmax`, and
-`lower_threshold`, or a JSON containing the same structured marker entries. Both
-formats load into an editable three-column table. Older marker-to-value JSON and
-`Marker,Value` CSV files remain supported and receive a lower threshold of zero.
-Add or remove marker rows without writing JSON. **Show technical JSON preview**
-provides a read-only representation for troubleshooting.
-**Validate edited values** checks the table without writing it. After a workspace
-exists, **Save edited copy into experiment** stores the mapping in canonical JSON
+Open **Saved normalisation dictionary** and choose a CSV or JSON file containing
+your channel intensity limits. Reusing these limits makes brightness easier to
+compare across regions. The table shows **Channel**, **Max. intensity**, and **Min. intensity**:
+Minimum removes low background signal, and Maximum sets the bright end of the
+range. Channels without saved limits are adjusted automatically. Expand **Edit
+channel limits** to see the table and make changes.
+
+Use **Check edited values** after editing the table. After a workspace
+exists, **Save limits to workspace** stores a copy in canonical JSON
 form at `display/normalization.json` and records it in the manifest. Workspace
-creation also writes this experiment-owned copy, including an empty mapping when
-no fixed bounds are supplied.
+creation also saves a copy when channel limits have been supplied.
 
 For matched channels, NapariSBT uses
 `clip((image - lower_threshold) / (vmax - lower_threshold), 0, 1)`. For channels
@@ -152,9 +171,8 @@ mask coverage, represented ROIs, and eligible-cell counts. The eligible identity
 snapshot is frozen when the workspace is created; original masks and AnnData are
 never modified.
 
-Choose the observation and one or more values, then click **Check dataset integrity
-and build the fast image index** (or **Validate integrity and preview cohort** in
-the classification scope box). Read the preview before continuing: unexpectedly low counts,
+Choose the observation and one or more values, then use **Prepare cell selection** to preview the cohort and **Check entire
+dataset** to validate its assets. Read the preview before continuing: unexpectedly low counts,
 missing masks, duplicate identities, or unrepresented ROIs usually indicate an
 identity-column or filename mismatch.
 

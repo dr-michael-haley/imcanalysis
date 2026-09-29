@@ -151,6 +151,13 @@ class PlannedStage(PipelineModel):
     skipped_upstream_stages: list[str] = Field(default_factory=list)
 
 
+class StageCommand(PipelineModel):
+    """One scientific entry point, independent of the execution backend."""
+
+    module: str
+    environment_key: str
+
+
 class RunPlan(PipelineModel):
     schema_version: Literal[1] = 1
     project_id: str
@@ -162,6 +169,7 @@ class RunPlan(PipelineModel):
     dependency_policy: DependencyPolicy = "assets"
     ignore_missing_assets: bool = False
     environment_overrides: dict[str, str] = Field(default_factory=dict)
+    use_active_environment: bool = False
     ready: bool
     errors: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
@@ -391,6 +399,10 @@ class StageStatus(PipelineModel):
     ]
     source: str
     detail: str | None = None
+    process_id: int | None = None
+    environment: str | None = None
+    started_at: datetime | None = None
+    elapsed_seconds: float | None = None
 
 
 class RunStatus(PipelineModel):
@@ -470,6 +482,7 @@ __all__ = [
     "ProjectStatusChange",
     "ProjectStatusRefresh",
     "StageSpec",
+    "StageCommand",
     "StageStatus",
     "SubmissionRecord",
     "SubmittedJobs",

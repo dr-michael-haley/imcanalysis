@@ -532,6 +532,7 @@ class NapariSBTController:
         masks_folder: str | Path | None = None,
         images_folders: Iterable[str | Path] = (),
         extra_images_folders: Iterable[str | Path] = (),
+        welcome: bool = False,
     ) -> None:
         from qtpy.QtCore import Qt, QTimer
         from qtpy.QtGui import QColor, QFont, QIcon, QPixmap
@@ -597,10 +598,15 @@ class NapariSBTController:
         self.QTextBrowser = QTextBrowser
         self.QTreeWidgetItem = QTreeWidgetItem
         self.viewer = viewer
+        images_folders = tuple(images_folders)
+        extra_images_folders = tuple(extra_images_folders)
+        self._supplied_inputs = bool(project_root or experiment or resolved_anndata_path or in_memory_anndata is not None or masks_folder or images_folders)
+        self._welcome = welcome or not self._supplied_inputs
+        self._validation_result = None
         self.project_root = (
             Path(project_root).expanduser().resolve(strict=False)
             if project_root
-            else Path.cwd()
+            else Path.home() if self._welcome else Path.cwd()
         )
         self._workspace_container = workspace_folder(self.project_root)
         self._workspace_summaries: list[WorkspaceSummary] = []
@@ -729,7 +735,7 @@ class NapariSBTController:
         self.feature_health_timer.timeout.connect(self._update_feature_process_health)
         root_layout = QVBoxLayout(self.root)
         self.scope_label = QLabel(
-            "No workflow workspace: choose a task and dataset in Setup."
+            "Choose Create a workspace or Open a workspace on Home."
         )
         self.scope_label.setWordWrap(True)
         root_layout.addWidget(self.scope_label)
@@ -956,7 +962,7 @@ class NapariSBTController:
         )
         self.live_recipe_tracking_check.setChecked(True)
         self.live_recipe_tracking_check.setToolTip(
-            "This can be changed at any time in Setup, Explore, or Population QC. "
+            "This can be changed at any time in Workspace, Explore, or Population QC. "
             "Disable it for the lightest display path. Explicitly saved recipes "
             "still load, but manual layer display changes are not copied back into "
             "the working recipe automatically."
@@ -1117,12 +1123,9 @@ class NapariSBTController:
         )
         display_layout = QVBoxLayout(display_group)
         display_explanation = QLabel(
-            "Load a Nimbus marker/Vmax/lower-threshold JSON or CSV, then review "
-            "or edit all three values below. Legacy marker-to-value JSON and "
-            "Marker/Value CSV files remain supported with a lower threshold of "
-            "zero. Scalar images are "
-            "normalized to 0-1; the default contrast handles below are used only "
-            "when a saved recipe has no channel-specific range."
+            "Load channel intensity limits from a CSV or JSON file. Minimum "
+            "removes background signal; Maximum sets the bright end of the range. "
+            "Channels without saved limits are adjusted automatically."
         )
         display_explanation.setWordWrap(True)
         normalization_source = QWidget()
@@ -1130,10 +1133,10 @@ class NapariSBTController:
         normalization_source_layout.setContentsMargins(0, 0, 0, 0)
         self.normalization_edit = QLineEdit()
         self.normalization_edit.setPlaceholderText(
-            "Optional Nimbus normalization CSV or legacy JSON"
+            "Choose a normalisation dictionary (.csv or .json)"
         )
-        self.choose_normalization_button = QPushButton("Choose...")
-        self.load_normalization_button = QPushButton("Load into editor")
+        self.choose_normalization_button = QPushButton("Choose dictionary…")
+        self.load_normalization_button = QPushButton("Reload dictionary")
         self._setup_status_labels["normalization"] = QLabel("○ Optional")
         self._setup_status_labels["normalization"].setObjectName("sbtInputStatus")
         self._setup_status_labels["normalization"].setMinimumWidth(128)
@@ -1145,16 +1148,29 @@ class NapariSBTController:
         normalization_source_layout.addWidget(self.load_normalization_button)
         self.normalization_table = QTableWidget(0, 3)
         self.normalization_table.setHorizontalHeaderLabels(
-            ["Marker", "Vmax", "Lower threshold"]
+            ["Channel", "Max.\nintensity", "Min.\nintensity"]
+        )
+        self.normalization_table.horizontalHeaderItem(1).setToolTip(
+            "Maximum intensity: the bright end of the channel's range."
+        )
+        self.normalization_table.horizontalHeaderItem(2).setToolTip(
+            "Minimum intensity: the background cutoff for this channel."
         )
         self.normalization_table.horizontalHeader().setSectionResizeMode(
             QHeaderView.Stretch
         )
+        self.normalization_table.verticalHeader().hide()
+        self.normalization_table.horizontalHeader().setStyleSheet(
+            "QHeaderView { font-size: 9pt; } "
+            "QHeaderView::section { padding: 4px 2px; }"
+        )
         self.normalization_table.setMaximumHeight(190)
         normalization_table_actions = QHBoxLayout()
-        self.add_normalization_row_button = QPushButton("Add marker")
-        self.remove_normalization_row_button = QPushButton("Remove selected marker")
-        self.advanced_normalization_check = QCheckBox("Show technical JSON preview")
+        self.add_normalization_row_button = QPushButton("Add channel")
+        self.remove_normalization_row_button = QPushButton("Remove channel")
+        self.remove_normalization_row_button.setToolTip("Remove the selected channel rows.")
+        self.advanced_normalization_check = QCheckBox("File format preview")
+        self.advanced_normalization_check.setToolTip("Show the technical JSON representation of these limits.")
         normalization_table_actions.addWidget(self.add_normalization_row_button)
         normalization_table_actions.addWidget(self.remove_normalization_row_button)
         normalization_table_actions.addStretch(1)
@@ -1164,8 +1180,8 @@ class NapariSBTController:
         self.normalization_json_edit.setMaximumHeight(190)
         self.normalization_json_edit.hide()
         normalization_actions = QHBoxLayout()
-        self.validate_normalization_button = QPushButton("Validate edited values")
-        self.save_normalization_button = QPushButton("Save edited copy into experiment")
+        self.validate_normalization_button = QPushButton("Check edited values")
+        self.save_normalization_button = QPushButton("Save limits to workspace")
         normalization_actions.addWidget(self.validate_normalization_button)
         normalization_actions.addWidget(self.save_normalization_button)
         normalization_actions.addStretch(1)
@@ -1191,17 +1207,23 @@ class NapariSBTController:
         self.display_upper_contrast_spin.setDecimals(3)
         self.display_upper_contrast_spin.setSingleStep(0.01)
         self.display_upper_contrast_spin.setValue(1.0)
-        display_defaults_layout.addWidget(QLabel("Fallback quantile"), 0, 0)
+        self.display_quantile_spin.setToolTip(
+            "Used for channels without saved limits. 0.999 sets the maximum at "
+            "the 99.9th percentile of image intensities."
+        )
+        self.display_minimum_pixel_spin.setToolTip(
+            "Pixel intensities at or below this value are treated as background."
+        )
+        display_defaults_layout.addWidget(QLabel("Automatic upper limit (fraction)"), 0, 0)
         display_defaults_layout.addWidget(self.display_quantile_spin, 0, 1)
-        display_defaults_layout.addWidget(QLabel("Minimum pixel count"), 0, 2)
-        display_defaults_layout.addWidget(self.display_minimum_pixel_spin, 0, 3)
-        display_defaults_layout.addWidget(QLabel("Default contrast lower"), 1, 0)
-        display_defaults_layout.addWidget(self.display_lower_contrast_spin, 1, 1)
-        display_defaults_layout.addWidget(QLabel("Default contrast upper"), 1, 2)
-        display_defaults_layout.addWidget(self.display_upper_contrast_spin, 1, 3)
+        display_defaults_layout.addWidget(QLabel("Ignore intensities below"), 1, 0)
+        display_defaults_layout.addWidget(self.display_minimum_pixel_spin, 1, 1)
+        display_defaults_layout.addWidget(QLabel("Display minimum (0–1)"), 2, 0)
+        display_defaults_layout.addWidget(self.display_lower_contrast_spin, 2, 1)
+        display_defaults_layout.addWidget(QLabel("Display maximum (0–1)"), 3, 0)
+        display_defaults_layout.addWidget(self.display_upper_contrast_spin, 3, 1)
         self.normalization_status_label = QLabel(
-            "No fixed normalization mapping is loaded; unmatched channels use "
-            "the fallback quantile."
+            "No dictionary loaded. Each channel's brightness will be adjusted automatically."
         )
         self.normalization_status_label.setWordWrap(True)
         display_layout.addWidget(display_explanation)
@@ -1319,6 +1341,11 @@ class NapariSBTController:
         class_layout.addLayout(class_buttons)
         classification_setup_layout.addWidget(class_group)
         setup_layout.addWidget(self.classification_setup_widget)
+        self._setup_parts = dict(
+            location_row=location_row, extra_widget=extra_widget, display=display_group,
+            scope=scope_group, trial=trial_group, classes=class_group,
+            display_defaults=display_defaults,
+        )
         add_tab(setup, "⚙ Setup", "setup")
 
         # Feature Building
@@ -1345,7 +1372,7 @@ class NapariSBTController:
         self.feature_readiness_coverage.setValue(0)
         self.feature_readiness_coverage.setFormat("No feature table")
         self.feature_readiness_next_step = QLabel(
-            "Next: create or load a workspace in Setup."
+            "Next: create or load a workspace in Workspace."
         )
         self.feature_readiness_next_step.setWordWrap(True)
         readiness_actions = QHBoxLayout()
@@ -1464,7 +1491,7 @@ class NapariSBTController:
         self.background_ring_spin.setRange(1, 100)
         self.background_ring_spin.setValue(5)
         self.feature_normalization_summary = QLabel(
-            "Configured in Setup. The experiment-backed copy is also used by "
+            "Configured in Workspace. The experiment-backed copy is also used by "
             "synthetic feature extraction."
         )
         self.feature_normalization_summary.setWordWrap(True)
@@ -4036,6 +4063,14 @@ class NapariSBTController:
             self.load_anndata_selectors()
         self.refresh_setup_readiness()
 
+        from .onboarding import WorkspaceFlow
+
+        self.workspace_flow = WorkspaceFlow(
+            self, self._setup_parts, supplied_inputs=self._supplied_inputs and not welcome,
+        )
+        self._update_workflow_mode()
+        self.refresh_setup_readiness()
+
     def _connect_signals(self) -> None:
         self.tabs.currentChanged.connect(self._workflow_tab_changed)
         self.workflow_button_group.buttonClicked.connect(
@@ -5538,6 +5573,13 @@ class NapariSBTController:
         """Populate project/workspace choices without scanning scientific assets."""
 
         self._refresh_registered_project_choices()
+        if self._welcome:
+            # A desktop launch must not discover data in its install/launch folder.
+            self.project_edit.clear()
+            self.project_edit.setPlaceholderText("Choose a dataset folder")
+            self._workspace_container = Path.home() / "NapariSBT Workspaces"
+            self._update_suggested_workspace_path(force=True)
+            return
         self._apply_project_root(self.project_root, replace_inputs=False)
         self.refresh_workspace_choices()
 
@@ -5591,6 +5633,7 @@ class NapariSBTController:
         if replace_inputs:
             self._updating_setup_controls = True
             try:
+                self.adata = self._in_memory_adata
                 if self._in_memory_adata is None:
                     self.anndata_edit.clear()
                 self.masks_edit.clear()
@@ -5608,7 +5651,10 @@ class NapariSBTController:
             experiment_folder = context.config.napari_sbt.experiment_folder
         except Exception:  # Standalone datasets remain supported.
             context = None
-        self._workspace_container = workspace_folder(root, experiment_folder)
+        self._workspace_container = (
+            Path.home() / "NapariSBT Workspaces" if self._welcome
+            else workspace_folder(root, experiment_folder)
+        )
         if replace_inputs:
             self._launch_experiment = None
             self._launch_experiment_was_explicit = False
@@ -5900,6 +5946,8 @@ class NapariSBTController:
     def start_new_workspace(self, *, confirm: bool = True) -> None:
         """Leave a loaded workspace without changing any saved source files."""
 
+        self._check_workspace_switch()
+
         if confirm and self.paths is not None:
             reply = self.QMessageBox.question(
                 self.root,
@@ -5923,6 +5971,7 @@ class NapariSBTController:
         self._invalidate_population_qc_caches()
         self._refresh_roi_metadata_display()
         self._integrity_signature = None
+        self._validation_result = None
         self._asset_index_signature = None
         self._mask_path_index.clear()
         self._roi_image_path_index.clear()
@@ -5961,7 +6010,7 @@ class NapariSBTController:
         self._refresh_population_qc_scope_banner()
         self._set_classification_enabled(False)
         self.scope_label.setText(
-            "No workflow workspace: complete Setup, then create it."
+            "No workflow workspace: complete Workspace setup, then create it."
         )
         self.name_edit.setReadOnly(False)
         self.experiment_edit.setReadOnly(False)
@@ -5973,7 +6022,35 @@ class NapariSBTController:
         finally:
             self._updating_setup_controls = False
         self._update_suggested_workspace_path(force=True)
+        self._update_workflow_mode()
         self.refresh_setup_readiness()
+
+    def _check_workspace_switch(self) -> None:
+        """Prevent switching away from running work or unsaved scientific edits."""
+        if hasattr(self, "workspace_flow") and self.workspace_flow.checking:
+            raise ValueError("Cancel the dataset check and wait for it to finish before changing workspace.")
+        if self._active_background_processes() or self.publication_batch is not None:
+            raise ValueError("Finish or cancel the running operation before changing workspace.")
+        if self.maintenance_dirty or self._population_draft_dirty:
+            raise ValueError("Save or discard your maintenance/population edits before changing workspace.")
+
+    def _check_workspace_destination(self) -> None:
+        """Check the chosen output parent with a tiny temporary write."""
+        import tempfile
+        name = self.name_edit.text().strip()
+        destination = Path(self.experiment_edit.text().strip()).expanduser()
+        if not name or not self.experiment_edit.text().strip():
+            raise ValueError("Enter a workspace name and choose where to save your work.")
+        if (destination / "experiment.yaml").exists():
+            raise FileExistsError("A workspace already exists here. Open it or choose another name.")
+        parent = destination.parent
+        while not parent.exists() and parent != parent.parent:
+            parent = parent.parent
+        try:
+            with tempfile.TemporaryFile(dir=parent):
+                pass
+        except OSError as exc:
+            raise ValueError("This location cannot save your work. Choose a writable workspace folder.") from exc
 
     def _set_dataset_source_editable(self, editable: bool) -> None:
         """Prevent a loaded manifest from being silently contradicted by the form."""
@@ -6119,6 +6196,7 @@ class NapariSBTController:
 
     def reload_all_dataset_components(self) -> None:
         """Reload known sources without performing the expensive integrity scan."""
+        self._check_workspace_switch()
 
         if self.paths is not None:
             root = self.paths.root
@@ -6197,8 +6275,12 @@ class NapariSBTController:
             object_id_obs=self.object_obs_edit.text(),
             normalization_path=self.normalization_edit.text(),
             integrity_current=integrity_current,
+            quick_open=hasattr(self, "workspace_flow") and self.workspace_flow.quick_open,
         )
         self._current_setup_checks = checks
+        if hasattr(self, "workspace_flow"):
+            # Refresh again below once button readiness has been updated.
+            self.workspace_flow.refresh()
         styles = {
             "ready": ("● Ready", "#dcfce7", "#166534", "#22c55e"),
             "check": ("● Check needed", "#fef3c7", "#92400e", "#f59e0b"),
@@ -6230,6 +6312,8 @@ class NapariSBTController:
                 "background: #dcfce7; color: #166534; border: 2px solid #22c55e; "
                 "border-radius: 7px; padding: 8px; font-weight: 800;"
             )
+            if hasattr(self, "workspace_flow"):
+                self.workspace_flow.refresh()
             return
         ready = setup_is_ready(checks)
         self.create_button.setEnabled(ready)
@@ -6263,6 +6347,8 @@ class NapariSBTController:
             if problems
             else "Create the new workspace."
         )
+        if hasattr(self, "workspace_flow"):
+            self.workspace_flow.refresh()
 
     def current_workflow_mode(self) -> str | None:
         value = self.workflow_combo.currentData()
@@ -6385,9 +6471,10 @@ class NapariSBTController:
 
     def _invalidate_integrity_result(self, *_args) -> None:
         self._integrity_signature = None
+        self._validation_result = None
         if hasattr(self, "integrity_status_label"):
             self.integrity_status_label.setText(
-                "Dataset or cohort settings changed. Run Check dataset integrity "
+                "Dataset or cohort settings changed. Run Check entire dataset "
                 "before creating a new workspace."
             )
         self.refresh_setup_readiness()
@@ -6431,6 +6518,7 @@ class NapariSBTController:
         payload = {
             "assets": self._current_asset_index_signature(),
             "adata_identity": id(self.adata),
+            "anndata_path": self.anndata_edit.text().strip(),
             "adata_cells": int(self.adata.n_obs) if self.adata is not None else None,
             "roi_obs": self.roi_obs_edit.text().strip(),
             "object_obs": self.object_obs_edit.text().strip(),
@@ -6506,8 +6594,8 @@ class NapariSBTController:
         direct = resolve_mask_file(self.manifest.masks_folder, roi)
         if direct is None:
             raise FileNotFoundError(
-                f"No directly named mask was found for ROI {roi!r}. Run Setup → "
-                "Validate integrity to rebuild the complete asset index."
+                f"No directly named mask was found for ROI {roi!r}. Run Workspace → "
+                "Check data → Find files only to rebuild the asset index."
             )
         self._mask_path_index[roi] = direct
         return direct
@@ -6534,7 +6622,9 @@ class NapariSBTController:
         if mode != self._recipe_tracking_workflow:
             self._sync_recipe_tracking_controls(mode != "population_qc")
             self._recipe_tracking_workflow = mode
-        visible_topics = WORKFLOW_VISIBLE_TABS.get(mode, {"setup"})
+        visible_topics = set(WORKFLOW_VISIBLE_TABS.get(mode, {"setup"})) | {"home"}
+        if self.manifest is None:
+            visible_topics = {"home", "setup"}
         for topic, index in self._workflow_tab_indices.items():
             self.tabs.setTabVisible(index, topic in visible_topics)
         setup_index = self._workflow_tab_indices.get("setup", 0)
@@ -6615,10 +6705,10 @@ class NapariSBTController:
                 continue
             if not marker or not vmax_text:
                 raise ValueError(
-                    f"Normalization row {row + 1} requires Marker and Vmax."
+                    f"Row {row + 1} needs a channel name and a maximum intensity."
                 )
             if marker in payload:
-                raise ValueError(f"Normalization marker {marker!r} is duplicated.")
+                raise ValueError(f"Channel {marker!r} appears more than once. Keep one row per channel.")
             payload[marker] = {
                 "vmax": vmax_text,
                 "lower_threshold": lower_text or 0.0,
@@ -6677,7 +6767,7 @@ class NapariSBTController:
     def choose_normalization_json(self) -> None:
         selected, _filter = self.QFileDialog.getOpenFileName(
             self.root,
-            "Choose Nimbus normalization JSON or CSV",
+            "Choose a saved normalisation dictionary",
             self.normalization_edit.text().strip() or str(self.project_root),
             "Normalization files (*.json *.csv);;JSON files (*.json);;"
             "CSV files (*.csv)",
@@ -6705,32 +6795,24 @@ class NapariSBTController:
         self._set_normalization_table(self.display_normalization)
         self._clear_explore_layer_data_cache()
         if self.display_normalization:
-            lower_count = sum(
-                entry.lower_threshold > 0
-                for entry in self.display_normalization.values()
-            )
             self.normalization_status_label.setText(
-                f"Loaded {len(self.display_normalization):,} channel bounds from "
-                f"{source}; {lower_count:,} use a non-zero lower threshold. Save "
-                "the workspace to create an experiment-backed copy."
+                f"Loaded limits for {len(self.display_normalization):,} channels. "
+                + ("Use Save limits to workspace to keep changes."
+                   if self.manifest else "These will be saved when you create the workspace.")
             )
         else:
             self.normalization_status_label.setText(
-                "No channel-specific normalization is stored; images use the "
-                "configured fallback quantile and display defaults."
+                "No saved channel limits. Each channel's brightness will be adjusted automatically."
             )
         self._refresh_feature_normalization_summary()
 
     def validate_normalization_editor(self) -> None:
         self.display_normalization = self._normalization_from_editor()
         self._clear_explore_layer_data_cache()
-        lower_count = sum(
-            entry.lower_threshold > 0 for entry in self.display_normalization.values()
-        )
         self.normalization_status_label.setText(
-            f"Valid normalization mapping: {len(self.display_normalization):,} "
-            f"channel bounds; {lower_count:,} use a non-zero lower threshold. "
-            "Save it into the experiment to persist edits."
+            f"Limits checked for {len(self.display_normalization):,} channels. "
+            + ("Use Save limits to workspace to keep these edits."
+               if self.manifest else "These will be saved when you create the workspace.")
         )
         self._refresh_feature_normalization_summary()
 
@@ -6787,9 +6869,8 @@ class NapariSBTController:
             entry.lower_threshold > 0 for entry in self.display_normalization.values()
         )
         self.normalization_status_label.setText(
-            f"Saved {len(self.display_normalization):,} channel bounds "
-            f"({lower_count:,} non-zero lower thresholds) and display defaults "
-            f"inside {self.paths.root / 'display'}."
+            f"Saved limits for {len(self.display_normalization):,} channels "
+            f"({lower_count:,} with a minimum above zero) and display settings to this workspace."
         )
         self._refresh_feature_normalization_summary()
 
@@ -6801,7 +6882,7 @@ class NapariSBTController:
             entry.lower_threshold > 0 for entry in self.display_normalization.values()
         )
         self.feature_normalization_summary.setText(
-            f"Configured in Setup: {len(self.display_normalization):,} fixed "
+            f"Configured in Workspace: {len(self.display_normalization):,} fixed "
             f"channel bounds ({lower_count:,} non-zero lower thresholds); "
             f"source/copy: {source}. Unmatched channels use quantile "
             f"{self.display_quantile_spin.value():.4f}."
@@ -7236,6 +7317,7 @@ class NapariSBTController:
             source = "the live in-memory object"
         else:
             raise ValueError("Supply an AnnData path or launch with an AnnData object.")
+        self._loaded_anndata_source = path_text
         self._populate_anndata_selectors(source=source)
 
     def _maintenance_identity_columns(self) -> tuple[str, str]:
@@ -7317,7 +7399,7 @@ class NapariSBTController:
             self.maintenance_readiness_tree.clear()
             self.maintenance_readiness_tree.addTopLevelItem(
                 self.QTreeWidgetItem(
-                    ["✕ Blocked", "Live AnnData", "Load AnnData in Setup first."]
+                    ["✕ Blocked", "Live AnnData", "Load AnnData in Workspace first."]
                 )
             )
             return
@@ -10483,7 +10565,7 @@ class NapariSBTController:
     def selected_scope_values(self) -> list[str]:
         return [item.text() for item in self.value_list.selectedItems()]
 
-    def preview_cohort(self) -> CohortPreview:
+    def prepare_cohort(self) -> CohortPreview:
         # Earlier versions rendered the first eligible ROI as a temporary
         # ``cohort_preview`` labels layer.  That layer was not part of ROI
         # navigation or the frozen experiment state, so it became an orphan as
@@ -10492,7 +10574,9 @@ class NapariSBTController:
         self._remove_layers(("cohort_preview",))
         mode = self.scope_combo.currentData()
         values = self.selected_scope_values() if mode == "obs_values" else []
-        if self.adata is None and Path(self.anndata_edit.text()).is_file():
+        if self.anndata_edit.text().strip() and (
+            self.adata is None or self.anndata_edit.text().strip() != getattr(self, "_loaded_anndata_source", None)
+        ):
             self.load_anndata_selectors()
         if self.adata is None:
             if mode != "all_cells":
@@ -10521,76 +10605,78 @@ class NapariSBTController:
                 else None,
                 obs_values=values,
             )
-        masks_folder = self.masks_edit.text().strip()
-        masks = (
-            discover_mask_files(masks_folder)
-            if masks_folder and Path(masks_folder).expanduser().is_dir()
-            else {}
-        )
-        missing_masks: list[str] = []
-        missing_ids = 0
-        unmatched_ids = 0
-        for roi, group in self.preview.eligible_cells.groupby("ROI", observed=True):
-            path = masks.get(str(roi))
-            if path is None:
-                missing_masks.append(str(roi))
-                continue
-            full_mask = load_mask(path)
-            missing, unmatched = validate_mask_coverage(
-                full_mask,
-                group["ObjectNumber"],
-                roi=str(roi),
-            )
-            missing_ids += len(missing)
-            unmatched_ids += len(unmatched)
-        eligible_rois = self.preview.eligible_cells["ROI"].astype(str).unique()
-        image_index = discover_roi_image_index(
-            _split_paths(self.images_edit.toPlainText())
-            + _split_paths(self.extra_images_edit.toPlainText()),
-            eligible_rois,
-            channel_aliases=self._channel_aliases(),
-        )
-        missing_image_rois = [
-            roi for roi in eligible_rois if not image_index.get(str(roi))
-        ]
-        indexed_images = sum(len(paths) for paths in image_index.values())
-        self._mask_path_index = dict(masks)
-        self._roi_image_path_index = image_index
-        self._asset_index_signature = self._current_asset_index_signature()
-        self._integrity_signature = self._current_integrity_signature()
-        if self.paths is not None:
-            self._write_integrity_index(self.paths.root)
-        text = (
-            f"{self.preview.eligible_cell_count:,} eligible cells "
-            f"({self.preview.eligible_fraction:.1%}) / "
-            f"{self.preview.total_cell_count:,} total\n"
-            f"{self.preview.represented_roi_count:,} represented ROIs\n"
-            f"Missing masks: {len(missing_masks)}; missing eligible object IDs: "
-            f"{missing_ids}; other full-mask labels: {unmatched_ids}\n"
-            f"Indexed images: {indexed_images}; ROIs without images: "
-            f"{len(missing_image_rois)}\n\n"
+        self.preview_text.setPlainText(
+            f"{self.preview.eligible_cell_count:,} cells across "
+            f"{self.preview.represented_roi_count:,} regions. Asset files have not been scanned.\n\n"
             + self.preview.per_roi_counts.to_string(index=False)
         )
-        self.preview_text.setPlainText(text)
+        if hasattr(self, "workspace_flow"):
+            self.workspace_flow.cohort_summary.setText(
+                f"Selected {self.preview.eligible_cell_count:,} of {self.preview.total_cell_count:,} cells "
+                f"across {self.preview.represented_roi_count:,} regions."
+            )
         previous_trial_rois = self.selected_trial_rois()
-        self._populate_trial_roi_list(
-            self.preview.per_roi_counts,
-            selected_rois=previous_trial_rois,
-        )
+        self._populate_trial_roi_list(self.preview.per_roi_counts, selected_rois=previous_trial_rois)
         if self.experiment_mode_combo.currentData() == "feature_discovery_trial" and (
-            self.trial_roi_strategy_combo.currentData() == "largest"
-            or not previous_trial_rois
+            self.trial_roi_strategy_combo.currentData() == "largest" or not previous_trial_rois
         ):
             self.suggest_trial_rois()
-        self.integrity_status_label.setText(
-            f"Validated and indexed {len(masks):,} masks and {indexed_images:,} "
-            f"images across {len(eligible_rois):,} eligible ROIs. Normal ROI "
-            "navigation will reuse this index without rescanning folders."
+        return self.preview
+
+    def asset_check_request(self) -> dict:
+        maintenance = self.current_workflow_mode() == "dataset_maintenance"
+        return dict(
+            cohort=self.preview.eligible_cells.copy(),
+            masks_folder=self.masks_edit.text().strip(),
+            image_folders=_split_paths(self.images_edit.toPlainText()) + _split_paths(self.extra_images_edit.toPlainText()),
+            channel_aliases=self._channel_aliases(),
+            require_masks=not maintenance,
+            require_images=not maintenance,
         )
-        self.set_status(
-            "Dataset integrity validated and the fast ROI asset index was built."
+
+    def integrity_is_current(self) -> bool:
+        return bool(self.preview is not None and self._integrity_signature == self._current_integrity_signature())
+
+    def apply_asset_check(self, result) -> None:
+        self._validation_result = result
+        self._validated_cohort_fingerprint = self.preview.fingerprint if result.ok else None
+        self._integrity_signature = self._current_integrity_signature() if result.ok else None
+        if not result.cancelled:
+            self._mask_path_index = result.masks
+            self._roi_image_path_index = result.images
+            self._asset_index_signature = self._current_asset_index_signature()
+        self.integrity_status_label.setText(result.summary())
+        self.preview_text.setPlainText(
+            result.summary() + "\n\n" + "\n".join(result.issues)
+            + f"\nIndexed masks: {len(result.masks):,}; images: {sum(map(len, result.images.values())):,}"
+            + f"\nOther mask labels outside this cohort: {result.other_mask_labels:,}\n\n"
+            + self.preview.per_roi_counts.to_string(index=False)
         )
+        if self.paths is not None:
+            self._write_integrity_index(self.paths.root)
+            self._write_validation_report(self.paths.root)
+        self.set_status(result.summary())
         self.refresh_setup_readiness()
+
+    def _write_validation_report(self, root: Path) -> None:
+        from datetime import timezone
+        result = self._validation_result
+        write_json(Path(root) / "inputs" / "asset_validation.json", {
+            "schema_version": 1,
+            "status": "complete" if self.integrity_is_current() else "needs_review" if result and result.issues else "indexed" if result and result.indexed_only else "not_checked",
+            "checked_at": datetime.now(timezone.utc).isoformat() if result else None,
+            "asset_signature": self._current_asset_index_signature(),
+            "cohort_fingerprint": self.preview.fingerprint if self.preview else None,
+            "checked_rois": result.checked_rois if result else 0,
+            "issues": result.issues if result else [],
+            "checks": ["mask readability", "cell IDs in masks", "image path coverage"] if result and not result.indexed_only else [],
+        })
+
+    def preview_cohort(self) -> CohortPreview:
+        """Explicit synchronous check for Python callers; the UI uses a worker."""
+        from .validation import check_assets
+        self.prepare_cohort()
+        self.apply_asset_check(check_assets(**self.asset_check_request()))
         return self.preview
 
     def _class_colour_item(self, colour_text: str):
@@ -11340,7 +11426,7 @@ class NapariSBTController:
                 "⚪ No workspace — feature status is unavailable",
                 "Create or load a classification workspace to configure and "
                 "build features.",
-                "create or load a workspace in Setup.",
+                "create or load a workspace in Workspace.",
             )
             return
 
@@ -11542,7 +11628,7 @@ class NapariSBTController:
             ):
                 raise ValueError(
                     "The saved experiment revision changed externally. Reload the "
-                    "workspace from Setup before using its new feature table."
+                    "workspace from Workspace before using its new feature table."
                 )
             previous_feature_set = (
                 self.manifest.active_feature_set_id
@@ -11585,17 +11671,21 @@ class NapariSBTController:
     def create_experiment(self) -> None:
         workflow_mode = self.current_workflow_mode()
         if workflow_mode is None:
-            raise ValueError("Choose a Setup workflow before creating its workspace.")
-        if (
-            self.preview is None
-            or self._integrity_signature != self._current_integrity_signature()
-        ):
-            raise ValueError(
-                "Run Setup → Check dataset integrity and build the fast image index after "
-                "choosing the dataset and cohort, then create the workspace. This "
-                "keeps costly folder and mask checks out of normal navigation."
-            )
-        preview = self.preview
+            raise ValueError("Choose a task in Workspace before creating it.")
+        from .validation import allows_quick_open
+        quick = allows_quick_open(workflow_mode) and (
+            not hasattr(self, "workspace_flow") or self.workspace_flow.quick_open
+        )
+        if not quick and not self.integrity_is_current():
+            raise ValueError("Check the dataset in Workspace before starting this task. Resolve any reported issues first.")
+        # Preparing identities is separate from reading every mask/image asset.
+        preview = self.prepare_cohort()
+        validated_result = self._validation_result
+        validated_current = self.integrity_is_current() and getattr(self, "_validated_cohort_fingerprint", None) == preview.fingerprint
+        if not quick and not validated_current:
+            raise ValueError("Cell identities changed since validation. Check the dataset again before creating this workspace.")
+        self._check_workspace_destination()
+
         classification_workflow = workflow_mode in {
             "classification",
             "full_workspace",
@@ -11712,7 +11802,11 @@ class NapariSBTController:
             annotated_adata_path=self.annotated_path_edit.text().strip(),
         )
         self.paths = save_experiment(manifest, root, audit_action="create_experiment")
+        # Saving a live AnnData snapshot changes its path, not the checked assets.
+        self._validation_result = validated_result
+        self._integrity_signature = self._current_integrity_signature() if validated_current else None
         self._write_integrity_index(root)
+        self._write_validation_report(root)
         self.experiment_edit.setText(str(root))
         self.load_existing_experiment(root)
         self.set_status(f"Created experiment {manifest.experiment_id} at {root}.")
@@ -11725,6 +11819,8 @@ class NapariSBTController:
             self.load_existing_experiment(Path(selected))
 
     def load_existing_experiment(self, path: Path) -> None:
+        if self.paths is not None and Path(path).resolve() != self.paths.root:
+            self._check_workspace_switch()
         if self.publication_batch is not None:
             raise ValueError(
                 "Cancel the active publication bulk export before changing workspace."
@@ -11732,6 +11828,8 @@ class NapariSBTController:
         if self.publication_export_dialog is not None:
             self.publication_export_dialog.hide()
         self.manifest, self.paths = load_experiment(path)
+        self._validation_result = None
+        self._integrity_signature = None
         # A workspace can share ROI names with the previously open workspace.
         # Reset the loaded-ROI identity so its first ROI is always a real load,
         # while later model/view data changes can safely ignore same-text combo
@@ -11888,8 +11986,8 @@ class NapariSBTController:
             self.display_normalization = {}
             self._set_normalization_table({})
             self.normalization_status_label.setText(
-                "No usable fixed normalization mapping is stored; channels use "
-                "the configured fallback quantile."
+                "No saved channel limits are available. Each channel's brightness "
+                "will be adjusted automatically."
             )
             self._refresh_feature_normalization_summary()
         self.distribution_check.setChecked(
@@ -12059,6 +12157,18 @@ class NapariSBTController:
                 "dataset integrity to index flat image folders and check complete "
                 "coverage."
             )
+        report_path = self.paths.root / "inputs" / "asset_validation.json"
+        self._recorded_validation_status = "Not fully checked"
+        if report_path.is_file():
+            try:
+                report = json.loads(report_path.read_text(encoding="utf-8"))
+                if report.get("status") == "complete" and report.get("asset_signature") == self._current_asset_index_signature() and report.get("cohort_fingerprint") == self.preview.fingerprint:
+                    self._recorded_validation_status = "Previously checked; source changes have not been rescanned"
+                elif report.get("status") == "needs_review":
+                    self._recorded_validation_status = "Needs review: " + "; ".join(report.get("issues", [])[:2])
+            except (OSError, ValueError, TypeError):
+                pass
+        self.integrity_status_label.setText(self._recorded_validation_status + ". " + self.integrity_status_label.text())
         self.refresh_feature_channel_choices()
         requested_channels = set(self.manifest.synthetic_features.channels)
         for index in range(self.feature_channel_list.count()):
@@ -12077,7 +12187,15 @@ class NapariSBTController:
             self.roi_combo.count()
             and self.manifest.workflow_mode != "dataset_maintenance"
         ):
-            self.load_roi(self.roi_combo.currentText())
+            try:
+                self.load_roi(self.roi_combo.currentText())
+            except (OSError, ValueError) as exc:
+                warning = (
+                    f"Region could not open: {exc}. Choose another region or "
+                    "check the dataset in Workspace."
+                )
+                self._recorded_validation_status = warning
+                self.integrity_status_label.setText(warning)
         self.set_status(
             f"Loaded experiment {self.manifest.name!r}, revision "
             f"{self.manifest.revision}."
@@ -12087,11 +12205,14 @@ class NapariSBTController:
         self.refresh_setup_readiness()
         self.refresh_status()
         self.load_refinement_results(silent=True)
+        if hasattr(self, "workspace_flow"):
+            self.workspace_flow.remember_workspace()
+            self.workspace_flow.show_workspace()
 
     def _update_scope_text(self) -> None:
         if self.manifest is None:
             self.scope_label.setText(
-                "No workflow workspace: choose a task and dataset in Setup."
+                "Choose Create a workspace or Open a workspace on Home."
             )
             self._refresh_population_qc_scope_banner()
             return
@@ -12566,7 +12687,7 @@ class NapariSBTController:
                 rois = sorted(set(self._mask_path_index) | set(eligible_rois))
             else:
                 self.set_status(
-                    "Run Setup → Validate integrity before including cohort-empty "
+                    "Run Workspace → Check data → Find files only before including cohort-empty "
                     "ROIs; normal navigation will not scan the complete mask folder."
                 )
         current = self.roi_combo.currentText()
@@ -14751,9 +14872,21 @@ class NapariSBTController:
         if not roi:
             return
         roi_changed = self.current_mask is None or str(self.current_roi) != roi
-        mask_path = self._mask_path_for_roi(roi)
-        full_mask = load_mask(mask_path)
         eligible = self._eligible_ids_for_roi(roi)
+        try:
+            mask_path = self._mask_path_for_roi(roi)
+            full_mask = load_mask(mask_path)
+            missing, _ = validate_mask_coverage(full_mask, eligible, roi=roi)
+            if len(missing):
+                raise ValueError(f"{roi}: {len(missing)} selected cell IDs are missing from the mask.")
+        except (OSError, ValueError):
+            self.current_roi = None
+            self.current_mask = None
+            self.current_mask_path = None
+            self.current_image_paths.clear()
+            self._clear_explore_layers()
+            self._remove_layers([ALL_CELLS_LAYER_NAME, "classification_cohort", NONCONTEXT_MASK_LAYER_NAME, *CLASS_LAYER_NAMES.values(), SELECTED_CELL_LAYER_NAME, LABELER_LAYER_NAME, LABELER_SELECTED_CELL_LAYER_NAME])
+            raise
         self.current_roi = roi
         self.current_mask = full_mask
         self.current_mask_path = mask_path
@@ -17502,7 +17635,7 @@ class NapariSBTController:
         else:
             folders = self.manifest.images_folders + self.manifest.extra_images_folders
             suffix = (
-                " Run Setup → Validate integrity to index flat image folders."
+                " Run Workspace → Check data → Find files only to index flat image folders."
                 if self._asset_index_signature is None
                 else ""
             )
@@ -18354,7 +18487,7 @@ class NapariSBTController:
             self.population_qc_scope_banner.setText(
                 "ℹ SETUP MODE — No frozen workspace cell scope is active "
                 f"({cell_text}). A new workspace starts at All cells; review the "
-                "scope in Setup before running the integrity check."
+                "scope in Workspace before running the integrity check."
             )
             self.population_qc_scope_banner.setStyleSheet(
                 "background: #e0f2fe; color: #075985; "
@@ -20009,6 +20142,9 @@ class NapariSBTController:
         self.set_status("The predicted_classes layer now shows all scored predictions.")
 
     def _load_feature_table(self) -> pd.DataFrame:
+        stored, _ = load_experiment(self.paths.root)
+        if stored.active_feature_set_id is None:
+            raise ValueError("Finish a successful feature build before training or scoring.")
         if not self.paths.feature_table.exists():
             raise FileNotFoundError(
                 "No canonical feature table exists. Build or resume features first."
@@ -20031,6 +20167,10 @@ class NapariSBTController:
                 "contract. Rebuild/resume features so Nimbus lower thresholds "
                 "are applied before training or scoring."
             )
+        if provenance.get("failures", 0):
+            raise ValueError("The feature build has failed regions. Repair inputs and resume before training or scoring.")
+        if provenance.get("feature_set_id") != stored.active_feature_set_id:
+            raise ValueError("Feature provenance is out of date. Rebuild features before training or scoring.")
         return read_dataframe(self.paths.feature_table)
 
     def train_model(self) -> bool:
@@ -20447,7 +20587,7 @@ class NapariSBTController:
             else:
                 self.refinement_scope_label.setText(
                     "Feature refinement requires a Feature Discovery Trial created "
-                    "in Setup."
+                    "in Workspace."
                 )
             return
         trial_rois = set(trial.selected_rois)
@@ -20523,7 +20663,7 @@ class NapariSBTController:
         if self.manifest is None or self.paths is None:
             raise RuntimeError("Create or load a feature-discovery trial first.")
         if self.manifest.experiment_mode != "feature_discovery_trial":
-            raise ValueError("Switch to a Feature Discovery Trial in Setup first.")
+            raise ValueError("Switch to a Feature Discovery Trial in Workspace first.")
         if self.refinement_process is not None:
             raise RuntimeError("Feature refinement is already running.")
         if (
@@ -22069,13 +22209,14 @@ def launch(
     masks_folder: str | Path | None = None,
     images_folders: Iterable[str | Path] = (),
     extra_images_folders: Iterable[str | Path] = (),
+    welcome: bool = False,
 ):
     """Create the viewer and dock; paths or a live AnnData object are accepted."""
 
     import napari
 
     if viewer is None:
-        viewer = napari.Viewer(title="napari_sbt — cohort-first cell classification")
+        viewer = napari.Viewer(title="NapariSBT")
     controller = NapariSBTController(
         viewer,
         project_root=project_root,
@@ -22085,12 +22226,14 @@ def launch(
         masks_folder=masks_folder,
         images_folders=images_folders,
         extra_images_folders=extra_images_folders,
+        welcome=welcome,
     )
     dock = viewer.window.add_dock_widget(
         controller.root,
         name="napari_sbt",
         area="right",
     )
+    controller.workspace_flow.protect_window()
     controller.install_readiness_dock()
     controller.install_cell_properties_dock()
     # Reapply the preferred split once Qt has completed this event-loop turn;

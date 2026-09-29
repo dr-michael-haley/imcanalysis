@@ -193,7 +193,8 @@ def create_run_record(
     )
     write_yaml(
         run_dir / SUBMITTED_JOBS,
-        SubmittedJobs(run_id=workflow_run_id, workflow_run_id=workflow_run_id),
+        SubmittedJobs(run_id=workflow_run_id, workflow_run_id=workflow_run_id,
+                      execution_backend=plan.execution_backend),
     )
     write_yaml(
         run_dir / STATUS_FILE,

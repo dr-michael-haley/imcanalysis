@@ -9,12 +9,21 @@ from pathlib import Path
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
+    location = parser.add_mutually_exclusive_group()
+    location.add_argument(
         "--project",
         type=Path,
         help="Initialized project path, registered project name, or project ID.",
     )
     parser.add_argument("--experiment", type=Path)
+    location.add_argument(
+        "--welcome", action="store_true",
+        help="Open Home without discovering a project from the launch folder.",
+    )
+    location.add_argument(
+        "--dataset", type=Path,
+        help="Open a standalone dataset folder without SBT project registration.",
+    )
     parser.add_argument("--anndata", type=Path)
     parser.add_argument("--masks", type=Path)
     parser.add_argument("--images", type=Path, action="append", default=[])
@@ -52,6 +61,8 @@ def _resolve_project_context(project: Path | None):
 
 
 def _project_defaults(args) -> dict:
+    if getattr(args, "welcome", False) or getattr(args, "dataset", None):
+        return {"project_root": args.dataset} if getattr(args, "dataset", None) else {}
     context = _resolve_project_context(args.project)
     if context is None:
         return {}
@@ -133,6 +144,7 @@ def main(argv: list[str] | None = None) -> int:
         masks_folder=masks_folder,
         images_folders=images_folders,
         extra_images_folders=args.extra_images,
+        welcome=args.welcome,
     )
     import napari
 

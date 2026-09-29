@@ -1,7 +1,7 @@
 # `napari_sbt`: cohort-first IMC exploration and classification
 
 `napari_sbt` combines the reusable parts of the IMC explorer and CellPose
-active-learning viewer in one experiment-driven Napari dock. Setup first asks
+active-learning viewer in one experiment-driven Napari dock. Guided setup asks
 whether the session is for data exploration, Population QC, classification,
 manual labeling, population curation, dataset maintenance, or the full workspace,
 then hides tabs that are irrelevant to that task.
@@ -12,6 +12,45 @@ assets and changes AnnData in memory; replacing an existing AnnData file require
 an explicit replacement option. An experiment freezes the eligible
 `(ROI, ObjectNumber)` identities before feature calculation, annotation, training,
 scoring, or export.
+
+## Home, guided setup, and quick exploration
+
+NapariSBT keeps startup inside its right-hand dock. **Home** opens existing or
+recent workspaces. **Workspace** guides new work through Dataset → Task → Check
+data → Save workspace, with fixed navigation and expandable advanced controls.
+After opening, the same tab shows a workspace summary and settings.
+
+Launch directly into Home without interpreting the current folder as a project:
+
+```bash
+sbt gui napari --welcome
+```
+
+Open an ordinary dataset folder without project registration:
+
+```bash
+sbt gui napari --dataset /path/to/dataset
+```
+
+The direct `napari-sbt` launcher accepts these flags too. Python callers can use
+`launch(welcome=True)` for Home, or supply `project_root`,
+`anndata`, `anndata_path`, masks and image paths to prefill setup. Existing
+`launch_notebook(adata, ...)` integration remains supported. Explicit project and
+workspace launches retain their direct-entry behaviour.
+
+Exploration and visual review offer **Open quickly**, which prepares cell
+identities and loads each region's assets on demand. **Check entire dataset** is
+an optional background coverage/mask check for these workflows and required for
+new classification workspaces. **Find files only** builds a reusable index
+without reading mask contents. These are separate operations: locating files does
+not prove their contents are valid. Large live AnnData objects still need to be
+snapshotted when creating a persistent workspace.
+
+The workspace records validation history and warns when assets have not been
+fully checked. Feature builds validate consumed inputs independently; failed
+regions prevent activation for training. Training requires feature rows for all
+confirmed training cells. Derived mask exports check requested identities before
+writing. See the [Setup help](napari_sbt_help.md) for the guided controls.
 
 ## Launch
 
@@ -32,8 +71,8 @@ sbt gui napari --project /path/to/project
 ```
 
 An explicit existing initialized path takes precedence over a registry lookup.
-Outside an initialized project, omitting `--project` retains the blank Setup
-workflow for manually supplied inputs.
+Outside an initialized project, omitting `--project` opens Home, with guided
+Workspace setup for manually supplied inputs.
 
 Run a side-effect-free launch check first when using a new environment or an
 HPC allocation:

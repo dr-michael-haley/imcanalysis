@@ -14,8 +14,8 @@ Choose a starting point:
 3. [Local analysis setup](local.md) — prepare a Windows or macOS environment for
    notebooks, Napari, exploratory analysis, and bespoke figures after pipeline
    processing.
-4. [Linux and EC2 without SLURM](ec2.md) — run an editable list of Python stage
-   commands with saved console logs and configurable machine locations.
+4. [Linux and EC2 without SLURM](ec2.md) — run managed local workflows with
+   saved logs, detachment, cancellation, and persistent machine locations.
 
 Experienced users on another HPC can go straight to the
 [`sbt` CLI guide](../pipeline/cli.md) and

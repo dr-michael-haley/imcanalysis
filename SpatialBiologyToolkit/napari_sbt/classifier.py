@@ -181,6 +181,9 @@ def train_multiclass_classifier(
     ordered_classes = [str(class_id) for class_id in class_ids]
     labels = validate_labels(labels, class_ids=ordered_classes, cohort=cohort)
     confirmed = labels.loc[labels["state"] == "confirmed"].copy()
+    coverage = confirmed.merge(rows[IDENTITY], on=IDENTITY, how="left", indicator=True)
+    if coverage["_merge"].eq("left_only").any():
+        raise ValueError("Some confirmed training cells have no feature row. Repair feature coverage before training.")
     training = confirmed.merge(rows, on=IDENTITY, how="inner", validate="one_to_one")
     warnings: list[str] = []
     errors: list[str] = []

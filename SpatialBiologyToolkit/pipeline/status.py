@@ -253,6 +253,10 @@ def inspect_run_status(
 ) -> RunStatus:
     """Refresh one workflow from a bounded scheduler snapshot."""
     directory = Path(run_dir)
+    if load_run_manifest(directory).execution_backend == "local":
+        from .local import inspect_local
+
+        return inspect_local(context, directory)
     submitted = load_submitted_jobs(directory)
     job_ids = {job.job_id for job in submitted.jobs if job.job_id}
     snapshot = _query_scheduler(job_ids, runner=runner)
@@ -272,6 +276,10 @@ def _inspect_run_with_snapshot(
     persist: bool = True,
 ) -> RunStatus:
     manifest = load_run_manifest(directory)
+    if manifest.execution_backend == "local":
+        from .local import inspect_local
+
+        return inspect_local(context, directory, persist=persist)
     submitted = load_submitted_jobs(directory)
 
     stage_statuses: list[StageStatus] = []

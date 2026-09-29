@@ -248,6 +248,7 @@ def build_run_plan(
     toolkit_directory: str | Path | None = None,
     dependency_policy: DependencyPolicy = "assets",
     include_dependencies: bool | None = None,
+    backend: str = "slurm",
     ignore_missing_assets: bool = False,
 ) -> RunPlan:
     """Build a plan whose readiness is governed by direct blocking inputs.
@@ -264,6 +265,9 @@ def build_run_plan(
         dependency_policy = "all" if include_dependencies else "none"
     if dependency_policy not in {"assets", "none", "all"}:
         raise ValueError("dependency_policy must be 'assets', 'none', or 'all'.")
+
+    if backend not in {"slurm", "local"}:
+        raise ValueError(f"Unsupported execution backend: {backend}")
 
     requested_names = list(requested)
     expanded = expand_requested(requested_names)
@@ -346,7 +350,14 @@ def build_run_plan(
             if item.name != stage.name and item.name not in selected_names
         ]
 
-        if not script.is_file():
+        if backend == "local":
+            from .commands import stage_commands
+
+            try:
+                stage_commands(stage.name)
+            except ValueError as exc:
+                errors.append(str(exc))
+        if backend == "slurm" and not script.is_file():
             errors.append(f"SLURM script for stage '{stage.name}' is missing: {script}")
         if missing_assets:
             missing_asset_message = (
@@ -410,6 +421,7 @@ def build_run_plan(
         requested=requested_names,
         resolved_stages=planned,
         config_source=context.config_path,
+        execution_backend="local" if backend == "local" else "slurm_scripts",
         dependency_policy=dependency_policy,
         ignore_missing_assets=ignore_missing_assets,
         ready=not errors,

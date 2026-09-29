@@ -2,7 +2,7 @@
 
 The preferred interface is the lightweight, project-aware [`sbt` CLI](cli.md).
 It initializes or adopts projects, validates configured assets, plans workflows,
-submits the existing stage-specific SLURM wrappers, records runs, and inspects
+executes stages locally on Linux or through SLURM wrappers, records runs, and inspects
 status and logs. The older `pl` command remains available for compatibility.
 
 Start with the [CLI and project guide](cli.md) and the [workflow and run
@@ -28,6 +28,7 @@ reporting
 environments
 environment-migration
 execution-layout-design
+local-execution
 stages/index
 subclustering
 python_stages

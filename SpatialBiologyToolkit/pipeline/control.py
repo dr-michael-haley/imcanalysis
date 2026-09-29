@@ -87,6 +87,8 @@ def run_preview_snapshot(
         "dependency_policy": plan.dependency_policy,
         "ignore_missing_assets": plan.ignore_missing_assets,
         "environment_overrides": dict(plan.environment_overrides),
+        "execution_backend": plan.execution_backend,
+        "use_active_environment": plan.use_active_environment,
         "external_dependency": (
             {
                 "kind": external_dependency.kind,

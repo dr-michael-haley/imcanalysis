@@ -646,6 +646,17 @@ def _remove_selected_executions(
             f"{labels}. Cancel or finish them first, then refresh status."
         )
 
+    # Removing an earlier execution can renumber every subsequent output path.
+    # A local worker's snapshotted reporting environment must keep those paths.
+    from .local import assert_no_orphan
+
+    try:
+        assert_no_orphan(context)
+    except RuntimeError as exc:
+        raise ExecutionLayoutError(
+            "Finish or cancel the active local workflow before removing executions."
+        ) from exc
+
     removed_ids = {record.technical_run_id for record in removed}
     operation_id = f"{utc_now().strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     old_paths = {

@@ -450,9 +450,13 @@ def setup_checks(
     object_id_obs: str,
     normalization_path: str | Path | None,
     integrity_current: bool,
+    quick_open: bool = False,
 ) -> tuple[SetupCheck, ...]:
     """Return the common Setup readiness checks in user-facing order."""
 
+    from .validation import allows_quick_open
+
+    quick_open = quick_open and allows_quick_open(workflow_mode)
     checks: list[SetupCheck] = []
     name = workspace_name.strip()
     destination = (
@@ -595,7 +599,7 @@ def setup_checks(
         SetupCheck(
             "identity",
             "Cell-to-image matching",
-            "ready" if integrity_current else "check",
+            "blocked" if not roi_obs.strip() or not object_id_obs.strip() else "ready" if integrity_current else "check",
             identity_detail
             if integrity_current
             else identity_detail + " The integrity check will confirm them.",
@@ -611,14 +615,14 @@ def setup_checks(
             required=False,
         )
     )
-    if integrity_current:
+    if integrity_current or quick_open:
         for index, check in enumerate(checks):
-            if check.key in {"anndata", "masks", "images"} and check.level == "check":
+            if check.key in {"anndata", "masks", "images", "identity"} and check.level == "check":
                 checks[index] = SetupCheck(
                     check.key,
                     check.label,
                     "ready",
-                    "Validated for this workspace setup.",
+                    "Found; contents will be checked as used." if quick_open and not integrity_current else "Validated for this workspace setup.",
                 )
     else:
         checks.append(

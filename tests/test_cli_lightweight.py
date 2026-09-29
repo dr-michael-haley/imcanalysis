@@ -68,7 +68,7 @@ class LightweightCliTests(unittest.TestCase):
         expected = {
             "plan": "Validate and preview stages",
             "run": "Allocate execution IDs",
-            "status": "Refresh and show scheduler status",
+            "status": "Refresh and show status",
             "logs": "Show or locate recorded stdout and stderr",
             "report": "Display the human-facing report",
             "summary": "List project executions",

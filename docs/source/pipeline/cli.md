@@ -1,13 +1,16 @@
-# The `sbt` project and SLURM CLI
+# The `sbt` project and execution CLI
 
 `sbt` is the lightweight command-and-control interface for
 SpatialBiologyToolkit. It validates project structure and typed configuration,
-plans workflows, submits the existing per-stage SLURM wrappers, records runs,
-checks scheduler status, and resolves logs.
+plans workflows, executes stages through SLURM or the sequential Linux local
+backend, records runs, checks status, and resolves logs. SLURM is the default;
+use `--backend local` or `SBT_BACKEND=local` on EC2. See the
+[local execution guide](../getting_started/ec2.md) for detachment, cancellation,
+environment selection, live logs, and resource inspection.
 
 Normal CLI startup imports only lightweight packages such as Pydantic, PyYAML,
 and Typer. Scientific work still runs in the stage-specific Conda environments
-selected by the existing SLURM wrappers.
+selected by the stage registry (local) or existing SLURM wrappers.
 
 For standalone spatial transcriptomics, `sbt run cell2location` supports reference
 signature fitting and joint multi-library Visium mapping. Set

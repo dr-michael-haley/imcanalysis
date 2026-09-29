@@ -330,7 +330,7 @@ class StageReporter:
     def finalize(
         self,
         *,
-        status: Literal["running", "completed", "failed"] = "completed",
+        status: Literal["running", "completed", "failed", "cancelled", "blocked"] = "completed",
         error: BaseException | None = None,
         traceback_text: str | None = None,
     ) -> StageManifest:

@@ -146,13 +146,15 @@ def test_unified_dock_is_cohort_gated_and_rejects_context_clicks(tmp_path: Path)
             controller.tabs.tabText(index).split(" ", 1)[-1]
             for index in range(controller.tabs.count())
         ] == [
-            "Setup",
+            "Home",
+            "Workspace",
             "Feature Building",
             "Feature Refinement",
             "Explore",
             "Population QC",
             "Population naming",
             "Scanpy plotting",
+            "Dataset Maintenance",
             "Classify",
             "Labeler",
             "Regions & Export",
@@ -176,6 +178,9 @@ def test_unified_dock_is_cohort_gated_and_rejects_context_clicks(tmp_path: Path)
         assert controller.current_selected_object is None
         assert "outside this experiment" in controller.selected_cell_label.text()
 
+        # Empty-cohort regions need known asset paths; navigation never scans
+        # the whole mask directory simply to populate this selector.
+        controller._mask_path_index["r2"] = masks / "r2.tiff"
         controller.show_empty_rois.setChecked(True)
         controller.refresh_rois()
         assert {controller.roi_combo.itemText(index) for index in range(2)} == {

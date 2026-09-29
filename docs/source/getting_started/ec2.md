@@ -1,9 +1,140 @@
 # Linux and EC2 without SLURM
 
-Use the repository's `run_local.sh` as an editable list of Python stage commands.
-Bash runs them in order and stops at the first nonzero exit. Each invocation saves
-one console log. Edit the list to choose your workflow; there is no queue, retry
-logic, dependency expansion, or background service.
+Use `sbt run --backend local` for managed sequential execution on Linux. It uses
+the same project config, stage aliases, built-in modes, dependency planning,
+numbered execution IDs, and reports as the SLURM backend. No job manager is
+required. SLURM remains the default when no backend is selected.
+
+## Run Nimbus, BioBatchNet, RAPIDS, and visualisation
+
+Activate `sbt-cli` and adopt the project once if it does not already have
+`.sbt/project.yaml`:
+
+```bash
+conda activate sbt-cli
+cd /scratch/projects/GBMp2_bgnorm
+sbt project adopt .
+
+sbt run nimbus bbn rapids vis --project . --backend local --dry-run
+sbt run nimbus bbn rapids vis --project . --backend local --detach
+```
+
+The default `assets` dependency policy adds upstream stages when blocking assets
+are missing. To run only the stages explicitly listed, add
+`--dependency-policy none`; input validation still applies. Built-in modes such
+as `segmentation` work with the local backend too. There are no custom workflow
+definitions or automatic retries.
+
+The launcher selects each stage's registered Conda environment and checks that
+its Python exists before allocating execution IDs. It uses `conda run` and does
+not install missing environments. Stages with multiple environments switch at
+the same module boundaries as their SLURM wrappers. For these four stages, the
+default environment is `sbt-analysis`.
+
+If you want to use the Conda environment already active in your shell, pass
+`--use-active-env`. SBT selects its Python from `CONDA_PREFIX`, even if the `sbt`
+executable itself belongs to the launcher environment:
+
+```bash
+conda activate sbt-analysis
+sbt run nimbus bbn rapids vis --project . --backend local --use-active-env --detach
+```
+
+This explicitly uses the active environment for **every** selected module. It
+must contain their dependencies. `--environment` retains its existing meaning:
+an override for one stage that normally uses a single registered environment.
+
+## Monitor and cancel
+
+Without `--detach`, the command streams saved logs and waits for the workflow.
+Ctrl+C cancels it and waits for process cleanup. With `--detach`, the command
+returns only after the worker acknowledges startup. The worker has its own
+session and survives closing the shell or disconnecting SSH.
+
+The startup message lists the allocated execution IDs and log paths. Substitute
+your actual execution ID for `001` below:
+
+```bash
+sbt status 001 --project . --details
+sbt logs 001 --project . --tail 100
+sbt logs 001 --project . --follow
+sbt summary --project .
+```
+
+`status` shows the entire local workflow, current module process group,
+environment, and selected stage's start time and elapsed time. `--details` adds
+active-stage CPU percentage, summed resident memory, and GPU information when
+`nvidia-smi` is available. CPU percentage can exceed 100% when several cores are
+used. GPU device utilization is for the whole device; matching process IDs show
+that this stage has a GPU allocation, not that it is continuously computing.
+
+Each stage has one combined stdout/stderr log in
+`.sbt/runs/<workflow>/logs/<stage>.log`. Python output is unbuffered. Both
+`--stdout` and `--stderr` select this combined log locally. Worker setup errors
+go to `logs/worker.log` in the same run. Following logs stops when the selected
+stage finishes; Ctrl+C while following only stops viewing. `latest` means the
+last allocated execution, which may still be waiting for earlier stages.
+
+Cancellation follows the CLI's existing preview-token convention:
+
+```bash
+sbt cancel 001 --project . --reason "Stop this trial" --dry-run
+# Copy the printed token into the next command.
+sbt cancel 001 --project . --reason "Stop this trial" --plan-token '<token>'
+```
+
+For a local execution this stops the **whole workflow**, including the current
+stage's child processes and all stages still waiting. Cancellation first sends
+TERM to the active process group, then KILL after a five-second grace period
+if needed. A failed stage stops the sequence and marks later stages `blocked`.
+The launcher returns a nonzero exit code for a failed/cancelled foreground run.
+Use `status` to inspect the result of a detached run.
+
+One local workflow can run per project. Other projects can run independently;
+SBT does not divide CPU, RAM, or GPUs between projects. Detached runs do not
+survive stopping/rebooting an instance and do not resume automatically. A
+missing worker is reported as `unknown`, never inferred to have succeeded.
+Cancellation verifies host, boot, and process identity. It will not signal a PID
+from an old instance. If a worker is forcibly killed and leaves children alive,
+inspect those processes on the original host before launching another run.
+
+Managed runs save a config snapshot and numbered reports below
+`general.outputs_folder`. Existing direct-run reports remain separate. See
+[local execution internals](../pipeline/local-execution.md) for the backend
+boundary and future Nextflow integration.
+
+## Keep EC2 machine locations on persistent storage
+
+Keep the same mount path on replacement instances, for example `/scratch`, and
+keep Conda, the checkout, projects, and this small environment file there:
+
+```bash
+# /scratch/sbt-machine.sh
+export SBT_TOOLKIT_ROOT=/scratch/imcanalysis
+export CONDA_EXE=/scratch/miniconda3/bin/conda
+export SBT_CONDA_SH=/scratch/miniconda3/etc/profile.d/conda.sh
+export SBT_STATE_HOME=/scratch/sbt-state
+export SBT_BACKEND=local
+source "$SBT_CONDA_SH"
+```
+
+Source it from each new instance's shell startup file:
+
+```bash
+source /scratch/sbt-machine.sh
+conda activate sbt-cli
+```
+
+With `SBT_BACKEND=local`, `sbt run nimbus bbn rapids vis --project . --detach`
+is sufficient. Override it with `--backend slurm` when needed. The project
+contains its execution history; `SBT_STATE_HOME` keeps launcher/environment state
+on the volume. Keep any project registry selected with `SBT_IMC_CONFIG` on the
+volume too. Mount the volume before starting Conda or SBT. Existing Conda
+environments and editable installs contain absolute paths, so preserving the
+mount path avoids reinstalling them solely because the instance changed.
+
+Instance-specific GPU drivers still need to be available on the replacement
+machine. Mounting saved files does not transfer a running process.
 
 ## Prepare the environments and project
 
@@ -27,7 +158,11 @@ panel/metadata and scientific settings before running the example. You can creat
 an initial config with `sbt config template --output config.yaml` from that
 directory. Project adoption is not required for direct Python execution.
 
-## Copy, edit, and run
+## Optional plain Bash runner
+
+The repository's `run_local.sh` is still available for an editable list of Python
+calls with one console log. It has no managed execution IDs or cancellation
+tracking. Use the CLI above for those features.
 
 ```bash
 export SBT_TOOLKIT_ROOT=/mnt/software/imcanalysis
@@ -67,7 +202,7 @@ error. Stage output goes to `logs/run-<timestamp>-<pid>.log` below the project b
 default. Inspect it with `tail -f <log-file>`. This does not resume after an
 instance shutdown.
 
-## Logs and reports
+## Plain Bash logs and reports
 
 Both stdout and stderr are saved, including import errors and tracebacks. Python
 output is unbuffered. `set -e` stops the script when a command reports failure;

@@ -11,7 +11,7 @@ import pandas as pd
 import tifffile
 
 from .anndata_io import write_h5ad_compat
-from .cohort import cohort_mask
+from .cohort import cohort_mask, validate_mask_coverage
 from .models import ClassificationClass, ExperimentManifest
 from .storage import write_dataframe
 
@@ -545,6 +545,7 @@ def materialize_cohort_masks(
 ) -> list[Path]:
     """Write cohort-only masks with original labels preserved."""
 
+    _validate_export_masks(masks, cohort)
     output = Path(destination)
     output.mkdir(parents=True, exist_ok=True)
     eligible = {
@@ -577,6 +578,7 @@ def export_cleaned_masks(
     }
     if not excluded:
         raise ValueError("Cleaned-mask export requires at least one exclude class.")
+    _validate_export_masks(masks, assignments)
     output = Path(destination)
     output.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
@@ -602,6 +604,20 @@ def export_cleaned_masks(
         tifffile.imwrite(destination_path, cleaned)
         written.append(destination_path)
     return written
+
+
+def _validate_export_masks(masks, cells) -> None:
+    """Check the requested identities before writing any derived masks."""
+    for roi, rows in cells.groupby("ROI", observed=True):
+        roi = str(roi)
+        if roi not in masks:
+            raise FileNotFoundError(f"No mask was supplied for eligible ROI {roi!r}.")
+        mask = tifffile.imread(masks[roi])
+        if mask.ndim != 2:
+            raise ValueError(f"{roi}: expected a two-dimensional cell mask.")
+        missing, _ = validate_mask_coverage(mask, rows["ObjectNumber"], roi=roi)
+        if missing:
+            raise ValueError(f"{roi}: {len(missing)} cell IDs are missing from the export mask.")
 
 
 __all__ = [

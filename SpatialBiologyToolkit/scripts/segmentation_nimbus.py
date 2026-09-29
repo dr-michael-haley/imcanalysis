@@ -1626,6 +1626,7 @@ def main() -> None:
         )
         reuse_existing_master_celltables = False
 
+    logging.info("Nimbus phase: preparing normalization and QC (this phase can use CPU and disk before GPU inference).")
     dataset.prepare_normalization_dict(
         quantile=nimbus_config.normalization_quantile,
         clip_values=clip_values,
@@ -1665,6 +1666,7 @@ def main() -> None:
             )
 
     if merged_celltable is None:
+        logging.info("Nimbus phase: loading model; requested device=%s", nimbus_config.device)
         nimbus = Nimbus(
             dataset=dataset,
             output_dir=nimbus_config.output_dir,
@@ -1677,6 +1679,7 @@ def main() -> None:
         )
 
         # Run Nimbus predictions
+        logging.info("Nimbus phase: running predictions.")
         nimbus_df = _prepare_nimbus_output(
             _predict_fovs_with_padding(
                 nimbus=nimbus,
