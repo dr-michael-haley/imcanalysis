@@ -450,6 +450,11 @@ Bar plots summarise the distribution; strip or swarm plots show individual ROI o
 
 ## Output organisation
 
+The final AnnData save supports pandas nullable string indices and columns,
+preserving missing values. It temporarily enables AnnData's nullable string
+writer for the save and restores the previous setting afterwards. Files using
+this encoding require AnnData 0.11 or newer to read.
+
 For an `sbt run`, outputs are written beneath the active execution's `figures`
 directory (for example, `outputs/007_Visualisation/figures/`). Direct reported
 runs use their corresponding `outputs/direct/.../figures/` directory. Calls made

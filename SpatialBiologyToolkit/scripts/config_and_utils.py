@@ -11,6 +11,8 @@ from collections.abc import MutableMapping
 
 from pydantic import BaseModel
 
+from SpatialBiologyToolkit.anndata_io import write_h5ad_compat
+
 from SpatialBiologyToolkit.config.models import (  # noqa: F401 - legacy re-exports
     BasicProcessConfig,
     BatchIntegrationConfig,
@@ -862,7 +864,7 @@ def save_pipeline_anndata(
         )
 
     try:
-        adata.write_h5ad(target_path)
+        write_h5ad_compat(adata, target_path, convert_strings_to_categoricals=True)
     except Exception as exc:
         logging.warning(
             "Initial AnnData write failed (%s). Retrying after additional uns sanitization.",
@@ -874,7 +876,7 @@ def save_pipeline_anndata(
                 "Removed %d additional null-like uns entries before write retry.",
                 removed_retry,
             )
-        adata.write_h5ad(target_path)
+        write_h5ad_compat(adata, target_path, convert_strings_to_categoricals=True)
     logging.info("Saved AnnData to %s", target_path)
     try:
         from SpatialBiologyToolkit.reporting import get_active_reporter
