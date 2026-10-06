@@ -139,6 +139,13 @@ The IMC defaults preserve the tested local adaptation:
 - ten shuffle repeats and all-channel perturbations;
 - spatial TIFF maps disabled by default because whole-cohort masks can be large.
 
+During permutation, `hyperstac.permutation_batch_size` controls how many patches
+are loaded into host memory at once. Each freshly loaded batch is perturbed in
+place, and encoder inference runs directly in minibatches of at most 32 patches.
+This avoids an extra full image-batch copy and repeated Keras prediction data
+pipelines while preserving the perturbation order and random seeds. Reducing
+`permutation_batch_size` further reduces the host image-buffer size.
+
 These are adaptation defaults, not universal biological constants. In the
 published mIF protocol, HyPERSTAC used 224 px tiles, 100 epochs, batch size 256,
 a ResNet-50 encoder, a 2,048-dimensional representation and an 8,192-dimensional

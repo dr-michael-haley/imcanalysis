@@ -409,8 +409,11 @@ def perturb_batch(
     condition: PerturbationCondition,
     rng: np.random.Generator,
     shuffle_pixels: str,
+    *,
+    copy: bool = True,
 ) -> np.ndarray:
-    perturbed = batch.copy()
+    """Perturb patches, optionally reusing a freshly loaded, disposable buffer."""
+    perturbed = batch.copy() if copy else batch
 
     if condition.perturbation_type == "zero_channel":
         perturbed[:, :, :, condition.channel_index] = 0.0
@@ -468,6 +471,21 @@ def cosine_metrics(original: np.ndarray, perturbed: np.ndarray) -> tuple[np.ndar
     return distance.astype(np.float32), similarity.astype(np.float32), perturbed_norm.astype(np.float32)
 
 
+def predict_patch_batch(model: tf.keras.Model, batch: np.ndarray) -> np.ndarray:
+    """Run inference without constructing a Keras prediction data pipeline.
+
+    Keep the 32-patch minibatches previously used by ``Model.predict`` by
+    default; calling the model on the whole loading batch would increase
+    activation memory. Explicit inference mode also preserves BatchNorm behavior.
+    """
+    embeddings = []
+    for start in range(0, len(batch), 32):
+        prediction = model(batch[start : start + 32], training=False)
+        embeddings.append(prediction.numpy())
+        del prediction
+    return np.concatenate(embeddings, axis=0).astype(np.float32, copy=False)
+
+
 def predict_original_embeddings(
     model: tf.keras.Model,
     patch_paths: list[str],
@@ -482,7 +500,8 @@ def predict_original_embeddings(
         desc="Recomputing original embeddings",
     ):
         batch = load_patch_batch(paths, patch_size, num_channels)
-        embeddings.append(model.predict(batch, verbose=0))
+        embeddings.append(predict_patch_batch(model, batch))
+        del batch
     return np.concatenate(embeddings, axis=0).astype(np.float32, copy=False)
 
 
@@ -507,8 +526,11 @@ def run_condition(
     batch_iter = iter_batches(patch_paths, batch_size)
     for start, end, paths in tqdm(batch_iter, total=total_batches, desc=condition.condition_id):
         batch = load_patch_batch(paths, patch_size, num_channels)
-        perturbed = perturb_batch(batch, condition, rng, shuffle_pixels)
-        perturbed_embeddings = model.predict(perturbed, verbose=0)
+        # Each condition reloads its patches, so this buffer can be overwritten.
+        perturb_batch(batch, condition, rng, shuffle_pixels, copy=False)
+        perturbed_embeddings = predict_patch_batch(model, batch)
+        # Release the images before allocating the next loading batch.
+        del batch
         distance, similarity, norm = cosine_metrics(original_embeddings[start:end], perturbed_embeddings)
         distances[start:end] = distance
         similarities[start:end] = similarity
