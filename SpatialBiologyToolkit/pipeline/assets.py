@@ -59,6 +59,8 @@ class AssetSpec:
 
 
 ASSET_SPECS: tuple[AssetSpec, ...] = (
+    AssetSpec("hyperstac_environments", "hyperstac_environments.output_folder", "directory", "generated_output"),
+    AssetSpec("hyperstac_environment_mapping", "hyperstac_environments.case_mapping_csv", "file", "required_input"),
     AssetSpec(
         "cell2location_assets", "cell2location.asset_folder", "directory", "generated_output"
     ),
@@ -364,6 +366,12 @@ def resolve_assets(
                 lifecycle="optional_input", count_limit=count_limit,
             )
         )
+    for role, value, kind, lifecycle in (
+        ("hyperstac_environments", config.hyperstac_environments.output_folder, "directory", "generated_output"),
+        ("hyperstac_environment_mapping", config.hyperstac_environments.case_mapping_csv, "file", "required_input"),
+    ):
+        if value:
+            assets.append(inspect_asset(role=role, path=resolve_project_path(root, value), kind=kind, lifecycle=lifecycle, count_limit=count_limit))
     return assets
 
 

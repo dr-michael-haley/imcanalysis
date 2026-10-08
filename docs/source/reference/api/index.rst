@@ -12,6 +12,7 @@ This reference is split by module so the site navigation stays compact.
 
    _napari_imc_normalization
    _overlay_comparisons
+   anndata_io
    backgating
    cell2location_analysis
    cell2location_contract

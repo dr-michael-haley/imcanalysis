@@ -12,6 +12,7 @@ from .models import ModeSpec, StageSpec
 
 
 STAGE_PRESENTATION: dict[str, tuple[str, int, str, str]] = {
+    "hyperstac-environments": ("HyPERSTAC Spatial Environments", 43, "HyPERSTAC_Spatial_Environments", "hyperstac_environments.md"),
     "prep": ("Preprocessing", 1, "Preprocessing", "preprocessing.md"),
     "denoise": ("Denoising", 2, "Denoising", "denoising.md"),
     "dnqc": ("Denoising QC", 3, "Denoising_QC", "denoising_qc.md"),
@@ -214,6 +215,7 @@ STAGE_PRESENTATION: dict[str, tuple[str, int, str, str]] = {
 }
 
 STAGE_MODULES: dict[str, tuple[str, ...]] = {
+    "hyperstac-environments": ("SpatialBiologyToolkit.scripts.hyperstac_environments",),
     "cell2location": ("SpatialBiologyToolkit.scripts.cell2location_analysis",),
     "prep": ("SpatialBiologyToolkit.scripts.preprocess",),
     "vis": ("SpatialBiologyToolkit.scripts.basic_visualizations",),
@@ -267,6 +269,7 @@ STAGE_MODULES: dict[str, tuple[str, ...]] = {
 }
 
 STAGE_CONFIG_SECTIONS: dict[str, tuple[str, ...]] = {
+    "hyperstac-environments": ("general", "hyperstac", "hyperstac_environments", "logging"),
     "cell2location": ("general", "cell2location"),
     "prep": ("general", "preprocess"),
     "vis": ("general", "visualization", "process"),
@@ -945,6 +948,16 @@ STAGES: tuple[StageSpec, ...] = (
             "Configured reference, Visium and prior files are checked before submission according to the selected action.",
             "Serial-section counts are optional soft priors, not fixed cell totals; registration is performed upstream.",
         ),
+    ),
+    _stage(
+    "hyperstac-environments", "job_hyperstac_environments.sh",
+    "Discover physical-radius spatial environments from saved patch embeddings.",
+    groups=("hyperstac",),
+    requires=("hyperstac_assets", "hyperstac_environment_mapping"),
+    required_files={"hyperstac_assets": ["imc_hyperstac_representations.h5ad", "imc_hyperstac_patch_metrics.h5ad", "permutation_sensitivity/imc_permutation_sensitivity.h5ad"]},
+    produces=("hyperstac_environments", "human_outputs"),
+    outputs=("Separate spatial environment AnnData, radius graphs, seeded GMM checkpoints, patient stability and patch-metric summaries",),
+    notes=("Reads the saved encoder representation without rerunning training or permutation. Original Leiden labels remain reference annotations. Requires an explicit ROI/case mapping and reference cluster.",),
     ),
 )
 

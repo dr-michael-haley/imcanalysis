@@ -6495,6 +6495,203 @@
       "title": "HyperstacConfig",
       "type": "object"
     },
+    "HyperstacEnvironmentsConfig": {
+      "description": "Physical-radius aggregation of existing image-patch embeddings.",
+      "properties": {
+        "output_folder": {
+          "advice": "",
+          "default": "hyperstac/spatial_environments",
+          "description": "Separate reusable output; an input/config signature guards checkpoint reuse.",
+          "level": "advanced",
+          "stage": "hyperstac_environments",
+          "title": "Output Folder",
+          "type": "string",
+          "ui_group": "Hyperstac Environments"
+        },
+        "reference_cluster": {
+          "advice": "",
+          "default": "",
+          "description": "Existing Leiden column retained for interpretation; required when running this stage.",
+          "level": "advanced",
+          "stage": "hyperstac_environments",
+          "title": "Reference Cluster",
+          "type": "string",
+          "ui_group": "Hyperstac Environments"
+        },
+        "case_mapping_csv": {
+          "advice": "",
+          "default": "",
+          "description": "CSV containing ROI to patient mapping, including patients without outcomes when available.",
+          "level": "advanced",
+          "stage": "hyperstac_environments",
+          "title": "Case Mapping Csv",
+          "type": "string",
+          "ui_group": "Hyperstac Environments"
+        },
+        "mapping_roi_column": {
+          "advice": "",
+          "default": "ROI",
+          "description": "ROI identifier column in mapping CSV.",
+          "level": "advanced",
+          "stage": "hyperstac_environments",
+          "title": "Mapping Roi Column",
+          "type": "string",
+          "ui_group": "Hyperstac Environments"
+        },
+        "mapping_case_column": {
+          "advice": "",
+          "default": "Case",
+          "description": "Patient identifier column in mapping CSV.",
+          "level": "advanced",
+          "stage": "hyperstac_environments",
+          "title": "Mapping Case Column",
+          "type": "string",
+          "ui_group": "Hyperstac Environments"
+        },
+        "n_pcs": {
+          "advice": "",
+          "default": 50,
+          "description": "Shared unwhitened PCA dimensions; refitted within patient subsamples.",
+          "level": "advanced",
+          "minimum": 2,
+          "stage": "hyperstac_environments",
+          "title": "N Pcs",
+          "type": "integer",
+          "ui_group": "Hyperstac Environments"
+        },
+        "patch_pitch_um": {
+          "advice": "",
+          "default": 100,
+          "description": "Spacing of the regular non-overlapping patch grid in micrometres.",
+          "exclusiveMinimum": 0,
+          "level": "advanced",
+          "stage": "hyperstac_environments",
+          "title": "Patch Pitch Um",
+          "type": "number",
+          "ui_group": "Hyperstac Environments"
+        },
+        "radii_um": {
+          "advice": "",
+          "description": "Centre-distance radii; zero is focal-only. Nonzero radii use focal plus neighbour mean.",
+          "items": {
+            "type": "number"
+          },
+          "level": "advanced",
+          "stage": "hyperstac_environments",
+          "title": "Radii Um",
+          "type": "array",
+          "ui_group": "Hyperstac Environments"
+        },
+        "n_clusters": {
+          "advice": "",
+          "description": "Gaussian-mixture component counts to compare.",
+          "items": {
+            "type": "integer"
+          },
+          "level": "advanced",
+          "stage": "hyperstac_environments",
+          "title": "N Clusters",
+          "type": "array",
+          "ui_group": "Hyperstac Environments"
+        },
+        "fit_repeats": {
+          "advice": "",
+          "default": 3,
+          "description": "Independent seeded mixture fits per radius/count.",
+          "level": "advanced",
+          "minimum": 2,
+          "stage": "hyperstac_environments",
+          "title": "Fit Repeats",
+          "type": "integer",
+          "ui_group": "Hyperstac Environments"
+        },
+        "patient_repeats": {
+          "advice": "",
+          "default": 5,
+          "description": "Whole-patient subsamples per setting; fixed encoder, refitted PCA and mixture.",
+          "level": "advanced",
+          "minimum": 1,
+          "stage": "hyperstac_environments",
+          "title": "Patient Repeats",
+          "type": "integer",
+          "ui_group": "Hyperstac Environments"
+        },
+        "patient_fraction": {
+          "advice": "",
+          "default": 0.8,
+          "description": "Fraction of patient groups retained in each subsample.",
+          "exclusiveMaximum": 1,
+          "exclusiveMinimum": 0,
+          "level": "advanced",
+          "stage": "hyperstac_environments",
+          "title": "Patient Fraction",
+          "type": "number",
+          "ui_group": "Hyperstac Environments"
+        },
+        "covariance_type": {
+          "advice": "",
+          "default": "diag",
+          "description": "Regularized sklearn CPU Gaussian-mixture covariance model after CellCharter aggregation.",
+          "enum": [
+            "diag",
+            "tied",
+            "full",
+            "spherical"
+          ],
+          "level": "advanced",
+          "stage": "hyperstac_environments",
+          "title": "Covariance Type",
+          "type": "string",
+          "ui_group": "Hyperstac Environments"
+        },
+        "reg_covar": {
+          "advice": "",
+          "default": 0.0001,
+          "description": "Covariance diagonal regularization.",
+          "exclusiveMinimum": 0,
+          "level": "advanced",
+          "stage": "hyperstac_environments",
+          "title": "Reg Covar",
+          "type": "number",
+          "ui_group": "Hyperstac Environments"
+        },
+        "max_iter": {
+          "advice": "",
+          "default": 300,
+          "description": "Maximum EM iterations per mixture fit.",
+          "level": "advanced",
+          "minimum": 10,
+          "stage": "hyperstac_environments",
+          "title": "Max Iter",
+          "type": "integer",
+          "ui_group": "Hyperstac Environments"
+        },
+        "seed": {
+          "advice": "",
+          "default": 42,
+          "description": "Seed for PCA, mixture fits and patient selection.",
+          "level": "advanced",
+          "minimum": 0,
+          "stage": "hyperstac_environments",
+          "title": "Seed",
+          "type": "integer",
+          "ui_group": "Hyperstac Environments"
+        },
+        "cpu_threads": {
+          "advice": "",
+          "default": 4,
+          "description": "Bound numerical-library thread pools for local execution.",
+          "level": "advanced",
+          "minimum": 1,
+          "stage": "hyperstac_environments",
+          "title": "Cpu Threads",
+          "type": "integer",
+          "ui_group": "Hyperstac Environments"
+        }
+      },
+      "title": "HyperstacEnvironmentsConfig",
+      "type": "object"
+    },
     "LoggingConfig": {
       "properties": {
         "log_file": {
@@ -13770,6 +13967,14 @@
       "$ref": "#/$defs/HyperstacConfig",
       "advice": "",
       "description": "Configuration value for hyperstac.",
+      "level": "advanced",
+      "stage": "pipeline",
+      "ui_group": "Pipeline"
+    },
+    "hyperstac_environments": {
+      "$ref": "#/$defs/HyperstacEnvironmentsConfig",
+      "advice": "",
+      "description": "Configuration value for hyperstac environments.",
       "level": "advanced",
       "stage": "pipeline",
       "ui_group": "Pipeline"

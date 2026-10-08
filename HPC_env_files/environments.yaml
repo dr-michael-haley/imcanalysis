@@ -188,6 +188,7 @@ stage_environments:
   bbn: [analysis]
   subcl: [analysis]
   cchar: [analysis]
+  hyperstac-environments: [analysis]
   starling: [starling]
   dnqc: [tensorflow, analysis]
   aiinter: [analysis]

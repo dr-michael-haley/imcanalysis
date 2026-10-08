@@ -51,6 +51,7 @@ for ordering and usage guidance.
 | [`neighsig`](neighsig.md) | Learn empirical marker halos, calculate neighbour-attributable fractions, and retain spatial source-cell provenance | `sbt-analysis` | general, neighbour_signal, logging |
 | [`nimbus-scan`](nimbus-scan.md) | Scan marker-wise Nimbus normalization values before AnnData or clustering | `sbt-analysis` | general, segmentation, nimbus, nimbus_normalization_scan, logging |
 | [`cell2location`](cell2location.md) | Fit reference signatures and map multiple Visium libraries with optional IMC spot-count priors | `sbt-cell2location` | general, cell2location, logging |
+| [`hyperstac-environments`](hyperstac-environments.md) | Discover physical-radius environments from saved HyPERSTAC patch embeddings | `sbt-analysis` | general, hyperstac, hyperstac_environments, logging |
 
 ```{toctree}
 :maxdepth: 1
@@ -98,4 +99,5 @@ spatialdata
 neighsig
 nimbus-scan
 cell2location
+hyperstac-environments
 ```

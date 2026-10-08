@@ -30,6 +30,7 @@ sections/spatialdata
 sections/cellvision
 sections/scportrait
 sections/hyperstac
+sections/hyperstac_environments
 sections/cox
 sections/biobatchnet
 sections/process

@@ -5059,6 +5059,39 @@ class PopulationEmbeddingQCConfig(ConfigModel):
             )
         return self
 
+@config_section("hyperstac_environments")
+class HyperstacEnvironmentsConfig(ConfigModel):
+    """Physical-radius aggregation of existing image-patch embeddings."""
+
+    output_folder: str = Field(default="hyperstac/spatial_environments", description="Separate reusable output; an input/config signature guards checkpoint reuse.")
+    reference_cluster: str = Field(default="", description="Existing Leiden column retained for interpretation; required when running this stage.")
+    case_mapping_csv: str = Field(default="", description="CSV containing ROI to patient mapping, including patients without outcomes when available.")
+    mapping_roi_column: str = Field(default="ROI", description="ROI identifier column in mapping CSV.")
+    mapping_case_column: str = Field(default="Case", description="Patient identifier column in mapping CSV.")
+    n_pcs: int = Field(default=50, ge=2, description="Shared unwhitened PCA dimensions; refitted within patient subsamples.")
+    patch_pitch_um: float = Field(default=100, gt=0, description="Spacing of the regular non-overlapping patch grid in micrometres.")
+    radii_um: List[float] = Field(default_factory=lambda: [0, 100, 150, 200, 300], description="Centre-distance radii; zero is focal-only. Nonzero radii use focal plus neighbour mean.")
+    n_clusters: List[int] = Field(default_factory=lambda: list(range(6, 16)), description="Gaussian-mixture component counts to compare.")
+    fit_repeats: int = Field(default=3, ge=2, description="Independent seeded mixture fits per radius/count.")
+    patient_repeats: int = Field(default=5, ge=1, description="Whole-patient subsamples per setting; fixed encoder, refitted PCA and mixture.")
+    patient_fraction: float = Field(default=0.8, gt=0, lt=1, description="Fraction of patient groups retained in each subsample.")
+    covariance_type: Literal["diag", "tied", "full", "spherical"] = Field(default="diag", description="Regularized sklearn CPU Gaussian-mixture covariance model after CellCharter aggregation.")
+    reg_covar: float = Field(default=1e-4, gt=0, description="Covariance diagonal regularization.")
+    max_iter: int = Field(default=300, ge=10, description="Maximum EM iterations per mixture fit.")
+    seed: int = Field(default=42, ge=0, description="Seed for PCA, mixture fits and patient selection.")
+    cpu_threads: int = Field(default=4, ge=1, description="Bound numerical-library thread pools for local execution.")
+
+    @model_validator(mode="after")
+    def validate_scan(self):
+        if not self.radii_um or any(not math.isfinite(x) or x < 0 for x in self.radii_um):
+            raise ValueError("radii_um must contain finite nonnegative values")
+        if len(set(self.radii_um)) != len(self.radii_um):
+            raise ValueError("radii_um must be unique")
+        if not self.n_clusters or any(k < 2 for k in self.n_clusters) or len(set(self.n_clusters)) != len(self.n_clusters):
+            raise ValueError("n_clusters must contain unique integers >=2")
+        return self
+
+
 @config_section("cellcharter")
 class CellCharterConfig(ConfigModel):
     # Input/output
@@ -6686,6 +6719,7 @@ class PipelineConfig(ConfigModel):
     cellvision: CellVisionConfig = Field(default_factory=CellVisionConfig)
     scportrait: ScPortraitConfig = Field(default_factory=ScPortraitConfig)
     hyperstac: HyperstacConfig = Field(default_factory=HyperstacConfig)
+    hyperstac_environments: HyperstacEnvironmentsConfig = Field(default_factory=HyperstacEnvironmentsConfig)
     cox: CoxConfig = Field(default_factory=CoxConfig)
     biobatchnet: BioBatchNetConfig = Field(default_factory=BioBatchNetConfig)
     process: BasicProcessConfig = Field(default_factory=BasicProcessConfig)
@@ -6719,6 +6753,7 @@ DEFAULT_CONFIG_CLASSES = {
     "cellvision": CellVisionConfig,
     "scportrait": ScPortraitConfig,
     "hyperstac": HyperstacConfig,
+    "hyperstac_environments": HyperstacEnvironmentsConfig,
     "cox": CoxConfig,
     "biobatchnet": BioBatchNetConfig,
     "process": BasicProcessConfig,
