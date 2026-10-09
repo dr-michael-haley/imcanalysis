@@ -397,7 +397,7 @@ def run_feature_build(
     image_folders = [
         _resolve_input_path(folder, input_root) for folder in manifest.images_folders
     ]
-    channel_aliases: dict[str, str] = {}
+    channel_aliases: dict[str, str] = dict(manifest.channel_aliases)
     if manifest.anndata_path:
         import anndata as ad
 
@@ -405,9 +405,11 @@ def run_feature_build(
         if anndata_path.is_file():
             panel_adata = ad.read_h5ad(anndata_path, backed="r")
             try:
-                channel_aliases = build_image_channel_aliases(
-                    panel_adata.var_names,
-                    panel_adata.var,
+                channel_aliases.update(
+                    build_image_channel_aliases(
+                        panel_adata.var_names,
+                        panel_adata.var,
+                    )
                 )
             finally:
                 panel_adata.file.close()

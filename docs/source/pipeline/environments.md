@@ -331,7 +331,10 @@ sbt env test --all
 sbt env doctor
 ```
 
-Smoke tests execute the registry's short import probes through `conda run` and
+Smoke tests execute the registry's short import probes and runtime checks through
+`conda run`, with the toolkit repository root as the working directory. Relative
+script and data paths therefore resolve from the toolkit, even when `sbt env test`
+or `sbt env sync` is invoked from a project directory. The checks
 record command, return code, output tails, and duration. They do not run GPU
 workloads, datasets, or complete pipeline stages. `doctor` checks Conda,
 the base-environment conda-lock installation, registry/spec paths, stage

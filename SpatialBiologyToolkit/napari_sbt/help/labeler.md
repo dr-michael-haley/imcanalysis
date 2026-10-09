@@ -29,11 +29,19 @@ cells directly in the Napari viewer. The full source mask is inspected under the
 cursor, so `classification_cohort` can remain hidden and does not need to be the
 selected layer. Clicks outside the frozen cohort are ignored.
 
+Uncheck **Enable Labeler (clicks and overlays)** at the top of the tab to disable
+Labeler picking and remove both Labeler overlays for this session. Existing
+Labeler assignments are retained, and Classify remains available. Recheck it to
+resume. From Python, use `controller.set_labeler_enabled(False)` with the
+controller returned by `launch` or `launch_notebook`.
+
 **Assign selected label** is the fast annotation mode. **Select only** lets you
 inspect a cell before using the button. **Clear label** removes the clicked cell's
 Labeler assignment. The coloured `labeler_assignments` layer uses outlines by
 default so staining remains visible, and `labeler_selected_cell_outline` marks the
-current cell.
+current cell. Selection outlines are read-only and preserve the active viewer
+layer. Each selection outline appears only in its own tab: leaving Labeler removes
+its selection outline, and returning restores it for the selected cell.
 
 ## ROI sampling guidance
 

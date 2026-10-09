@@ -14,7 +14,8 @@ def _active_experiment_path(settings, project_asset_path) -> Path:
     if not settings.active_experiment:
         raise ValueError(
             "napari_sbt.active_experiment is not configured. Confirm an experiment "
-            "in the Napari Setup tab before running cellfeat."
+            "in Napari Setup or with population_refinement.create_feature_experiment "
+            "before running cellfeat."
         )
     configured = Path(settings.active_experiment).expanduser()
     if configured.is_absolute():

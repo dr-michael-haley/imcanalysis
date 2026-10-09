@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -719,6 +720,43 @@ class SpecificationTests(EnvironmentFixture):
 
 
 class ComparisonAndSyncTests(EnvironmentFixture):
+    def test_relative_smoke_script_runs_from_project_directory(self):
+        relative_script = "HPC_env_files/test_env/smoke_test.py"
+        (self.root / relative_script).write_text(
+            "from pathlib import Path\n"
+            "assert Path('HPC_env_files/test_env/environment.yml').is_file()\n"
+            "print('RELATIVE_SMOKE_PASS')\n",
+            encoding="utf-8",
+        )
+        cli = CliRunner()
+        for operation in ("test", "sync"):
+            with self.subTest(operation=operation):
+                manager, runner = self.manager(exists=operation == "test")
+                smoke_command = [sys.executable, relative_script]
+                manager.registry.environments["test"].smoke_tests = [smoke_command]
+                completed_smoke_tests = []
+
+                def run_smoke_script(command, **kwargs):
+                    if command == ["conda", "run", "-n", "test_env", *smoke_command]:
+                        completed = subprocess.run(command[4:], **kwargs)
+                        completed_smoke_tests.append(completed)
+                        return completed
+                    return runner(command, **kwargs)
+
+                manager.runner = run_smoke_script
+                with cli.isolated_filesystem(temp_dir=self.root), patch(
+                    "SpatialBiologyToolkit.cli.main._env_manager", return_value=manager
+                ):
+                    project_directory = Path.cwd()
+                    result = cli.invoke(app, ["env", operation, "test"])
+                    self.assertEqual(Path.cwd(), project_directory)
+
+                self.assertEqual(result.exit_code, 0, result.output)
+                self.assertEqual(len(completed_smoke_tests), 1)
+                self.assertEqual(
+                    completed_smoke_tests[0].stdout.strip(), "RELATIVE_SMOKE_PASS"
+                )
+
     def test_doctor_is_lightweight_with_mocked_commands(self):
         manager, runner = self.manager()
         report = manager.doctor()

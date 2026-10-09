@@ -541,6 +541,10 @@ def _sanitize_for_uns(value: Any) -> Any:
             if cleaned is None:
                 continue
             out_list.append(cleaned)
+        # HDF5 cannot store a list of mappings as an object/string array.
+        # Keep each item structured and ordered, as with the stage run log.
+        if any(isinstance(item, dict) for item in out_list):
+            return {f"item_{index:06d}": item for index, item in enumerate(out_list)}
         return out_list
 
     # Handle array-like payloads (e.g., numpy arrays, pandas index/series) by

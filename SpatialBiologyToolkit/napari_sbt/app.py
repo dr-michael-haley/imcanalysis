@@ -521,6 +521,32 @@ def _split_paths(value: str) -> list[str]:
 class NapariSBTController:
     """Qt-independent state plus Qt/Napari callbacks for one workflow dock."""
 
+    # Home is inserted after the workflow tabs are built. Always use the
+    # updated tab map instead of caching positions before that insertion.
+    @property
+    def explore_tab_index(self) -> int:
+        return self._workflow_tab_indices["explore"]
+
+    @property
+    def population_qc_tab_index(self) -> int:
+        return self._workflow_tab_indices["population_qc"]
+
+    @property
+    def scanpy_plotting_tab_index(self) -> int:
+        return self._workflow_tab_indices["scanpy_plotting"]
+
+    @property
+    def dataset_maintenance_tab_index(self) -> int:
+        return self._workflow_tab_indices["dataset_maintenance"]
+
+    @property
+    def classify_tab_index(self) -> int:
+        return self._workflow_tab_indices["classify"]
+
+    @property
+    def labeler_tab_index(self) -> int:
+        return self._workflow_tab_indices["labeler"]
+
     def __init__(
         self,
         viewer,
@@ -626,6 +652,7 @@ class NapariSBTController:
         self.cohort = pd.DataFrame()
         self.labels = empty_labels()
         self.labeler_classes = default_labeler_classes()
+        self.labeler_enabled = True
         self.labeler_records = empty_labeler_records()
         self._labeler_experiment_id: str | None = None
         self.scores = pd.DataFrame()
@@ -2054,7 +2081,6 @@ class NapariSBTController:
         image_layout.addLayout(image_actions)
         explore_layout.addWidget(image_group)
         add_tab(explore, "🔬 Explore", "explore")
-        self.explore_tab_index = self.tabs.count() - 1
 
         # Population QC
         population_qc = QWidget()
@@ -2293,7 +2319,6 @@ class NapariSBTController:
         population_qc_layout.addWidget(population_qc_roi_group)
         population_qc_layout.addStretch(1)
         add_tab(population_qc, "🧿 Population QC", "population_qc")
-        self.population_qc_tab_index = self.tabs.count() - 1
 
         # Population naming and curation
         populations = QWidget()
@@ -2630,7 +2655,6 @@ class NapariSBTController:
             "📊 Scanpy plotting",
             "scanpy_plotting",
         )
-        self.scanpy_plotting_tab_index = self.tabs.count() - 1
 
         # Dataset Maintenance. File-system scans are deliberately explicit; the
         # dashboard otherwise consumes the index produced by Setup validation.
@@ -3114,7 +3138,6 @@ class NapariSBTController:
         maintenance_layout.addWidget(self.maintenance_tool_tabs)
         maintenance_layout.addStretch(1)
         add_tab(maintenance, "🛠️ Dataset Maintenance", "dataset_maintenance")
-        self.dataset_maintenance_tab_index = self.tabs.count() - 1
 
         # Classify
         classify = QWidget()
@@ -3511,7 +3534,6 @@ class NapariSBTController:
         finalize_page_layout.addStretch(1)
         self.classify_workflow_tabs.addTab(finalize_page, "3. Finalize & export")
         add_tab(classify, "🏷 Classify", "classify")
-        self.classify_tab_index = self.tabs.count() - 1
 
         # Labeler
         labeler = QWidget()
@@ -3524,6 +3546,12 @@ class NapariSBTController:
         )
         labeler_intro.setWordWrap(True)
         labeler_layout.addWidget(labeler_intro)
+        self.labeler_enabled_check = QCheckBox("Enable Labeler (clicks and overlays)")
+        self.labeler_enabled_check.setChecked(self.labeler_enabled)
+        self.labeler_enabled_check.setToolTip(
+            "Disable Labeler picking and remove its overlays. Existing labels are kept."
+        )
+        labeler_layout.addWidget(self.labeler_enabled_check)
 
         label_definition_group = workflow_group(
             "1. Define labels", "labeler", "Define labels"
@@ -3677,7 +3705,6 @@ class NapariSBTController:
         labeler_layout.addWidget(labeler_export_group)
         labeler_layout.addStretch(1)
         add_tab(labeler, "📍 Labeler", "labeler")
-        self.labeler_tab_index = self.tabs.count() - 1
 
         # Regions & Export
         regions = QWidget()
@@ -4736,6 +4763,7 @@ class NapariSBTController:
         self.apply_live_adata_button.clicked.connect(
             self._guard(self.apply_final_identities_to_live_anndata)
         )
+        self.labeler_enabled_check.toggled.connect(self.set_labeler_enabled)
         self.assign_labeler_cell_button.clicked.connect(
             self._guard(self.assign_selected_labeler_cell)
         )
@@ -10401,6 +10429,12 @@ class NapariSBTController:
         close_button = QPushButton("Close")
         actions.addWidget(stale_label)
         actions.addStretch(1)
+        if request.plot_type == "embedding":
+            annotate_button = QPushButton("Annotate regions…")
+            annotate_button.clicked.connect(
+                self._guard(lambda: self.annotate_scanpy_plot(window_id))
+            )
+            actions.addWidget(annotate_button)
         actions.addWidget(export_data_button)
         actions.addWidget(close_button)
         layout.addWidget(toolbar)
@@ -10448,6 +10482,7 @@ class NapariSBTController:
             "stale_label": stale_label,
             "layout_timer": layout_timer,
             "resize_connection": resize_connection,
+            "adata": self.adata,
         }
         self.scanpy_plotting_panel.add_window(
             window_id,
@@ -10466,6 +10501,52 @@ class NapariSBTController:
         dialog.destroyed.connect(forget_dialog)
         dialog.show()
         schedule_scanpy_layout()
+
+    def annotate_scanpy_plot(self, window_id: str):
+        """Open the shared annotator using the full cell scope of this plot."""
+        from SpatialBiologyToolkit.annotation import annotate_embedding
+
+        record = self.scanpy_plot_windows.get(window_id)
+        if record is None or record["request"].plot_type != "embedding":
+            raise ValueError("Open an embedding plot before annotating regions.")
+        source_adata = record["adata"]
+
+        def check_current_data() -> None:
+            if self.adata is not source_adata:
+                raise ValueError("The loaded AnnData changed; open a new embedding plot.")
+
+        check_current_data()
+        request = record["request"]
+
+        def labels_applied(key: str) -> None:
+            self._populate_anndata_selectors(source=f"manual regions {key!r}")
+            self.refresh_scanpy_plotting_choices(preferred_groupby=key)
+            self.set_status(
+                f"Applied manual regions to adata.obs[{key!r}]. "
+                "Save an H5AD copy to keep the labels on disk."
+            )
+
+        return annotate_embedding(
+            source_adata,
+            basis=request.embedding_key,
+            components=(request.x_component - 1, request.y_component - 1),
+            source_obs=request.groupby,
+            color=(
+                request.embedding_markers[0]
+                if request.embedding_markers else request.groupby
+            ),
+            obs_names=record["artifact"].annotation_obs_names,
+            point_limit=request.point_limit,
+            layer=(
+                request.matrix_source.split("::", 1)[1]
+                if request.matrix_source.startswith("layer::") else None
+            ),
+            use_raw=request.matrix_source == "raw",
+            parent=self.root,
+            block=False,
+            before_apply=check_current_data,
+            on_apply=labels_applied,
+        )
 
     def export_scanpy_plot_data(self, window_id: str) -> None:
         record = self.scanpy_plot_windows.get(str(window_id))
@@ -13519,6 +13600,8 @@ class NapariSBTController:
         return None
 
     def _workflow_tab_changed(self, index: int) -> None:
+        self._refresh_selected_cell_layer()
+        self._refresh_labeler_selected_cell_layer()
         if index == getattr(self, "population_qc_tab_index", -1):
             self.refresh_population_qc_rois()
         if index != self.explore_tab_index:
@@ -17495,7 +17578,11 @@ class NapariSBTController:
         return True
 
     def _refresh_selected_cell_layer(self) -> None:
-        if self.current_mask is None or self.current_selected_object is None:
+        if (
+            self.current_mask is None
+            or self.current_selected_object is None
+            or self.tabs.currentIndex() != self.classify_tab_index
+        ):
             self._remove_layers([SELECTED_CELL_LAYER_NAME])
             return
         from napari.utils.colormaps import DirectLabelColormap
@@ -17503,6 +17590,7 @@ class NapariSBTController:
         selected = (self.current_mask == int(self.current_selected_object)).astype(
             np.uint8
         )
+        active_layer = self.viewer.layers.selection.active
         layer = self._replace_layer(
             SELECTED_CELL_LAYER_NAME,
             selected,
@@ -17523,6 +17611,10 @@ class NapariSBTController:
             SELECTED_CELL_LAYER_NAME,
             MANAGED_LAYER_DEFAULT_CONTOUR[SELECTED_CELL_LAYER_NAME],
         )
+        # Selection outlines are display aids, not editable segmentation masks.
+        layer.editable = False
+        if active_layer is not None and active_layer in self.viewer.layers:
+            self.viewer.layers.selection.active = active_layer
         self._bind_recipe_display_tracking(layer)
 
     def current_labeler_click_behavior(self) -> str:
@@ -17532,6 +17624,8 @@ class NapariSBTController:
         return str(checked.property("napari_sbt_labeler_click_behavior") or "select")
 
     def _handle_clicked_labeler_object(self, object_id: int) -> None:
+        if not self.labeler_enabled:
+            return
         if not self._select_labeler_object(object_id):
             return
         behavior = self.current_labeler_click_behavior()
@@ -17568,12 +17662,18 @@ class NapariSBTController:
         return True
 
     def _refresh_labeler_selected_cell_layer(self) -> None:
-        if self.current_mask is None or self.current_labeler_object is None:
+        if (
+            not self.labeler_enabled
+            or self.current_mask is None
+            or self.current_labeler_object is None
+            or self.tabs.currentIndex() != self.labeler_tab_index
+        ):
             self._remove_layers([LABELER_SELECTED_CELL_LAYER_NAME])
             return
         selected = (self.current_mask == int(self.current_labeler_object)).astype(
             np.uint8
         )
+        active_layer = self.viewer.layers.selection.active
         layer = self._replace_layer(
             LABELER_SELECTED_CELL_LAYER_NAME,
             selected,
@@ -17593,6 +17693,9 @@ class NapariSBTController:
                 LABELER_SELECTED_CELL_LAYER_NAME,
                 MANAGED_LAYER_DEFAULT_CONTOUR[LABELER_SELECTED_CELL_LAYER_NAME],
             )
+        layer.editable = False
+        if active_layer is not None and active_layer in self.viewer.layers:
+            self.viewer.layers.selection.active = active_layer
         self._bind_recipe_display_tracking(layer)
 
     def refresh_channel_list(self) -> None:
@@ -19400,9 +19503,30 @@ class NapariSBTController:
             }
         )
 
+    def set_labeler_enabled(self, enabled: bool) -> None:
+        """Disable Labeler picking/overlays without discarding its records."""
+        self.labeler_enabled = bool(enabled)
+        self.labeler_enabled_check.blockSignals(True)
+        self.labeler_enabled_check.setChecked(self.labeler_enabled)
+        self.labeler_enabled_check.blockSignals(False)
+        if not self.labeler_enabled:
+            self.current_labeler_object = None
+            self.labeler_selected_cell_label.setText("Labeler disabled")
+        else:
+            self.labeler_selected_cell_label.setText("No cohort cell selected")
+        self.refresh_labeler_layers()
+        self.set_status(
+            "Labeler enabled. Use the Labeler tab to annotate cells."
+            if self.labeler_enabled else
+            "Labeler disabled. Existing labels are kept; Classify remains available."
+        )
+
     def refresh_labeler_layers(self) -> None:
         """Render current-ROI Labeler assignments as coloured cell outlines."""
 
+        if not self.labeler_enabled:
+            self._remove_layers([LABELER_LAYER_NAME, LABELER_SELECTED_CELL_LAYER_NAME])
+            return
         if self.current_mask is None or self.manifest is None:
             return
         codes = self._labeler_code_map()
@@ -19459,6 +19583,8 @@ class NapariSBTController:
         layer.refresh()
 
     def assign_selected_labeler_cell(self) -> None:
+        if not self.labeler_enabled:
+            raise ValueError("Enable Labeler before assigning cells.")
         if self.manifest is None:
             raise ValueError("Create or load an experiment first.")
         if self.current_labeler_object is None:
@@ -19488,6 +19614,8 @@ class NapariSBTController:
         )
 
     def clear_selected_labeler_cell(self) -> None:
+        if not self.labeler_enabled:
+            raise ValueError("Enable Labeler before clearing cells.")
         if self.current_labeler_object is None:
             raise ValueError("Select an eligible cohort cell first.")
         before = len(self.labeler_records)

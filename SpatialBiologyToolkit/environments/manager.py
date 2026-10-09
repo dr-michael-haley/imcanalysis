@@ -1199,6 +1199,7 @@ class EnvironmentManager:
             try:
                 completed = self.runner(
                     command,
+                    cwd=self.repository_root,
                     capture_output=True,
                     text=True,
                     check=False,

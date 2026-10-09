@@ -116,14 +116,19 @@ analysis subfolder and the root contains `survival_all_cluster_summary.csv`.
   disease-specific clinical fields. Add fields such as age and sex to enable
   clinical-only and combined comparisons.
 - `feature_selection_top_n`, `coxph_max_features`, and
-  `ridge_max_features` control dimensionality after univariate ranking.
+  `ridge_max_features` control dimensionality after univariate ranking. Screening
+  is repeated on training cases within validation, including inner tuning folds.
+  To retain every eligible image feature, set these caps at least as high as the
+  number of candidates. Clinical columns are retained subject to training-fold
+  variability and do not count against the image-feature caps.
 - `ridge_alphas` defines the primary Ridge cross-validation grid.
 - `coxnet_l1_ratio=1.0`, `coxnet_n_alphas=200`, and
   `coxnet_alpha_min_ratio=0.001` reproduce the sparse lasso-path analysis used
   for the multi-source comparison.
 - `validation_folds=5` and `validation_repeats=10` control repeated held-out
-  case validation. Reduce folds when the cohort is small, but retain at least
-  two.
+  case validation. The same fold count is used for inner tuning. Reduce folds
+  when the cohort is small, but retain at least two. Nested screening and
+  independent-alpha fitting cost more than the previous validation procedure.
 - `risk_group_quantiles=[0, 0.33, 0.67, 1]` creates low, middle, and high risk
   groups.
 - `censored_case_ids` can derive event status when a legacy table lacks an
@@ -133,6 +138,63 @@ analysis subfolder and the root contains `survival_all_cluster_summary.csv`.
   strict final auditing.
 
 ## How to interpret the results
+
+### Complete paths and training-only validation
+
+Coxnet now constructs the requested alpha grid explicitly and fits each penalty
+independently. With tied event times, the upstream automatic path can stop after
+only six values because its initial deviance ratios can be negative. Merely
+supplying an explicit long alpha array does not avoid that stopping rule.
+SBT preserves the original survival times and records a status for every requested
+penalty. Failed/non-converged fits are not converted into zero coefficients.
+Finite ridge/Coxnet solutions also undergo a tied-time Breslow gradient/KKT
+check: the maximum residual per case must be at most 0.005. This distinguishes
+recovered intermediate numerical warnings from an invalid final optimum.
+
+The Coxnet grid is expressed as fractions of alpha_max. Each inner training fold
+estimates its own alpha_max after its own screening and scaling. A candidate must
+succeed in **every** inner fold to be eligible; an entirely failed search raises
+an error rather than silently selecting the strongest penalty. Ties in validation
+score prefer the stronger penalty. Final-fit tuning and outer validation are
+separate: the outer test cases do not select features or penalties. Ridge scans
+are likewise nested for the primary feature set; other ridge comparisons retain
+their prespecified `ridge_fixed_alpha` behavior. The existing controls and output
+filenames remain available.
+
+New audit outputs include:
+
+- `*_nested_alpha_cv_scores.csv`: inner searches identified by outer repeat/fold;
+- `ridge_cox_final_tuning_folds.csv`: individual final-fit tuning folds, while
+  `ridge_cox_alpha_cv_scores.csv` retains the historical per-alpha summary columns;
+- `selected_features` in outer metrics: the feature list actually used per fold;
+- `*_feature_eligibility.csv`: excluded candidates versus fitted features;
+- `*_coefficient_path_all_features.png`: every fitted feature, including zeros
+  (white) and failed values (grey), alongside the compact line plot;
+- `n_requested_folds`, `n_failed_folds`, and an explicit complete/partial/failed
+  `validation_status` in validation summaries. A mean based
+  on only successful folds is explicitly conditional on those folds.
+
+The original `*_alpha_cv_scores.csv` describes tuning the final full-cohort fit,
+not independent predictive performance. In the Coxnet table, `alpha` is the actual fold-specific
+penalty; `alpha_fraction`/`candidate` identifies the shared Coxnet tuning position.
+`selected_alpha` is the penalty rescaled for the final training table. Failed
+inner searches also mark the enclosing outer fold failed.
+
+The path x-axis is **log10(alpha)**: −2 means alpha = 0.01, not a negative penalty.
+Zero Coxnet coefficients are valid sparse-model outcomes, not proof that a marker
+or population is biologically irrelevant. A missing line may represent prior
+screening, a zero trajectory, or the display cap; consult the eligibility table
+and the all-feature heatmap. Path failures remain visible in the CSV.
+
+Univariate screening now defaults to ordinary model-based standard errors for
+independent case rows. The API still accepts an explicit `robust=True`; users
+should not interpret very small sandwich P values in rare, few-patient features
+as additional independent support. These exploratory rankings do not provide
+post-selection inference for the multivariable model.
+
+Standardized lifelines Cox PH fits retain raw `fit_data` with their fitted scaler,
+matching the other model families. Risk reporting therefore standardizes once;
+proportional-hazards diagnostics explicitly reconstruct the fitted scale.
 
 Use held-out validation first. A mean C-index above 0.5 indicates better than
 random risk ranking, while fold/repeat spread shows uncertainty. Compare the
@@ -159,6 +221,12 @@ fitted for the number of events.
   are relative to that reference.
 - Repeated cross-validation estimates internal performance only. Independent
   cohort validation remains necessary for a predictive biomarker claim.
+- Image embeddings/clusters learned on the entire image cohort remain fixed
+  upstream inputs. Nested survival validation does not make that complete image
+  workflow externally validated. Fold SD is not a confidence interval. Selecting
+  a Leiden resolution by its outer validation score requires another independent
+  evaluation. Pooled risk-group plots remain exploratory diagnostics, not a
+  substitute for fold-specific discrimination or calibrated survival estimates.
 - Cox execution uses the shared, repository-managed `sbt-tensorflow`
   environment because lifelines and scikit-survival are not present in the
   lightweight CLI environment. The external `sbt-hyperstac` environment

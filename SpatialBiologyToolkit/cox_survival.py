@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 import re
+import warnings
 
 import anndata as ad
 import matplotlib.pyplot as plt
@@ -556,7 +557,7 @@ def fit_univariate_cox(
     duration_col: str = "duration",
     event_col: str = "event",
     penalizer: float = 0.0,
-    robust: bool = True,
+    robust: bool = False,
 ) -> pd.DataFrame:
     """Fit one Cox PH model per feature and return a ranked summary table."""
 
@@ -586,8 +587,12 @@ def fit_univariate_cox(
 
         fit_df[event_col] = fit_df[event_col].astype(bool)
         try:
+            from lifelines.exceptions import ConvergenceWarning
+
             cph = CoxPHFitter(penalizer=penalizer)
-            cph.fit(fit_df, duration_col=duration_col, event_col=event_col, robust=robust)
+            with warnings.catch_warnings():
+                warnings.simplefilter("error", ConvergenceWarning)
+                cph.fit(fit_df, duration_col=duration_col, event_col=event_col, robust=robust)
             summary = cph.summary.loc[feature]
             rows.append(
                 {
@@ -698,6 +703,82 @@ def _coxnet_coefficients(model: Any, feature_cols: Sequence[str], alpha: float |
     return coefficients[:, index].reshape(-1)
 
 
+def _fit_sksurv_checked(model, X, y):
+    """Reject non-converged/nonfinite fits; an all-zero penalized fit is valid."""
+    from sklearn.exceptions import ConvergenceWarning
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        model.fit(X, y)
+    messages = [str(item.message) for item in caught]
+    if any(issubclass(item.category, ConvergenceWarning) for item in caught):
+        raise RuntimeError("Cox solver did not converge: " + "; ".join(messages))
+    if not np.isfinite(model.coef_).all() or not np.isfinite(model.predict(X)).all():
+        raise RuntimeError("Cox solver returned nonfinite coefficients or predictions.")
+    residual = _sksurv_kkt_residual(model, X, y)
+    if not np.isfinite(residual) or residual > 0.005:
+        raise RuntimeError(f"Cox final per-case KKT residual {residual:g} exceeds 0.005.")
+    model.sbt_kkt_residual_ = residual
+    model.sbt_fit_warnings_ = "; ".join(messages)
+    return model
+
+
+def _sksurv_kkt_residual(model, X, y):
+    """Check the final Breslow objective in O(n*p), respecting tied event times.
+
+    Log-space cumulative risk sums also handle rejected overflowing Newton trial
+    steps without mistaking them for a nonfinite final optimum. Both estimators
+    used here default to Breslow; do not use this check for Efron fits.
+    """
+    X = np.asarray(X, dtype=float)
+    coefficients = np.asarray(model.coef_)
+    beta = coefficients[:, -1] if coefficients.ndim == 2 else coefficients
+    event_name, time_name = y.dtype.names
+    order = np.argsort(y[time_name])[::-1]
+    time, event = y[time_name][order], y[event_name][order].astype(float)
+    design = X[order]
+    eta = design @ beta
+    ends = np.r_[np.flatnonzero(time[1:] != time[:-1]), len(time) - 1]
+    starts = np.r_[0, ends[:-1] + 1]
+    deaths = np.add.reduceat(event, starts)
+    log_deaths = np.full(len(deaths), -np.inf)
+    log_deaths[deaths > 0] = np.log(deaths[deaths > 0])
+    log_increments = log_deaths - np.logaddexp.accumulate(eta)[ends]
+    log_cumulative_hazard = np.logaddexp.accumulate(log_increments[::-1])[::-1]
+    expected = np.exp(eta + np.repeat(log_cumulative_hazard, ends - starts + 1))
+    gradient = design.T @ (expected - event) / len(X)
+    if coefficients.ndim == 2:
+        alpha, ratio, penalty = model.alphas_[-1], model.l1_ratio, model.penalty_factor_
+        smooth = gradient + alpha * (1 - ratio) * penalty * beta
+        residual = np.where(np.abs(beta) > 1e-10,
+                            smooth + alpha * ratio * penalty * np.sign(beta),
+                            np.maximum(np.abs(smooth) - alpha * ratio * penalty, 0.))
+    else:
+        residual = gradient + np.asarray(model.alpha) * beta / len(X)
+    return float(np.max(np.abs(residual)))
+
+
+def _coxnet_alpha_grid(X, y, l1_ratio, n_alphas, alpha_min_ratio, max_iter, tol):
+    """Construct the requested grid without trusting the solver's path length.
+
+    In particular, negative deviance ratios with tied event times can trip
+    scikit-survival's early-stop rule after six steps, even for explicit paths.
+    Only use a two-step, near-null pilot to estimate alpha_max, then construct
+    the grid ourselves. Every subsequent penalty is fitted independently.
+    """
+    if int(n_alphas) < 1 or not 0 < float(alpha_min_ratio) < 1:
+        raise ValueError("Coxnet requires n_alphas >= 1 and 0 < alpha_min_ratio < 1.")
+    _, CoxnetSurvivalAnalysis, *_ = _require_sksurv()
+    pilot = _fit_sksurv_checked(CoxnetSurvivalAnalysis(
+        l1_ratio=float(l1_ratio), n_alphas=2, alpha_min_ratio=0.99,
+        max_iter=int(max_iter), tol=float(tol),
+    ), X, y)
+    alpha_max = float(pilot.alphas_[0])
+    if not np.isfinite(alpha_max) or alpha_max <= 0:
+        raise ValueError("Coxnet could not determine a finite positive alpha_max.")
+    return np.geomspace(alpha_max, alpha_max * float(alpha_min_ratio), int(n_alphas))
+
+
 def _penalized_summary(
     feature_cols: Sequence[str],
     coefficients: np.ndarray,
@@ -771,34 +852,26 @@ def coxnet_path_coefficients(
         event_col=event_col,
         standardize=standardize,
     )
-    model = CoxnetSurvivalAnalysis(
-        l1_ratio=float(l1_ratio),
-        n_alphas=int(n_alphas),
-        alpha_min_ratio=float(alpha_min_ratio),
-        max_iter=int(max_iter),
-        tol=float(tol),
-    )
-    model.fit(X, y)
-    alphas = np.asarray(model.alphas_, dtype=float)
-    coefficients = np.asarray(model.coef_, dtype=float)
-    if coefficients.ndim == 1:
-        coefficients = coefficients.reshape(-1, 1)
-
+    alphas = _coxnet_alpha_grid(X, y, l1_ratio, n_alphas, alpha_min_ratio, max_iter, tol)
     rows = []
-    for alpha_index, alpha in enumerate(alphas):
-        for feature, coef in zip(feature_cols, coefficients[:, alpha_index]):
-            coef = float(coef)
-            rows.append(
-                {
-                    "feature": feature,
-                    "alpha": float(alpha),
-                    "coef": coef,
-                    "abs_coef": abs(coef),
-                    "nonzero": bool(abs(coef) > 1e-12),
-                    "model_type": "coxnet",
-                    "l1_ratio": float(l1_ratio),
-                }
-            )
+    for alpha in alphas:
+        status, fit_warnings = "ok", ""
+        try:
+            model = _fit_sksurv_checked(CoxnetSurvivalAnalysis(
+                l1_ratio=float(l1_ratio), alphas=[float(alpha)],
+                max_iter=int(max_iter), tol=float(tol),
+            ), X, y)
+            coefficients = model.coef_[:, 0]
+            fit_warnings = model.sbt_fit_warnings_
+        except (ValueError, RuntimeError, ArithmeticError) as exc:
+            coefficients = np.full(len(feature_cols), np.nan)
+            status = f"failed: {exc}"
+        for feature, coef in zip(feature_cols, coefficients):
+            rows.append({"feature": feature, "alpha": float(alpha), "coef": float(coef),
+                         "abs_coef": abs(float(coef)), "nonzero": bool(abs(coef) > 1e-12),
+                         "model_type": "coxnet", "l1_ratio": float(l1_ratio),
+                         "status": status, "fit_warnings": fit_warnings})
+
     return pd.DataFrame(rows)
 
 
@@ -829,7 +902,7 @@ def ridge_cox_path_coefficients(
     for alpha in sorted({float(value) for value in alphas if float(value) > 0}):
         try:
             model = CoxPHSurvivalAnalysis(alpha=alpha)
-            model.fit(X, y)
+            _fit_sksurv_checked(model, X, y)
             coefficients = np.asarray(model.coef_, dtype=float).reshape(-1)
             status = "ok"
         except Exception as exc:
@@ -872,7 +945,7 @@ def fit_ridge_cox_model(
         standardize=standardize,
     )
     model = CoxPHSurvivalAnalysis(alpha=float(alpha))
-    model.fit(X, y)
+    _fit_sksurv_checked(model, X, y)
     coefficients = np.asarray(model.coef_, dtype=float).reshape(-1)
     summary = _penalized_summary(feature_cols, coefficients, "ridge", float(alpha), l1_ratio=0.0)
     return CoxFitResult(
@@ -905,93 +978,16 @@ def fit_coxnet_alpha_cv(
 ) -> tuple[pd.DataFrame, float]:
     """Choose a Coxnet alpha by case-level K-fold C-index."""
 
-    _, CoxnetSurvivalAnalysis, *_ = _require_sksurv()
-    try:
-        from sklearn.model_selection import KFold
-    except ImportError as exc:  # pragma: no cover - depends on local environment.
-        raise ImportError("fit_coxnet_alpha_cv requires scikit-learn.") from exc
+    from .cox_validation import tune_cox_penalty
 
-    X, y, fit_table, _, feature_cols = _prepare_sksurv_inputs(
-        case_table=case_table,
-        feature_cols=feature_cols,
-        duration_col=duration_col,
-        event_col=event_col,
-        standardize=standardize,
+    features = list(feature_cols or get_feature_columns(case_table, duration_col, event_col))
+    scores, alpha = tune_cox_penalty(
+        case_table, features, model_type="coxnet", max_image_features=None,
+        n_splits=n_splits, seed=seed, duration_col=duration_col, event_col=event_col,
+        standardize=standardize, coxnet_l1_ratio=l1_ratio, coxnet_n_alphas=n_alphas,
+        coxnet_alpha_min_ratio=alpha_min_ratio, coxnet_max_iter=max_iter, coxnet_tol=tol,
     )
-    path_model = CoxnetSurvivalAnalysis(
-        l1_ratio=float(l1_ratio),
-        n_alphas=int(n_alphas),
-        alpha_min_ratio=float(alpha_min_ratio),
-        max_iter=int(max_iter),
-        tol=float(tol),
-    )
-    path_model.fit(X, y)
-    alphas = np.asarray(path_model.alphas_, dtype=float)
-    if len(alphas) == 0:
-        raise ValueError("Coxnet did not produce an alpha path.")
-
-    n_splits = min(int(n_splits), len(fit_table))
-    if n_splits < 2:
-        raise ValueError("At least two cases are required for Coxnet alpha CV.")
-
-    rows = []
-    splitter = KFold(n_splits=n_splits, shuffle=True, random_state=seed)
-    for fold, (train_idx, test_idx) in enumerate(splitter.split(fit_table), start=1):
-        train = fit_table.iloc[train_idx]
-        test = fit_table.iloc[test_idx]
-        X_train = train[feature_cols].astype(float)
-        X_test = test[feature_cols].astype(float)
-        if standardize:
-            X_train, X_test, _ = _standardize_frame(X_train, X_test)
-        y_train = make_survival_array(train, duration_col=duration_col, event_col=event_col)
-        y_test = make_survival_array(test, duration_col=duration_col, event_col=event_col)
-
-        try:
-            fold_model = CoxnetSurvivalAnalysis(
-                l1_ratio=float(l1_ratio),
-                alphas=alphas,
-                max_iter=int(max_iter),
-                tol=float(tol),
-            )
-            fold_model.fit(X_train, y_train)
-        except Exception as exc:
-            for alpha in alphas:
-                rows.append({"fold": fold, "alpha": float(alpha), "c_index": np.nan, "status": f"failed: {exc}"})
-            continue
-
-        for alpha in alphas:
-            try:
-                risk = np.asarray(fold_model.predict(X_test, alpha=float(alpha)), dtype=float).reshape(-1)
-                score = _sksurv_c_index(y_test, risk)
-                status = "ok"
-            except Exception as exc:
-                score = np.nan
-                status = f"failed: {exc}"
-            rows.append({"fold": fold, "alpha": float(alpha), "c_index": score, "status": status})
-
-    scores = pd.DataFrame(rows)
-    summary = (
-        scores.groupby("alpha", as_index=False)
-        .agg(
-            mean_c_index=("c_index", "mean"),
-            std_c_index=("c_index", "std"),
-            n_valid_folds=("c_index", "count"),
-        )
-        .dropna(subset=["mean_c_index"])
-    )
-    if summary.empty:
-        best_alpha = float(alphas[0])
-        scores["selected_alpha"] = best_alpha
-        return scores, best_alpha
-
-    summary = summary.sort_values(
-        ["mean_c_index", "n_valid_folds", "alpha"],
-        ascending=[False, False, True],
-    )
-    best_alpha = float(summary.iloc[0]["alpha"])
-    scores = scores.merge(summary, on="alpha", how="left")
-    scores["selected_alpha"] = best_alpha
-    return scores, best_alpha
+    return scores, alpha
 
 
 def fit_coxnet_model(
@@ -1042,7 +1038,7 @@ def fit_coxnet_model(
         max_iter=int(max_iter),
         tol=float(tol),
     )
-    model.fit(X, y)
+    _fit_sksurv_checked(model, X, y)
     coefficients = _coxnet_coefficients(model, feature_cols, float(alpha))
     summary = _penalized_summary(feature_cols, coefficients, "coxnet", float(alpha), l1_ratio=l1_ratio)
     return CoxFitResult(
@@ -1091,6 +1087,7 @@ def fit_cox_model(
     if fit_df[event_col].astype(bool).sum() == 0:
         raise ValueError("At least one observed event is required for Cox fitting.")
 
+    raw_fit_df = fit_df.copy()
     scaler = None
     if standardize:
         X_scaled, _, scaler = _standardize_frame(fit_df[feature_cols])
@@ -1098,20 +1095,24 @@ def fit_cox_model(
 
     fit_df[event_col] = fit_df[event_col].astype(bool)
     cph = CoxPHFitter(penalizer=penalizer, l1_ratio=l1_ratio)
-    cph.fit(
-        fit_df,
-        duration_col=duration_col,
-        event_col=event_col,
-        robust=robust,
-        strata=list(strata) if strata is not None else None,
-    )
+    from lifelines.exceptions import ConvergenceWarning
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", ConvergenceWarning)
+        try:
+            cph.fit(
+                fit_df, duration_col=duration_col, event_col=event_col,
+                robust=robust, strata=list(strata) if strata is not None else None,
+            )
+        except ConvergenceWarning as exc:
+            raise RuntimeError(f"Cox PH solver did not converge: {exc}") from exc
     summary = cph.summary.reset_index().rename(columns={"covariate": "feature"})
     summary["p_bh"] = _adjust_pvalues_bh(summary["p"])
     return CoxFitResult(
         model=cph,
         summary=summary,
         feature_columns=feature_cols,
-        fit_data=fit_df,
+        fit_data=raw_fit_df,
         scaler=scaler,
         duration_col=duration_col,
         event_col=event_col,
@@ -1358,7 +1359,7 @@ def cross_validate_sksurv_cox_model(
             try:
                 if model_type == "ridge":
                     model = CoxPHSurvivalAnalysis(alpha=float(ridge_alpha))
-                    model.fit(X_train, y_train)
+                    _fit_sksurv_checked(model, X_train, y_train)
                     risk = np.asarray(model.predict(X_test), dtype=float).reshape(-1)
                 else:
                     if model_alpha is None:
@@ -1382,7 +1383,7 @@ def cross_validate_sksurv_cox_model(
                         max_iter=int(coxnet_max_iter),
                         tol=float(coxnet_tol),
                     )
-                    model.fit(X_train, y_train)
+                    _fit_sksurv_checked(model, X_train, y_train)
                     risk = np.asarray(model.predict(X_test, alpha=float(model_alpha)), dtype=float).reshape(-1)
                 heldout_c_index = _sksurv_c_index(y_test, risk)
                 if model_type == "coxnet":
@@ -1439,13 +1440,14 @@ def summarise_cv_metrics(metrics: pd.DataFrame) -> pd.DataFrame:
 
     if metrics.empty:
         return pd.DataFrame()
-    valid = metrics[metrics["fit_status"] == "ok"].copy()
-    if valid.empty:
-        return pd.DataFrame()
+    valid = metrics[(metrics["fit_status"] == "ok") & np.isfinite(metrics["heldout_c_index"])].copy()
     return pd.DataFrame(
         [
             {
                 "n_folds": int(len(valid)),
+                "n_requested_folds": int(len(metrics)),
+                "n_failed_folds": int(len(metrics) - len(valid)),
+                "validation_status": "failed" if valid.empty else "complete" if len(valid) == len(metrics) else "partial",
                 "mean_heldout_c_index": float(valid["heldout_c_index"].mean()),
                 "std_heldout_c_index": float(valid["heldout_c_index"].std()),
                 "mean_train_c_index": float(valid["train_c_index"].mean()),
@@ -1491,7 +1493,10 @@ def test_proportional_hazards(
     """Run lifelines' proportional hazards test for a fitted Cox model."""
 
     *_, proportional_hazard_test, _ = _require_lifelines()
-    result = proportional_hazard_test(fit.model, fit.fit_data, time_transform=time_transform)
+    data = fit.fit_data.copy()
+    if fit.scaler is not None:
+        data.loc[:, fit.feature_columns] = fit.scaler.transform(data[fit.feature_columns])
+    result = proportional_hazard_test(fit.model, data, time_transform=time_transform)
     return result.summary.reset_index().rename(columns={"index": "feature"})
 
 
@@ -1713,7 +1718,8 @@ def plot_coefficient_path(
     ax.margins(y=0.08)
     ax.set_xlabel("log10(alpha; higher = stronger regularisation)")
     ax.set_ylabel("Coefficient (standardised feature scale)")
-    ax.set_title(title)
+    ax.set_title(f"{title}\n{len(active_indices)}/{len(wide)} fitted features shown; "
+                 f"{int((max_abs <= 1e-12).sum())} zero throughout valid path")
     if len(active_indices) <= 25:
         ax.legend(fontsize=7, loc="center left", bbox_to_anchor=(1.02, 0.5), borderaxespad=0)
     fig.tight_layout()
@@ -1733,6 +1739,31 @@ def plot_coefficient_path(
         legend_fig.savefig(legend_path, dpi=200, bbox_inches="tight")
         plt.close(legend_fig)
 
+    return fig
+
+
+def plot_coefficient_path_heatmap(path_coefficients, output_path=None):
+    """Show every fitted feature, including zero coefficients and failed fits."""
+    features = path_coefficients["feature"].drop_duplicates().tolist()
+    alphas = sorted(path_coefficients["alpha"].unique())
+    wide = path_coefficients.pivot(index="feature", columns="alpha", values="coef")
+    wide = wide.reindex(index=features, columns=alphas)
+    values = wide.to_numpy(dtype=float)
+    finite = np.abs(values[np.isfinite(values)])
+    limit = max(float(finite.max()) if finite.size else 0., 1e-12)
+    cmap = plt.colormaps["RdBu_r"].copy()
+    cmap.set_bad("#bdbdbd")
+    fig, ax = plt.subplots(figsize=(12, max(4., .23 * len(features))))
+    im = ax.imshow(np.ma.masked_invalid(values), aspect="auto", cmap=cmap,
+                   vmin=-limit, vmax=limit, interpolation="nearest")
+    tick_indices = np.unique(np.linspace(0, len(alphas) - 1, min(7, len(alphas))).astype(int))
+    ax.set_xticks(tick_indices, [f"{np.log10(alphas[i]):.2f}" for i in tick_indices])
+    ax.set_yticks(range(len(features)), features, fontsize=7)
+    ax.set_xlabel("log10(alpha; -2 means alpha = 0.01)")
+    ax.set_title("All fitted feature paths: white = zero, grey = failed/nonfinite")
+    fig.colorbar(im, ax=ax, label="Standardised coefficient")
+    fig.tight_layout()
+    _save_or_return(fig, output_path)
     return fig
 
 
@@ -1780,7 +1811,7 @@ def plot_validation_summary(
 
     if metrics.empty:
         raise ValueError("metrics is empty.")
-    valid = metrics[metrics["fit_status"] == "ok"].copy()
+    valid = metrics[(metrics["fit_status"] == "ok") & np.isfinite(metrics["heldout_c_index"])].copy()
     if valid.empty:
         raise ValueError("No successful validation folds were found.")
 
@@ -2099,32 +2130,12 @@ def run_cox_survival_analysis(
             l1_ratio=cox_l1_ratio,
             standardize=standardize,
         )
-        cv_metrics, cv_predictions = cross_validate_cox_model(
-            case_table,
-            feature_cols=selected,
-            n_splits=cv_folds,
-            repeats=cv_repeats,
-            penalizer=cox_penalizer,
-            l1_ratio=cox_l1_ratio,
-            standardize=standardize,
-            seed=seed,
-        )
     elif model == "ridge":
         fit = fit_ridge_cox_model(
             case_table,
             feature_cols=selected,
             alpha=ridge_alpha,
             standardize=standardize,
-        )
-        cv_metrics, cv_predictions = cross_validate_sksurv_cox_model(
-            case_table,
-            feature_cols=selected,
-            model_type="ridge",
-            n_splits=cv_folds,
-            repeats=cv_repeats,
-            ridge_alpha=ridge_alpha,
-            standardize=standardize,
-            seed=seed,
         )
     else:
         fit = fit_coxnet_model(
@@ -2140,21 +2151,18 @@ def run_cox_survival_analysis(
             seed=seed,
             standardize=standardize,
         )
-        cv_metrics, cv_predictions = cross_validate_sksurv_cox_model(
-            case_table,
-            feature_cols=selected,
-            model_type="coxnet",
-            n_splits=cv_folds,
-            repeats=cv_repeats,
-            coxnet_alpha=coxnet_alpha,
-            coxnet_l1_ratio=coxnet_l1_ratio,
-            coxnet_n_alphas=coxnet_n_alphas,
-            coxnet_alpha_min_ratio=coxnet_alpha_min_ratio,
-            coxnet_max_iter=coxnet_max_iter,
-            coxnet_tol=coxnet_tol,
-            standardize=standardize,
-            seed=seed,
-        )
+
+    from .cox_validation import cross_validate_selected_cox_model
+
+    cv_metrics, cv_predictions, nested_scores = cross_validate_selected_cox_model(
+        case_table, feature_cols, model_type=model, max_image_features=max_features,
+        p_value_threshold=p_value_threshold, n_splits=cv_folds, repeats=cv_repeats,
+        ridge_alphas=[ridge_alpha], coxnet_alpha=coxnet_alpha,
+        standardize=standardize, seed=seed, cox_penalizer=cox_penalizer,
+        cox_l1_ratio=cox_l1_ratio, coxnet_l1_ratio=coxnet_l1_ratio,
+        coxnet_n_alphas=coxnet_n_alphas, coxnet_alpha_min_ratio=coxnet_alpha_min_ratio,
+        coxnet_max_iter=coxnet_max_iter, coxnet_tol=coxnet_tol)
+    fit.metadata = {**(fit.metadata or {}), "nested_alpha_cv_scores": nested_scores}
 
     if output_dir is not None:
         output_dir = Path(output_dir)
@@ -2164,6 +2172,7 @@ def run_cox_survival_analysis(
         univariate.to_csv(output_dir / "cox_univariate_results.csv", index=False)
         fit.summary.to_csv(output_dir / f"{output_prefix}_summary.csv", index=False)
         cv_metrics.to_csv(output_dir / f"{output_prefix}_cv_metrics.csv", index=False)
+        nested_scores.to_csv(output_dir / f"{output_prefix}_nested_alpha_cv_scores.csv", index=False)
         cv_predictions.to_csv(output_dir / f"{output_prefix}_cv_predictions.csv", index=False)
         summarise_cv_metrics(cv_metrics).to_csv(output_dir / f"{output_prefix}_cv_summary.csv", index=False)
         alpha_scores = (fit.metadata or {}).get("alpha_cv_scores")

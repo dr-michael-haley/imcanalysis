@@ -31,6 +31,15 @@ class _ComboStub:
     def addItems(self, values):
         self.items.extend((str(value), None) for value in values)
 
+    def currentData(self):
+        return self.items[0][1] if self.items else None
+
+    def findData(self, data):
+        return next((i for i, item in enumerate(self.items) if item[1] == data), -1)
+
+    def setCurrentIndex(self, index):
+        self.current_index = index
+
 
 def test_guard_discards_surplus_qt_signal_arguments_by_default():
     controller = object.__new__(NapariSBTController)
@@ -61,6 +70,10 @@ def test_classification_label_layers_use_colormap_keyword():
         columns=["ROI", "ObjectNumber", "class_id", "state"]
     )
     controller.scores = pd.DataFrame()
+    controller.viewer = SimpleNamespace(layers={})
+    controller._update_prediction_review_summary = lambda: None
+    controller._apply_managed_layer_display_settings = lambda: None
+    controller._raise_noncontext_mask = lambda: None
     layer_calls: list[dict] = []
     controller._class_colormap = lambda: "direct-label-colormap"
     controller._replace_layer = (
@@ -132,6 +145,8 @@ def test_class_controls_allow_manifest_before_cohort_snapshot_is_loaded():
     controller._refresh_class_tally = lambda: None
     controller._refresh_model_storage_label = lambda: None
     controller._refresh_queue_if_scored = lambda: None
+    controller.class_hotkey_label = SimpleNamespace(setText=lambda _text: None)
+    controller._refresh_identity_integration_mapping = lambda: None
 
     controller.refresh_class_controls()
 

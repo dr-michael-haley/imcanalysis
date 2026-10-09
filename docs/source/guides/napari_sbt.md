@@ -892,6 +892,53 @@ replace an existing path.
 
 ## Scanpy plotting
 
+Embedding plot windows include **Annotate regions…**. Draw a lasso or polygon,
+enter a category name, and assign it to the selected cells. **Apply to AnnData**
+writes a categorical column (default `manual_population`) into the live object;
+**Save H5AD copy…** writes the result to a new file. Selection uses all cells in
+the plot's filtered scope, even when only a sample is displayed. Later
+assignments replace earlier labels in overlapping regions, with undo available.
+Choose a parent population under **Inherit labels from** to retain labels outside
+the drawn regions; NapariSBT starts from the plotted population column. Enable
+**Prefix new labels with parent** for names such as `T cells / Activated`.
+
+Use **Cohort to annotate** at the top of the popup to combine observation-value
+filters, numeric observation ranges, and marker ranges from `adata.X`. Only cells
+matching every filter are coloured and selectable; the remaining cells stay grey.
+Changing filters keeps existing draft annotations, so you can split one parent
+population and then move to another. X filters use stored values directly, even
+when colouring by a different expression layer. Small cohorts retain display
+space when the plot is sampled.
+
+The popup also works independently of Napari and needs no images or masks:
+
+```python
+from SpatialBiologyToolkit.annotation import annotate_embedding
+
+window = annotate_embedding(
+    adata, basis="X_umap", color="leiden", source_obs="leiden"
+)
+```
+
+It opens a desktop window from notebooks too; no inline widget backend is needed.
+The standalone CLI is `sbt gui annotate --anndata processed.h5ad --color leiden`.
+Use **Save recipe…** or `window.save_recipe("regions.json")` to retain the
+assigned lasso/polygon shapes, labels, cohort filters and parent-label settings.
+Replay them without a window:
+
+```python
+from SpatialBiologyToolkit.annotation import apply_annotation_recipe
+
+apply_annotation_recipe(adata, "regions.json")
+```
+
+Replay writes the saved output observation; pass `key_added="another_column"`
+to change it or `overwrite=True` to replace an existing column. Each region uses
+the filters active when it was assigned, in assignment order. Unassigned shapes
+are saved for reference only. Reuse the same embedding coordinate system:
+recomputing UMAP may place different cells inside the saved shapes.
+See the [Scanpy plotting help](napari_sbt_help.md) for the complete workflow.
+
 The **Scanpy plotting** tab replaces the small Live QC plot box previously nested
 inside Population naming. It is visible in every AnnData-based workflow and works
 with original, renamed, merged, subclustered, classifier-derived, or manually

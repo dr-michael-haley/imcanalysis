@@ -15,6 +15,7 @@ $outputPath = Join-Path ([IO.Path]::GetFullPath($OutputDirectory)) 'NapariSBT.ex
     "/out:$outputPath" (Join-Path $PSScriptRoot 'LauncherCore.cs') (Join-Path $PSScriptRoot 'Launcher.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Launcher compilation failed.' }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README.html') -Destination $OutputDirectory -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'README_DISTRIBUTOR.html') -Destination $OutputDirectory -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'Start_NapariSBT.bat') -Destination $OutputDirectory -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'start_naparisbt.py') -Destination $OutputDirectory -Force
 Write-Output "Built $outputPath"

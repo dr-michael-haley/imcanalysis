@@ -155,7 +155,7 @@ def _selected_features(cxs, case_table, image_features, top_n):
         case_table,
         feature_cols=image_features,
         penalizer=0.0,
-        robust=True,
+        robust=False,
     )
     selected = cxs.select_top_features(
         univariate,
@@ -167,127 +167,48 @@ def _selected_features(cxs, case_table, image_features, top_n):
     return univariate, selected
 
 
-def _ridge_alpha(cxs, case_table, features, config):
-    import pandas as pd
-
-    rows = []
-    for alpha in config.ridge_alphas:
-        metrics, _ = cxs.cross_validate_sksurv_cox_model(
-            case_table,
-            feature_cols=features,
-            model_type="ridge",
-            n_splits=config.validation_folds,
-            repeats=config.validation_repeats,
-            ridge_alpha=float(alpha),
-            standardize=config.standardize,
-            seed=config.seed,
-        )
-        summary = cxs.summarise_cv_metrics(metrics)
-        row = {
-            "alpha": float(alpha),
-            "mean_heldout_c_index": float("nan"),
-            "std_heldout_c_index": float("nan"),
-            "n_folds": 0,
-        }
-        if not summary.empty:
-            row.update(summary.iloc[0].to_dict())
-            row["alpha"] = float(alpha)
-        rows.append(row)
-    summary = pd.DataFrame(rows).sort_values(
-        ["mean_heldout_c_index", "n_folds", "alpha"],
-        ascending=[False, False, True],
-        na_position="last",
+def _fit_model(cxs, case_table, model, features, config, *, select_alpha,
+               candidate_features=None, clinical_features=(), max_image_features=None):
+    from SpatialBiologyToolkit.cox_validation import (
+        cross_validate_selected_cox_model, select_training_features, tune_cox_penalty,
     )
-    usable = summary.dropna(subset=["mean_heldout_c_index"])
-    if usable.empty:
-        raise ValueError("Ridge Cox alpha selection produced no valid held-out C-index.")
-    return float(usable.iloc[0]["alpha"]), summary
 
-
-def _fit_model(cxs, case_table, model, features, config, *, select_alpha):
+    candidates = list(features if candidate_features is None else candidate_features)
+    image = [f for f in candidates if f not in clinical_features]
+    clinical = [f for f in clinical_features if f in candidates]
+    features = select_training_features(case_table, image, clinical,
+                                        max_image_features=max_image_features)
+    shared = dict(standardize=config.standardize, coxnet_l1_ratio=config.coxnet_l1_ratio,
+                  coxnet_n_alphas=config.coxnet_n_alphas,
+                  coxnet_alpha_min_ratio=config.coxnet_alpha_min_ratio,
+                  coxnet_max_iter=config.coxnet_max_iter, coxnet_tol=config.coxnet_tolerance)
+    alpha_table = None
+    alpha = config.ridge_fixed_alpha
+    if model == "coxnet" or (model == "ridge" and select_alpha):
+        alpha_table, alpha = tune_cox_penalty(
+            case_table, image, clinical, model_type=model,
+            max_image_features=max_image_features, ridge_alphas=config.ridge_alphas,
+            n_splits=config.validation_folds, seed=config.seed, **shared)
     if model == "coxph":
-        fit = cxs.fit_cox_model(
-            case_table,
-            feature_cols=features,
-            penalizer=config.coxph_penalizer,
-            standardize=config.standardize,
-            robust=True,
-        )
-        metrics, predictions = cxs.cross_validate_cox_model(
-            case_table,
-            feature_cols=features,
-            n_splits=config.validation_folds,
-            repeats=config.validation_repeats,
-            penalizer=config.coxph_penalizer,
-            standardize=config.standardize,
-            seed=config.seed,
-        )
-        return fit, metrics, predictions, None
-    if model == "ridge":
-        alpha, alpha_summary = (
-            _ridge_alpha(cxs, case_table, features, config)
-            if select_alpha
-            else (config.ridge_fixed_alpha, None)
-        )
-        fit = cxs.fit_ridge_cox_model(
-            case_table,
-            feature_cols=features,
-            alpha=alpha,
-            standardize=config.standardize,
-        )
-        metrics, predictions = cxs.cross_validate_sksurv_cox_model(
-            case_table,
-            feature_cols=features,
-            model_type="ridge",
-            n_splits=config.validation_folds,
-            repeats=config.validation_repeats,
-            ridge_alpha=alpha,
-            standardize=config.standardize,
-            seed=config.seed,
-        )
-        return fit, metrics, predictions, alpha_summary
-
-    alpha_scores, alpha = cxs.fit_coxnet_alpha_cv(
-        case_table,
-        feature_cols=features,
-        l1_ratio=config.coxnet_l1_ratio,
-        n_alphas=config.coxnet_n_alphas,
-        alpha_min_ratio=config.coxnet_alpha_min_ratio,
-        max_iter=config.coxnet_max_iter,
-        tol=config.coxnet_tolerance,
-        n_splits=config.validation_folds,
-        seed=config.seed,
-        standardize=config.standardize,
-    )
-    fit = cxs.fit_coxnet_model(
-        case_table,
-        feature_cols=features,
-        alpha=alpha,
-        l1_ratio=config.coxnet_l1_ratio,
-        n_alphas=config.coxnet_n_alphas,
-        alpha_min_ratio=config.coxnet_alpha_min_ratio,
-        max_iter=config.coxnet_max_iter,
-        tol=config.coxnet_tolerance,
-        cv_folds=config.validation_folds,
-        seed=config.seed,
-        standardize=config.standardize,
-    )
-    metrics, predictions = cxs.cross_validate_sksurv_cox_model(
-        case_table,
-        feature_cols=features,
-        model_type="coxnet",
-        n_splits=config.validation_folds,
-        repeats=config.validation_repeats,
-        coxnet_alpha=alpha,
-        coxnet_l1_ratio=config.coxnet_l1_ratio,
-        coxnet_n_alphas=config.coxnet_n_alphas,
-        coxnet_alpha_min_ratio=config.coxnet_alpha_min_ratio,
-        coxnet_max_iter=config.coxnet_max_iter,
-        coxnet_tol=config.coxnet_tolerance,
-        standardize=config.standardize,
-        seed=config.seed,
-    )
-    return fit, metrics, predictions, alpha_scores
+        fit = cxs.fit_cox_model(case_table, feature_cols=features,
+                               penalizer=config.coxph_penalizer,
+                               standardize=config.standardize, robust=False)
+    elif model == "ridge":
+        fit = cxs.fit_ridge_cox_model(case_table, feature_cols=features,
+                                     alpha=alpha, standardize=config.standardize)
+    else:
+        fit = cxs.fit_coxnet_model(case_table, feature_cols=features, alpha=alpha,
+                                  l1_ratio=config.coxnet_l1_ratio,
+                                  max_iter=config.coxnet_max_iter, tol=config.coxnet_tolerance,
+                                  standardize=config.standardize)
+    metrics, predictions, nested_scores = cross_validate_selected_cox_model(
+        case_table, image, clinical, model_type=model, max_image_features=max_image_features,
+        ridge_alphas=config.ridge_alphas if select_alpha else [config.ridge_fixed_alpha],
+        n_splits=config.validation_folds, repeats=config.validation_repeats,
+        seed=config.seed, cox_penalizer=config.coxph_penalizer, **shared)
+    fit.metadata = {**(fit.metadata or {}), "nested_alpha_cv_scores": nested_scores,
+                    "candidate_features": candidates}
+    return fit, metrics, predictions, alpha_table
 
 
 def _write_model_outputs(cxs, output, label, fit, metrics, predictions, alpha_table, config):
@@ -297,8 +218,34 @@ def _write_model_outputs(cxs, output, label, fit, metrics, predictions, alpha_ta
     predictions.to_csv(output / f"{label}_cv_predictions.csv", index=False)
     summary = cxs.summarise_cv_metrics(metrics)
     summary.to_csv(output / f"{label}_cv_summary.csv", index=False)
+    import pandas as pd
+
+    nested = (fit.metadata or {}).get("nested_alpha_cv_scores")
+    if nested is not None:
+        nested.to_csv(output / f"{label}_nested_alpha_cv_scores.csv", index=False)
+    candidates = (fit.metadata or {}).get("candidate_features", fit.feature_columns)
+    pd.DataFrame({"feature": candidates,
+                  "included_in_final_fit": [f in fit.feature_columns for f in candidates],
+                  "reason": ["fitted; coefficient may be zero" if f in fit.feature_columns
+                             else "excluded by training-feature screen or constant column"
+                             for f in candidates]}).to_csv(output / f"{label}_feature_eligibility.csv", index=False)
     if alpha_table is not None:
-        alpha_table.to_csv(output / f"{label}_alpha_cv_scores.csv", index=False)
+        if label == "ridge_cox":
+            alpha_table.to_csv(output / f"{label}_final_tuning_folds.csv", index=False)
+            # Retain the historical per-alpha ridge summary columns/file.
+            valid = alpha_table.assign(
+                valid_score=alpha_table.c_index.where(alpha_table.status.eq("ok")))
+            legacy_summary = valid.groupby("alpha", as_index=False).agg(
+                mean_heldout_c_index=("valid_score", "mean"),
+                std_heldout_c_index=("valid_score", "std"),
+                n_folds=("valid_score", "count"),
+                mean_train_c_index=("train_c_index", "mean"),
+                std_train_c_index=("train_c_index", "std"),
+                mean_n_features=("n_features", "mean"),
+                eligible=("eligible", "first"))
+            legacy_summary.to_csv(output / f"{label}_alpha_cv_scores.csv", index=False)
+        else:
+            alpha_table.to_csv(output / f"{label}_alpha_cv_scores.csv", index=False)
 
     if label == "coxph":
         cxs.plot_cox_forest(
@@ -332,12 +279,15 @@ def _write_model_outputs(cxs, output, label, fit, metrics, predictions, alpha_ta
                 standardize=config.standardize,
             )
         path.to_csv(output / f"{label}_path_coefficients.csv", index=False)
-        cxs.plot_coefficient_path(
-            path,
-            output / f"{label}_coefficient_path.png",
-            selected_alpha=fit.alpha,
-            max_features=30,
-        )
+        cxs.plot_coefficient_path_heatmap(path, output / f"{label}_coefficient_path_all_features.png")
+        if path["coef"].notna().any():
+            cxs.plot_coefficient_path(
+                path, output / f"{label}_coefficient_path.png",
+                selected_alpha=fit.alpha, max_features=30,
+            )
+        else:
+            cxs.save_placeholder_plot(output / f"{label}_coefficient_path.png",
+                                      "Coefficient path failed", "Inspect path CSV fit statuses.")
 
     risk = cxs.build_risk_table(
         fit,
@@ -497,6 +447,14 @@ def _run_analysis(cxs, case_table, output, config, dynamic_source, dynamic_col):
                     model_features,
                     config,
                     select_alpha=(model == "ridge" and feature_set == primary_set),
+                    candidate_features=(
+                        [*image_features, *clinical_features] if feature_set == "clinical_image"
+                        else clinical_features if feature_set == "clinical" else image_features),
+                    clinical_features=clinical_features if feature_set != "image" else [],
+                    max_image_features=min(
+                        config.feature_selection_top_n,
+                        config.coxph_max_features if model == "coxph" else
+                        config.ridge_max_features if model == "ridge" else config.feature_selection_top_n),
                 )
                 fits[feature_set][model] = fit
                 label = "ridge_cox" if model == "ridge" else model
@@ -516,7 +474,8 @@ def _run_analysis(cxs, case_table, output, config, dynamic_source, dynamic_col):
                     "feature_set": feature_set,
                     "model": label,
                     "status": "ok",
-                    "n_features": len(model_features),
+                    "n_features": len(fit.feature_columns),
+                    "validation_scheme": "nested_training_only",
                     "alpha": fit.alpha,
                 }
                 if not summary.empty:
@@ -524,6 +483,8 @@ def _run_analysis(cxs, case_table, output, config, dynamic_source, dynamic_col):
                 validation_rows.append(row)
             except (ValueError, RuntimeError, ArithmeticError) as exc:
                 plt.close("all")
+                if hasattr(exc, "scores"):
+                    exc.scores.to_csv(output / f"{feature_set}_{model}_failed_tuning.csv", index=False)
                 logging.warning(
                     "Cox model failed for %s/%s: %s",
                     feature_set,
@@ -561,6 +522,9 @@ def _run_analysis(cxs, case_table, output, config, dynamic_source, dynamic_col):
                 f"Events: {int(case_table['event'].sum())}",
                 f"Image features: {len(image_features)}",
                 f"Clinical features: {len(clinical_features)}",
+                "Validation: outcome screening and penalty selection repeated inside training folds.",
+                "Alpha-CV tables tune the final fit; nested-alpha tables audit held-out validation.",
+                "Coefficient path x-axis: log10(alpha); -2 means a positive alpha of 0.01.",
                 f"Successful model comparisons: {sum(row['status'] == 'ok' for row in validation_rows)}",
             ]
         )

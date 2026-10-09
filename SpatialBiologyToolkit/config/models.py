@@ -4450,6 +4450,16 @@ class BioBatchNetConfig(ConfigModel):
         ),
     )
 
+    random_state: Optional[int] = Field(
+        default=None,
+        ge=0,
+        le=4294967295,
+        description=(
+            "Reset Python, NumPy, and PyTorch CPU/CUDA random generators before each "
+            "BioBatchNet fit. Null preserves the existing unseeded behaviour. A fixed "
+            "seed improves repeatability but does not guarantee bitwise GPU determinism."
+        ),
+    )
     batch_correction_obs: Optional[str] = Field(
         default=None,
         description=(

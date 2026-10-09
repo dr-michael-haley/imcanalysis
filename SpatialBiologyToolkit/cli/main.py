@@ -397,6 +397,89 @@ def gui_napari_command(
         raise typer.Exit(completed.returncode)
 
 
+def _annotation_gui_command(*, headless: bool = False) -> list[str]:
+    module = "SpatialBiologyToolkit.annotation"
+    modules = ("anndata", "numpy", "pandas", "matplotlib")
+    if not headless:
+        modules += ("qtpy",)
+    if all(importlib.util.find_spec(name) is not None for name in modules) and (
+        headless or any(
+            importlib.util.find_spec(name) is not None for name in QT_BINDING_MODULES
+        )
+    ):
+        return [sys.executable, "-m", module]
+    conda = shutil.which("conda")
+    if conda is None:
+        dependencies = "Matplotlib and AnnData" if headless else "Matplotlib, AnnData and Qt"
+        raise RuntimeError(
+            f"Region annotation needs {dependencies}. Activate the "
+            "SBT scientific environment before running it."
+        )
+    _key, definition = resolve_environment(load_environment_registry(), "napari")
+    return [
+        conda, "run", "--no-capture-output", "-n", definition.conda_name,
+        "python", "-m", module,
+    ]
+
+
+@gui_app.command("annotate")
+def gui_annotate_command(
+    anndata: Path = typer.Option(
+        ..., "--anndata", exists=True, dir_okay=False, resolve_path=True,
+    ),
+    basis: str = typer.Option("X_umap", "--basis", help="Existing obsm embedding key."),
+    key_added: str = typer.Option(
+        "manual_population", "--key-added", help="Output categorical obs column.",
+    ),
+    color: str | None = typer.Option(
+        None, "--color", help="Observation or marker used to colour cells.",
+    ),
+    source_obs: str | None = typer.Option(
+        None, "--source-obs",
+        help="Optional starting labels to preserve outside drawn regions.",
+    ),
+    recipe: Path | None = typer.Option(
+        None, "--recipe", exists=True, dir_okay=False, resolve_path=True,
+        help="Replay saved regions without a window; uses settings from the recipe.",
+    ),
+    output: Path | None = typer.Option(
+        None, "--output", dir_okay=False, resolve_path=True,
+        help="New H5AD destination; required with --recipe.",
+    ),
+    overwrite_obs: bool = typer.Option(
+        False, "--overwrite-obs", help="Allow recipe replay to replace its obs column.",
+    ),
+) -> None:
+    """Draw embedding regions, or replay a saved recipe without a window."""
+    if (recipe is None) != (output is None):
+        _fail("--recipe and --output must be supplied together.")
+    if overwrite_obs and recipe is None:
+        _fail("--overwrite-obs requires --recipe.")
+    if output is not None and output.exists():
+        _fail("Refusing to overwrite the output H5AD file.")
+    try:
+        command = (
+            _annotation_gui_command(headless=True)
+            if recipe is not None else _annotation_gui_command()
+        )
+    except Exception as exc:
+        _fail(exc)
+    command.extend([
+        "--anndata", str(anndata), "--basis", basis, "--key-added", key_added,
+    ])
+    if color is not None:
+        command.extend(["--color", color])
+    if source_obs is not None:
+        command.extend(["--source-obs", source_obs])
+    if recipe is not None:
+        command.extend(["--recipe", str(recipe), "--output", str(output)])
+    if overwrite_obs:
+        command.append("--overwrite-obs")
+    completed = subprocess.run(command, check=False)
+    if completed.returncode:
+        raise typer.Exit(completed.returncode)
+
+
 def _fail(exc: Exception | str, *, code: int = 2) -> NoReturn:
     typer.echo(f"Error: {exc}", err=True)
     raise typer.Exit(code)

@@ -171,6 +171,8 @@ class ScanpyPlotArtifact:
     data: pd.DataFrame
     cell_count: int
     summary: str
+    # Full embedding scope, before display downsampling, for region annotation.
+    annotation_obs_names: pd.Index | None = None
 
 
 def ordered_obs_values(
@@ -1198,7 +1200,10 @@ def _build_embedding_plot(
             f"{len(display_positions):,} displayed of {len(positions):,} selected "
             f"cells; grouped by {request.groupby}; source {request.embedding_key}."
         )
-    return ScanpyPlotArtifact(figure, title, table, len(positions), summary)
+    return ScanpyPlotArtifact(
+        figure, title, table, len(positions), summary,
+        annotation_obs_names=adata.obs_names[positions].copy(),
+    )
 
 
 def _build_expression_plot(

@@ -8,6 +8,7 @@
 |---|---|---|---|---|---|
 | `input_adata_path` | `Optional[str]` | `null` | `advanced` | AnnData file containing the per-cell expression matrix and batch annotation. When unset, the stage reads general.anndata_path. | - |
 | `output_adata_path` | `Optional[str]` | `null` | `advanced` | Destination for the AnnData with BioBatchNet embeddings and optional Scanpy results. When unset, general.anndata_path is updated in place. | - |
+| `random_state` | `Optional[int]` | `null` | `advanced` | Reset Python, NumPy, and PyTorch CPU/CUDA random generators before each BioBatchNet fit. Null preserves the existing unseeded behaviour. A fixed seed improves repeatability but does not guarantee bitwise GPU determinism. | - |
 | `batch_correction_obs` | `Optional[str]` | `null` | `advanced` | Name of the adata.obs column that identifies technical batches to remove from the biological latent space. Values are converted to strings and encoded as consecutive integers; the column must exist and should describe technical rather than biological variation. | - |
 | `n_for_pca` | `Optional[int]` | `null` | `advanced` | Deprecated compatibility setting retained for older configurations. The current BioBatchNet stage does not run PCA and does not use this value. | - |
 | `leiden_resolutions_list` | `List[float]` | `[0.3, 1.0]` | `advanced` | Leiden resolutions calculated from the neighbour graph of X_biobatchnet when both biobatchnet_run_postprocess and biobatchnet_run_leiden are enabled. Each result is stored in adata.obs as leiden_<resolution>. | - |

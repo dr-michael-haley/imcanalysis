@@ -194,3 +194,134 @@ def test_unified_dock_is_cohort_gated_and_rejects_context_clicks(tmp_path: Path)
         assert "SETUP MODE" in controller.population_qc_scope_banner.text()
     finally:
         viewer.close()
+
+
+def test_classify_clicks_after_labeler_selection(tmp_path: Path, monkeypatch):
+    import tifffile
+    from napari.utils.interactions import mouse_press_callbacks
+
+    from SpatialBiologyToolkit.napari_sbt.app import (
+        LABELER_SELECTED_CELL_LAYER_NAME,
+        SELECTED_CELL_LAYER_NAME,
+    )
+
+    data = _live_adata()
+    adata_path = tmp_path / "cells.h5ad"
+    data.write_h5ad(adata_path)
+    masks = tmp_path / "masks"
+    masks.mkdir()
+    tifffile.imwrite(
+        masks / "r1.tiff", np.array([[0, 1, 1], [0, 2, 2]], dtype=np.int32)
+    )
+    preview = resolve_cohort(
+        data, roi_obs="ROI", object_id_obs="ObjectNumber", mode="all_cells"
+    )
+    root = tmp_path / "experiment"
+    (root / "cohort").mkdir(parents=True)
+    preview.eligible_cells.to_parquet(
+        root / "cohort" / "eligible_cells.parquet", index=False
+    )
+    save_experiment(
+        ExperimentManifest(
+            name="Click regression",
+            anndata_path=str(adata_path),
+            masks_folder=str(masks),
+            cell_scope=preview.scope(
+                mode="all_cells", obs_column=None, obs_values=[]
+            ),
+            classes=segmentation_qc_classes(),
+        ),
+        root,
+    )
+
+    viewer = napari.Viewer(show=False)
+    try:
+        _, controller, _dock = launch(viewer=viewer, experiment=root)
+
+        def fail_on_dialog(_parent, _title, message):
+            pytest.fail(message)
+
+        monkeypatch.setattr(controller.QMessageBox, "critical", fail_on_dialog)
+        # Locate the visible tabs independently of the controller's routing.
+        classify_index = next(
+            i for i in range(controller.tabs.count())
+            if controller.tabs.tabText(i).endswith("Classify")
+        )
+        labeler_index = next(
+            i for i in range(controller.tabs.count())
+            if controller.tabs.tabText(i).endswith("Labeler")
+        )
+        assert controller.classify_tab_index == classify_index
+        assert controller.labeler_tab_index == labeler_index
+        for topic, title in (
+            ("explore", "Explore"), ("population_qc", "Population QC"),
+            ("scanpy_plotting", "Scanpy plotting"),
+            ("dataset_maintenance", "Dataset Maintenance"),
+        ):
+            assert controller.tabs.tabText(
+                getattr(controller, f"{topic}_tab_index")
+            ).endswith(title)
+        # Expose both tabs just as the advanced workflow does.
+        for index in (classify_index, labeler_index):
+            controller.tabs.setTabVisible(index, True)
+        controller.tabs.setCurrentIndex(labeler_index)
+        for button in controller.labeler_click_behavior_group.buttons():
+            if button.property("napari_sbt_labeler_click_behavior") == "select":
+                button.setChecked(True)
+        cohort_layer = viewer.layers["classification_cohort"]
+        viewer.layers.selection.active = cohort_layer
+        event = SimpleNamespace(type="mouse_press", button=1, position=(0, 1))
+        mouse_press_callbacks(viewer, event)
+        assert controller.current_labeler_object == 1
+        outline = viewer.layers[LABELER_SELECTED_CELL_LAYER_NAME]
+        assert viewer.layers.selection.active is cohort_layer
+        assert not outline.editable
+
+        # Selecting the outline manually must not prevent Classify clicks.
+        viewer.layers.selection.active = outline
+        controller.tabs.setCurrentIndex(classify_index)
+        assert LABELER_SELECTED_CELL_LAYER_NAME not in viewer.layers
+        controller.refresh_labeler_layers()
+        assert LABELER_SELECTED_CELL_LAYER_NAME not in viewer.layers
+        viewer.layers.selection.active = cohort_layer
+        for index, state in enumerate(("proposed", "confirmed")):
+            controller.class_combo.setCurrentIndex(index)
+            controller.click_behavior_radios[state].setChecked(True)
+            mouse_press_callbacks(viewer, event)
+            saved = pd.read_parquet(controller.paths.labels)
+            assert len(saved) == 1
+            assert saved.iloc[0]["state"] == state
+            assert saved.iloc[0]["class_id"] == controller.selected_class_id()
+            assert viewer.layers.selection.active is cohort_layer
+            assert not viewer.layers[SELECTED_CELL_LAYER_NAME].editable
+            assert controller.labeler_records.empty
+
+        controller.tabs.setCurrentIndex(labeler_index)
+        assert SELECTED_CELL_LAYER_NAME not in viewer.layers
+        assert LABELER_SELECTED_CELL_LAYER_NAME in viewer.layers
+        event.position = (1, 1)
+        mouse_press_callbacks(viewer, event)
+        assert controller.current_labeler_object == 2
+        assert len(pd.read_parquet(controller.paths.labels)) == 1
+        controller.assign_selected_labeler_cell()
+        labeler_records = controller.labeler_records.copy(deep=True)
+        assert len(labeler_records) == 1
+        controller.labeler_enabled_check.setChecked(False)
+        assert not controller.labeler_enabled
+        assert "labeler_assignments" not in viewer.layers
+        assert LABELER_SELECTED_CELL_LAYER_NAME not in viewer.layers
+        controller.refresh_labeler_layers()
+        mouse_press_callbacks(viewer, event)
+        assert controller.current_labeler_object is None
+        assert LABELER_SELECTED_CELL_LAYER_NAME not in viewer.layers
+        pd.testing.assert_frame_equal(controller.labeler_records, labeler_records)
+        controller.tabs.setCurrentIndex(classify_index)
+        mouse_press_callbacks(viewer, event)
+        assert len(pd.read_parquet(controller.paths.labels)) == 2
+        pd.testing.assert_frame_equal(controller.labeler_records, labeler_records)
+        controller.set_labeler_enabled(True)
+        assert controller.labeler_enabled_check.isChecked()
+        assert "labeler_assignments" in viewer.layers
+        pd.testing.assert_frame_equal(controller.labeler_records, labeler_records)
+    finally:
+        viewer.close()

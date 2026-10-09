@@ -299,6 +299,8 @@ class ExperimentManifest(BaseModel):
     updated_at: datetime = Field(default_factory=utc_timestamp)
     project_root: str | None = None
     anndata_path: str | None = None
+    identity_source: Literal["anndata_or_table", "frozen_cohort"] = "anndata_or_table"
+    channel_aliases: dict[str, str] = Field(default_factory=dict)
     images_folders: list[str] = Field(default_factory=list)
     extra_images_folders: list[str] = Field(default_factory=list)
     masks_folder: str
@@ -344,7 +346,9 @@ class ExperimentManifest(BaseModel):
         if len(source_ids) != len(set(source_ids)):
             raise ValueError("Feature source IDs must be unique.")
         if self.cell_scope.mode == "obs_values" and not self.anndata_path:
-            raise ValueError("AnnData is required for observation-defined cohorts.")
+            # Live notebook sessions supply the validated frozen identity table;
+            # the feature worker verifies its hash before touching images.
+            self.identity_source = "frozen_cohort"
         if self.experiment_mode == "feature_discovery_trial":
             if self.feature_trial is None or not self.feature_trial.selected_rois:
                 raise ValueError(

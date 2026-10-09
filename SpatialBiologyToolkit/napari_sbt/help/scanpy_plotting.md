@@ -10,6 +10,121 @@ recompute PCA, rebuild neighbours, change BioBatchNet output, calculate UMAP, or
 run clustering. Every plot window is a snapshot of the labels and values that
 existed when **Open in a new resizable window** was pressed.
 
+## Draw and label embedding regions
+
+Open an **Embedding** plot, then click **Annotate regions…** in its window.
+The annotation popup uses the same embedding components. The plot's filtered
+cell scope remains the outer limit for annotation; other cells provide grey
+context. You can narrow the annotation cohort further in the popup.
+
+1. Choose an **Output obs column** (default: `manual_population`).
+2. Choose **Inherit labels from** to copy a parent population column into the
+   draft. NapariSBT preselects the plotted population column. Unannotated cells
+   keep their parent labels. Choose **Unassigned (no parent)** for a fresh column.
+3. Under **Cohort to annotate**, choose **obs values**, **obs range**, or **X
+   range**, select the field and values/bounds, then click **Add filter**. All
+   filters must match. Cohort cells are coloured; other cells stay grey and cannot
+   be selected. **Remove selected filter** and **Clear filters** preserve your
+   existing draft annotations.
+4. Choose **Lasso** and drag around cells, or **Polygon** and click vertices,
+   clicking the first vertex again to finish. Turn off toolbar pan/zoom to draw.
+5. Enter a category name and click **Assign label**. Optionally enable **Prefix
+   new labels with parent**: assigning `Activated` inside `T cells` produces
+   `T cells / Activated`. This uses each cell's original parent label, including
+   when a selection spans several parents. Repeat for other categories.
+   Later assignments replace earlier ones where regions overlap. **Undo
+   assignment** reverses the last assignment; **Clear selection** clears the
+   current outline without removing assigned labels.
+6. Click **Apply to AnnData** to write a categorical observation and its colours.
+   An existing column requires the explicit overwrite checkbox. The new column
+   becomes available in NapariSBT's observation selectors.
+7. Use **Save H5AD copy…** to persist the applied labels in a new file. The source
+   H5AD is not automatically changed.
+
+For example, add `obs[population] = T cells`, `obs[sample] = A`, and
+`X[CD3] >= 2` to split only CD3-high T cells from sample A. Values within one
+**obs values** filter use OR; separate filters use AND. Range limits are inclusive
+and either bound can be left blank. Missing/nonfinite numeric values do not match
+ranges; missing observation values can be selected explicitly.
+
+**X range** always reads stored `adata.X` values without transforming them,
+independently of any `layer` or `raw` setting used for plot colouring.
+
+The display can be sampled, but the drawn region selects **all cells in the
+cohort**, including undisplayed cells. Sampling reserves space for the cohort so
+small populations remain visible. The popup shows coloured, grey, and selected counts.
+Cells with missing embedding coordinates cannot be selected. Region annotations
+are manual labels; the tool does not calculate clusters.
+
+The same popup is available without Napari, masks, or images:
+
+```bash
+sbt gui annotate --anndata processed.h5ad --basis X_umap --color leiden
+```
+
+From Python or a notebook (the notebook opens a separate desktop window):
+
+```python
+from SpatialBiologyToolkit.annotation import CohortFilter, annotate_embedding
+
+window = annotate_embedding(
+    adata, basis="X_umap", color="leiden", source_obs="leiden",
+    key_added="manual_population",
+    filters=[
+        CohortFilter("obs", "leiden", values=("3",)),
+        CohortFilter("X", "CD3", minimum=2),
+    ],
+)
+```
+
+Optional Python arguments include `components=(0, 1)` (zero-based),
+`source_obs="leiden"`, `obs_names=[...]` to restrict selectable cells,
+`layer="scaled"` or `use_raw=True` for marker colouring, and `point_limit=50000`.
+Use another existing `obsm` key for PCA, t-SNE, or a custom embedding.
+Scripts wait for the popup to close; notebooks keep their Qt event loop active.
+
+### Save regions and replay without a window
+
+Click **Save recipe…** to save a JSON file, or call
+`window.save_recipe("regions.json")`. Saving a recipe does not require applying
+the draft to AnnData. It records the embedding key/components, output column,
+parent labels, optional cell-name scope, display settings, and each assigned
+region's vertices, label, parent-prefix choice, and obs/X filters. Undo removes
+the last assignment from the recipe; changing the parent column starts a new
+recipe. A drawn but unassigned shape is saved for reference only.
+
+```python
+from SpatialBiologyToolkit.annotation import apply_annotation_recipe
+
+apply_annotation_recipe(adata, "regions.json")
+# Optional output name or permission to replace an existing obs column:
+# apply_annotation_recipe(adata, "regions.json", key_added="split", overwrite=True)
+```
+
+This updates the live AnnData without importing Qt or opening a window. Save the
+AnnData separately if needed. Assigned regions run in order with their original
+filters; the last matching assignment wins. Filters use the supplied object's
+obs/X values, and parent labels come from its saved source column. Regions
+matching no cells are skipped. Display sampling and colours do not limit replay.
+
+Use the same embedding coordinate system. Recomputing UMAP can move cells into
+different regions. Recipes with an explicit cell-name scope require those cells
+to be present; recipes without one evaluate all cells in the supplied object.
+
+For a new H5AD copy from the command line:
+
+```bash
+sbt gui annotate --anndata processed.h5ad --recipe regions.json --output annotated.h5ad
+```
+
+This uses the settings saved in the recipe and requires no desktop display.
+`--overwrite-obs` permits replacing its output obs column; the output H5AD must
+be a new file.
+Use `block=False` when embedding the popup in an already running Qt application.
+This reuses Matplotlib and Qt from the SBT environment; no inline widget backend
+or `ipympl` is required. Run on a desktop or an allocated interactive session with
+a display, rather than a headless/login-node analysis job.
+
 ## Choose data and cells
 
 **Labels / populations** chooses the `adata.obs` column used to group and colour

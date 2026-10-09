@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1" name="viewport"/>
+<meta content="light" name="color-scheme"/>
+<title>NapariSBT for Windows — Distributor guide</title>
+<style>
+:root { color-scheme: light; font-family: "Segoe UI", Arial, sans-serif; color: #23343f; background: #eef3f5; line-height: 1.65; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 36px 20px; }
+main { max-width: 950px; margin: auto; background: #fff; border: 1px solid #dce5e8; border-top: 7px solid #087f73; border-radius: 14px; padding: 36px 48px; box-shadow: 0 8px 30px #16393d0a; }
+.eyebrow { color: #087268; text-transform: uppercase; letter-spacing: .12em; font-size: .78rem; font-weight: 700; margin: 0; }
+h1 { font-size: clamp(1.9rem, 5vw, 2.7rem); line-height: 1.15; letter-spacing: -.03em; margin: 10px 0 22px; color: #133e3a; }
+h2 { font-size: 1.4rem; line-height: 1.3; color: #075e57; border-top: 1px solid #dce5e8; padding-top: 28px; margin-top: 38px; scroll-margin-top: 20px; }
+h3 { font-size: 1.1rem; margin-top: 26px; }
+p, li { max-width: 78ch; }
+li { padding-left: 4px; margin: 10px 0; }
+li::marker { color: #087268; font-weight: 700; }
+a { color: #006f66; text-underline-offset: 3px; }
+a:focus-visible { outline: 3px solid #087f73; outline-offset: 4px; }
+nav { background: #eff8f5; border: 1px solid #cce4dc; border-radius: 9px; padding: 18px 22px; margin: 28px 0; }
+nav strong { display: block; margin-bottom: 9px; }
+nav a { display: block; padding: 4px 0; }
+code { font-family: Consolas, "Courier New", monospace; font-size: .92em; background: #edf2f4; padding: 2px 5px; border-radius: 4px; overflow-wrap: anywhere; }
+pre { background: #172e36; color: #f1f8f8; padding: 18px 20px; border-radius: 8px; overflow-x: auto; line-height: 1.5; }
+pre code { background: none; padding: 0; color: inherit; overflow-wrap: normal; white-space: pre; }
+footer { border-top: 1px solid #dce5e8; margin-top: 36px; padding-top: 18px; color: #566a73; font-size: .88rem; }
+@media (max-width: 600px) { body { padding: 12px; } main { padding: 25px 20px; } pre { padding: 14px; } ol { padding-left: 22px; } }
+@media print { body { background: white; padding: 0; } main { border: 0; box-shadow: none; padding: 0; max-width: none; } nav { display: none; } h2, h3 { break-after: avoid; } pre { white-space: pre-wrap; background: #f0f3f4; color: #111; } pre code { white-space: pre-wrap; } }
+</style>
+</head>
+<body>
+<main><p class="eyebrow">Distribution guide</p>
+<h1>Preparing NapariSBT for Windows</h1>
+<p>This guide is for the person building and sharing the packed application.
+Give users <a href="README.html">README.html</a> for installation and startup instructions.</p>
+<nav aria-label="Guide sections"><strong>In this guide</strong><a href="#package-for-distribution">Package for distribution</a><a href="#rebuild">Rebuild</a><a href="#developer-checks">Developer checks</a><a href="#diagnostic-files">Diagnostic files</a></nav><h2 id="package-for-distribution">Package for distribution</h2>
+<p>Pack a Windows environment with <code>conda-pack</code>, with SpatialBiologyToolkit installed
+normally rather than in editable mode. Add these files at the ZIP's root:</p>
+<pre><code class="language-text">NapariSBT.exe
+Start_NapariSBT.bat
+start_naparisbt.py
+README.html
+python.exe
+Lib/
+Library/
+Scripts/
+</code></pre>
+<p>Include these four files from this launcher's <code>dist/</code> folder: <code>NapariSBT.exe</code>,
+<code>Start_NapariSBT.bat</code>, <code>start_naparisbt.py</code>, and <code>README.html</code>. The Python helper is
+required for both backup options; it uses only Python's standard library.
+No C# source or build tools need to be distributed.
+Distribute the original packed archive with those four files added, rather than
+rezipping an environment already initialised on another machine.</p><p>README_DISTRIBUTOR.html is for the distributor and does not need to be included in the user ZIP.</p>
+<p>The launcher targets Windows with .NET Framework 4.5 or later (including the
+.NET Framework 4.x runtime shipped with Windows 10/11). It is compiled as a GUI
+application with an explicit <code>asInvoker</code> manifest. It never requests elevation,
+installs system components, changes the system PATH, or writes to HKLM.
+Environment changes apply only to the launched processes. Numba's cache and
+diagnostic logs stay in the user's Local AppData.</p>
+<p>The build is unsigned. Code signing/organisational approval is a separate release
+step where required by the recipient's Windows policy.</p>
+<p>The batch and executable launchers run the environment's activation hooks. The
+direct command-prompt helper deliberately does not execute batch files: it sets
+the bundled library/search paths, Python isolation, Numba cache, and available
+OpenSSL certificate defaults itself. Environments that require additional
+package-specific activation settings need those settings reviewed and supplied
+before using the direct route. Test the workflows you intend to distribute with
+each startup option, especially plugins that depend on activation hooks.</p>
+<h2 id="rebuild">Rebuild</h2>
+<p>On a Windows development machine with the .NET Framework C# compiler:</p>
+<pre><code class="language-powershell">.\install\napari_sbt_windows\build_launcher.ps1
+</code></pre>
+<p>This builds <code>dist/NapariSBT.exe</code> and copies the batch file, Python helper, user guide, and distributor guide alongside it. No external NuGet packages, Python freezing, or administrator access are used for the build.</p>
+<h2 id="developer-checks">Developer checks</h2>
+<pre><code class="language-powershell">.\install\napari_sbt_windows\test_launcher.ps1 -PythonEnvironment C:\path\to\python-environment
+</code></pre>
+<p>These checks use a real Python interpreter with disposable fixture scripts and
+small temporary environments. They cover first/subsequent runs, failed setup,
+path changes, activation, Python isolation, log output and application failures.
+They also compare the child and parent security tokens. The test runner is an
+unsigned executable; an organisational execution policy may block it.</p>
+<p>The Python helper also has focused tests that do not start Napari or execute a
+newly compiled binary:</p>
+<pre><code class="language-powershell">$env:PYTEST_DISABLE_PLUGIN_AUTOLOAD = '1'
+python -m pytest install/napari_sbt_windows/tests/test_python_launcher.py -q
+</code></pre>
+<p>Before release, test the finished ZIP under a standard Windows user account on a
+representative target computer. Check Home, network dataset loading,
+normalisation, workspace save/reopen, and any required background feature or
+export jobs. A successful compile does not verify those workflows.</p>
+<h2 id="diagnostic-files">Diagnostic files</h2>
+<p>The executable launcher writes logs to <code>%LOCALAPPDATA%\NapariSBT\logs</code>.
+Users can find them with the <strong>Open logs folder</strong> button in the error window.
+The batch and command-prompt routes print diagnostics in the command window;
+the user guide also explains how to save that output.</p>
+<footer>This guide works offline. User instructions are in <a href="README.html">README.html</a>.</footer>
+</main>
+</body>
+</html>

@@ -324,10 +324,13 @@ A scan's `extra_params.loss_weights` replaces the complete base loss-weight mapp
 so all six keys required by the pinned interface must be repeated. Use stable,
 descriptive `name` values because they become file and directory suffixes.
 
-BioBatchNet training and VAE sampling are stochastic, and the pipeline does not
-currently expose a complete run seed. Apparent differences between parameter sets
-can therefore include run-to-run variation. Important conclusions should be
-checked across repeated runs or otherwise tested for stability.
+BioBatchNet training and VAE sampling are stochastic. Set
+`biobatchnet.random_state: 42` to reset Python, NumPy and PyTorch CPU/CUDA random
+generators immediately before every fit, including each parameter-scan member.
+The seed is recorded in the scan summary and `adata.uns['biobatchnet']`; null
+preserves unseeded behaviour. This wrapper setting is not an `extra_params` value
+passed to the upstream API. GPU operations may still be nondeterministic, so
+important conclusions should be checked across repeated runs or tested for stability.
 
 ## How to interpret the results
 
@@ -375,8 +378,8 @@ They are analytical conveniences, not automatically biological cell types.
 - **Memory and runtime:** the wrapper densifies the full matrix and trains neural
   networks. Large cell counts can exhaust RAM or GPU memory; CPU training may be
   slow.
-- **Stochastic results:** repeated runs need not be identical, and no complete seed
-  control is exposed by this stage.
+- **Stochastic results:** use `random_state` for repeatability; fixed seeds do not
+  guarantee identical results across GPU hardware or library versions.
 - **No corrected marker matrix:** latent axes have no one-to-one marker meaning.
   Differential marker testing still requires an appropriate expression layer and
   sample-aware statistical design.

@@ -67,6 +67,30 @@ read-only mode.
 
 ## Optional NapariSBT application
 
+For a standalone region-annotation popup using an existing embedding:
+
+```bash
+sbt gui annotate --anndata processed.h5ad --basis X_umap --color leiden
+```
+
+Draw regions, assign category names, then **Apply to AnnData** and **Save H5AD
+copy…**. `--key-added` names the output observation; `--source-obs` starts from an
+existing label column. This opens a Matplotlib/Qt window without launching Napari
+or requiring a project, images, or masks. It uses the current scientific GUI
+environment, or falls back to the registered Napari environment. A desktop display
+and enough memory to load the H5AD are required.
+
+The popup's **Save recipe…** button saves assigned shapes and their settings.
+Replay them into a new H5AD without Qt or a display:
+
+```bash
+sbt gui annotate --anndata processed.h5ad --recipe regions.json --output annotated.h5ad
+```
+
+Replay uses the saved embedding, parent column, region labels and cohort filters.
+Reuse the same embedding layout. The output file must be new; `--overwrite-obs`
+allows replacing an existing output observation within the saved copy.
+
 NapariSBT uses its own scientific GUI environment. The lightweight launcher
 uses the current interpreter when it already contains Napari and Qt; otherwise
 it re-executes through the centrally registered `sbt-napari` environment:

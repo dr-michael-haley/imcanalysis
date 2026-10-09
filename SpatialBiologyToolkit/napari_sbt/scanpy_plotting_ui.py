@@ -66,7 +66,8 @@ class ScanpyPlottingPanel:
         intro = QLabel(
             "Create quick, regenerable QC plots from the live AnnData object. "
             "Plotting is read-only: it does not recompute embeddings, neighbours, "
-            "clustering, normalization, or batch correction."
+            "clustering, normalization, or batch correction. Embedding windows "
+            "also offer Annotate regions to draw and apply manual category labels."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)

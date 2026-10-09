@@ -9,6 +9,7 @@ import copy
 import csv
 import json
 import logging
+import random
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -81,6 +82,7 @@ def run_biobatchnet_correction(
     device: Optional[str] = None,
     extra_params: Optional[Dict[str, Any]] = None,
     use_raw: bool = True,
+    random_state: Optional[int] = None,
 ) -> None:
     """
     Run BioBatchNet on the provided AnnData object and attach the embeddings.
@@ -104,6 +106,8 @@ def run_biobatchnet_correction(
     use_raw : bool, default True
         If True, use adata.raw.X (raw data) for batch correction.
         If False, use adata.X (potentially normalized data).
+    random_state : int, optional
+        Reset random generators before model construction for each fit.
     """
     if batch_key not in adata.obs.columns:
         raise ValueError(f"Batch column '{batch_key}' not found in AnnData.obs")
@@ -151,6 +155,15 @@ def run_biobatchnet_correction(
         len(unique_batches),
     )
 
+    if random_state is not None:
+        random.seed(random_state)
+        np.random.seed(random_state)
+        if torch is not None:
+            torch.manual_seed(random_state)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(random_state)
+        logging.info("Reset BioBatchNet random generators with seed %d.", random_state)
+
     bio_embeddings, batch_embeddings = correct_batch_effects(**params)
 
     def _to_numpy(value):
@@ -189,6 +202,8 @@ def run_biobatchnet_correction(
         "representation_key": "X_batch_integration",
         "source_representation_key": "X_biobatchnet",
     }
+    if random_state is not None:
+        adata.uns["biobatchnet"]["random_state"] = random_state
     logging.info("BioBatchNet embeddings stored in adata.obsm['X_biobatchnet'].")
 
 
@@ -361,6 +376,7 @@ def _run_single_parameter_set(
         device=run_params.get("device"),
         extra_params=run_params.get("extra_params"),
         use_raw=run_params.get("use_raw", True),
+        random_state=biobatchnet_config.random_state,
     )
 
     if biobatchnet_config.biobatchnet_run_postprocess:
@@ -393,6 +409,7 @@ def _run_single_parameter_set(
         "device": run_params["device"],
         "use_raw": run_params["use_raw"],
         "extra_params": run_params.get("extra_params"),
+        "random_state": biobatchnet_config.random_state,
     }
 
 
@@ -412,6 +429,7 @@ def _write_scan_summary(rows: List[Dict[str, Any]], qc_dir: Path) -> None:
         "device",
         "use_raw",
         "extra_params",
+        "random_state",
     ]
     with summary_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)

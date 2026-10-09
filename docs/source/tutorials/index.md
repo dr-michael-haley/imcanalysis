@@ -11,6 +11,7 @@ but may require changes for current package APIs and data layouts.
 
 | Status | Notebook | Notes |
 |---|---|---|
+| Example | Population_refinement.ipynb | Headless exemplar selection, stratified sampling, image features and grouped classifier validation; see the [guide](../guides/population_refinement.md). |
 | Retired | 1A. ImcSegmentationPipeline Data Import | Uses the older Bodenmiller import pipeline. |
 | Legacy | 1B. Steinpose and Steinbock Data Import | Example for older Steinpose/steinbock outputs. |
 | Legacy | 2. Population identification | Superseded by the current population-identification notebook. |
