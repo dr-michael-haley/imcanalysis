@@ -1,5 +1,14 @@
 # Feature Refinement
 
+**Use this after a Feature Discovery Trial.** Build a broad feature table on the
+chosen trial ROIs and confirm examples of every class. This tab compares candidate
+features, helping you choose a smaller set before processing all ROIs.
+
+Start with **Trial readiness**, run **leave-one-ROI-out feature refinement**, then
+review the recommended checked features. Try that selection in the trial
+classifier before promoting it. Promotion requires a fresh feature build for the
+full cohort; it does not immediately produce full-dataset predictions.
+
 Feature Refinement is available for Feature Discovery Trials after broad features
 have been built and cells have confirmed class labels. Its purpose is to find a
 smaller, more stable model-input set before paying to process the full cohort.

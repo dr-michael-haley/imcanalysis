@@ -6,6 +6,10 @@ resulting AnnData, images, and reports for interactive work on a workstation.
 
 Choose a starting point:
 
+**Prefer buttons and menus?** If your dataset has already been processed, start
+with [NapariSBT: the no-code guide](../napari_sbt/index.md). You can explore images,
+review populations, and collect labelled cells without learning the command line.
+
 1. [Complete beginner's guide](beginners.md) — learn the small set of command-line,
    Conda, Git, and SLURM concepts used by the toolkit.
 2. [CSF3 setup](hpc.md) — an absolute-beginner walkthrough for University of

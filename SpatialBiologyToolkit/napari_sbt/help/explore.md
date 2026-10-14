@@ -1,5 +1,15 @@
 # Explore
 
+**Start here:** select an ROI at the top and click **Load ROI**. In the amber
+**Raw, extra, greyscale, and multicolour images** box, select a marker and choose
+**Load selected greyscale**. Adjust its contrast in Napari's layer controls, then
+add cell outlines from the teal **AnnData overlays** box.
+
+**Keep a useful view:** use the violet **Layers re-added when the ROI changes**
+box to save a named recipe. Enable **Reapply the current Explore recipe after
+changing ROI**, then use **Previous ROI** or **Next ROI** to compare tissue with
+the same display settings. The selected ROI is shown above the boxes.
+
 Explore is the image and population-QC workspace. ROI navigation normally shows
 only ROIs in the current experiment scope. A Feature Discovery Trial restricts
 navigation to its representative ROIs so it is always obvious which cells are
@@ -8,7 +18,7 @@ being labelled and evaluated.
 ## ROI navigation and layer controls
 
 Choose an ROI or use **Previous ROI** and **Next ROI**. **Load ROI** refreshes the
-mask and available channels. Enable empty ROIs only after building the Setup
+mask and available channels. Enable empty ROIs only after building the Workspace
 integrity index. The dimmed full-mask context is optional and does not change the
 eligible classification cohort.
 
@@ -74,7 +84,7 @@ six-colour roles for older recipes), so bulk exports remain reproducible even
 when another ROI is currently displayed.
 
 For bulk export, select one or more ROIs and run preflight. Preflight uses the fast
-Setup asset index and never rescans image folders. It reports missing masks,
+Workspace asset index and never rescans image folders. It reports missing masks,
 requested channels, and target filenames. Rendering then runs sequentially on the
 GUI thread because Napari/OpenGL canvases cannot safely be moved into worker
 processes. The progress display reports exported, resumed, and failed ROIs;
@@ -188,7 +198,7 @@ even when they belong to the same category; the source mask and AnnData are not
 changed. Saved recipes retain category-level colours rather than ROI-specific
 object IDs, so the same palette remains valid on another ROI.
 Population controls can add selected populations as separate layers, rank ROIs by
-abundance, or send one population back to Setup as a proposed cohort. Marker
+abundance, or send one population back to Workspace as a proposed cohort. Marker
 overlays use cell-level values from `adata.X`, not image pixels.
 
 Population QC can save and restore the exact verification view used for a selected
@@ -224,7 +234,7 @@ match are reused in place: only changed colour, visibility, opacity, contour, an
 contrast settings are applied. Layers removed by another recipe can be restored
 from a bounded cross-ROI memory cache instead of reading or calculating them
 again. The least-recently-used cache holds at most 48 arrays or 512 MiB and is
-cleared when source, normalization, or live AnnData inputs changeâ€”not on every ROI
+cleared when source, normalization, or live AnnData inputs change—not on every ROI
 switch. Image identity includes
 the source path, size, and modification time, so a changed image is still reloaded.
 Missing, changed, or genuinely different data are loaded or recalculated normally. The
@@ -239,9 +249,9 @@ classification recipe to be inspected in Data exploration mode without losing
 confirmed, proposed, prediction, or focus-mask display settings. Use **Delete
 selected recipe items** when an absent entry should genuinely be removed.
 
-Scalar channel images are normalized onto a 0â€“1 display scale. When a recipe
+Scalar channel images are normalized onto a 0–1 display scale. When a recipe
 restores their saved contrast handles, the Napari slider itself remains fixed at
-0â€“1. This lets you estimate the saved minimum and maximum visually without using
+0–1. This lets you estimate the saved minimum and maximum visually without using
 Napari's reset action, which would replace the recipe's handles.
 
 **Update from current layers** captures manual display changes into the working
@@ -254,7 +264,7 @@ retains its own effective reviewed-ROI context. Green and amber dropdown entries
 use an explicit dark foreground so their ROI names remain readable in Napari's
 dark theme.
 
-The **Live recipe tracking** toggle is available in Setup, Explore, and Population
+The **Live recipe tracking** toggle is available in Workspace, Explore, and Population
 QC; all three controls change the same session setting. It can be switched at any
 time and is not frozen into the workspace. It defaults on for Data exploration
 and off for Population QC. Explicit recipe actions and Population QC RGB controls

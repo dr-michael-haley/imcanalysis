@@ -8,6 +8,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent / "_ext"))
 
 project = "SpatialBiologyToolkit"
 copyright = "2024, Michael Haley"
@@ -19,6 +20,7 @@ extensions = [
     "sphinx.ext.autodoc",
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
+    "napari_sbt_help",
 ]
 
 source_suffix = {

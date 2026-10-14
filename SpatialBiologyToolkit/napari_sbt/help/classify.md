@@ -1,5 +1,18 @@
 # Classify
 
+**The workflow has three stages:**
+
+1. **Annotate:** choose a class and click action, inspect cells in several ROIs,
+   and confirm clear examples. Only confirmed examples train the model.
+2. **Train / review predictions:** build features first, train, then score the
+   cohort. Inspect errors and uncertain cells, add confirmed examples, and retrain.
+3. **Finalize & export:** set decision thresholds, create final identities,
+   optionally combine them with an existing population column, then export.
+
+**Before starting:** open a classification workspace and check Feature Building's
+saved readiness card. If every prediction looks the same, check that each class
+has enough confirmed examples with usable features before changing thresholds.
+
 ## Cell annotation
 
 Classify is the human-in-the-loop annotation and active-learning workspace. Click
@@ -54,7 +67,7 @@ reload recipe.
 
 `noncontext_mask` is an optional opaque black focus layer. It leaves visible the
 original eligible cell bodies, their recipe-defined intensity measurement regions,
-andâ€”when region-image features are enabledâ€”their local-background rings. Everything
+and—when region-image features are enabled—their local-background rings. Everything
 else is covered. Positive offsets respect the recipe's overlap policy, background
 rings exclude all segmented cells, and a negative intensity offset never hides the
 original cell body because original-mask shape features may still inform the model.
@@ -119,6 +132,12 @@ Click **Build / refresh integrated labels** after creating final identities. Any
 change to the final identities, source observation, output name, naming strategy,
 or class-name mapping makes the integration stale and blocks integrated export.
 Disable the option if a cohort-only output is intended.
+
+## Export final identities
+
+Use this cyan box after creating current final identities, and after building
+integrated labels if you enabled integration. Check the destination filename and
+the summary of what will be exported.
 
 The final table may be exported as CSV or Parquet. With integration enabled, this
 is the full-dataset integrated table; otherwise it is the cohort-only table. The

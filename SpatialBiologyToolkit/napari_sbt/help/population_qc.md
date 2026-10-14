@@ -1,5 +1,20 @@
 # Population QC
 
+**A first review:**
+
+1. Check the **WHOLE DATASET / LIMITED CELL SCOPE** banner before interpreting
+   counts. Choose the population column and one population in the blue box.
+2. In the teal **RGB verification recipe** box, choose up to three markers.
+   **Suggest top three markers** offers a starting point; check that the choices
+   answer your biological question. Adjust each channel's contrast if needed.
+3. In the amber **ROI sampling** box, choose an order and number of ROIs, then
+   click **Recalculate ROI list**. Click an ROI button to inspect the tissue.
+4. Review more than one ROI. Use **Save RGB recipe for population** to retain the
+   colours and ranges for your next visit.
+
+**What success looks like:** the selected population is outlined on the staining
+images, the scope is the one you intended, and reviewed ROI buttons turn grey.
+
 Population QC is a compact population-by-population image-review workflow. It
 uses the same image discovery, AnnData overlays, saved recipes, display
 normalization, and viewed-ROI history as Explore, while exposing the controls most
@@ -51,10 +66,10 @@ Choose up to three distinct image channels for red, green, and blue additive
 layers. Each channel has its own normalized 0–1 contrast range; these limits and
 the explicit colours are stored in the shared Explore recipe state. A population
 without a saved recipe starts with **Default contrast lower** and **Default
-contrast upper** from Setup. Edit any red, green, or blue values here to override
-those defaults for the current population. Later Setup edits update only controls
+contrast upper** from Workspace display settings. Edit any red, green, or blue values here to override
+those defaults for the current population. Later Workspace edits update only controls
 which still contain the previous default; they do not replace manual overrides or
-saved recipes. **Use Setup contrast defaults** explicitly resets all three working
+saved recipes. **Use Setup contrast defaults** (the button retains its older name) explicitly resets all three working
 ranges when required.
 
 **Outline width for all populations** controls the contour of the
@@ -108,5 +123,5 @@ classification-cohort/context layers are not constructed. The review recipe and
 visited ROI are persisted once after a successful switch.
 
 Live tracking of manual Napari layer changes defaults off for a Population QC
-session. Enable it in Setup when manual changes should continually update the
+session. Enable it here, in Explore, or in Workspace when manual changes should update the
 working Explore recipe; explicit RGB controls and saved views work either way.

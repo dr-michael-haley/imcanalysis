@@ -2,8 +2,17 @@
 
 Use this tab to turn an original categorical observation such as `leiden` into
 one or more named, reviewable observations. The original observation is never
-edited. The main loop is: edit names, **Save and update Explore / Population
-QC**, review them in tissue, then return here to refine them.
+edited. The main loop is: edit names, **Save and Update**, review them in tissue,
+then return here to refine them.
+
+**First pass:** choose the source column (for example, your Leiden clustering),
+enter a meaningful new column name such as `reviewed_population`, and click
+**Create new label draft**. Change **Proposed name** in the table, then click
+**Save and Update**. Select the new column in Population QC to inspect the result.
+
+**Saving:** Save and Update saves naming work and makes its labels available in
+this session. Save an AnnData copy separately when another program needs the new
+column. Check the readiness message beside the save button before switching tabs.
 
 ## 1. Source workspace and drafts
 
@@ -107,7 +116,7 @@ remain proposals in this population draft until you review, rename, and save it.
 ### Applying a draft
 
 The preview always shows effective cell counts, split coverage, and each explicit
-merge. **Save and update Explore / Population QC** now performs both actions: it
+merge. **Save and Update** performs both actions: it
 saves the draft, adds or refreshes its derived observation in the live working
 AnnData, refreshes the app's observation selectors, and selects the corresponding
 new population name in Population QC where possible. The current Population QC

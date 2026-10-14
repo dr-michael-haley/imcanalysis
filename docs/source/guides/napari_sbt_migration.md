@@ -6,7 +6,7 @@ Create a new experiment beside them and validate its identity joins first.
 
 ## From CellPose good/artifact QC
 
-1. Select **All cells** in Setup.
+1. Choose **Train a cell classifier** in Workspace, then select **All cells**.
 2. Use the **Segmentation QC template**.
 3. Add the existing CellPose metrics table as an imported table feature source.
 4. Keep CellPose probability, flow, flow-error, and segmentation-configuration
@@ -31,9 +31,10 @@ New experiments do not allow AnnData row-order fallback. Every eligible cell
 must have a unique `(ROI, ObjectNumber)` identity. This prevents a filtered or
 reordered AnnData object from being mapped to the wrong mask label.
 
-Population QC now connects directly to Setup. Choose a population and use
-**Use this population as classification cohort**; inspect the cohort-only mask
-and confirm it before calculating features or labelling cells.
+Population review connects to Workspace through Explore. Choose a population and
+use **Use this population as classification cohort**; review the selected-cell
+counts and validate the dataset before calculating features or labelling cells.
+See the [no-code guide](../napari_sbt/index.md) for the current interface.
 
 ## Deliberate changes
 

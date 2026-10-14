@@ -1,5 +1,15 @@
 # Feature Building
 
+**You need this tab for classification, not for simply viewing images.** A feature
+is a numerical description of a cell: for example, marker intensity, cell area,
+or texture. This tab gathers those measurements into a table the classifier can use.
+
+**First build:** choose imported measurements or image-derived features, select
+the relevant channels and feature families, then click **Build/resume features
+locally**. Watch the progress box. Finished workers alone are not the final check:
+the blue **Feature readiness** card must report **Ready for classification** (or
+**Ready for refinement** for a trial) before continuing.
+
 Feature Building creates the numerical table used by the classifier. In a normal
 experiment it covers the complete frozen cohort; in a Feature Discovery Trial it
 covers only the selected trial ROIs. Full segmentation masks remain the authority

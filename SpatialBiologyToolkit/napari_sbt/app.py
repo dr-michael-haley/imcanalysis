@@ -111,6 +111,11 @@ from .feature_catalog import (
 from .feature_refinement import compact_synthetic_recipe
 from .features import classifier_seen_mask
 from .help import load_help_markdown
+from .help.presentation import (
+    populate_help_browser,
+    section_accent,
+    workflow_accent_stylesheet,
+)
 from .labeler import (
     LabelerClass,
     apply_labeler_to_anndata,
@@ -828,7 +833,10 @@ class NapariSBTController:
             numbered = len(stripped_title) > 1 and stripped_title[0].isdigit()
             return WorkflowGroupBox(
                 title,
-                accent=group_help_accents[accent_index % len(group_help_accents)],
+                accent=section_accent(
+                    help_topic, help_section,
+                    group_help_accents[accent_index % len(group_help_accents)],
+                ),
                 numbered=numbered,
                 help_callback=self._guard(
                     lambda: self.show_help(
@@ -3507,7 +3515,7 @@ class NapariSBTController:
         final_export_group = workflow_group(
             "6. Export final identities",
             "classify",
-            "Final identities and export",
+            "Export final identities",
         )
         final_export_form = QFormLayout(final_export_group)
         self.assignment_path_edit = QLineEdit(
@@ -3809,42 +3817,9 @@ class NapariSBTController:
                 font-size: 16px;
                 font-weight: 800;
             }
-            QGroupBox[sbtAccent="blue"] { border-color: #60a5fa; }
-            QGroupBox[sbtAccent="blue"]::title {
-                border-color: #3b82f6;
-                background-color: #dbeafe;
-                color: #1e3a8a;
-            }
-            QGroupBox[sbtAccent="violet"] { border-color: #a78bfa; }
-            QGroupBox[sbtAccent="violet"]::title {
-                border-color: #8b5cf6;
-                background-color: #ede9fe;
-                color: #4c1d95;
-            }
-            QGroupBox[sbtAccent="teal"] { border-color: #2dd4bf; }
-            QGroupBox[sbtAccent="teal"]::title {
-                border-color: #14b8a6;
-                background-color: #ccfbf1;
-                color: #134e4a;
-            }
-            QGroupBox[sbtAccent="amber"] { border-color: #fbbf24; }
-            QGroupBox[sbtAccent="amber"]::title {
-                border-color: #f59e0b;
-                background-color: #fef3c7;
-                color: #78350f;
-            }
-            QGroupBox[sbtAccent="rose"] { border-color: #fb7185; }
-            QGroupBox[sbtAccent="rose"]::title {
-                border-color: #f43f5e;
-                background-color: #ffe4e6;
-                color: #881337;
-            }
-            QGroupBox[sbtAccent="cyan"] { border-color: #22d3ee; }
-            QGroupBox[sbtAccent="cyan"]::title {
-                border-color: #06b6d4;
-                background-color: #cffafe;
-                color: #164e63;
-            }
+            """
+            + workflow_accent_stylesheet()
+            + """
             QPushButton#sbtBoxHelpButton,
             QPushButton#sbtTabHelpButton {
                 border: 1px solid #1d4ed8;
@@ -5566,9 +5541,16 @@ class NapariSBTController:
         prefix = "Focused help" if section else "Tab help"
         dialog.setWindowTitle(f"napari_sbt {prefix} — {title}")
         dialog.resize(760 if section else 820, 560 if section else 680)
-        from qtpy.QtWidgets import QVBoxLayout
+        from qtpy.QtWidgets import QHBoxLayout, QPushButton, QVBoxLayout
 
         layout = QVBoxLayout(dialog)
+        reading_controls = QHBoxLayout()
+        smaller = QPushButton("Smaller text")
+        larger = QPushButton("Larger text")
+        reading_controls.addStretch(1)
+        reading_controls.addWidget(smaller)
+        reading_controls.addWidget(larger)
+        layout.addLayout(reading_controls)
         browser = self.QTextBrowser(dialog)
         browser.setOpenExternalLinks(True)
         help_font = browser.font()
@@ -5577,15 +5559,9 @@ class NapariSBTController:
         dialog.setFont(help_font)
         browser.setFont(help_font)
         browser.document().setDefaultFont(help_font)
-        browser.document().setDefaultStyleSheet(
-            "body { line-height: 1.4; } "
-            "h1 { font-size: 21pt; margin-top: 8px; margin-bottom: 12px; } "
-            "h2 { font-size: 18pt; margin-top: 12px; margin-bottom: 8px; } "
-            "h3 { font-size: 15pt; margin-top: 10px; margin-bottom: 6px; } "
-            "li { margin-bottom: 5px; } "
-            "code, pre { font-size: 12pt; }"
-        )
-        browser.setMarkdown(markdown)
+        populate_help_browser(browser, markdown, topic)
+        smaller.clicked.connect(lambda: browser.zoomOut(1))
+        larger.clicked.connect(lambda: browser.zoomIn(1))
         buttons = self.QDialogButtonBox(self.QDialogButtonBox.Close, parent=dialog)
         buttons.rejected.connect(dialog.reject)
         layout.addWidget(browser)

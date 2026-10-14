@@ -7,7 +7,8 @@ routine processing and Python tools for interactive and bespoke analysis.
 
 Start with :doc:`getting_started/index` if this is your first visit. Pipeline
 operators will usually want :doc:`pipeline/index`, while Python users can go
-straight to :doc:`reference/index`.
+straight to :doc:`reference/index`. For a no-code, image-led workflow, use the
+:doc:`NapariSBT guide <napari_sbt/index>`.
 
 .. image:: _static/repository_overview.png
    :alt: How SpatialBiologyToolkit fits together, from project inputs through the SBT control plane, HPC execution, scientific workflows, outputs, and local exploration.
@@ -19,6 +20,7 @@ straight to :doc:`reference/index`.
    :caption: Contents
 
    Getting started <getting_started/index>
+   🖼️ NapariSBT — no-code guide <napari_sbt/index>
    🔬 Scientific Guides <stages/index>
    ⚙️ Pipeline <pipeline/index>
    🛠️ Technical Guides <guides/index>

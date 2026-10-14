@@ -1,7 +1,15 @@
 # Dataset Maintenance
 
+**For routine viewing, start in Explore.** Use Dataset Maintenance when you want
+to change the dataset itself: save new labels, rename markers, remove variables,
+filter cells, or create masks aligned with the retained cells.
+
+Read the blue readiness dashboard, preview the change in the relevant subtab,
+apply it, and inspect the result. Finish with **Save current AnnData** to a new
+file. Changes to the live cell table are not saved simply by closing the tab.
+
 Dataset Maintenance creates deliberate, synchronized changes to the AnnData,
-image, and mask assets connected in Setup. It is intended for repairing or
+image, and mask assets connected in Workspace. It is intended for repairing or
 deriving datasets, not for routine exploration. The live AnnData can change in
 memory, but no AnnData change reaches disk until **Save current AnnData** is
 pressed.
@@ -93,7 +101,7 @@ Mask-only objects outside the current AnnData become background.
   AnnData ObjectNumber observation.
 
 Both modes produce `object_number_crosswalk.csv` and a maintenance manifest. The
-new folder becomes the current Setup mask source. Original masks remain untouched.
+new folder becomes the current Workspace mask source. Original masks remain untouched.
 
 ## Manage observations
 
@@ -132,6 +140,6 @@ Completed actions append a compact JSON-lines audit under the active workspace's
 workspace is open. Image and mask operations also write explicit crosswalks in
 their derived folders.
 
-Before saving AnnData, reload the original Setup AnnData to discard unwanted
+Before saving AnnData, reload the original Workspace AnnData to discard unwanted
 in-memory changes. Derived output folders can be inspected independently and do
 not replace their sources automatically.

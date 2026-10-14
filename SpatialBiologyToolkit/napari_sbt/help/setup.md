@@ -1,9 +1,18 @@
-# Setup
+# Home and Workspace
 
-Setup is a guided start screen for opening or creating a NapariSBT workspace,
+Home and Workspace guide you through opening or creating a NapariSBT workspace,
 choosing a task, connecting a dataset, and checking that it is ready. A workspace
 stores the scientific manifest, cohort, recipes, labels, models, and exports; it
 does not save and restore the complete Napari window layout.
+
+**First visit:** choose **Create a workspace** on Home, then follow **Dataset →
+Task → Check data → Save workspace**. To resume, use **Open a workspace…** and
+select the folder containing your saved work. You do not need to type commands.
+
+**Three terms used below:** an ROI is one tissue image or region; AnnData is the
+cell-data file, usually ending in `.h5ad`; a cohort is the set of cells included
+in this workspace. A workspace holds saved analysis work, not a replacement for
+the original dataset.
 
 ## Start or resume
 
@@ -23,79 +32,16 @@ The source dataset can be on a shared drive while saved work is in a separate,
 writable location. Desktop welcome mode defaults saved work to
 `~/NapariSBT Workspaces`; it does not inspect the application's launch folder.
 
-Choose a task before checking data. Exploration, Population QC, manual labeling,
-population curation, and dataset maintenance offer **Open quickly (check as I go)**.
-Quick opening prepares and freezes cell identities without a
-complete image/mask scan. Each opened mask is checked against that region's cell
-IDs. A persistent status explains that the complete dataset has not been checked.
-A live notebook AnnData is still saved as a workspace-owned snapshot at creation;
-copying a large cell table can take time independently of asset validation.
-
-**Check entire dataset** explicitly scans file paths, reads masks, and checks cell
-IDs and image coverage. It runs in the background; cancellation takes effect
-between discovery/region operations, after any current filesystem read finishes.
-Missing masks, images, or eligible cell IDs produce **Needs review**, never a
-successful validation status. This coverage check does not decode every image;
-feature extraction checks image contents when it consumes them.
-
-**Find files only** builds the path index without reading mask contents. This is
-useful for flat or irregular layouts that direct region lookup cannot resolve.
-It does not count as full validation. Nested `images/<ROI>/` folders and directly
-named masks support lazy lookup without a dataset-wide index.
-
-Classification and the combined full workspace require a successful full check
-before creation. Feature workers also check their inputs independently; a build
-with failed regions cannot activate a feature set for training. Training rejects
-confirmed cells without feature rows. Derived mask exports validate the requested
-cell identities before writing outputs.
-
-On the final page, name the workspace and review its save location. **Saved
-normalisation dictionary** lets you reuse channel intensity limits. **Other
-display settings** contains automatic brightness and contrast controls. Existing
-workspace files are never overwritten by creation. Once open, Workspace becomes
-a summary with links to task controls, settings, checks, and the results folder.
-
-Validation history is stored separately from the file index. A reopened workspace
-reports previous checks without claiming that externally changed files were
-rescanned. Changing inputs invalidates the current check. A workspace switch is
-blocked while background work or unsaved maintenance/population edits remain.
-
-## Advanced controls
-
-The Dataset page contains **Additional image folders**, **Show advanced
-cell-identity settings**, registered projects, and **Troubleshooting**. Reloading
-components and detecting missing paths remain available there. Neither action
-counts as full validation. The Task page retains classification cell selection,
-class definitions, and expandable Feature Discovery Trial settings. **Prepare
-cell selection** updates trial-region choices without scanning image assets.
-
-## Workflow selection
-
-Choose the plain-language task from the menu. **Explore my images
-and cells** shows images, overlays, recipes, regions, and layer tools. **Check
-existing cell populations** concentrates on population-specific RGB review.
-**Train a cell classifier** adds feature building, active learning, and prediction
-export. **Manually collect labelled cells** creates hand-assigned identity lists,
-while **Rename, merge, or subcluster populations** opens population curation.
-**Advanced: show every tool** exposes the complete interface.
-
-Changing this selection hides irrelevant tabs; it does not delete their data or
-saved recipes. The selection is stored in the experiment manifest, so reopening
-the workspace restores the intended interface. A recipe may still contain layers
-from another workflow, and those unavailable layers remain stored.
-
-**Live recipe tracking** copies manual Napari layer visibility, opacity, colour,
-contour, and contrast changes into the working recipe. It defaults on for Data
-exploration and off for the lightweight Population QC workflow. Explicit recipe
-controls, saved recipes, and Population QC review history continue to work when
-live tracking is disabled. The same session switch is also shown in Explore and
-Population QC, and can be changed at any time without revising the workspace.
-
 ## Dataset inputs
+
+This is **step 1: Dataset**. Click **Choose dataset…**, then expand **Review
+dataset files**. Check the cell-data file, cell outlines (segmentation masks), and
+staining image folders. If several cell-data files are found, choose the intended
+one; the application cannot know which analysis version you want.
 
 The main data rows have mouse-driven file/folder choosers and accessible status
 badges: green **Ready**, amber **Check needed**, red **Action required**, or grey
-**Optional**. Colour is never the only signal. **Processed cell data** loads an
+**Optional**. Colour is never the only signal. **Cell data (.h5ad)** loads an
 `.h5ad` file or uses the AnnData object supplied by a notebook. Add one or more
 **Staining image folders**; additional-image folders are optional.
 
@@ -130,15 +76,94 @@ it searches only bounded conventional locations and never substitutes for the
 integrity check.
 
 The workspace folder is NapariSBT's working area for the manifest, frozen cohort,
-features, labels, and models. It is not the source image or mask directory. Source
-images, masks, and AnnData are never overwritten.
+features, labels, and models. Opening it does not overwrite source images, masks,
+or AnnData. Saving changes to an AnnData file is a separate, explicit action.
 
 When launched from a Notebook with a live `AnnData`, selectors and previews use
 that object directly. Creating the workspace writes a frozen copy under
 `inputs/anndata.h5ad` so the workspace can be reopened and used by feature-building
 subprocesses. Opening the dock alone does not write the object.
 
+## Workflow selection
+
+This is **step 2: Task**. For a first look at the tissue, choose **Explore my images
+and cells**. You do not need to define classes or build features for exploration.
+
+Choose the plain-language task from the menu. **Explore my images
+and cells** shows images, overlays, recipes, regions, and layer tools. **Check
+existing cell populations** concentrates on population-specific RGB review.
+**Train a cell classifier** adds feature building, active learning, and prediction
+export. **Manually collect labelled cells** creates hand-assigned identity lists,
+while **Rename, merge, or subcluster populations** opens population curation.
+**Advanced: show every tool** exposes the complete interface.
+
+Changing this selection hides irrelevant tabs; it does not delete their data or
+saved recipes. The selection is stored in the experiment manifest, so reopening
+the workspace restores the intended interface. A recipe may still contain layers
+from another workflow, and those unavailable layers remain stored.
+
+**Live recipe tracking** copies manual Napari layer visibility, opacity, colour,
+contour, and contrast changes into the working recipe. It defaults on for Data
+exploration and off for the lightweight Population QC workflow. Explicit recipe
+controls, saved recipes, and Population QC review history continue to work when
+live tracking is disabled. The same session switch is also shown in Explore and
+Population QC, and can be changed at any time without revising the workspace.
+
+## Checking data
+
+This is **step 3: Check data**. Choose a task before checking data.
+Exploration, Population QC, manual labeling,
+population curation, and dataset maintenance offer **Open quickly (check as I go)**.
+Quick opening prepares and freezes cell identities without a
+complete image/mask scan. Each opened mask is checked against that region's cell
+IDs. A persistent status explains that the complete dataset has not been checked.
+A live notebook AnnData is still saved as a workspace-owned snapshot at creation;
+copying a large cell table can take time independently of asset validation.
+
+**Check entire dataset** explicitly scans file paths, reads masks, and checks cell
+IDs and image coverage. It runs in the background; cancellation takes effect
+between discovery/region operations, after any current filesystem read finishes.
+Missing masks, images, or eligible cell IDs produce **Needs review**, never a
+successful validation status. This coverage check does not decode every image;
+feature extraction checks image contents when it consumes them.
+
+**Find files only** builds the path index without reading mask contents. This is
+useful for flat or irregular layouts that direct region lookup cannot resolve.
+It does not count as full validation. Nested `images/<ROI>/` folders and directly
+named masks support lazy lookup without a dataset-wide index.
+
+Classification and the combined full workspace require a successful full check
+before creation. Feature workers also check their inputs independently; a build
+with failed regions cannot activate a feature set for training. Training rejects
+confirmed cells without feature rows. Derived mask exports validate the requested
+cell identities before writing outputs.
+
+## Saving a workspace
+
+This is **step 4: Save workspace**. Name the workspace and review its save location. **Saved
+normalisation dictionary** lets you reuse channel intensity limits. **Other
+display settings** contains automatic brightness and contrast controls. Existing
+workspace files are never overwritten by creation. Click **Create workspace**
+and wait for the task tabs to appear.
+
+## Workspace summary
+
+Once open, Workspace becomes a summary. **Continue working** returns to your task;
+**Open results folder** opens the workspace exports folder. Use **Change task**
+to show different tools, **Check dataset** for validation, and **Display settings**
+to revisit channel intensity limits. **Dataset settings / troubleshooting**
+returns to the dataset connections. Visiting Home does not close the workspace.
+
+Validation history is stored separately from the file index. A reopened workspace
+reports previous checks without claiming that externally changed files were
+rescanned. Changing inputs invalidates the current check. A workspace switch is
+blocked while background work or unsaved maintenance/population edits remain.
+
 ## Image normalization and default display
+
+Find these controls under **Workspace → Display settings** after opening a
+workspace, or on **Save workspace** during creation. Normalisation controls how
+bright the displayed images appear; it does not replace the cell measurements.
 
 Open **Saved normalisation dictionary** and choose a CSV or JSON file containing
 your channel intensity limits. Reusing these limits makes brightness easier to
@@ -146,6 +171,11 @@ compare across regions. The table shows **Channel**, **Max. intensity**, and **M
 Minimum removes low background signal, and Maximum sets the bright end of the
 range. Channels without saved limits are adjusted automatically. Expand **Edit
 channel limits** to see the table and make changes.
+
+Supported files include newer CSV dictionaries with **marker**, **vmax**, and
+**lower_threshold** columns, and older **Marker, Value** CSV files. JSON
+dictionaries are also supported. Older dictionaries without a lower threshold
+start at zero; you do not have to convert them before loading.
 
 Use **Check edited values** after editing the table. After a workspace
 exists, **Save limits to workspace** stores a copy in canonical JSON
@@ -159,15 +189,16 @@ the legacy IMC Explorer display normalization. Default lower and upper contrast
 values apply to newly loaded scalar images whose recipe has no explicit range.
 They also initialize Population QC RGB contrast controls for populations without
 a saved recipe. Population QC values can be changed per channel, and manual or
-saved overrides are not replaced by later Setup changes. Recipe-specific contrast
+saved overrides are not replaced by later Workspace changes. Recipe-specific contrast
 always takes precedence. Pixel values and Napari's contrast slider range remain
 normalized to 0–1.
 
 ## Cell scope
 
 Choose **All cells** for whole-segmentation QC, or **Selected adata.obs values**
-to subclassify one or more existing populations. Previewing validates identities,
-mask coverage, represented ROIs, and eligible-cell counts. The eligible identity
+to subclassify one or more existing populations. Preparing the selection checks
+cell identities and reports represented ROIs and eligible-cell counts. Mask
+coverage is checked separately on **Check data**. The eligible identity
 snapshot is frozen when the workspace is created; original masks and AnnData are
 never modified.
 
@@ -175,19 +206,6 @@ Choose the observation and one or more values, then use **Prepare cell selection
 dataset** to validate its assets. Read the preview before continuing: unexpectedly low counts,
 missing masks, duplicate identities, or unrepresented ROIs usually indicate an
 identity-column or filename mismatch.
-
-## Full experiment or Feature Discovery Trial
-
-A full experiment builds and scores every eligible ROI. A Feature Discovery Trial
-keeps that same full cohort as the eventual target but initially builds features
-only for a configurable representative ROI subset. Select the largest eligible
-ROIs automatically or choose them manually. Large ROIs are computationally
-efficient, but manual selection is preferable when staining, tissue type, batch,
-or disease state varies substantially.
-
-Three ROIs are sufficient for a preliminary leave-one-ROI-out analysis; five or
-more usually provide a more credible estimate of generalisation. Every target
-class should be represented in at least two trial ROIs.
 
 ## Classes
 
@@ -202,3 +220,25 @@ before creating the workspace. The Colour column is a true swatch: double-click
 it, or select a row and click **Pick selected colour…**, to open the system colour
 picker. Choose distinct colours and shortcuts because both are reused throughout
 annotation and review.
+
+## Full experiment or Feature Discovery Trial
+
+A full experiment builds and scores every eligible ROI. A Feature Discovery Trial
+keeps that same full cohort as the eventual target but initially builds features
+only for a configurable representative ROI subset. Select the largest eligible
+ROIs automatically or choose them manually. Large ROIs are computationally
+efficient, but manual selection is preferable when staining, tissue type, batch,
+or disease state varies substantially.
+
+Three ROIs are sufficient for a preliminary leave-one-ROI-out analysis; five or
+more usually provide a more credible estimate of generalisation. Every target
+class should be represented in at least two trial ROIs.
+
+## Advanced controls
+
+The Dataset page contains **Additional image folders**, **Show advanced
+cell-identity settings**, registered projects, and **Troubleshooting**. Reloading
+components and detecting missing paths remain available there. Neither action
+counts as full validation. The Task page retains classification cell selection,
+class definitions, and expandable Feature Discovery Trial settings. **Prepare
+cell selection** updates trial-region choices without scanning image assets.

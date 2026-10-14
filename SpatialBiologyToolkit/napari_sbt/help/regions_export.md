@@ -1,5 +1,14 @@
 # Regions & Export
 
+**To record tissue regions:** load an ROI, name a region, and click **Create/select
+regions layer**. Draw polygons with Napari's Shapes tools, then **Synchronize
+regions to cell table**. Synchronize again after editing a polygon.
+
+**Choose the right export:** publication images are under **Explore → Publication
+export…**; final cell identities are under **Classify → Finalize & export**;
+explicit manual cell lists are exported from **Labeler**. This tab exports masks
+and records tissue-region membership.
+
 Regions & Export connects manual spatial annotation with cell classifications and
 produces interoperable outputs.
 

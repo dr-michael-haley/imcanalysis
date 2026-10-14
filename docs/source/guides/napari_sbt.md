@@ -1,4 +1,7 @@
-# `napari_sbt`: cohort-first IMC exploration and classification
+# NapariSBT technical launch and storage reference
+
+For the mouse-driven interface, begin with the [NapariSBT no-code guide](../napari_sbt/index.md).
+This reference is for installation support, notebook users, and advanced workflow details.
 
 `napari_sbt` combines the reusable parts of the IMC explorer and CellPose
 active-learning viewer in one experiment-driven Napari dock. Guided setup asks
@@ -50,7 +53,7 @@ The workspace records validation history and warns when assets have not been
 fully checked. Feature builds validate consumed inputs independently; failed
 regions prevent activation for training. Training requires feature rows for all
 confirmed training cells. Derived mask exports check requested identities before
-writing. See the [Setup help](napari_sbt_help.md) for the guided controls.
+writing. See the [Home and Workspace help](../napari_sbt/workspace.md) for the guided controls.
 
 ## Launch
 
@@ -146,52 +149,21 @@ snapshot. Later edits to the original Notebook object therefore cannot silently
 change an established experiment. No copy is made merely by opening the
 interface.
 
-## Setup and the frozen cohort
+## Workspace and the frozen cohort
 
-Setup is designed to work without launcher path arguments. Its first section
-shows the current project or standalone dataset folder, registered SBT projects,
-saved workspaces detected under the configured `napari_sbt.experiment_folder`,
-and mouse-driven open/create actions. Workspace discovery is bounded to the
-container itself and immediate child `experiment.yaml` files; it never recursively
-scans the project. Each entry reports its workflow, cohort size, ROI count, last
-change time, and missing-source warnings.
+The [Home and Workspace guide](../napari_sbt/workspace.md) describes the current
+guided interface. Older releases used a single **Setup** tab; its controls now
+live in the Dataset, Task, Check data, and Save workspace steps.
 
-Box 3 also performs bounded dataset-input discovery. Existing valid paths from an
-initialized project or explicit launch arguments remain authoritative. Otherwise,
-NapariSBT looks for root-level `.h5ad` files, `.h5ad` files in conventional
-immediate data folders, and conventionally named immediate mask/image folders.
-One AnnData candidate is selected automatically; several candidates always open
-a chooser and are never guessed. Cancelling leaves AnnData as an action-required
-input. **Automatically detect missing inputs** repeats the same cheap lookup. It
-does not open image/mask contents or replace the explicit integrity check.
+Input discovery is bounded to conventional locations. Explicit supplied paths
+take precedence. When several AnnData files are found, the user must choose one.
+Workspace creation needs a unique name and freezes eligible cell identities.
+Exploration and review may use **Open quickly**; classification requires a
+current full dataset check. **Find files only** indexes paths without validating
+mask contents. Normal ROI navigation reuses that index or direct ROI lookups.
 
-New workspaces require a friendly name and receive an automatically derived,
-collision-checked folder. A text-and-colour readiness banner keeps **Create
-workspace and start** disabled until required inputs and the integrity check are
-complete. Existing workspaces reopen directly from the detected list or a folder
-chooser. Workspace persistence covers scientific state and deliberately does not
-restore the complete Napari window layout.
-
-Workflow selection uses plain-language task cards rather than requiring knowledge
-of internal modes. Exploration-only workspaces still create the same
-experiment-backed folder structure, allowing named views and reviewed-ROI state
-to persist without exposing feature building or classifier controls. The selected
-workflow is stored in the manifest and can be changed later without deleting data
-from hidden tabs. The combined full workspace remains behind an advanced toggle.
-
-AnnData, masks, staining images, optional extra images, and normalization files
-have **Choose…** or **Add folder…** controls and status badges which combine
-colour with Ready, Check needed, Action required, or Optional text. Conventional
-ROI and object-ID observations are proposed after AnnData loads; the raw fields
-are hidden under advanced cell-identity settings. **Reload all selected
-components** rereads known data and current-ROI state without running a full scan.
-
-Setup provides an explicit **Check dataset integrity and build the fast image index**
-action. It is the only normal UI operation that scans complete mask/image folders
-and validates every eligible mask identity. The resulting
-`inputs/integrity_index.json` is reused across ROI changes and later sessions;
-ordinary navigation uses cached or direct ROI-specific lookups. A current
-validation result is required before creating a new workspace.
+Workspace persistence stores scientific state and recipes, not the complete
+Napari window layout.
 
 For classification, cell scope is required. Choose either:
 
@@ -201,13 +173,13 @@ For classification, cell scope is required. Choose either:
   or more values. This is intended for subclassifying a broad Leiden or curated
   population.
 
-The preview reports selected/total cells, represented ROIs, per-ROI counts,
-missing masks, missing object IDs, and other labels present in the full masks.
-It also renders a cohort-only mask for inspection. Confirming the preview
+The cohort preview reports selected/total cells, represented ROIs, and per-ROI
+counts; it does not automatically add a preview layer. The full dataset check
+validates mask coverage and object identities. Creating the workspace
 stores a frozen identity snapshot in the experiment. A later change in AnnData
 membership does not silently change the experiment; create a revision.
 
-Setup also offers a **Feature Discovery Trial**. The complete cohort remains
+The Workspace Task step also offers a **Feature Discovery Trial**. The complete cohort remains
 frozen as the scientific target, while an independently stored trial scope
 limits initial feature extraction, navigation, training, and scoring to a
 configurable number of representative ROIs. ROIs can be selected manually or
@@ -236,11 +208,11 @@ disposition. The Segmentation QC template creates `good` and `artifact`
 classes. Stable class and cohort semantics are locked after confirmed labels
 exist.
 
-The Setup class table renders each colour as a readable swatch. Double-click
+The Workspace class table renders each colour as a readable swatch. Double-click
 the swatch, or select its row and use **Pick selected colour…**, to open the
 colour picker; the saved hexadecimal value remains visible on the swatch.
 
-Setup also owns scientific-display normalization. The preferred Nimbus CSV has
+Workspace display settings own scientific-display normalization. The preferred Nimbus CSV has
 `marker`, `vmax`, and `lower_threshold` columns; equivalent structured JSON can
 also be loaded into the editable three-column table, validated, and copied to
 `display/normalization.json` inside the workspace. Legacy marker-to-value JSON and

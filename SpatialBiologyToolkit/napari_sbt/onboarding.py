@@ -148,10 +148,22 @@ class WorkspaceFlow:
         self.step_caption = QLabel()
         self.step_caption.setObjectName("sbtStepCaption")
         header.addWidget(self.step_caption, 1)
-        help_button = QPushButton("Help")
+        help_button = QPushButton("Help for this step")
+        help_button.setObjectName("sbtTabHelpButton")
         action_icon(help_button, QStyle.SP_DialogHelpButton)
-        help_button.clicked.connect(lambda: c.show_tab_help("setup", "Workspace"))
+        help_button.clicked.connect(
+            lambda: c.show_help(
+                "setup", "Workspace", section=(
+                    "Dataset inputs", "Workflow selection", "Checking data",
+                    "Saving a workspace", "Workspace summary",
+                )[self.step],
+            )
+        )
         header.addWidget(help_button)
+        all_help = QPushButton("All Workspace help")
+        all_help.setObjectName("sbtTabHelpButton")
+        all_help.clicked.connect(lambda: c.show_tab_help("setup", "Workspace"))
+        header.addWidget(all_help)
         layout.addLayout(header)
         self.heading = QLabel()
         self.heading.setObjectName("sbtPageTitle")
@@ -434,6 +446,12 @@ class WorkspaceFlow:
         intro = QLabel("Open saved work, or choose a dataset to create a workspace.")
         intro.setWordWrap(True)
         home_layout.addWidget(intro)
+        home_help = QPushButton("❓ Help — getting started")
+        home_help.setObjectName("sbtTabHelpButton")
+        home_help.clicked.connect(
+            lambda: c.show_help("setup", "Home", section="Start or resume")
+        )
+        home_layout.addWidget(home_help)
         new = QPushButton("Create a workspace")
         new.setObjectName("sbtPrimaryActionButton")
         action_icon(new, QStyle.SP_FileIcon)

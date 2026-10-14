@@ -106,3 +106,19 @@
 .wy-nav-content {
   max-width: 100% !important; /* Dynamic middle pane */
 }
+
+/* No-code guide: comfortable reading lines, without shrinking interface captures. */
+.napari-guide-section > p,
+.napari-guide-section > ul,
+.napari-guide-section > ol {
+  max-width: 78ch;
+  line-height: 1.65;
+}
+.napari-guide-section > h2 { margin-top: 2rem; }
+.napari-guide-section li { margin-bottom: .45rem; }
+.napari-guide-section figure,
+.napari-guide-section .figure { max-width: 1100px; margin: 1.5rem 0; }
+.napari-guide-section img { height: auto; border-radius: 6px; }
+.napari-guide-section figcaption,
+.napari-guide-section .caption { line-height: 1.5; color: #334155; }
+.napari-guide-section .headerlink { color: inherit; }

@@ -3,15 +3,14 @@
 These technical guides cover interactive tools that sit alongside the
 config-driven pipeline.
 
+For the current no-code image and cell-review interface, see the dedicated
+[NapariSBT guide](../napari_sbt/index.md), starting with your first session.
+
 ```{toctree}
 :maxdepth: 1
 
 napari_imc_explorer
 cellpose_qc_active_learning
-napari_sbt
-napari_sbt_csf3
-napari_sbt_help
-napari_sbt_migration
 population_refinement
 project_console
 spatialdata

@@ -1,5 +1,13 @@
 # Layers & Status
 
+**To change a display layer:** first select it in Napari's layer list on the left,
+then choose a utility here. **Refresh experiment freshness status** explains
+whether features, model, and scores still match the current workspace.
+
+The separate **NapariSBT Readiness** dock reports the latest operation. A green
+Finished message means that operation finished; it does not mean every model,
+feature set, or export is current. Read the relevant readiness summary as well.
+
 Layers & Status contains general display utilities and a compact audit of
 experiment freshness.
 
@@ -19,9 +27,9 @@ feature-extraction progress remains in the Feature Building tab.
 ## Selected-layer utilities
 
 Select the target layer in Napari before using a utility. Recolouring and colormap
-transfer modify display settings. Flipping, resizing, label expansion, and cohort
-masking create derived display layers so the original scientific images and masks
-remain unchanged. Check the new layer name and alignment before using it for QC.
+transfer modify display settings. Flipping changes the selected layer's displayed
+array; resizing, label expansion, and cohort masking add derived display layers.
+Source files are unchanged. Check layer alignment before using these views for QC.
 
 ## Experiment freshness status
 

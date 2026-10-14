@@ -1,5 +1,13 @@
 # Labeler
 
+**Make a cell list:** define your labels, click **Apply label edits**, choose
+**Assign selected label**, and click cells in the image. Use the tally to check
+how many cells and ROIs contribute to each label. Export the results before closing.
+
+**Save before leaving:** Labeler assignments are session-only. **Export CSV**
+saves a reusable cell list. Applying a label column to the live AnnData still
+requires saving that AnnData to file if you want to keep it.
+
 Labeler is a lightweight way to make explicit lists of cells without training or
 scoring a classifier. It uses the active experiment's frozen cohort, ROI identity,
 object identity, masks, images, and Explore recipes. Choose an **all cells**
