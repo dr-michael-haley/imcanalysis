@@ -7,12 +7,12 @@
   <meta name="description" content="Explore local IMC images, segmentation masks and AnnData in your browser.">
   <link rel="icon" type="image/png" href="../images/Logo.png">
   <link rel="icon" type="image/svg+xml" sizes="any" href="./src/favicon.svg">
-  <title>SBT · Tissue Explorer</title>
+  <title>SBT · IMC Explorer</title>
 </head>
 <body>
   <main>
     <aside class="sidebar">
-      <div class="brand-area"><img class="brand-logo sbt-logo" alt="SpatialBiologyToolkit logo"><div class="brand-copy"><div class="brand-title"><a class="brand" href="./">Tissue Explorer</a><span id="viewer-version" title="Tissue Explorer application version"></span></div><span class="brand-links"><a id="how-to-guide" href="https://www.guidejar.com/guides/6050375d-c6a2-4e23-9722-8adeabe2c5c0" target="_blank" rel="noopener noreferrer">How to guide ↗</a><a id="report-issue" href="mailto:michael.haley@manchester.ac.uk?subject=SBT%20Tissue%20Explorer%20issue">Report an issue</a></span></div></div>
+      <div class="brand-area"><img class="brand-logo sbt-logo" alt="SpatialBiologyToolkit logo"><div class="brand-copy"><div class="brand-title"><a class="brand" href="./">IMC Explorer</a><span id="viewer-version" title="IMC Explorer application version"></span></div><span class="brand-links"><a id="how-to-guide" href="https://imcanalysis.readthedocs.io/en/latest/browser_tools/imc_explorer.html" target="_blank" rel="noopener noreferrer" title="IMC Explorer user guide (opens in a new tab)">User guide</a><a id="report-issue" href="mailto:michael.haley@manchester.ac.uk?subject=SBT%20IMC%20Explorer%20issue">Report an issue</a></span></div></div>
       <div class="sidebar-tabs" role="tablist" aria-label="Viewer sections"><button id="tab-setup" role="tab" aria-selected="true" aria-controls="panel-setup">Setup</button><button id="tab-rois" role="tab" aria-selected="false" aria-controls="panel-rois">ROIs</button><button id="tab-views" role="tab" aria-selected="false" aria-controls="panel-views">Views</button></div>
       <div id="panel-setup" role="tabpanel" aria-labelledby="tab-setup"></div>
       <div id="panel-rois" role="tabpanel" aria-labelledby="tab-rois" hidden></div>
@@ -161,17 +161,17 @@
           <div class="welcome-content">
             <header class="welcome-hero">
               <img class="welcome-logo sbt-logo" alt="SpatialBiologyToolkit">
-              <div><p class="welcome-eyebrow">SpatialBiologyToolkit · browser viewer</p><h1 id="welcome-title">Welcome to Tissue Explorer</h1><p>Explore imaging mass cytometry (IMC) results, review cell populations in their tissue context, and share what you find — directly in your browser.</p></div>
+              <div><p class="welcome-eyebrow">SpatialBiologyToolkit · browser viewer</p><h1 id="welcome-title">Welcome to IMC Explorer</h1><p>Explore imaging mass cytometry (IMC) results, review cell populations in their tissue context, and share what you find — directly in your browser.</p></div>
             </header>
             <div class="welcome-actions">
               <button id="welcome-setup" class="primary-action">Open Setup <span aria-hidden="true">→</span></button>
               <button id="welcome-workspace">Resume a workspace</button>
               <a href="https://www.guidejar.com/guides/6050375d-c6a2-4e23-9722-8adeabe2c5c0" target="_blank" rel="noopener noreferrer">Follow the Guidejar tutorial <span aria-hidden="true">↗</span></a>
             </div>
-            <nav class="welcome-resources" aria-label="Tissue Explorer resources">
+            <nav class="welcome-resources" aria-label="IMC Explorer resources">
               <a href="https://github.com/dr-michael-haley/imcanalysis" target="_blank" rel="noopener noreferrer">SpatialBiologyToolkit on GitHub <span aria-hidden="true">↗</span></a>
-              <a href="https://imcanalysis.readthedocs.io/en/latest/" target="_blank" rel="noopener noreferrer">SBT documentation <span aria-hidden="true">↗</span></a>
-              <a href="mailto:michael.haley@manchester.ac.uk?subject=SBT%20Tissue%20Explorer">Contact Michael Haley</a>
+              <a href="https://imcanalysis.readthedocs.io/en/latest/browser_tools/imc_explorer.html" target="_blank" rel="noopener noreferrer" title="Opens in a new tab">IMC Explorer user guide</a>
+              <a href="mailto:michael.haley@manchester.ac.uk?subject=SBT%20IMC%20Explorer">Contact Michael Haley</a>
             </nav>
             <div class="welcome-columns">
               <section class="welcome-card" aria-labelledby="welcome-features-title">

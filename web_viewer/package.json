@@ -1,6 +1,6 @@
 {
   "name": "sbt-browser-viewer",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "private": true,
   "type": "module",
   "description": "Read-only, browser-local IMC review",
@@ -11,7 +11,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
-    "test": "node --test tests/core.test.js tests/anndata.test.js tests/workspace.test.js tests/workspace-library.test.js tests/loading.test.js tests/remaps.test.js tests/plots.test.js tests/review-tools.test.js tests/aligned-layers.test.js tests/navigation.test.js tests/figure.test.js tests/workspace-assets.test.js",
+    "test": "node --test tests/core.test.js tests/anndata.test.js tests/workspace.test.js tests/workspace-library.test.js tests/loading.test.js tests/remaps.test.js tests/plots.test.js tests/review-tools.test.js tests/aligned-layers.test.js tests/navigation.test.js tests/figure.test.js tests/workspace-assets.test.js tests/legacy-redirect.test.js",
     "test:browser": "node --test tests/browser.test.js tests/browser-workspace.test.js tests/browser-multiview.test.js"
   },
   "dependencies": {

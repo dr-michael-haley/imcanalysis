@@ -4,7 +4,7 @@ The MCD format interpretation in src/mcd.js is adapted from readimc:
 https://github.com/BodenmillerGroup/readimc
 In particular, mcd_file.py and mcd_parser.py informed XML discovery,
 acquisition reconstruction, channel metadata, and embedded image offsets.
-Interface colours and interaction patterns follow SBT Tissue Explorer.
+Interface colours and interaction patterns follow SBT IMC Explorer.
 
 readimc — MIT License
 

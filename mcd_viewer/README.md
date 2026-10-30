@@ -1,6 +1,6 @@
 # MCD Explorer
 
-A small companion to SBT Tissue Explorer with browser-local computation. Open an MCD directly;
+A small companion to SBT IMC Explorer with browser-local computation. Open an MCD directly;
 no TIFF conversion, Python analysis service, or data upload is involved.
 
 ## Run
@@ -98,14 +98,14 @@ uploads. See THIRD-PARTY-NOTICES.txt for readimc attribution.
 
 Image exports are limited to 8,192 pixels in width, 16,384 pixels per side and
 32 million pixels overall. SVG exports have a 128 MiB size limit. Figure controls
-adapt Tissue Explorer's framing, overlay, filename and bookmark features to a
+adapt IMC Explorer's framing, overlay, filename and bookmark features to a
 single image; no cell annotations or multiple image panes are included.
 
 ## Cloudflare hosting
 
 The production target is `https://mcd.spatialbiology.app/`, served by the separate
 `sbt-mcd-explorer` Worker with static assets only. `wrangler.jsonc` uses the same
-Cloudflare account as Tissue Explorer. Build and verify from this folder:
+Cloudflare account as IMC Explorer. Build and verify from this folder:
 
 ```shell
 node --test tests/*.test.mjs

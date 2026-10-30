@@ -63,7 +63,7 @@ export function parseWorkspace(text) {
   let input;
   try { input = JSON.parse(text.replace(/^\uFEFF/, '')); } catch { throw new Error('Invalid workspace JSON.'); }
   record(input, 'document');
-  if (input.format !== WORKSPACE_FORMAT) throw new Error('This is not an SBT Tissue Explorer workspace.');
+  if (input.format !== WORKSPACE_FORMAT) throw new Error('This is not an SBT IMC Explorer workspace.');
   if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, WORKSPACE_VERSION].includes(input.version)) throw new Error(`Unsupported workspace version: ${String(input.version)}. This viewer supports versions 1–${WORKSPACE_VERSION}.`);
   const sources = record(input.sources, 'sources'), anndata = record(sources.anndata, 'AnnData reference');
   const layerSources = sources.layers ?? [];

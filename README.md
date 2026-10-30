@@ -57,14 +57,14 @@ tools, and selected datasets are not uploaded to the application host.
 
 | Tool | Use it for | Open | User guide |
 | --- | --- | --- | --- |
-| **Tissue Explorer** | Review analysed cells in `.h5ad` alongside TIFF images and masks; compare populations, annotate a review and export figures | [Open Tissue Explorer](https://explorer.spatialbiology.app/) | [Tissue Explorer guide](https://imcanalysis.readthedocs.io/en/latest/browser_tools/tissue_explorer.html) |
+| **IMC Explorer** | Review analysed cells in `.h5ad` alongside TIFF images and masks; compare populations, annotate a review and export figures | [Open IMC Explorer](https://imc.spatialbiology.app/) | [IMC Explorer guide](https://imcanalysis.readthedocs.io/en/latest/browser_tools/imc_explorer.html) |
 | **MCD Explorer** | Browse raw IMC acquisitions in an `.mcd` file, mix channels and inspect pixel counts before downstream analysis | [Open MCD Explorer](https://mcd.spatialbiology.app/) | [MCD Explorer guide](https://imcanalysis.readthedocs.io/en/latest/browser_tools/mcd_explorer.html) |
 | **MERSCOPE Explorer** | Explore a SpatialData `.zarr` folder or ZIP with images, cell boundaries, transcript points and gene expression | [Open MERSCOPE Explorer](https://merscope.spatialbiology.app/) | [MERSCOPE Explorer guide](https://imcanalysis.readthedocs.io/en/latest/browser_tools/merscope_explorer.html) |
 
 The dedicated [Browser-based tools documentation](https://imcanalysis.readthedocs.io/en/latest/browser_tools/index.html)
 covers required inputs, first sessions, controls, exports, saved workspaces and
 [troubleshooting](https://imcanalysis.readthedocs.io/en/latest/browser_tools/troubleshooting.html).
-Tissue Explorer and MERSCOPE Explorer save review settings locally and can
+IMC Explorer and MERSCOPE Explorer save review settings locally and can
 export workspace JSON; MCD Explorer's settings and bookmarks last only for the
 current session. Source datasets are not rewritten by the explorers.
 
@@ -140,7 +140,7 @@ before submitting a real run.
 - `HPC_env_files/`: fixed pipeline environment definitions used by registered stages.
 - `install/`: HPC launcher, shell integration, environment, and uninstall helpers.
 - `docs/`: canonical Sphinx sources and generated reference tooling.
-- `web_viewer/`, `mcd_viewer/`, and `spatialdata_viewer/`: application source and maintainer build/deployment notes for Tissue Explorer, MCD Explorer and MERSCOPE Explorer; end-user guides live in `docs/source/browser_tools/`.
+- `web_viewer/`, `mcd_viewer/`, and `spatialdata_viewer/`: application source and maintainer build/deployment notes for IMC Explorer, MCD Explorer and MERSCOPE Explorer; end-user guides live in `docs/source/browser_tools/`.
 - `tests/`: automated tests for the CLI, configuration, reporting, and scientific utilities.
 - `External_and_old_code/`: unsupported historical/experimental material.
 

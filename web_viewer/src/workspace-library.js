@@ -29,7 +29,7 @@ export class WorkspaceLibrary {
         db.createObjectStore('settings');
       };
       request.onerror = () => reject(request.error);
-      request.onblocked = () => reject(new Error('Close other Tissue Explorer tabs to finish opening local workspace storage.'));
+      request.onblocked = () => reject(new Error('Close other IMC Explorer tabs to finish opening local workspace storage.'));
       request.onsuccess = () => { request.result.onversionchange = () => request.result.close(); resolve(request.result); };
     });
   }

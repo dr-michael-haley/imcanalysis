@@ -712,7 +712,7 @@ $('write-workspace-file').addEventListener('click', async () => {
   try {
     if (workspaceFileHandle) {
       if (await workspaceFileHandle.requestPermission({ mode: 'readwrite' }) !== 'granted') return;
-    } else workspaceFileHandle = await window.showSaveFilePicker({ suggestedName: `${workspacePanel.name}.workspace.json`, types: [{ description: 'Tissue Explorer workspace', accept: { 'application/json': ['.json'] } }] });
+    } else workspaceFileHandle = await window.showSaveFilePicker({ suggestedName: `${workspacePanel.name}.workspace.json`, types: [{ description: 'IMC Explorer workspace', accept: { 'application/json': ['.json'] } }] });
     await exportWorkspace(workspaceFileHandle); $('write-workspace-file').textContent = `Update ${workspaceFileHandle.name}`;
   } catch (error) { if (error.name !== 'AbortError') workspaceError(error.message); }
 });

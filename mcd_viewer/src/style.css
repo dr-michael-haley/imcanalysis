@@ -25,7 +25,8 @@ main { display: grid; grid-template-columns: 308px minmax(0, 1fr); height: 100dv
 .brand-title { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
 .brand-title h1 { font-size: 17px; font-weight: 620; letter-spacing: -.3px; }
 .viewer-version { font-size: 10px; color: var(--muted); }
-.report-issues { display: inline-block; font-size: 13px; color: #a8e3d3; line-height: 1.6; margin-top: 3px; }
+.brand-links { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 3px; }
+.brand-links a { font-size: 13px; color: #a8e3d3; line-height: 1.6; text-underline-offset: 3px; }
 .local-badge { color: #b6d8cd; padding: 8px 10px; border: 1px solid #304a45; border-radius: 6px; background: #1c302d; font-size: 11px; margin-bottom: 15px; }
 .local-badge i, .privacy-dot { display: inline-block; width: 6px; height: 6px; background: var(--accent); border-radius: 50%; margin-right: 7px; }
 .section { border-bottom: 1px solid var(--line); }

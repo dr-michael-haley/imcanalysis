@@ -57,7 +57,7 @@ def serve(*, port: int = 8765, open_browser: bool = True) -> None:
     handler = partial(StaticViewerHandler, directory=str(root))
     with ThreadingHTTPServer(("127.0.0.1", port), handler) as server:
         url = f"http://127.0.0.1:{server.server_port}/"
-        print(f"SBT Tissue Explorer: {url}\nSelect local files in the browser. Ctrl+C to stop.", flush=True)
+        print(f"SBT IMC Explorer: {url}\nSelect local files in the browser. Ctrl+C to stop.", flush=True)
         if open_browser:
             webbrowser.open(url)
         try:

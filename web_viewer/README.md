@@ -1,11 +1,12 @@
-# SBT Tissue Explorer
+# SBT IMC Explorer
 
 A standalone, read-only browser application for local AnnData, segmentation
 masks and IMC channel TIFFs. All scientific file reads happen on the user's
 computer. The production application has no API, upload endpoint, telemetry,
 external fonts, or CDN dependency.
 
-See the [user and format guide](../docs/source/guides/browser_viewer.md).
+See the [IMC Explorer user guide](https://imcanalysis.readthedocs.io/en/latest/browser_tools/imc_explorer.html)
+and the [technical and format reference](../docs/source/guides/browser_viewer.md).
 
 ## Development
 
@@ -47,8 +48,8 @@ license notices, including libraries bundled into workers.
 
 ## Cloudflare hosting
 
-The production target is `https://explorer.spatialbiology.app/`, using the
-`sbt-tissue-explorer` Cloudflare Worker with static assets only. The checked-in
+The production target is `https://imc.spatialbiology.app/`, using the
+`sbt-imc-explorer` Cloudflare Worker with static assets only. The checked-in
 `wrangler.jsonc` specifies the account, build directory and custom domain.
 `public/_headers` preserves the local launcher's security policy on Cloudflare,
 including WebAssembly and local file workers. No datasets, server code, database,
@@ -60,14 +61,20 @@ Wrangler for the configured account, inspect `wrangler whoami`, then run
 directory through the existing Worker's dashboard. Include `_headers` and the
 license notices; never upload the repository or a dataset folder.
 
-Users select their local files again on the hosted origin. Workspace JSON files
-remain portable: load the JSON and select its local root folder to relink files.
-When moving from `https://spatial.uom-bioimaging.uk/`, export each workspace as
-JSON on the old site, then import it on the new site and reconnect its data folder.
-Browser workspace libraries and folder permissions do not transfer between domains.
-The earlier university-hostname deployment remains available. The root domain
-`spatialbiology.app` is no longer connected to this Worker; future deployments
-use the account and explorer subdomain in `wrangler.jsonc`.
+The previous address, `https://explorer.spatialbiology.app/`, is maintained by
+the redirect-only `sbt-tissue-explorer` Worker. Its separate configuration is
+`wrangler.legacy.jsonc`; deploy it with `wrangler deploy --config wrangler.legacy.jsonc`
+only after the IMC domain is verified. It returns a permanent 308 redirect,
+preserving the path and query. Browser navigation retains the original fragment.
+It has no static assets or dataset handling.
+
+Users select their local files again on the new origin. Browser-only workspaces
+and folder permissions from previous domains are not migrated. Previously exported
+workspace JSON remains portable: import it and reconnect the local data folder.
+The internal JSON format and local database identifiers retain their historical
+names for compatibility. The local `sbt gui web` command and source paths are unchanged.
+
+For deployment versions and rollback instructions, see [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Verification
 

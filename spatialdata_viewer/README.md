@@ -1,7 +1,7 @@
 # SpatialData Explorer
 
 A read-only, browser-local SpatialData viewer with the dark sidebar and mint
-controls used by SBT Tissue Explorer and MCD Explorer. Open a local SpatialData
+controls used by SBT IMC Explorer and MCD Explorer. Open a local SpatialData
 `.zarr` directory or ZIP, choose a coordinate system, and combine images,
 segmentation labels, shapes and points. Mix up to six image channels, colour
 cells by an associated table column, click features to inspect annotations,
