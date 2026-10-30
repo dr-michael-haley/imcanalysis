@@ -1,8 +1,14 @@
-# Tissue Explorer
+(tissue-explorer)=
+# IMC Explorer
 
-[Open Tissue Explorer](https://explorer.spatialbiology.app/)
+[Open IMC Explorer](https://imc.spatialbiology.app/)
 
-Use Tissue Explorer to review analysed tissue images alongside segmented cells
+The application now uses `imc.spatialbiology.app`; the previous address redirects
+here. Browser-saved workspaces and folder permissions do not transfer between
+addresses. You can still import previously exported workspace JSON and reconnect
+the original files.
+
+Use IMC Explorer to review analysed tissue images alongside segmented cells
 and their AnnData measurements. You can compare channel combinations, inspect
 populations and embeddings, propose annotation changes, and export figures.
 Your selected files stay on your computer and are not rewritten by the viewer.
@@ -314,7 +320,7 @@ annotations, but not image pixels, expression matrices or file permissions.
   scalar TIFFs; new multipage selections use their first plane. RGB images
   belong in aligned reference layers, not the primary mask input.
 - SpatialData Zarr belongs in [MERSCOPE Explorer](merscope_explorer.md), not
-  Tissue Explorer. Raw MCD belongs in [MCD Explorer](mcd_explorer.md).
+  IMC Explorer. Raw MCD belongs in [MCD Explorer](mcd_explorer.md).
 - Allocation guards include five million AnnData rows, 16 megapixels per TIFF
   plane and 16,384 pixels per side. These are not performance guarantees.
   Fewer channels, panes or aligned layers can reduce memory use.

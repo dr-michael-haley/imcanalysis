@@ -124,5 +124,5 @@ session.
 
 The viewer holds one acquisition at a time and reads selected channels as
 needed. It does not segment cells, assign populations or retain a session
-workspace. For analysed cells and masks, use [Tissue Explorer](tissue_explorer.md).
+workspace. For analysed cells and masks, use [IMC Explorer](imc_explorer.md).
 For browser or network problems, see [Troubleshooting](troubleshooting.md).

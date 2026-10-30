@@ -30,7 +30,7 @@ not necessarily mean the application has stopped.
   available locally.
 - Select the requested dataset or asset folder, rather than an entire drive or
   a parent containing many unrelated projects.
-- In Tissue Explorer, prefer **Connect folder** and the primary file/folder
+- In IMC Explorer, prefer **Connect folder** and the primary file/folder
   controls over the compatibility chooser for large network roots.
 - In MERSCOPE Explorer, use **Open local / network folder** where available in
   Chrome/Edge; the compatibility picker lists the selected folder's files.
@@ -47,7 +47,7 @@ dataset while it is loading is unlikely to speed it up.
 
 | Tool | First checks |
 | --- | --- |
-| Tissue Explorer | Match ROI names, mask filenames and image folders exactly. Confirm the ROI/object-ID columns and equal image/mask dimensions. Grey mask objects may have no matching AnnData row. |
+| IMC Explorer | Match ROI names, mask filenames and image folders exactly. Confirm the ROI/object-ID columns and equal image/mask dimensions. Grey mask objects may have no matching AnnData row. |
 | MCD Explorer | Select the intended acquisition and visible marker channels. Check notices for missing pixels or unsupported acquisition data. |
 | MERSCOPE Explorer | Choose the correct coordinate system, add the required layers, and check their visibility and order. For cell colours, inspect the table association and exact region/cell-ID match count. |
 
@@ -60,12 +60,12 @@ not change the source measurements.
 
 - Confirm the selected gene or observation and the source table. Different
   segmentations may be associated with different tables.
-- Check the expression source. Tissue Explorer offers `X` and available
+- Check the expression source. IMC Explorer offers `X` and available
   `layers`; MERSCOPE's shapes expression controls use `X`. Neither guide
   assumes that these stored values are raw counts or already normalised.
 - Check the legend, colour limits, linear/log display choice and population
   filters. Automatic scaling can differ between regions or views.
-- In Tissue Explorer, image normalisation dictionaries affect TIFF channel
+- In IMC Explorer, image normalisation dictionaries affect TIFF channel
   images, not AnnData expression values.
 - In MERSCOPE, gene names match exactly, including case. “Present” in a table
   means available for reading, not necessarily nonzero expression.
@@ -82,7 +82,7 @@ data of that size.
 Reduce the number of panes, visible channels and layers. Use fewer transcript
 genes or a smaller embedding context sample, and reduce export resolution.
 Close unrelated memory-intensive tabs. For format-specific limits, consult
-the relevant [Tissue](tissue_explorer.md#supported-inputs-and-limits),
+the relevant [IMC](imc_explorer.md#supported-inputs-and-limits),
 [MCD](mcd_explorer.md#limits-and-troubleshooting) or
 [MERSCOPE](merscope_explorer.md#supported-inputs-and-limits) guide.
 
@@ -92,7 +92,7 @@ Saved workspaces are specific to the website address, browser profile and
 computer. A save made at one address does not automatically appear at another.
 Private browsing or clearing site storage can remove local saves.
 
-- **Tissue Explorer:** open the saved workspace and use **Assets & connection**
+- **IMC Explorer:** open the saved workspace and use **Assets & connection**
   to choose its data root. Resolve items marked **Needs attention** using
   **Locate file/folder**, **Edit path**, and **Retry**. Use a full asset check
   after changing files.

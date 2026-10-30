@@ -14,10 +14,10 @@ of those applications.
 | Your data and task | Tool | Start here |
 | --- | --- | --- |
 | An IMC acquisition file; check regions, marker images and raw pixel counts before analysis | [MCD Explorer](https://mcd.spatialbiology.app/) | [MCD Explorer user guide](mcd_explorer.md) |
-| An analysed `.h5ad` file with ROI images and cell masks; review populations, compare views and prepare figures | [Tissue Explorer](https://explorer.spatialbiology.app/) | [Tissue Explorer user guide](tissue_explorer.md) |
+| An analysed `.h5ad` file with ROI images and cell masks; review populations, compare views and prepare figures | [IMC Explorer](https://imc.spatialbiology.app/) | [IMC Explorer user guide](imc_explorer.md) |
 | A SpatialData `.zarr` folder or ZIP; explore images, cell boundaries, transcript points and gene expression | [MERSCOPE Explorer](https://merscope.spatialbiology.app/) | [MERSCOPE Explorer user guide](merscope_explorer.md) |
 
-MCD Explorer does not require segmented cells or AnnData. Tissue Explorer uses
+MCD Explorer does not require segmented cells or AnnData. IMC Explorer uses
 separate AnnData, TIFF image and mask files. MERSCOPE Explorer expects a
 **SpatialData store**, rather than an arbitrary folder of raw instrument
 exports. None of the explorers runs the SBT processing pipeline or calculates
@@ -45,7 +45,7 @@ rather than a replacement dataset.
 
 | Tool | Across browser sessions | Portable output |
 | --- | --- | --- |
-| Tissue Explorer | Named workspaces save locally; reconnect the original assets when required | Workspace JSON, figures, plot data and proposed annotation CSVs |
+| IMC Explorer | Named workspaces save locally; reconnect the original assets when required | Workspace JSON, figures, plot data and proposed annotation CSVs |
 | MCD Explorer | Display settings and export bookmarks are limited to the current session | PNG, JPEG and layered SVG figures |
 | MERSCOPE Explorer | Workspace settings save locally; reopen the same store to resume | Workspace JSON, composed figures and embedding PNGs |
 
@@ -64,7 +64,7 @@ see [Troubleshooting](troubleshooting.md).
 :maxdepth: 2
 :hidden:
 
-tissue_explorer
+imc_explorer
 mcd_explorer
 merscope_explorer
 troubleshooting

@@ -71,6 +71,7 @@ html_title = "SpatialBiologyToolkit"
 html_short_title = "SpatialBiologyToolkit"
 html_logo = "_static/Logo_white.png"
 html_static_path = ["_static"]
+html_extra_path = ["_redirects"]
 html_css_files = ["custom.css"]
 html_theme_options = {
     "collapse_navigation": True,

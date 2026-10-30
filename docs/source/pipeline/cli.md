@@ -76,7 +76,7 @@ sbt gui web
 Select a local AnnData file and mask/image folders in the browser. The launcher
 serves only UI assets; all dataset reading stays in the browser, with no upload
 or Python scientific backend. A hosted copy needs no local SBT installation.
-See the [Tissue Explorer guide](../guides/browser_viewer.md) for build steps,
+See the [IMC Explorer guide](../guides/browser_viewer.md) for build steps,
 supported formats and initial limits. `--check` checks for a build without
 starting a server, and `--no-browser` prints the local URL.
 

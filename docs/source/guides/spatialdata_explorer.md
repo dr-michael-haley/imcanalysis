@@ -5,7 +5,7 @@ entirely in a desktop browser. It combines multichannel images, segmentation,
 points, shapes and associated cell annotations in a 2D view. Display settings
 can be saved as JSON and the visible canvas exported as PNG.
 
-The app uses SBT's Tissue Explorer styling. Its reusable loading and rendering
+The app uses SBT's IMC Explorer styling. Its reusable loading and rendering
 engine comes from the pinned SBT fork of SpatialData.js. Files remain on the
 user's computer; hosting requires only static HTML, JavaScript, CSS and WASM.
 

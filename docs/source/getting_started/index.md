@@ -1,7 +1,7 @@
 # Getting started
 
 **Want to explore data in your browser?** Start with the
-[Browser-based tools](../browser_tools/index.md). Tissue Explorer, MCD Explorer
+[Browser-based tools](../browser_tools/index.md). IMC Explorer, MCD Explorer
 and MERSCOPE Explorer open local files through their hosted websites; you do
 not need the software environments or command-line setup below.
 

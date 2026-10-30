@@ -11,7 +11,7 @@ straight to :doc:`reference/index`. For a no-code, image-led workflow, use the
 :doc:`NapariSBT guide <napari_sbt/index>`.
 
 To explore local files without installing the toolkit, start with
-:doc:`browser_tools/index`: Tissue Explorer for analysed cells and images,
+:doc:`browser_tools/index`: IMC Explorer for analysed cells and images,
 MCD Explorer for raw IMC acquisitions, and MERSCOPE Explorer for SpatialData.
 Each hosted tool has an end-user guide covering data selection, review,
 figures and saved settings.
