@@ -1,0 +1,17 @@
+{
+  "name": "sbt-tissue-explorer",
+  "account_id": "3c8725c2be94e1b5f72bb8dc0c9e1974",
+  "compatibility_date": "2026-10-26",
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "directory": "../SpatialBiologyToolkit/browser_viewer/static",
+    "not_found_handling": "none"
+  },
+  "routes": [
+    {
+      "pattern": "explorer.spatialbiology.app",
+      "custom_domain": true
+    }
+  ]
+}

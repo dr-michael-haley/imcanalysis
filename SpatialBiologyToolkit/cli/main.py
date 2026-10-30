@@ -325,6 +325,24 @@ def gui_project_command(
         raise typer.Exit(completed.returncode)
 
 
+@gui_app.command("web")
+def gui_web_command(
+    port: int = typer.Option(8765, "--port", min=1, max=65535, help="Local static viewer port."),
+    no_browser: bool = typer.Option(False, "--no-browser", help="Print the URL without opening a browser."),
+    check: bool = typer.Option(False, "--check", help="Check that viewer assets are built without starting a server."),
+) -> None:
+    """Open the read-only browser viewer for local AnnData, masks, and images."""
+    from SpatialBiologyToolkit.browser_viewer import serve, static_directory
+
+    try:
+        if check:
+            typer.echo(f"Browser viewer ready: {static_directory()}")
+        else:
+            serve(port=port, open_browser=not no_browser)
+    except OSError as exc:
+        _fail(exc)
+
+
 @gui_app.command("napari")
 def gui_napari_command(
     project: Path | None = typer.Option(

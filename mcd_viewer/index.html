@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; worker-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="description" content="Open and explore imaging mass cytometry MCD files locally in your browser.">
+  <link rel="stylesheet" href="./src/style.css">
+  <link rel="icon" type="image/svg+xml" sizes="any" href="./src/assets/logo.svg">
+  <title>SBT · MCD Explorer</title>
+</head>
+<body>
+  <main>
+    <aside class="sidebar">
+      <header class="brand-area"><img class="brand-logo" src="./src/assets/logo.svg" alt="SpatialBiologyToolkit logo"><div class="brand-copy"><div class="brand-title"><h1>MCD Explorer</h1><span class="viewer-version">0.1</span></div><a class="report-issues" href="mailto:michael.haley@manchester.ac.uk?subject=SBT%20MCD%20Explorer%20issue">Report issues</a></div></header>
+      <div class="local-badge"><i></i> Local files. Local compute.</div>
+      <details class="section" open>
+        <summary><span class="step">01</span> Open your file</summary>
+        <div class="section-body">
+          <button class="file-button primary" id="open-file"><span>＋ Open MCD</span><span>.mcd</span></button>
+          <input type="file" id="file" accept=".mcd" hidden>
+          <p class="muted" id="file-name">Choose a file or drop it anywhere.</p>
+          <div class="row file-info"><span id="file-size"></span><button id="close-file" class="text-button" hidden>Close file</button></div>
+        </div>
+      </details>
+      <details class="section" id="acquisition-section" open>
+        <summary><span class="step">02</span> Acquisitions <span id="acquisition-count" class="count">—</span></summary>
+        <div class="section-body">
+          <label class="filter-label">Slide<select id="slide" disabled><option>Open a file to begin</option></select></label>
+          <input id="search" type="search" placeholder="Find an acquisition…" aria-label="Find an acquisition" disabled>
+          <div class="roi-nav"><button id="previous" title="Previous acquisition" aria-label="Previous acquisition" disabled>←</button><select id="acquisition" aria-label="Acquisition" disabled><option>No acquisitions</option></select><button id="next" title="Next acquisition" aria-label="Next acquisition" disabled>→</button></div>
+          <p id="acquisition-summary" class="muted">Browse regions directly from your MCD.</p>
+          <div id="overview" hidden>
+            <label class="overview-backdrop">Backdrop<select id="overview-backdrop" aria-label="Acquisition backdrop"><option value="panorama">Panorama image</option><option value="slide">Whole-slide photo</option><option value="none">Coordinates only</option></select></label>
+            <div class="overview-heading"><span id="overview-title">Acquisition map</span><span id="overview-action">Click a region</span></div>
+            <svg id="map" role="group" tabindex="0" aria-label="Acquisition overview. Scroll to zoom, drag to pan, click a region to open it."></svg>
+            <div class="overview-tools"><span>Drag to pan · Scroll to zoom</span><button id="map-zoom-out" aria-label="Zoom out slide overview">−</button><span id="map-zoom">100%</span><button id="map-zoom-in" aria-label="Zoom in slide overview">＋</button><button id="map-fit" title="Fit overview (F)">Fit</button></div>
+            <p id="overview-note" class="muted" hidden></p>
+          </div>
+        </div>
+      </details>
+      <details class="section" open>
+        <summary><span class="step">03</span> Image channels <span class="count" id="channel-count">—</span></summary>
+        <div class="section-body">
+          <p class="muted" id="channel-help">Mix up to six channels. Browse markers with the arrows. Drag either contrast handle or enter counts in steps of 0.1.</p>
+          <div id="channels"></div>
+          <div class="row channel-actions"><button id="add-channel" class="quiet" disabled>＋ Add channel</button><button id="auto-all" class="quiet" disabled>Auto all</button></div>
+          <p id="map-blend-note" class="muted" hidden>Colour maps blend additively. Show one channel to see its full colour scale.</p>
+        </div>
+      </details>
+      <details class="section" id="histogram-section">
+        <summary><span class="step">04</span> Histogram</summary>
+        <div class="section-body">
+          <p class="muted">Select visible channels, then generate curves for this acquisition. Raw counts; missing pixels are excluded.</p>
+          <div id="histogram-channels"></div>
+          <div class="row"><button id="generate-histogram" class="quiet" disabled>Generate histogram</button><button id="cancel-histogram" class="text-button" hidden>Cancel</button></div>
+          <p id="histogram-status" class="muted" role="status">Open an acquisition to begin.</p>
+          <div id="histogram-result" hidden>
+            <label class="checkbox-label"><input id="histogram-log" type="checkbox"> Log frequency</label>
+            <svg id="histogram-plot" role="img" aria-label="Channel histograms in raw counts"></svg>
+            <div id="histogram-legend"></div>
+          </div>
+        </div>
+      </details>
+      <details class="section" id="advanced-section">
+        <summary><span class="step">05</span> Advanced</summary>
+        <div class="section-body">
+          <label>Channel order<select id="channel-order"><option value="alphabetical">Alphabetical (marker name)</option><option value="original">MCD order (metal tag)</option></select></label>
+          <p class="muted order-help">Applies to channel menus and previous/next arrows.</p>
+          <div class="display-options"><label>Display transform<select id="transform" disabled><option value="linear">Linear</option><option value="arcsinh">Arcsinh</option><option value="log">Log₁₊</option><option value="sqrt">Square root</option></select></label><label id="cofactor-wrap" hidden>Cofactor<input id="cofactor" type="number" min="0.01" step="0.1" value="5"></label></div>
+        </div>
+      </details>
+      <details class="section" id="metadata-section">
+        <summary><span class="step">06</span> Acquisition metadata</summary>
+        <div class="section-body"><dl id="metadata"><dt>Open an MCD to inspect its metadata.</dt></dl></div>
+      </details>
+      <details class="section" id="export-section">
+        <summary><span class="step">07</span> Image Export</summary>
+        <div class="section-body" id="figure-root"></div>
+      </details>
+      <footer class="sidebar-footer"><span class="privacy-dot"></span> Nothing is uploaded.<p>Direct MCD viewing · no conversion needed</p><a href="./THIRD-PARTY-NOTICES.txt" target="_blank" rel="noopener">Reader acknowledgements ↗</a></footer>
+    </aside>
+    <section class="workspace" aria-label="Image workspace">
+      <header class="workspace-header"><div class="title-group"><span class="eyebrow" id="view-context">IMAGING MASS CYTOMETRY</span><h2 id="view-title">Your tissue, a closer look.</h2></div><label class="image-mode" hidden id="image-mode-wrap"><span class="visually-hidden">Image source</span><select id="image-mode" aria-label="Image source"><option value="channels">Channel composite</option></select></label></header>
+      <div class="viewport" id="viewport">
+        <div id="image-stage"><canvas id="canvas" aria-label="Tissue image. Drag to pan, scroll to zoom, click to inspect a pixel." tabindex="0"></canvas><svg id="figure-overlay" aria-label="Image scale and figure labels" role="img"></svg></div>
+        <section id="welcome" class="welcome" aria-labelledby="welcome-title" tabindex="0">
+          <div class="welcome-content">
+            <header class="welcome-hero">
+              <img class="welcome-logo" src="./src/assets/logo.svg" alt="SpatialBiologyToolkit">
+              <div><p class="welcome-eyebrow">SpatialBiologyToolkit · browser viewer</p><h2 id="welcome-title">Welcome to MCD Explorer</h2><p>Go from an imaging mass cytometry acquisition to a closer look at your tissue. Browse regions, explore markers and export figures, directly in your browser.</p></div>
+            </header>
+            <div class="welcome-actions">
+              <button id="welcome-open" class="primary">Open an MCD file <span aria-hidden="true">→</span></button>
+              <button id="demo">Try a synthetic demonstration</button>
+              <span>or drop your .mcd file anywhere</span>
+            </div>
+            <div class="welcome-columns">
+              <section class="welcome-card" aria-labelledby="welcome-explore-title">
+                <h3 id="welcome-explore-title">Explore your acquisition</h3>
+                <dl class="welcome-features">
+                  <div><dt>Find your region</dt><dd>Move between acquisitions and navigate the slide using embedded photographs, where available.</dd></div>
+                  <div><dt>Bring markers into view</dt><dd>Mix up to six channels, adjust contrast and colour maps, inspect pixels, and generate histograms when you need them.</dd></div>
+                  <div><dt>Make a figure</dt><dd>Frame your image with a channel legend and calibrated scale bar. Export PNG, JPEG or editable SVG from Image Export.</dd></div>
+                </dl>
+              </section>
+              <section class="welcome-card" aria-labelledby="welcome-file-title">
+                <h3 id="welcome-file-title">Just bring your MCD</h3>
+                <div class="welcome-file"><span class="welcome-file-badge" aria-hidden="true">.mcd</span><div><strong>One file to get started</strong><p>Open the original acquisition file from your computer or an accessible drive.</p></div></div>
+                <p>Channels, regions and available optical images are read directly from the file. No TIFF conversion or extra setup is needed.</p>
+                <p class="welcome-tip">New here? The synthetic demonstration lets you try the viewer before opening your own data.</p>
+              </section>
+            </div>
+            <div class="welcome-local"><span class="privacy-dot" aria-hidden="true"></span><p><strong>Your files stay local.</strong> Reading, image processing and exports happen on your computer. Nothing is uploaded, and your original MCD is never changed.</p></div>
+            <nav class="welcome-resources" aria-label="MCD Explorer resources">
+              <a href="https://explorer.spatialbiology.app/" target="_blank" rel="noopener noreferrer">Tissue Explorer <span aria-hidden="true">↗</span></a>
+              <a href="https://github.com/dr-michael-haley/imcanalysis" target="_blank" rel="noopener noreferrer">SpatialBiologyToolkit on GitHub <span aria-hidden="true">↗</span></a>
+            </nav>
+          </div>
+        </section>
+        <div id="busy" class="busy" role="status" hidden><span class="spinner"></span><span id="busy-label">Reading file…</span><progress id="progress" max="1"></progress><button id="cancel" class="text-button">Cancel</button></div>
+        <div id="message" class="message" role="alert" hidden><span id="message-text"></span><button id="dismiss-message" aria-label="Dismiss message">×</button></div>
+        <div id="legend" class="legend" hidden></div>
+        <div class="viewer-tools" id="viewer-tools" hidden><button id="zoom-out" aria-label="Zoom out" title="Zoom out">−</button><span id="zoom-label">100%</span><button id="zoom-in" aria-label="Zoom in" title="Zoom in">＋</button><span class="divider"></span><button id="one-to-one" title="One image pixel per screen pixel">1:1</button><button id="fit" title="Fit image (F)">Fit view</button></div>
+        <div id="drop-overlay" hidden>Drop an MCD file to open it</div>
+      </div>
+      <div id="pixel-panel" class="pixel-panel" hidden><span id="pixel-coordinate"></span><div id="pixel-values"></div><button id="close-pixel" class="text-button" aria-label="Close pixel inspector">×</button></div>
+      <footer class="statusbar"><span id="status">Ready to open an MCD file</span><span id="view-hint">Drag to pan · Scroll to zoom · Click to inspect</span></footer>
+    </section>
+  </main>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,6 @@
+{
+  "repository": "https://github.com/dr-michael-haley/SpatialData.js.git",
+  "revision": "3a4dbec45d30db2a987416bb9b14a5ee0474f4ad",
+  "node": "24.14.1",
+  "pnpm": "11.20.0"
+}

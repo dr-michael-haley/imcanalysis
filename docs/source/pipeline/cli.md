@@ -65,6 +65,21 @@ See the complete [Project Console guide](../guides/project_console.md), includin
 the central project registry, CSF3 `srun-x11`, config backup/audit behavior, and
 read-only mode.
 
+## Read-only browser viewer
+
+After building the static application in `web_viewer/`, launch it with:
+
+```shell
+sbt gui web
+```
+
+Select a local AnnData file and mask/image folders in the browser. The launcher
+serves only UI assets; all dataset reading stays in the browser, with no upload
+or Python scientific backend. A hosted copy needs no local SBT installation.
+See the [Tissue Explorer guide](../guides/browser_viewer.md) for build steps,
+supported formats and initial limits. `--check` checks for a build without
+starting a server, and `--no-browser` prints the local URL.
+
 ## Optional NapariSBT application
 
 For a standalone region-annotation popup using an existing embedding:

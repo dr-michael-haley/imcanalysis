@@ -1,0 +1,9 @@
+.engine/
+dist/
+node_modules/
+fixtures/
+test-results/
+playwright-report/
+*.local.json
+*.log
+*.zip

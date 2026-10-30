@@ -1,0 +1,27 @@
+name: Build SpatialData Explorer
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  static-site:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: spatialdata_viewer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.14.1'
+      - run: npm install --global pnpm@11.20.0
+      - run: npm run prepare:engine
+      - run: pnpm --dir .engine/SpatialData.js install --frozen-lockfile
+      - run: npm test
+      - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbt-spatialdata-explorer-static
+          path: spatialdata_viewer/dist/
+          include-hidden-files: true
+          if-no-files-found: error

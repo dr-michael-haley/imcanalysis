@@ -1,0 +1,12 @@
+{
+  "name": "sbt-mcd-explorer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A browser-local viewer for imaging mass cytometry MCD files",
+  "scripts": {
+    "start": "node server.mjs",
+    "build": "node build.mjs",
+    "test": "node --test tests/*.test.mjs"
+  }
+}

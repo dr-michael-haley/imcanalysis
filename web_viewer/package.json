@@ -1,0 +1,25 @@
+{
+  "name": "sbt-browser-viewer",
+  "version": "0.6.2",
+  "private": true,
+  "type": "module",
+  "description": "Read-only, browser-local IMC review",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "test": "node --test tests/core.test.js tests/anndata.test.js tests/workspace.test.js tests/workspace-library.test.js tests/loading.test.js tests/remaps.test.js tests/plots.test.js tests/review-tools.test.js tests/aligned-layers.test.js tests/navigation.test.js tests/figure.test.js tests/workspace-assets.test.js",
+    "test:browser": "node --test tests/browser.test.js tests/browser-workspace.test.js tests/browser-multiview.test.js"
+  },
+  "dependencies": {
+    "geotiff": "3.0.5",
+    "h5wasm": "0.10.3"
+  },
+  "devDependencies": {
+    "playwright": "1.58.2",
+    "vite": "8.3.5"
+  }
+}

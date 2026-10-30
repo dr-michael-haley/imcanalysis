@@ -1,0 +1,16 @@
+{
+  "name": "sbt-spatialdata-explorer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A static, browser-local SpatialData viewer",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "prepare:engine": "node scripts/prepare-engine.mjs",
+    "dev": "node scripts/run.mjs dev",
+    "build": "node scripts/run.mjs build",
+    "preview": "node scripts/serve.mjs",
+    "test": "node --test tests/model.test.mjs",
+    "test:browser": "node scripts/run.mjs test:browser"
+  }
+}

@@ -25,3 +25,4 @@ include = ["SpatialBiologyToolkit*"]
 
 [tool.setuptools.package-data]
 "SpatialBiologyToolkit.napari_sbt" = ["help/*.md"]
+"SpatialBiologyToolkit.browser_viewer" = ["static/*", "static/assets/*"]

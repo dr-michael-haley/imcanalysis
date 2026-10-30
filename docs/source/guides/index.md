@@ -13,6 +13,8 @@ napari_imc_explorer
 cellpose_qc_active_learning
 population_refinement
 project_console
+browser_viewer
+spatialdata_explorer
 spatialdata
 figures
 spatial_permutation

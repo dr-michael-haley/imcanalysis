@@ -4,7 +4,10 @@ setup(
     name="SpatialBiologyToolkit",
     version="0.1",
     packages=find_packages(),
-    package_data={"SpatialBiologyToolkit.napari_sbt": ["help/*.md"]},
+    package_data={
+        "SpatialBiologyToolkit.napari_sbt": ["help/*.md"],
+        "SpatialBiologyToolkit.browser_viewer": ["static/*", "static/assets/*"],
+    },
 
     install_requires=[
         # ---- Core ----

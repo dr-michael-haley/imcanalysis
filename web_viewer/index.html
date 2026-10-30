@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="description" content="Explore local IMC images, segmentation masks and AnnData in your browser.">
+  <link rel="icon" type="image/png" href="../images/Logo.png">
+  <link rel="icon" type="image/svg+xml" sizes="any" href="./src/favicon.svg">
+  <title>SBT · Tissue Explorer</title>
+</head>
+<body>
+  <main>
+    <aside class="sidebar">
+      <div class="brand-area"><img class="brand-logo sbt-logo" alt="SpatialBiologyToolkit logo"><div class="brand-copy"><div class="brand-title"><a class="brand" href="./">Tissue Explorer</a><span id="viewer-version" title="Tissue Explorer application version"></span></div><span class="brand-links"><a id="how-to-guide" href="https://www.guidejar.com/guides/6050375d-c6a2-4e23-9722-8adeabe2c5c0" target="_blank" rel="noopener noreferrer">How to guide ↗</a><a id="report-issue" href="mailto:michael.haley@manchester.ac.uk?subject=SBT%20Tissue%20Explorer%20issue">Report an issue</a></span></div></div>
+      <div class="sidebar-tabs" role="tablist" aria-label="Viewer sections"><button id="tab-setup" role="tab" aria-selected="true" aria-controls="panel-setup">Setup</button><button id="tab-rois" role="tab" aria-selected="false" aria-controls="panel-rois">ROIs</button><button id="tab-views" role="tab" aria-selected="false" aria-controls="panel-views">Views</button></div>
+      <div id="panel-setup" role="tabpanel" aria-labelledby="tab-setup"></div>
+      <div id="panel-rois" role="tabpanel" aria-labelledby="tab-rois" hidden></div>
+      <div id="panel-views" role="tabpanel" aria-labelledby="tab-views" hidden></div>
+      <div id="workspace-controls">
+      <div class="workspace-library">
+        <div class="workspace-library-heading"><h2>Workspaces</h2><p id="local-save-status" class="workspace-note save-status" role="status">Opening…</p></div>
+        <label class="workspace-name-row"><span id="local-workspace-current">Active</span><input id="local-workspace-name" aria-label="Workspace name" type="text" maxlength="120" placeholder="Name this workspace" disabled></label>
+        <div class="workspace-open-row"><label class="recent-workspaces"><span class="visually-hidden">Saved on this browser</span><select id="local-workspace-select" aria-label="Saved workspaces" disabled></select></label><button id="open-local-workspace" title="Open selected workspace" aria-label="Open workspace" disabled>Open</button></div>
+        <label class="workspace-check-choice">On open<select id="workspace-check-mode"><option value="full">Full asset check (default)</option><option value="fast">Quick reconnect · cached file list</option></select></label>
+        <p id="workspace-check-help" class="workspace-note">Checks all files in the saved asset folders.</p>
+        <div class="workspace-actions workspace-manage-actions"><button id="new-local-workspace" class="quiet" title="Create a new workspace" aria-label="New workspace" disabled>+ New</button><button id="duplicate-local-workspace" class="quiet" title="Duplicate the active workspace" aria-label="Duplicate active workspace" disabled>Duplicate</button><button id="delete-local-workspace" class="quiet" title="Delete the active workspace" aria-label="Delete active workspace" disabled>Delete</button></div>
+        <div id="delete-workspace-confirm" class="workspace-confirm" hidden><p>Delete “<strong id="delete-workspace-name"></strong>” from this browser? Its saved annotations will be removed. Your data files are unchanged.</p><div class="workspace-actions"><button id="confirm-delete-workspace">Delete workspace</button><button id="keep-local-workspace" class="quiet">Keep workspace</button></div></div>
+        <details id="workspace-locations"><summary>Assets &amp; connection <span id="workspace-asset-count"></span></summary>
+          <div class="workspace-connection" id="workspace-connection">
+            <div class="workspace-folder-row"><p id="root-connection" class="workspace-note"></p><button id="connect-workspace-root" class="quiet" disabled>Connect folder</button></div>
+            <div id="workspace-root-label" hidden><button id="choose-workspace-root">Choose data folder</button></div>
+            <p id="workspace-status" class="workspace-note" role="status" aria-live="polite"></p>
+            <div id="workspace-error" class="input-error" role="alert" hidden></div>
+            <progress id="workspace-progress" aria-label="Workspace connection progress" hidden></progress>
+            <div id="workspace-location-fields"></div>
+            <div class="workspace-connection-actions"><button id="workspace-retry-assets" class="quiet" hidden>Retry unresolved</button><button id="workspace-open-connected" class="primary-action" hidden>Open workspace</button><button id="cancel-workspace" class="quiet" hidden>Cancel</button></div>
+            <details class="workspace-compatibility"><summary>Compatibility folder chooser</summary><p class="workspace-note">Lists the entire root, including unrelated folders. Quick reconnect requires the standard folder chooser.</p><label id="workspace-root-fallback" class="file-picker quiet">Choose root folder<input id="workspace-root" type="file" webkitdirectory multiple aria-label="Workspace root folder"></label></details>
+          </div>
+        </details>
+        <div id="local-workspace-error" class="input-error" role="alert" hidden></div><button id="retry-local-save" class="quiet" hidden>Retry saving</button>
+        <div class="workspace-library-footer"><details id="workspace-file-tools"><summary>Import / export</summary><div class="workspace-actions" aria-label="Workspace files">
+        <label class="file-picker">Import JSON<input id="workspace-file" aria-label="Load workspace" type="file" accept=".json"></label>
+        <button id="save-workspace" class="quiet" disabled>Export JSON</button><button id="write-workspace-file" class="quiet" disabled>Save to file…</button>
+      </div></details></div>
+      </div>
+      </div>
+      <div id="view-controls">
+        <label>Selected view<select id="view-select" aria-label="Selected view"></select></label>
+        <label>View name<input id="view-name" type="text" maxlength="80" value="View 1"></label>
+        <div class="workspace-actions"><button id="add-view">+ Add view</button><button id="remove-view" disabled>Remove view</button></div>
+        <p class="muted">Up to four views. Pan and zoom are linked. Click a pane to edit its channels and overlay.</p>
+        <div id="saved-views-root"></div>
+      </div>
+      <div class="sidebar-toolbar"><span>Controls</span><button id="collapse-sections" class="quiet">Collapse all</button></div>
+      <details class="control-section" id="section-data" open>
+        <summary class="section-heading"><span class="step">01</span><h2>Open your dataset</h2></summary>
+        <div class="section-body">
+        <p class="muted">Choose files from your computer. Your data stays here.</p>
+        <label class="file-picker">AnnData <span id="anndata-name">Choose .h5ad</span><input id="anndata-file" type="file" accept=".h5ad"></label>
+        <label class="file-picker">Masks <span id="masks-name">Choose folder</span><input id="mask-files" type="file" webkitdirectory multiple></label>
+        <label class="file-picker">Images <span id="images-name">Choose folder</span><input id="image-files" type="file" webkitdirectory multiple></label>
+        <details class="mapping" id="identity-settings"><summary>Cell identity columns</summary>
+          <label>ROI column<select id="roi-column" disabled></select></label>
+          <label>Mask object ID<select id="id-column" disabled></select></label>
+          <button id="apply-mapping" disabled>Apply mapping</button>
+        </details>
+        <button id="reset" class="quiet">Close dataset</button>
+        </div>
+      </details>
+      <details class="control-section" id="section-roi" open>
+        <summary class="section-heading"><span class="step">01</span><h2>Navigation</h2></summary>
+        <div class="section-body">
+        <h1 id="view-title" class="visually-hidden">Tissue view</h1>
+        <div class="roi-nav"><button id="previous-roi" aria-label="Previous ROI" disabled>←</button><select id="roi" aria-label="Region of interest" disabled></select><button id="next-roi" aria-label="Next ROI" disabled>→</button></div>
+        <p id="roi-summary" class="muted">Open AnnData to find your regions.</p>
+        <dl id="roi-metadata-summary"></dl>
+        </div>
+      </details>
+      <details class="control-section" id="section-roi-filter" open>
+        <summary class="section-heading"><span class="step">02</span><h2>Filtering</h2></summary><div class="section-body" id="roi-filter-root"></div>
+      </details>
+      <details class="control-section" id="section-roi-sort" open>
+        <summary class="section-heading"><span class="step">03</span><h2>Sorting</h2></summary><div class="section-body">
+        <label>Order by<select id="order-mode"><option value="name">ROI name</option><option value="cells">Total cells</option><option value="population">Population / observation count</option><option value="obs">Mean numeric observation</option><option value="marker">Mean marker intensity</option></select></label>
+        <label id="order-field-label" hidden>Field<select id="order-field"></select></label>
+        <label id="order-value-label" hidden>Value<select id="order-value"></select></label>
+        <label id="order-source-label" hidden>Expression source<select id="order-source"></select></label>
+        <label>Direction<select id="order-direction"><option value="desc">Descending · highest first</option><option value="asc" selected>Ascending · lowest first</option></select></label>
+        <div class="workspace-actions"><button id="apply-order" disabled>Apply order</button><button id="reset-order">Reset order</button></div>
+        <p id="order-status" class="muted" role="status">Ordered by ROI name · ascending.</p>
+        <label>Quick jump: first X ROIs<input id="top-rois" type="number" min="1" max="100" value="10"></label>
+        <div id="roi-shortcuts" aria-label="Ranked ROI shortcuts"></div>
+        <p class="visit-key"><span class="unvisited">● Unvisited</span> <span class="partial">● Some views</span> <span class="visited">● All views</span></p>
+        <p class="muted">Visits follow the current channel, contrast, normalisation and overlay settings.</p>
+        <button id="reset-visits" class="quiet">Reset visits for current views</button>
+        </div>
+      </details>
+      <details class="control-section" id="section-channels" open>
+        <summary class="section-heading with-visibility"><span class="step">03</span><h2>Image channels</h2><button id="toggle-images" class="visibility-toggle" type="button" aria-label="Image channels visible" aria-pressed="true" title="Hide all image channels"><svg class="eye-open" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg><svg class="eye-closed" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8s3 7 9 7 9-7 9-7M5 11l-3 3m7 0-1 4m7-4 1 4m3-7 3 3"/></svg></button></summary>
+        <div class="section-body">
+        <p class="muted">Mix up to six channels. Untick a channel to hide it.</p>
+        <div id="channels"></div>
+        <div class="channel-actions"><span id="channel-count" class="muted"></span><button id="add-channel">+ Add channel</button></div>
+        </div>
+      </details>
+      <details class="control-section" id="section-normalization" open>
+        <summary class="section-heading"><span class="step">04</span><h2>Image normalisation</h2></summary>
+        <div class="section-body">
+          <label class="file-picker">Dictionary <span id="normalization-name">Choose CSV / JSON</span><input id="normalization-file" type="file" accept=".csv,.json"></label>
+          <p id="normalization-status" class="muted" role="status">Optional Nimbus / NapariSBT dictionary. Image display only.</p>
+          <div id="normalization-error" class="input-error" role="alert" hidden></div>
+          <button id="clear-normalization" class="quiet" disabled>Remove dictionary</button>
+          <details class="mapping" id="normalization-settings"><summary>Fallback settings</summary>
+            <p class="muted">With a dictionary loaded, unmatched channels use these settings. Minimum counts applies to all channels.</p>
+            <label>Fallback quantile (0–1)<input id="normalization-quantile" type="number" min="0.000001" max="1" step="0.001" value="0.999"></label>
+            <label>Minimum pixel counts<input id="normalization-minimum" type="number" min="0" step="0.1" value="0.1"></label>
+            <button id="apply-normalization-settings">Apply settings</button>
+          </details>
+        </div>
+      </details>
+      <details class="control-section" id="section-overlay" open>
+        <summary class="section-heading with-visibility"><span class="step">05</span><h2>Cell overlay</h2><button id="toggle-overlay" class="visibility-toggle" type="button" aria-label="Cell overlay visible" aria-pressed="true" title="Hide cell overlay"><svg class="eye-open" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg><svg class="eye-closed" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8s3 7 9 7 9-7 9-7M5 11l-3 3m7 0-1 4m7-4 1 4m3-7 3 3"/></svg></button></summary>
+        <div class="section-body">
+        <label class="check-label element-legend-control"><input id="overlay-legend" type="checkbox" checked>Show cell overlay in legend</label>
+        <label>Colour by<select id="colour-by" disabled></select></label>
+        <label id="expression-label" hidden>Expression source<select id="expression-source"></select></label>
+        <div id="colourmap-controls" hidden><label>Continuous colourmap<select id="marker-colourmap"></select></label><label class="check-label"><input id="marker-reverse" type="checkbox"> Reverse colourmap</label><div id="overlay-colour-limits"></div></div>
+        <div class="two-columns"><label>Appearance<select id="overlay-style"><option value="outline">Outlines</option><option value="fill">Filled cells</option><option value="off">Hidden</option></select></label><label>Opacity<input id="opacity" type="range" min="0" max="1" step="0.05" value="0.8"></label></div>
+        <label>Show populations<select id="population" multiple size="5" disabled aria-describedby="population-help"></select></label>
+        <div class="population-actions"><span id="population-summary">All populations</span><button id="population-all" class="quiet">Show all</button></div>
+        <p id="population-help" class="muted">Ctrl / Cmd-click to choose several; Shift-click for a range. No selection shows all. Representative markers requires exactly one.</p>
+        <div id="legend" class="legend"></div>
+        </div>
+      </details>
+      <details class="control-section" id="section-representative" open><summary class="section-heading"><span class="step">03</span><h2>Representative markers</h2></summary><div class="section-body" id="representative-root"></div></details>
+      <details class="control-section" id="section-aligned-setup" open>
+        <summary class="section-heading"><span class="step">03</span><h2>Aligned layers</h2></summary>
+        <div class="section-body">
+          <p class="muted">Add a folder per layer, with one image named after each ROI, or an IMC folder with channel images inside ROI subfolders. All images must share the tissue's pixel dimensions and alignment.</p>
+          <label>Layer type<select id="aligned-kind"><option value="rgb">Colour / reference image (H&amp;E, RGB)</option><option value="scalar">Scalar image (intensity, probability)</option><option value="labels">Categorical labels (annotations, masks)</option><option value="imc">Additional IMC image folder</option></select></label>
+          <div id="aligned-flatten-option" hidden><label class="check-label"><input id="aligned-flatten" type="checkbox">Flatten labels on import</label><p class="muted">Combine all non-zero IDs. Change this per pane in Views.</p></div>
+          <label>Name (optional)<input id="aligned-name" maxlength="80" placeholder="e.g. H&amp;E or Tissue regions"></label>
+          <label class="file-picker" id="aligned-add">+ Add layer folder<input id="aligned-files" type="file" webkitdirectory multiple aria-label="Add aligned layer folder"></label>
+          <p class="muted">Colour: TIFF, PNG, JPEG, BMP, GIF or WebP. Scalar / labels: TIFF. IMC: TIFF channels in ROI subfolders, like Images. For labels, include label_mapping.csv or load a separate dictionary after adding the folder.</p>
+          <p id="aligned-empty" class="muted">No additional layers. Their display controls appear in Views when added.</p>
+          <div id="aligned-error" class="input-error" role="alert" hidden></div>
+          <div id="aligned-sources"></div>
+        </div>
+      </details>
+      <details class="control-section" id="section-aligned-view" open hidden>
+        <summary class="section-heading"><span class="step">04</span><h2>Aligned layers</h2></summary>
+        <div class="section-body"><p class="muted">Settings apply to the selected view. Layers are drawn over image channels, in the order below; cell overlays stay on top.</p><div id="aligned-controls"></div></div>
+      </details>
+      <div class="sidebar-footer"><span class="privacy"><i></i> Local files · Read only</span></div>
+    </aside>
+    <div class="workspace welcome-only">
+      <div id="viewport" tabindex="0" aria-label="Tissue image. Drag to pan, scroll to zoom, click a cell to inspect.">
+        <canvas id="tissue" aria-label="Tissue and segmentation view"></canvas>
+        <section id="empty-state" aria-labelledby="welcome-title" tabindex="0">
+          <div class="welcome-content">
+            <header class="welcome-hero">
+              <img class="welcome-logo sbt-logo" alt="SpatialBiologyToolkit">
+              <div><p class="welcome-eyebrow">SpatialBiologyToolkit · browser viewer</p><h1 id="welcome-title">Welcome to Tissue Explorer</h1><p>Explore imaging mass cytometry (IMC) results, review cell populations in their tissue context, and share what you find — directly in your browser.</p></div>
+            </header>
+            <div class="welcome-actions">
+              <button id="welcome-setup" class="primary-action">Open Setup <span aria-hidden="true">→</span></button>
+              <button id="welcome-workspace">Resume a workspace</button>
+              <a href="https://www.guidejar.com/guides/6050375d-c6a2-4e23-9722-8adeabe2c5c0" target="_blank" rel="noopener noreferrer">Follow the Guidejar tutorial <span aria-hidden="true">↗</span></a>
+            </div>
+            <nav class="welcome-resources" aria-label="Tissue Explorer resources">
+              <a href="https://github.com/dr-michael-haley/imcanalysis" target="_blank" rel="noopener noreferrer">SpatialBiologyToolkit on GitHub <span aria-hidden="true">↗</span></a>
+              <a href="https://imcanalysis.readthedocs.io/en/latest/" target="_blank" rel="noopener noreferrer">SBT documentation <span aria-hidden="true">↗</span></a>
+              <a href="mailto:michael.haley@manchester.ac.uk?subject=SBT%20Tissue%20Explorer">Contact Michael Haley</a>
+            </nav>
+            <div class="welcome-columns">
+              <section class="welcome-card" aria-labelledby="welcome-features-title">
+                <h2 id="welcome-features-title">Explore your results</h2>
+                <dl class="welcome-features">
+                  <div><dt>Compare tissue views</dt><dd>Up to four linked panes, six image channels per pane, and aligned histology or annotation layers.</dd></div>
+                  <div><dt>Inspect cells and markers</dt><dd>Colour by population, expression or metadata. Find representative markers and compare expression curves.</dd></div>
+                  <div><dt>Connect tissue to plots</dt><dd>Explore existing UMAPs and embeddings; select cells in either space. Create marker matrices, composition plots, label comparisons and alluvial plots.</dd></div>
+                  <div><dt>Propose labels and flag cells</dt><dd>Rename, merge and recolour populations, add notes, and export remapping schemas or cell flags as CSV.</dd></div>
+                  <div><dt>Pick up where you left off</dt><dd>Save workspaces, bookmark ROIs and positions with comments, and switch between named view presets.</dd></div>
+                  <div><dt>Export figures</dt><dd>Arrange panes with calibrated scale bars and legends. Export PNG, JPEG or SVG with separate layers.</dd></div>
+                </dl>
+              </section>
+              <section class="welcome-card" aria-labelledby="welcome-assets-title">
+                <h2 id="welcome-assets-title">Bring these assets</h2>
+                <p class="welcome-card-intro">For a full tissue review, choose these in <strong>Setup → Open your dataset</strong>.</p>
+                <dl class="welcome-assets">
+                  <div><dt>AnnData <span>.h5ad · required</span></dt><dd>Cell measurements and observations, including an ROI column and a cell ID column. Defaults: <code>ROI</code> and <code>ObjectNumber</code>.</dd></div>
+                  <div><dt>Cell masks <span>TIFF · for cell overlays</span></dt><dd>One labelled mask per ROI. Integer mask IDs must match AnnData cell IDs within that ROI; zero is background.</dd></div>
+                  <div><dt>Marker images <span>TIFF · for tissue images</span></dt><dd>One folder per ROI containing channel images. Images and masks must have the same pixel dimensions and alignment.</dd></div>
+                </dl>
+                <details class="welcome-details"><summary>Folder layout &amp; optional assets</summary>
+                  <p>Keep everything under one root folder so a saved workspace can reconnect to its assets. Match ROI names between AnnData, mask filenames and image folders.</p>
+                  <pre aria-label="Example dataset folder layout">MyDataset/
+  cells.h5ad
+  Masks/ROI_A.tiff
+  Images/ROI_A/CD3.tiff
+  Images/ROI_A/DNA.tiff</pre>
+                  <p>Optional: an image normalisation dictionary (CSV/JSON), aligned H&amp;E or other colour images, scalar images, annotation masks with label dictionaries, and additional IMC image folders. Add these in Setup.</p>
+                  <p>UMAP and other embedding coordinates must already be present in AnnData. This viewer does not compute them.</p>
+                </details>
+              </section>
+            </div>
+            <div class="welcome-local"><strong>Your files stay local.</strong> AnnData, images and masks are opened read-only, including files on accessible network drives. Proposed labels, notes and flags are saved in your workspace; they do not change the source AnnData.</div>
+            <footer class="welcome-footer">
+              <p>Use desktop Chrome or Edge for the best folder support. Workspaces saved in this browser remember settings, not copies of your data. Export workspace JSON to back up or move your review to another browser or computer.</p>
+            </footer>
+          </div>
+        </section>
+        <div id="loading-overlay" hidden>
+          <div class="loading-card" role="status" aria-live="polite" aria-atomic="true">
+            <span class="loading-spinner" aria-hidden="true"></span>
+            <div><strong id="loading-title">Loading</strong><p id="loading-detail"></p></div>
+          </div>
+        </div>
+        <div id="selection-strip" role="group" aria-label="Current cell selection" hidden>
+          <span id="selection-summary" role="status"><strong id="selection-count">0</strong> selected<span id="selection-rois"></span></span>
+          <span id="selection-space">Tissue · current ROI</span>
+          <button id="selection-visible" disabled>Select displayed</button>
+          <button id="selection-clear" title="Clear selected cells across all ROIs" disabled>Clear</button>
+          <button id="selection-done" title="Return to Inspect; keep selected cells">Done <kbd>Esc</kbd></button>
+        </div>
+      </div>
+      <nav id="viewer-toolbar" aria-label="Viewer controls">
+        <div class="roi-navigation" role="group" aria-label="ROI navigation">
+          <button id="quick-previous" class="toolbar-icon" aria-label="Previous ROI" title="Previous ROI" disabled>←</button>
+          <button id="quick-next" class="toolbar-icon" aria-label="Next ROI" title="Next ROI" disabled>→</button>
+          <span id="toolbar-roi">No ROI loaded</span><span id="toolbar-roi-position"></span>
+        </div>
+        <div class="toolbar-actions">
+          <div class="toolbar-disclosure">
+            <button id="selection-mode-trigger" aria-expanded="false" aria-controls="selection-mode-menu" title="Choose how the pointer works in tissue and embedding"><span id="selection-mode-icon" aria-hidden="true">↖</span><span id="selection-mode-name">Inspect</span><span class="toolbar-chevron" aria-hidden="true">⌃</span></button>
+            <div id="selection-mode-menu" class="toolbar-popover" role="group" aria-labelledby="selection-mode-heading" hidden>
+              <h2 id="selection-mode-heading">Mouse mode</h2>
+              <button id="selection-inspect" aria-pressed="true"><span aria-hidden="true">↖</span><span><strong>Inspect &amp; pan</strong><small>Click for details. Drag to move the tissue.</small></span></button>
+              <button id="selection-click" aria-pressed="false"><span aria-hidden="true">⊕</span><span><strong>Select cells</strong><small>Click to add or remove a cell.</small></span></button>
+              <button id="selection-lasso" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 18C-3 15 2 3 12 3s16 13 5 15c-8 2-14-4-10-6s9 5 4 10" stroke-dasharray="3 2"/></svg><span><strong>Lasso</strong><small>Draw around cell centres to add them.</small></span></button>
+              <p>Works in tissue and embedding. <kbd>Esc</kbd> returns to Inspect.</p>
+            </div>
+          </div>
+          <div class="toolbar-disclosure">
+            <button id="view-menu-trigger" aria-expanded="false" aria-controls="view-menu"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>View<span class="toolbar-chevron" aria-hidden="true">⌃</span></button>
+            <div id="view-menu" class="toolbar-popover" role="group" aria-labelledby="view-menu-heading" hidden>
+              <h2 id="view-menu-heading">Display · View 1</h2>
+              <label><input id="quick-images" type="checkbox" checked>Image channels</label>
+              <label><input id="quick-overlay" type="checkbox" checked>Cell overlay</label>
+              <label><input id="quick-legend" type="checkbox" checked>Legend</label>
+              <label><input id="scale-visible" type="checkbox" checked>Scale bar</label>
+              <details class="scale-settings"><summary>Scale bar settings</summary>
+                <label>µm per image pixel<input id="scale-calibration" type="number" min="0.000001" max="1000000" step="any" value="1"></label>
+                <p>Calibration applies to all aligned images and panes. Default: 1 px = 1 µm.</p>
+                <label><input id="scale-auto" type="checkbox" checked>Automatic length</label>
+                <label>Length (µm)<input id="scale-length" type="number" min="0.001" max="10000000" step="any" value="100"></label>
+                <label>Thickness (px)<input id="scale-thickness" type="number" min="1" max="20" value="3"></label>
+                <label>Text size (px)<input id="scale-font" type="number" min="8" max="48" value="12"></label>
+                <label>Colour<input id="scale-colour" type="color" value="#ffffff"></label>
+                <label>Position<select id="scale-position"><option value="bottom-left">Bottom left</option><option value="bottom-right">Bottom right</option></select></label>
+              </details>
+              <div class="toolbar-zoom" role="group" aria-label="Linked view zoom"><button id="zoom-out" class="toolbar-icon" aria-label="Zoom out">−</button><span id="view-scale">—</span><button id="zoom-in" class="toolbar-icon" aria-label="Zoom in">+</button><button id="fit" title="Fit all views">Fit</button></div>
+              <p>Zoom and pan stay linked across panes.</p>
+            </div>
+          </div>
+          <button id="quick-bookmark" title="Bookmark ROI, views, zoom and position" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 3h12v18l-6-4-6 4Z"/><path d="M9 9h6m-3-3v6"/></svg>Bookmark</button>
+          <button id="quick-export" title="Compose and export a figure" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 15v6h16v-6"/></svg>Export</button>
+        </div>
+      </nav>
+      <div id="status" role="status" aria-live="polite">Ready to open a local dataset.</div>
+      <div id="warning" role="alert" hidden></div>
+      <details id="review-panels" open>
+      <summary class="review-heading"><span>Review tools</span><span class="when-open">Hide panel</span><span class="when-closed">Show panel</span></summary>
+      <div id="review-resize" role="separator" tabindex="0" aria-label="Resize review panel; up to enlarge, down to shrink" aria-orientation="horizontal" aria-valuemin="180" aria-valuemax="700" aria-valuenow="280" aria-controls="review-content"></div>
+      <div class="review-toolbar"><div class="review-tabs" role="tablist" aria-label="Review tools">
+        <button id="review-tab-cells" role="tab" aria-controls="review-cells">Cell details</button>
+        <button id="review-tab-embedding" role="tab" aria-controls="review-embedding">Embedding</button>
+        <button id="review-tab-remap" role="tab" aria-controls="review-remap">Population remapping</button>
+        <button id="review-tab-plots" role="tab" aria-controls="review-plots">Plots</button>
+        <button id="review-tab-flags" role="tab" aria-controls="review-flags">Flagging</button>
+        <button id="review-tab-bookmarks" role="tab" aria-controls="review-bookmarks">Bookmarks</button>
+        <button id="review-tab-figure" role="tab" aria-controls="review-figure">Figure</button>
+      </div><button id="review-height-reset" class="quiet" title="Reset panel height">Reset height</button></div>
+      <div class="lower-panels" id="review-content">
+        <section id="review-figure" role="tabpanel" aria-labelledby="review-tab-figure" hidden><div id="figure-root"></div></section>
+        <section id="review-bookmarks" role="tabpanel" aria-labelledby="review-tab-bookmarks" hidden><div id="bookmark-root"></div></section>
+        <section id="review-flags" role="tabpanel" aria-labelledby="review-tab-flags" hidden><div id="flag-root"></div></section>
+        <section id="review-plots" role="tabpanel" aria-labelledby="review-tab-plots" hidden><div id="plot-root"></div></section>
+        <section class="inspector" id="review-cells" role="tabpanel" aria-labelledby="review-tab-cells" hidden><div class="panel-heading"><h2>Cell inspector</h2><span id="cell-badge">No cell selected</span></div><p id="cell-hint" class="muted">Click a segmented cell to see its AnnData observations.</p><dl id="cell-details"></dl></section>
+        <section class="embedding-panel" id="review-embedding" role="tabpanel" aria-labelledby="review-tab-embedding"><div class="embedding-controls"><label>Projection<select id="embedding" aria-label="Embedding" disabled></select></label><label>Colour by<select id="embedding-colour"></select></label><label>Matrix<select id="embedding-source"></select></label><label>Colour map<select id="embedding-colourmap"></select></label><label class="plot-check"><input id="embedding-square" type="checkbox">Square</label><label class="plot-check"><input id="embedding-context" type="checkbox">Other ROIs</label><label>Context limit<select id="embedding-limit"><option value="10000">10,000</option><option value="50000">50,000</option><option value="100000">100,000</option><option value="200000">200,000</option></select></label><button id="embedding-update">Update</button><button id="embedding-cancel" hidden>Cancel</button></div><div id="embedding-colour-limits" hidden></div><canvas id="embedding-canvas" aria-label="Linked cell embedding"></canvas><p id="embedding-status" class="muted" role="status">Current ROI · colours follow the selected view</p><div id="embedding-legend" class="embedding-legend"></div></section>
+        <section id="review-remap" role="tabpanel" aria-labelledby="review-tab-remap" hidden>
+          <div id="remap-panel">
+            <div class="remap-toolbar">
+              <label>Source observation<select id="remap-source" disabled></select></label><button id="remap-create" disabled>+ Create remap</button>
+              <label>Remaps in workspace<select id="remap-select" disabled></select></label><label>Remap name<input id="remap-name" maxlength="120" disabled></label>
+              <button id="remap-use" disabled>Use in selected view</button><button id="remap-export" disabled>Export CSV</button><button id="remap-undo" disabled>Undo</button><button id="remap-remove" class="quiet" disabled>Remove remap</button>
+            </div>
+            <p id="remap-summary" class="muted" role="status">Create a remap from an observation to begin. Source AnnData stays read only.</p>
+            <p id="remap-error" class="input-error" role="alert" hidden></p>
+            <div id="remap-table-wrap" hidden>
+              <div class="remap-toolbar remap-bulk"><input id="remap-search" type="search" placeholder="Find populations or notes" aria-label="Find populations or notes"><span id="remap-selected">0 selected</span><button id="remap-select-page">Select page</button><button id="remap-clear-selection" class="quiet">Clear selection</button><input id="remap-merge-name" maxlength="256" placeholder="Shared proposed name" aria-label="Shared proposed name"><button id="remap-merge" disabled>Rename / merge selected</button></div>
+              <div class="remap-table-scroll"><table class="remap-table"><thead><tr><th scope="col">Select</th><th scope="col">Original population</th><th scope="col">Cells</th><th scope="col">Proposed name</th><th scope="col">Colour</th><th scope="col">Notes</th></tr></thead><tbody id="remap-rows"></tbody></table></div>
+              <div class="remap-pagination"><span>Shared names merge populations; merged rows share a colour. Changes save automatically to your local workspace.</span><button id="remap-previous" aria-label="Previous population page">←</button><span id="remap-page"></span><button id="remap-next" aria-label="Next population page">→</button></div>
+            </div>
+          </div>
+        </section>
+      </div>
+      </details>
+    </div>
+  </main>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
