@@ -1,5 +1,10 @@
 # Getting started
 
+**Want to explore data in your browser?** Start with the
+[Browser-based tools](../browser_tools/index.md). Tissue Explorer, MCD Explorer
+and MERSCOPE Explorer open local files through their hosted websites; you do
+not need the software environments or command-line setup below.
+
 SpatialBiologyToolkit is **HPC-first**. The normal workflow is to run the
 repeatable, compute-heavy pipeline on a Linux cluster with SLURM, then use the
 resulting AnnData, images, and reports for interactive work on a workstation.

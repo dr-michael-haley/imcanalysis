@@ -1,5 +1,11 @@
 # SBT Tissue Explorer: browser review
 
+For the hosted application, start with the
+[Tissue Explorer user guide](../browser_tools/tissue_explorer.md) in the
+dedicated [Browser-based tools](../browser_tools/index.md) section. It covers
+opening data, review controls, exports and workspaces without local build steps.
+This page retains the detailed reference and local-launch notes for existing links.
+
 SBT Tissue Explorer is an initial read-only browser viewer for IMC analysis
 results. Open a local `.h5ad`, a mask folder and an image folder, then navigate
 ROIs, mix channels, colour cells, inspect observations and view existing

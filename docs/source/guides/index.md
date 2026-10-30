@@ -3,6 +3,11 @@
 These technical guides cover interactive tools that sit alongside the
 config-driven pipeline.
 
+For the hosted Tissue Explorer, MCD Explorer and MERSCOPE Explorer, use the
+dedicated [Browser-based tools user guides](../browser_tools/index.md).
+They start with opening data and explain the application controls, exports,
+saved settings and troubleshooting without build or deployment instructions.
+
 For the current no-code image and cell-review interface, see the dedicated
 [NapariSBT guide](../napari_sbt/index.md), starting with your first session.
 
