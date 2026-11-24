@@ -374,11 +374,27 @@ not try to repair it by installing arbitrary packages.
 Run `sbt status latest`. A pending job is usually waiting for suitable CSF3
 resources. `sbt logs latest` becomes more useful after the job starts.
 
-For a future submission, request a wall time based on a comparable run. For
-example, if two hours is enough for Cellpose, preview the request with
-`sbt run cellpose --slurm cellpose.time=2h --dry-run`. Remove
-`--dry-run` to submit. Run `sbt slurm-help` from any directory for the available
-settings and CPU examples. See [per-run SLURM settings](../pipeline/cli.md#override-slurm-settings-for-a-run).
+Use `sbt slurm-help bbn` or `sbt slurm-help cellpose` to see the stage's
+default time limit. For a small cohort, if comparable runs fit within two
+hours, request that limit for the relevant GPU stage. Run the matching
+preview from each project's directory.
+
+```bash
+sbt run bbn --slurm bbn.time=2h --dry-run
+sbt run cellpose --slurm cellpose.time=2h --dry-run
+```
+
+If a previous submission is still pending, use `sbt squeue` to identify it.
+Follow the [cancellation procedure](../pipeline/cli.md#owned-queue-and-guarded-cancellation)
+and confirm the old job is cancelled before submitting a replacement. Run
+the matching preview again, check the stage and `--time=120` in the
+`sbatch` command, then remove `--dry-run` to submit. Check the new job ID
+and its effective limit with `squeue -j JOB_ID -o '%i %T %l'`, replacing
+`JOB_ID` with the ID returned by SBT. Slurm displays two hours as `2:00:00`
+and two days as `2-00:00:00`.
+Repeat the override on future submissions that need it.
+See [per-run SLURM settings](../pipeline/cli.md#override-slurm-settings-for-a-run)
+for other options and examples.
 
 ## Optional email and AI credentials
 
