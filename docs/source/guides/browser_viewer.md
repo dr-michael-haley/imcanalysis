@@ -43,9 +43,10 @@ directly using `file://`; workers need HTTP/HTTPS. No offline cache is promised.
 
 ## Review a dataset
 
-The sidebar has three tabs: **Setup** contains dataset loading, workspaces and
-image normalisation; **ROIs** contains navigation, ranking and visit tracking;
-**Views** contains the named panes and their image/overlay controls. Numbered
+The sidebar starts with three tabs. **Setup** contains dataset loading, workspaces
+and image normalisation. **ROIs** contains navigation, ranking and visit tracking.
+**Views** contains the named panes and their image and overlay controls. Connecting
+a writable analysis folder in Setup adds a fourth tab, **Analyses**. Numbered
 sections restart within each tab and remain individually collapsible.
 
 While AnnData or an ROI is loading, a central indicator shows the current stage
@@ -104,7 +105,7 @@ for the selected pane. Tooltips name their actions and the affected view.
 
 ## Multiple views and ROI review
 
-Under **Views**, use **Add view** to duplicate the selected view, up to four
+Under **Views**, use **Add view** to duplicate the selected view, up to six
 active panes. Edit **View name**, then choose that pane's six-channel mix and
 cell overlay. Select a pane by clicking its image, its name badge, or the
 **Selected view** list. A mint outline marks the selected pane. **Remove view**
@@ -610,7 +611,7 @@ output file after switching or duplicating workspaces. A workspace contains:
   pane's visibility, opacity, blending, colourmap, contrast and label appearance.
 - Additional IMC source identities, separate label CSV references/column choices,
   representative-curve quantile bounds and each pane's floating legend visibility and size.
-- Up to four named view presets, each with six channel slots, visibility,
+- Up to six named view presets, each with six channel slots, visibility,
   colours, TIFF planes, contrast and independent overlay settings.
 - The normalisation dictionary itself, its fallback quantile and minimum counts.
 - Overlay visibility, annotation or marker, expression source, population filter,
@@ -669,7 +670,13 @@ renamed, update its relative path in **Assets & connection**. These are
 metadata checks, not checksums of file contents, so retain the original datasets
 for reproducible review. Inputs absent from a saved workspace are cleared on load.
 
-The JSON uses format `sbt-tissue-explorer-workspace`, version `11`, with `sources`
+Under **Setup → 04 Analysis folder**, connect a folder with read/write access to
+show the **Analyses** tab. A small project file identifies that folder when you
+reopen it. Each workspace remembers its own connection. After importing a
+workspace JSON on another computer, use **Locate folder** to reconnect the
+matching analysis folder. Disconnecting leaves its files on disk.
+
+The JSON uses format `sbt-tissue-explorer-workspace`, version `15`, with `sources`
 and `view` objects. Version-1 JSON files migrate to a single **View 1** preset;
 version-2 files retain their named presets. Both receive empty remaps and default
 review-panel settings. Version-1–3 files receive default plot settings. Version-1–4

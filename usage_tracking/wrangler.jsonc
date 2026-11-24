@@ -1,0 +1,15 @@
+{
+  "name": "sbt-tool-usage",
+  "main": "worker.mjs",
+  "account_id": "3c8725c2be94e1b5f72bb8dc0c9e1974",
+  "compatibility_date": "2026-11-06",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": false },
+  "assets": { "directory": "./dashboard", "binding": "ASSETS", "not_found_handling": "none", "run_worker_first": true },
+  "routes": [{ "pattern": "usage.spatialbiology.app", "custom_domain": true }],
+  "vars": {
+    "TOOL_ORIGINS": "{\"https://imc.spatialbiology.app\":\"imc\",\"https://mcd.spatialbiology.app\":\"mcd\",\"https://merscope.spatialbiology.app\":\"merscope\",\"https://sbt-imc-explorer.mrmichaelhaley.workers.dev\":\"imc\",\"https://sbt-mcd-explorer.mrmichaelhaley.workers.dev\":\"mcd\",\"https://sbt-merscope-explorer.mrmichaelhaley.workers.dev\":\"merscope\"}"
+  },
+  "d1_databases": [{ "binding": "DB", "database_name": "sbt-tool-usage", "database_id": "d8f82400-5775-4ea4-a875-359bbad4d4e2", "migrations_dir": "migrations" }]
+}

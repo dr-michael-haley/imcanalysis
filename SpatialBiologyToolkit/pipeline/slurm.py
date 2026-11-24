@@ -65,6 +65,8 @@ def build_sbatch_command(
     ]
     if dependency_job_id:
         command.append(f"--dependency=afterok:{dependency_job_id}")
+    for key, value in sorted(run.plan.slurm_overrides.get(stage_name, {}).items()):
+        command.append(f"--{key}={value}")
     command.append(str(script))
     return command
 

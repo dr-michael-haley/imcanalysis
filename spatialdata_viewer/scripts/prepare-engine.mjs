@@ -10,9 +10,27 @@ if (process.env.SBT_SPATIALDATA_ROOT) {
 		mkdirSync(dirname(engineRoot), { recursive: true });
 		execFileSync(
 			"git",
-			["clone", "--no-checkout", engineLock.repository, engineRoot],
+			["clone", engineLock.repository, engineRoot],
 			{ stdio: "inherit" },
 		);
+	}
+	const revision = execFileSync("git", ["rev-parse", "HEAD"], {
+		cwd: engineRoot,
+		encoding: "utf8",
+	}).trim();
+	if (revision !== engineLock.revision) {
+		const changes = execFileSync("git", ["status", "--porcelain"], {
+			cwd: engineRoot,
+			encoding: "utf8",
+		}).trim();
+		if (changes)
+			throw new Error(
+				"The prepared engine has local changes. Preserve them before updating it, or use SBT_SPATIALDATA_ROOT.",
+			);
+		execFileSync("git", ["fetch", "origin", engineLock.revision], {
+			cwd: engineRoot,
+			stdio: "inherit",
+		});
 		execFileSync("git", ["checkout", "--detach", engineLock.revision], {
 			cwd: engineRoot,
 			stdio: "inherit",

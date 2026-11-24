@@ -1,6 +1,8 @@
+import json
 import subprocess
 import tempfile
 import unittest
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -43,6 +45,7 @@ from SpatialBiologyToolkit.pipeline.slurm import (
     sbt_environment,
     submit_run,
 )
+from SpatialBiologyToolkit.pipeline.slurm_options import SLURM_OPTIONS, resolve_slurm_overrides
 from SpatialBiologyToolkit.pipeline.status import (
     inspect_run_status,
     refresh_project_status,
@@ -131,6 +134,7 @@ class RunControlTests(unittest.TestCase):
             third_args, _ = runner.calls[2]
             fourth_args, _ = runner.calls[3]
             self.assertIn("--parsable", first_args)
+            self.assertFalse(any(arg.startswith("--time=") for arg in first_args))
             self.assertIn("--export=ALL", first_args)
             self.assertNotIn("--dependency=afterok:101", first_args)
             self.assertIn("--dependency=afterok:101", second_args)
@@ -157,6 +161,122 @@ class RunControlTests(unittest.TestCase):
             self.assertEqual(exported["SBT_ENVIRONMENT_KEY"], "analysis")
             self.assertEqual(exported["SBT_CONDA_ENV"], "sbt-analysis")
             self.assertEqual(exported["SBT_CONDA_ENV_ANALYSIS"], "sbt-analysis")
+
+    def test_slurm_help_lists_working_examples_without_a_project(self):
+        cli = CliRunner()
+        with cli.isolated_filesystem():
+            for command in (["--help"], ["run", "--help"], ["plan", "--help"]):
+                result = cli.invoke(app, command)
+                self.assertEqual(result.exit_code, 0, result.output)
+                self.assertIn("slurm-help", result.output)
+            guide = cli.invoke(app, ["slurm-help"])
+            self.assertEqual(guide.exit_code, 0, guide.output)
+            for key, option in SLURM_OPTIONS.items():
+                example = f"{key}={option.example}"
+                self.assertIn(example, guide.output)
+                self.assertIn(key, resolve_slurm_overrides([example], ["debug"])["debug"])
+            self.assertIn("cellpose.ntasks=8", guide.output)
+            self.assertIn("cell2location.cpus-per-task=8", guide.output)
+            wrapper = Path("SLURM_scripts")
+            wrapper.mkdir()
+            (wrapper / "job_cellposesam.sh").write_text(
+                "#!/bin/bash\n#SBATCH -n 3\n\ntrue\n#SBATCH -n 99\n", encoding="utf-8"
+            )
+            with patch.dict("os.environ", {"SBT_TOOLKIT_ROOT": str(Path.cwd())}):
+                stage_guide = cli.invoke(app, ["slurm-help", "cellpose"])
+            self.assertEqual(stage_guide.exit_code, 0, stage_guide.output)
+            self.assertIn("#SBATCH -n 3", stage_guide.output)
+            self.assertNotIn("#SBATCH -n 99", stage_guide.output)
+
+    def test_slurm_time_units_and_native_formats(self):
+        cases = {
+            "2d": "2880", "2h": "120", "30m": "30", "45s": "1", "120s": "2",
+            "1d2h3m4s": "1564", "1H30M": "90",
+            "90": "90", "02:00:00": "02:00:00", "0-2": "0-2", "0": "0",
+        }
+        for value, expected in cases.items():
+            with self.subTest(value=value):
+                overrides = resolve_slurm_overrides([f"time={value}"], ["debug"])
+                self.assertEqual(overrides, {"debug": {"time": expected}})
+
+    def test_slurm_overrides_in_plan_preview_and_submitted_jobs(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context, _ = self._project_and_plan(temp_dir)
+            args = [
+                "segmentation", "--project", str(context.root), "--format", "json",
+                "--slurm", "cellpose.time=2h", "--slurm", "time=90",
+                "--slurm", "cellpose.partition=gpuL", "--slurm", "cellpose.ntasks=4",
+            ]
+            cli = CliRunner()
+            planned = cli.invoke(app, ["plan", *args])
+            self.assertEqual(planned.exit_code, 0, planned.output)
+            preview = cli.invoke(app, ["run", *args, "--dry-run"])
+            self.assertEqual(preview.exit_code, 0, preview.output)
+            payload = json.loads(preview.stdout)
+            self.assertEqual(json.loads(planned.stdout), payload["plan"])
+            self.assertEqual(list(context.runs_dir.iterdir()), [])
+
+            fake_scheduler = FakeSbatchRunner(range(101, 106))
+            with (
+                patch("SpatialBiologyToolkit.cli.main._ensure_run_environments"),
+                patch(
+                    "SpatialBiologyToolkit.cli.main.submit_run",
+                    partial(submit_run, runner=fake_scheduler),
+                ),
+            ):
+                result = cli.invoke(
+                    app, ["run", *args, "--plan-token", payload["preview_token"]]
+                )
+            self.assertEqual(result.exit_code, 0, result.output)
+            run_dir = context.runs_dir / payload["prospective_workflow_run_id"]
+            self.assertEqual(read_yaml(run_dir / RUN_PLAN), payload["plan"])
+            jobs = read_yaml(run_dir / SUBMITTED_JOBS)["jobs"]
+            self.assertEqual(len(jobs), 5)
+            for i, job in enumerate(jobs):
+                stage = job["stage"]
+                expected = {"time": "90"}
+                if stage == "cellpose":
+                    expected = {"time": "120", "partition": "gpuL", "ntasks": "4"}
+                self.assertEqual(payload["plan"]["slurm_overrides"][stage], expected)
+                preview_argv = payload["submission_commands"][i]["argv"]
+                actual_argv = fake_scheduler.calls[i][0]
+                self.assertEqual(actual_argv, job["command"])
+                for argv in (preview_argv, actual_argv):
+                    self.assertEqual(
+                        argv[-1], payload["plan"]["resolved_stages"][i]["slurm_script"]
+                    )
+                    flags = [
+                        arg for arg in argv
+                        if arg.startswith(("--time=", "--partition=", "--ntasks="))
+                    ]
+                    self.assertEqual(
+                        flags, [f"--{key}={value}" for key, value in sorted(expected.items())]
+                    )
+
+    def test_invalid_slurm_overrides_fail_before_submission(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context, _ = self._project_and_plan(temp_dir, ["debug"])
+            cases = [
+                (["--slurm", "time"], "KEY=VALUE"),
+                (["--slurm", "time=two hours"], "Invalid --slurm value"),
+                (["--slurm", "time=0h"], "Invalid --slurm value"),
+                (["--slurm", "time=2h30"], "Invalid --slurm value"),
+                (["--slurm", "ntasks=0"], "Invalid --slurm value"),
+                (["--slurm", "time=60", "--slurm", "time=120"], "Duplicate"),
+                (["--slurm", "dependency=afterany:1"], "Unsupported"),
+                (["--slurm", "cellpose.time=90"], "outside the plan"),
+                (["--slurm", "time=60", "--backend", "local"], "requires --backend slurm"),
+            ]
+            with patch("SpatialBiologyToolkit.cli.main._ensure_run_environments") as preflight:
+                for args, error in cases:
+                    with self.subTest(args=args):
+                        result = CliRunner().invoke(
+                            app, ["run", "debug", "--project", str(context.root), *args]
+                        )
+                        self.assertEqual(result.exit_code, 2, result.output)
+                        self.assertIn(error, result.output)
+                preflight.assert_not_called()
+            self.assertEqual(list(context.runs_dir.iterdir()), [])
 
     def test_submission_exports_the_planned_toolkit_location(self):
         with tempfile.TemporaryDirectory() as temp_dir:

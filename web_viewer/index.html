@@ -8,15 +8,29 @@
   <link rel="icon" type="image/png" href="../images/Logo.png">
   <link rel="icon" type="image/svg+xml" sizes="any" href="./src/favicon.svg">
   <title>SBT · IMC Explorer</title>
+  <script defer src="./usage.js" data-usage-tool="imc" data-usage-endpoint="https://usage.spatialbiology.app/record" data-usage-hosts="imc.spatialbiology.app,sbt-imc-explorer.mrmichaelhaley.workers.dev"></script>
 </head>
 <body>
   <main>
     <aside class="sidebar">
       <div class="brand-area"><img class="brand-logo sbt-logo" alt="SpatialBiologyToolkit logo"><div class="brand-copy"><div class="brand-title"><a class="brand" href="./">IMC Explorer</a><span id="viewer-version" title="IMC Explorer application version"></span></div><span class="brand-links"><a id="how-to-guide" href="https://imcanalysis.readthedocs.io/en/latest/browser_tools/imc_explorer.html" target="_blank" rel="noopener noreferrer" title="IMC Explorer user guide (opens in a new tab)">User guide</a><a id="report-issue" href="mailto:michael.haley@manchester.ac.uk?subject=SBT%20IMC%20Explorer%20issue">Report an issue</a></span></div></div>
-      <div class="sidebar-tabs" role="tablist" aria-label="Viewer sections"><button id="tab-setup" role="tab" aria-selected="true" aria-controls="panel-setup">Setup</button><button id="tab-rois" role="tab" aria-selected="false" aria-controls="panel-rois">ROIs</button><button id="tab-views" role="tab" aria-selected="false" aria-controls="panel-views">Views</button></div>
+      <div class="sidebar-tabs" role="tablist" aria-label="Viewer sections">
+        <button id="tab-setup" role="tab" aria-selected="true" aria-controls="panel-setup">Setup</button>
+        <button id="tab-rois" role="tab" aria-selected="false" aria-controls="panel-rois">ROIs</button>
+        <button id="tab-views" role="tab" aria-selected="false" aria-controls="panel-views">Views</button>
+        <button id="tab-analyses" role="tab" aria-selected="false" aria-controls="panel-analyses" hidden>Analyses</button>
+      </div>
       <div id="panel-setup" role="tabpanel" aria-labelledby="tab-setup"></div>
       <div id="panel-rois" role="tabpanel" aria-labelledby="tab-rois" hidden></div>
       <div id="panel-views" role="tabpanel" aria-labelledby="tab-views" hidden></div>
+      <div id="panel-analyses" role="tabpanel" aria-labelledby="tab-analyses" hidden>
+        <h2>Analysis project</h2>
+        <p class="muted">Connected folder<br><strong id="analysis-project-name"></strong></p>
+        <label>Active analysis<select id="qc-run"><option value="">Choose an analysis</option></select></label>
+        <button id="qc-new">New Mask QC analysis</button>
+        <button id="qc-reload" class="quiet">Reload analysis list</button>
+        <button id="manage-analysis-folder" class="quiet">Manage folder in Setup</button>
+      </div>
       <div id="workspace-controls">
       <div class="workspace-library">
         <div class="workspace-library-heading"><h2>Workspaces</h2><p id="local-save-status" class="workspace-note save-status" role="status">Opening…</p></div>
@@ -49,7 +63,7 @@
         <label>Selected view<select id="view-select" aria-label="Selected view"></select></label>
         <label>View name<input id="view-name" type="text" maxlength="80" value="View 1"></label>
         <div class="workspace-actions"><button id="add-view">+ Add view</button><button id="remove-view" disabled>Remove view</button></div>
-        <p class="muted">Up to four views. Pan and zoom are linked. Click a pane to edit its channels and overlay.</p>
+        <p class="muted">Up to six views. Pan and zoom are linked. Click a pane to edit its channels and overlay.</p>
         <div id="saved-views-root"></div>
       </div>
       <div class="sidebar-toolbar"><span>Controls</span><button id="collapse-sections" class="quiet">Collapse all</button></div>
@@ -123,6 +137,7 @@
         <summary class="section-heading with-visibility"><span class="step">05</span><h2>Cell overlay</h2><button id="toggle-overlay" class="visibility-toggle" type="button" aria-label="Cell overlay visible" aria-pressed="true" title="Hide cell overlay"><svg class="eye-open" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg><svg class="eye-closed" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8s3 7 9 7 9-7 9-7M5 11l-3 3m7 0-1 4m7-4 1 4m3-7 3 3"/></svg></button></summary>
         <div class="section-body">
         <label class="check-label element-legend-control"><input id="overlay-legend" type="checkbox" checked>Show cell overlay in legend</label>
+        <label id="qc-overlay-control" class="check-label" hidden><input id="qc-overlay" type="checkbox">Show Mask QC decisions in this pane</label>
         <label>Colour by<select id="colour-by" disabled></select></label>
         <label id="expression-label" hidden>Expression source<select id="expression-source"></select></label>
         <div id="colourmap-controls" hidden><label>Continuous colourmap<select id="marker-colourmap"></select></label><label class="check-label"><input id="marker-reverse" type="checkbox"> Reverse colourmap</label><div id="overlay-colour-limits"></div></div>
@@ -148,11 +163,32 @@
           <div id="aligned-sources"></div>
         </div>
       </details>
+      <details class="control-section" id="section-analysis-folder">
+        <summary class="section-heading"><span class="step">04</span><h2>Analysis folder</h2></summary>
+        <div class="section-body">
+          <p class="muted">Choose where this workspace can save analyses. Connecting a folder adds the Analyses tab.</p>
+          <p id="analysis-folder-status" role="status" class="workspace-note">No analysis folder connected.</p>
+          <div class="workspace-actions">
+            <button id="choose-analysis-folder" disabled>Choose folder</button>
+            <button id="open-analysis-project" class="quiet" hidden>Open existing analysis project</button>
+            <button id="reconnect-analysis-folder" hidden>Reconnect</button>
+            <button id="disconnect-analysis-folder" class="quiet" hidden>Disconnect</button>
+          </div>
+        </div>
+      </details>
       <details class="control-section" id="section-aligned-view" open hidden>
         <summary class="section-heading"><span class="step">04</span><h2>Aligned layers</h2></summary>
         <div class="section-body"><p class="muted">Settings apply to the selected view. Layers are drawn over image channels, in the order below; cell overlays stay on top.</p><div id="aligned-controls"></div></div>
       </details>
-      <div class="sidebar-footer"><span class="privacy"><i></i> Local files · Read only</span></div>
+      <details class="control-section" id="section-analysis-compute" hidden>
+        <summary class="section-heading"><span class="step">05</span><h2>Compute resources</h2></summary>
+        <div class="section-body">
+          <label>Simultaneous ROIs<input id="qc-workers" type="number" min="1" max="8" value="2"></label>
+          <label>Pixel buffer budget (MiB)<input id="qc-memory" type="number" min="64" max="8192" step="64" value="512"></label>
+          <p class="muted">Applies to local analysis jobs. Each simultaneous ROI gets an equal share of the pixel buffer budget.</p>
+        </div>
+      </details>
+      <div class="sidebar-footer"><span class="privacy"><i></i> Source data · Read only</span></div>
     </aside>
     <div class="workspace welcome-only">
       <div id="viewport" tabindex="0" aria-label="Tissue image. Drag to pan, scroll to zoom, click a cell to inspect.">
@@ -177,7 +213,7 @@
               <section class="welcome-card" aria-labelledby="welcome-features-title">
                 <h2 id="welcome-features-title">Explore your results</h2>
                 <dl class="welcome-features">
-                  <div><dt>Compare tissue views</dt><dd>Up to four linked panes, six image channels per pane, and aligned histology or annotation layers.</dd></div>
+                  <div><dt>Compare tissue views</dt><dd>Up to six linked panes, six image channels per pane, and aligned histology or annotation layers.</dd></div>
                   <div><dt>Inspect cells and markers</dt><dd>Colour by population, expression or metadata. Find representative markers and compare expression curves.</dd></div>
                   <div><dt>Connect tissue to plots</dt><dd>Explore existing UMAPs and embeddings; select cells in either space. Create marker matrices, composition plots, label comparisons and alluvial plots.</dd></div>
                   <div><dt>Propose labels and flag cells</dt><dd>Rename, merge and recolour populations, add notes, and export remapping schemas or cell flags as CSV.</dd></div>
@@ -270,9 +306,93 @@
       </nav>
       <div id="status" role="status" aria-live="polite">Ready to open a local dataset.</div>
       <div id="warning" role="alert" hidden></div>
+      <div id="analysis-modes" aria-label="Bottom panel" hidden><button id="mode-review" aria-pressed="true">Review</button><select id="mode-analysis" aria-label="Choose analysis workflow" aria-controls="qc-panel"><option value="" disabled selected>Analyses</option><option value="mask-qc">Analyses · Mask QC</option></select></div>
       <details id="review-panels" open>
       <summary class="review-heading"><span>Review tools</span><span class="when-open">Hide panel</span><span class="when-closed">Show panel</span></summary>
-      <div id="review-resize" role="separator" tabindex="0" aria-label="Resize review panel; up to enlarge, down to shrink" aria-orientation="horizontal" aria-valuemin="180" aria-valuemax="700" aria-valuenow="280" aria-controls="review-content"></div>
+      <div id="review-resize" role="separator" tabindex="0" aria-label="Resize review panel; up to enlarge, down to shrink" aria-orientation="horizontal" aria-valuemin="180" aria-valuemax="700" aria-valuenow="280" aria-controls="review-content qc-panel"></div>
+      <section id="qc-panel" hidden aria-label="Mask quality control">
+        <div class="qc-tabs" role="group" aria-label="Mask QC steps">
+          <button data-qc-tab="inputs"><span>01</span> Inputs</button>
+          <button data-qc-tab="label"><span>02</span> Label cells</button>
+          <button data-qc-tab="model"><span>03</span> Train and review</button>
+          <button data-qc-tab="export"><span>04</span> Export</button>
+          <button data-qc-tab="display">Display</button>
+        </div>
+        <p class="qc-instruction" data-qc-page="inputs">Choose your masks and DNA stain, or reuse features from an earlier run.</p>
+        <p class="qc-instruction" data-qc-page="label" hidden>Open the tissue in Views, then click or lasso cells to mark them as good or artefact.</p>
+        <p class="qc-instruction" data-qc-page="model" hidden>Train on examples of both classes, then adjust the threshold to review which cells will be removed.</p>
+        <p class="qc-instruction" data-qc-page="export" hidden>Save a cleaned mask and a table of decisions for each chosen ROI.</p>
+        <div class="qc-body" data-qc-page="inputs">
+          <label>Analysis name<input id="qc-name" maxlength="100" placeholder="e.g. Mask QC trial 1"></label>
+          <label>Features<select id="qc-source"></select></label>
+          <div id="qc-new-source" class="qc-body">
+            <button id="qc-read-setup">Use masks and images from Setup</button>
+            <label>DNA channel<select id="qc-dna"></select></label>
+            <label>Optional CellposeSAM metrics CSV<input id="qc-metrics" type="file" accept=".csv"></label>
+          </div>
+          <button id="qc-create" class="primary-action">Create analysis</button>
+        </div>
+        <div class="qc-body" id="qc-navigation" hidden>
+          <button id="qc-open-roi">Open in Views</button><span id="qc-view-roi"></span>
+          <button id="qc-reconnect-masks">Locate masks</button><button id="qc-reconnect-images">Locate images</button>
+        </div>
+        <div class="qc-body" data-qc-page="label" hidden>
+          <label>Apply to<select id="qc-target"><option value="selection">Selected cells</option><option value="object">Object number in this ROI</option></select></label>
+          <label id="qc-object-field" hidden>Object number<input id="qc-object" type="number" min="1" max="4294967295" step="1"></label>
+          <div class="qc-label-actions" role="group" aria-label="Apply label">
+            <button id="qc-label-good">Mark good</button><button id="qc-label-artefact">Mark artefact</button><button id="qc-label-remove">Remove label</button>
+          </div>
+          <label class="qc-check"><input type="checkbox" id="qc-clear-after-mark" checked> Clear selection after mark</label>
+          <div class="qc-label-summary">
+            <span id="qc-counts"></span>
+            <div class="qc-key" id="qc-colour-key" role="group" aria-label="Mask QC colours"></div>
+          </div>
+          <span id="qc-previous-edits" hidden><button id="qc-import-edits">Apply earlier draft</button> Apply these earlier edits before assigning new labels if you want to keep them.</span>
+        </div>
+        <section data-qc-page="model" class="qc-training" hidden>
+          <strong id="qc-model-state"></strong><span id="qc-model-guidance"></span>
+        </section>
+        <div class="qc-body" data-qc-page="model" hidden>
+          <button id="qc-extract">Prepare features for all ROIs</button><button id="qc-train" class="primary-action">Train on labels</button>
+          <label>Artefact threshold<input id="qc-threshold" type="number" min="0" max="1" step="0.01" value="0.5"></label>
+          <span id="qc-model-info"></span>
+        </div>
+        <div class="qc-body" data-qc-page="export" hidden>
+          <label>Export ROIs<select id="qc-export-scope"><option value="current">Current ROI</option><option value="all">All ROIs</option></select></label>
+          <button id="qc-export" class="primary-action">Write cleaned TIFF and QC CSV</button>
+          <span>Manual labels take priority. Unscored objects are kept.</span>
+        </div>
+        <section data-qc-page="display" hidden>
+          <div class="qc-body"><label>Show in Mask QC panes<select id="qc-display-mode"><option value="labels">Class labels</option><option value="uncertainty">Classifier uncertainty</option><option value="score">Artefact score</option></select></label></div>
+          <div id="qc-class-display"><span>Show class</span><span>Colour</span><span>Draw as</span></div>
+          <div id="qc-metric-display" hidden>
+            <div class="qc-body">
+              <label>Draw as<select id="qc-metric-style"><option value="fill">Filled</option><option value="outline">Outline</option></select></label>
+              <label>Colourmap<select id="qc-metric-cmap"></select></label>
+              <label>Lower limit<input type="number" id="qc-metric-min" min="0" max="1" step="any"></label>
+              <label>Upper limit<input type="number" id="qc-metric-max" min="0" max="1" step="any"></label>
+            </div>
+            <p class="qc-instruction" id="qc-metric-help"></p>
+          </div>
+        </section>
+        <div class="qc-feedback"><span id="qc-status" role="status" aria-live="polite"></span><button id="qc-cancel" hidden>Cancel job</button></div>
+        <section class="qc-roi-review" data-qc-page="label" aria-label="Training ROIs" hidden>
+          <div class="qc-roi-heading"><h3>Training ROIs</h3><span id="qc-roi-coverage"></span></div>
+          <div class="qc-roi-filters">
+            <label>Show<select id="qc-roi-filter"><option value="all">All ROIs</option><option value="labelled">With labels</option><option value="unlabelled">Without labels</option></select></label>
+            <label>Order by<select id="qc-roi-sort"><option value="fewest">Fewest manual labels</option><option value="uncertainty">Highest uncertainty</option><option value="artefact">Most predicted artefacts</option><option value="name">ROI name</option></select></label>
+            <label>Find ROI<input id="qc-roi-search" type="search"></label>
+            <button id="qc-next-review-roi">Open next in order</button>
+            <button id="qc-score-rois">Score all ROIs</button>
+          </div>
+          <p id="qc-roi-note" class="qc-instruction"></p>
+          <div class="qc-table-scroll"><table class="qc-table" aria-label="Training coverage by ROI">
+            <thead><tr><th rowspan="2" scope="col">Open ROI</th><th colspan="2" scope="colgroup">Manual labels</th><th colspan="2" scope="colgroup">Predicted labels</th><th rowspan="2" scope="col">Mean uncertainty</th></tr>
+              <tr><th scope="col">Good</th><th scope="col">Artefact</th><th scope="col">Good</th><th scope="col">Artefact</th></tr></thead>
+            <tbody id="qc-roi-rows"></tbody></table></div>
+          <div id="qc-roi-pages" hidden><button id="qc-roi-prev">Previous page</button> <span id="qc-roi-page"></span> <button id="qc-roi-next">Next page</button></div>
+        </section>
+      </section>
       <div class="review-toolbar"><div class="review-tabs" role="tablist" aria-label="Review tools">
         <button id="review-tab-cells" role="tab" aria-controls="review-cells">Cell details</button>
         <button id="review-tab-embedding" role="tab" aria-controls="review-embedding">Embedding</button>

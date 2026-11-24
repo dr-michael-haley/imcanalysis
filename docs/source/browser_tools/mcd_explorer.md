@@ -10,6 +10,22 @@ segmentation or AnnData file is needed.
 The file is read on your computer. Display adjustments and exports do not
 change the original MCD.
 
+## Usage preferences
+
+The hosted tool asks for your name (or **Remain anonymous**) and whether you are
+using it at the **University of Manchester** or externally. This helps demonstrate
+usage and support continued free maintenance. **Not now** skips recording.
+
+Your choice is remembered in this browser for this tool; use **Usage preferences**
+to change it. The record contains the tool, UTC date, affiliation and optional
+name. It does not contain your files, filenames or analysis data. Anonymous records
+have no persistent user identifier. Changes affect future records only. Reporting
+failures never prevent you from using the explorer. Localhost copies do not record.
+
+You can also choose to share anonymous counts of successful dataset opens and
+figure exports. Opening the built-in demo has its own count. The public dashboard shows totals by app, day and affiliation.
+[View explorer usage](https://usage.spatialbiology.app/).
+
 ## Your first acquisition
 
 1. Open the app in desktop Chrome or Edge and choose **Open MCD**, or drag one

@@ -7,6 +7,22 @@ together in a **SpatialData** store. You can colour cells by gene expression or
 annotations, compare segmentations, explore existing embeddings, and export
 figures. Files are read locally; the viewer does not upload or edit the store.
 
+## Usage preferences
+
+The hosted tool asks for your name (or **Remain anonymous**) and whether you are
+using it at the **University of Manchester** or externally. This helps demonstrate
+usage and support continued free maintenance. **Not now** skips recording.
+
+Your choice is remembered in this browser for this tool; use **Usage preferences**
+to change it. The record contains the tool, UTC date, affiliation and optional
+name. It does not contain your files, filenames or analysis data. Anonymous records
+have no persistent user identifier. Changes affect future records only. Reporting
+failures never prevent you from using the explorer. Localhost copies do not record.
+
+You can also choose to share anonymous counts of successful dataset opens and
+figure exports. The public dashboard shows totals by app, day and affiliation.
+[View explorer usage](https://usage.spatialbiology.app/).
+
 ## Prepare your data
 
 Open a complete SpatialData **`.zarr` folder** or a ZIP containing that store.

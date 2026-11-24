@@ -67,6 +67,19 @@ export default function ChannelControls({ entry, target, onChange }) {
 			{Array.from({ length: count }, (_, index) => {
 				const selection = current.selections[index] || {};
 				const limits = current.contrastLimits[index] || [0, 1];
+				const baseline = context.defaults.contrastLimits?.[index] ||
+					context.defaults.contrastLimits?.[0] || [0, 1];
+				const rangeMin = Math.min(baseline[0], limits[0]);
+				const rangeMax = Math.max(baseline[1], limits[1]);
+				const rangeStep = (rangeMax - rangeMin) / 1000;
+				function slide(side, value) {
+					const next = [...limits];
+					next[side] =
+						side === 0
+							? Math.max(rangeMin, Math.min(value, limits[1] - rangeStep))
+							: Math.min(rangeMax, Math.max(value, limits[0] + rangeStep));
+					if (next[0] < next[1]) edit("contrastLimits", index, next);
+				}
 				return (
 					<div className="channel-card" key={index}>
 						<div className="channel-heading">
@@ -140,6 +153,17 @@ export default function ChannelControls({ entry, target, onChange }) {
 											if (next.every(Number.isFinite) && next[0] < next[1])
 												edit("contrastLimits", index, next);
 										}}
+									/>
+									<input
+										type="range"
+										aria-label={`${label} slider for channel ${index + 1}`}
+										min={rangeMin}
+										max={rangeMax}
+										step="any"
+										value={limits[side]}
+										onChange={(event) =>
+											slide(side, Number(event.target.value))
+										}
 									/>
 								</label>
 							))}

@@ -20,13 +20,15 @@ export function viewSettings(view) {
   return { name: view.name, scaleBar: { ...view.scaleBar }, legendVisible: view.legendVisible ?? true, legendScale: view.legendScale ?? 1, layers: (view.layers ?? []).map(layerSettings), channels: view.channels.map(({ active, enabled, showInLegend = true, name, plane, low, high, colour, auto, sourceId }) => ({ active, enabled, showInLegend, name, plane, low, high, colour, auto, ...(sourceId ? { sourceId } : {}) })), imagesVisible: view.imagesVisible, overlay: { ...view.overlay, visible: view.overlayVisible } };
 }
 export function includedInView(view, index) { const keys = populationKeys(view.overlay); return !keys.length || keys.includes(JSON.stringify(view.region?.values[index])); }
-function* renderView(view, { width, height, mask, selected, flagSelection, layers = [], component = null }) {
+function* renderView(view, { width, height, mask, selected, flagSelection, layers = [], component = null, analysisOverlay }) {
   const { region, scene, overlay } = view;
   if (!width || !region) { scene.width = 0; scene.height = 0; return; }
   const ctx = scene.getContext('2d'), image = ctx.createImageData(width, height), pixels = image.data;
   const channels = view.imagesVisible && (!component || component === 'images') ? view.channels.filter(channel => channel.active && channel.enabled && channel.raster).map(channel => ({ ...channel, tint: rgb(channel.colour) })) : [];
   const extras = layers.filter(source => !component || component === `layer:${source.id}`).map(source => { const layer = view.layers?.find(item => item.id === source.id); return layer ? prepareLayer(layer, source) : null; }).filter(Boolean);
   const colours = new Map(region.ids.map((id, i) => [id, includedInView(view, i) ? view.colours.colour(region.values[i]) : null]));
+  const decisions = overlay.maskQC && view.overlayVisible ? analysisOverlay?.colours : null;
+  const filtered = populationKeys(overlay).length > 0;
   for (let i = 0; i < width * height; i++) {
     if (i % 65536 === 0) yield;
     const offset = i * 4;
@@ -41,10 +43,13 @@ function* renderView(view, { width, height, mask, selected, flagSelection, layer
     if (!mask || !mask.data[i]) continue;
     const id = mask.data[i], isSelected = id === selected || flagSelection?.has(id), edge = isBoundary(mask.data, i, width, height);
     if (!view.overlayVisible && !(isSelected && edge)) continue;
-    if (!(isSelected && edge) && (overlay.style === 'off' || (overlay.style === 'outline' && !edge))) continue;
-    const colour = isSelected && edge ? [255, 255, 255] : colours.has(id) ? colours.get(id) : [105, 115, 125];
+    const qc = (!filtered || colours.get(id)) && decisions?.get(id);
+    if (!(isSelected && edge) && decisions?.has(id) && (!filtered || colours.get(id)) &&
+        (!qc || (!edge && analysisOverlay.outlines?.has(id)))) continue;
+    if (!(isSelected && edge) && (overlay.style === 'off' || (!qc && overlay.style === 'outline' && !edge))) continue;
+    const colour = isSelected && edge ? [255, 255, 0] : qc || (colours.has(id) ? colours.get(id) : [105, 115, 125]);
     if (!colour) continue;
-    const alpha = isSelected && edge ? 1 : colours.has(id) ? overlay.opacity : overlay.opacity * 0.35;
+    const alpha = isSelected && edge ? 1 : (qc || colours.has(id)) ? overlay.opacity : overlay.opacity * 0.35;
     for (let c = 0; c < 3; c++) pixels[offset + c] = component ? colour[c] : pixels[offset + c] * (1 - alpha) + colour[c] * alpha;
     if (component) pixels[offset + 3] = alpha * 255;
   }

@@ -35,7 +35,7 @@ export function createROIBrowser(state, $, fillSelect, warning, applyFilters, na
       const button = existing.get(item.name) ?? document.createElement('button'), kind = visitClass(item.name);
       button.className = `roi-shortcut ${kind}`; button.dataset.roi = item.name; button.setAttribute('aria-current', String(item.name === $('roi').value));
       button.textContent = `${i + 1}. ${item.name}${item.score == null ? '' : ` · ${Number.isInteger(item.score) ? item.score.toLocaleString() : item.score.toPrecision(4)}`}`;
-      button.title = `${kind === 'visited' ? 'Viewed with all current pane settings' : kind === 'partial' ? 'Viewed with some current pane settings' : 'Not viewed with current pane settings'} · ${item.count.toLocaleString()} cells`;
+      button.title = `${kind === 'visited' ? 'Viewed with all current pane settings' : kind === 'partial' ? 'Viewed with some current pane settings' : 'Not viewed with current pane settings'} · ${item.count == null ? "Cell count available when opened" : item.count.toLocaleString() + " cells"}`;
       button.onclick = () => { if ($('roi').value !== item.name) { $('roi').value = item.name; $('roi').dispatchEvent(new Event('change')); } }; return button;
     });
     // Keep existing buttons attached when only visit colours or scores change,

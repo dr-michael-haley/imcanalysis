@@ -21,6 +21,9 @@ export function legendGroups(view, sources, state = {}) {
     else groups.push({ title: source.name, rows: [{ name: 'Colour reference image' }] });
   }
   if (view.overlayVisible && view.overlay.style !== 'off' && view.region && view.overlay.showInLegend !== false) {
+    const qc = view.overlay.maskQC && state.analysisOverlay;
+    if (qc?.scale) groups.push(qc.scale);
+    else if (qc?.legend?.length) groups.push({ title: qc.name, rows: qc.legend });
     const name = (state.remaps ?? []).find(plan => `remap:${plan.id}` === view.overlay.colourBy)?.name ?? (state.flags ?? []).find(field => `flag:${field.id}` === view.overlay.colourBy)?.name ?? view.overlay.colourBy.replace(/^(obs|var|remap|flag):/, '');
     const title = view.overlay.colourBy ? `Cells · ${name}` : 'Cell outlines';
     if (view.colours?.range) groups.push({ title, range: view.colours.range, gradient: colourmapGradient(view.overlay.colourmap, view.overlay.reverse) });

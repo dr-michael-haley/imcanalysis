@@ -1,3 +1,4 @@
+import { usageComponentPlugin } from '../usage_tracking/vite-plugin.mjs';
 import { defineConfig } from 'vite';
 import { runtimeLicensePlugin } from './licenses.js';
 import { readFileSync } from 'node:fs';
@@ -7,7 +8,7 @@ const { version } = JSON.parse(readFileSync(new URL('./package.json', import.met
 export default defineConfig({
   base: './',
   define: { __VIEWER_VERSION__: JSON.stringify(version) },
-  plugins: [runtimeLicensePlugin()],
+  plugins: [runtimeLicensePlugin(), usageComponentPlugin()],
   worker: { format: 'es' },
   build: {
     target: 'es2022',

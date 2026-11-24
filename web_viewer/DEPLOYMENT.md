@@ -66,8 +66,9 @@ wrangler deployments status --config wrangler.legacy.jsonc
 The new origin starts with a separate browser-local workspace library. No
 automatic migration is provided. Previously exported JSON can still be imported
 and its original files reconnected. The `sbt-tissue-explorer-workspace` format
-identifier, schema version 13 and historical IndexedDB name are intentionally
-unchanged for compatibility; they are not product display names.
+identifier and historical IndexedDB name are intentionally unchanged for
+compatibility; they are not product display names. Workspace schema 15 includes
+an optional analysis project reference and imports older workspace versions.
 
 ## Rollback
 

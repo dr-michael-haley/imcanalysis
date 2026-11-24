@@ -222,6 +222,7 @@ export class ExportPanel {
       if (this.downloadURL) URL.revokeObjectURL(this.downloadURL);
       const link = $('figure-download'); this.downloadURL = URL.createObjectURL(blob);
       link.href = this.downloadURL; link.download = filename; link.textContent = `Download ${filename}`; link.hidden = false; link.click();
+      window.sbtRecordAction?.('figure_exported');
       if (snapshot.settings.autoBookmark) { this.bookmarks.unshift({ filename, snapshot }); this.renderBookmarks(); }
       this.status(`Ready: ${filename}${snapshot.settings.autoBookmark ? ' · bookmark saved' : ''}.`);
     } catch (error) { if (epoch === this.epoch) this.status(error.message); }

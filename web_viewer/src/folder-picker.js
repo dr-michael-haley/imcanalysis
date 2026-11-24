@@ -1,19 +1,25 @@
+import { deferredAssetFile } from './asset-files.js';
+
 // Retain handles so root.resolve() can discover ancestors without crawling them.
-export async function readPickedFolder(handle, accepts, progress = () => {}) {
+export async function readPickedFolder(handle, accepts, progress = () => {}, namesOnly = false) {
   const files = []; let visited = 0;
   async function walk(directory, path) {
     for await (const [name, child] of directory.entries()) {
       if (child.kind === 'directory') await walk(child, `${path}/${name}`);
       else if (accepts({ name })) {
-        const file = await child.getFile();
-        Object.defineProperty(file, 'webkitRelativePath', { value: `${path}/${name}` }); files.push(file);
+        const webkitRelativePath = `${path}/${name}`;
+        if (namesOnly) files.push(deferredAssetFile({ name, webkitRelativePath }, () => child.getFile()));
+        else {
+          const file = await child.getFile();
+          Object.defineProperty(file, 'webkitRelativePath', { value: webkitRelativePath }); files.push(file);
+        }
       }
       if (++visited % 100 === 0) { progress(`Reading selected folder · ${files.length.toLocaleString()} files…`); await new Promise(resolve => setTimeout(resolve, 0)); }
     }
   }
   await walk(handle, handle.name); files.workspaceHandle = handle; return files;
 }
-export function bindFolderPicker(input, accepts, receive, error) {
+export function bindFolderPicker(input, accepts, receive, error, namesOnly = () => false) {
   input.addEventListener('change', () => receive(Array.from(input.files)));
   if (!window.showDirectoryPicker) return;
   const label = input.closest('label'), button = document.createElement('button'), fallback = document.createElement('details'), summary = document.createElement('summary');
@@ -29,7 +35,7 @@ export function bindFolderPicker(input, accepts, receive, error) {
     try {
       const handle = await window.showDirectoryPicker({ mode: 'read', id: input.id });
       button.disabled = true; button.textContent = 'Reading selected folder…';
-      const files = await readPickedFolder(handle, accepts, message => { button.textContent = message; });
+      const files = await readPickedFolder(handle, accepts, message => { button.textContent = message; }, namesOnly());
       await receive(files);
     } catch (failure) { if (failure.name !== 'AbortError') error(failure); }
     finally { button.disabled = false; button.textContent = caption(); }

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Anonymous usage totals for the IMC, MCD and MERSCOPE explorers.">
+  <title>Explorer usage · SpatialBiologyToolkit</title>
+  <link rel="icon" href="/favicon.svg">
+  <link rel="stylesheet" href="/style.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <header><nav aria-label="Main navigation">
+    <a class="brand" href="https://spatialbiology.app/" aria-label="spatialbiology.app home"><img src="/favicon.svg" alt="" width="34" height="34"><span>spatialbiology<span class="suffix">.app</span></span></a>
+    <a href="https://spatialbiology.app/#resources">Explore the tools</a>
+  </nav></header>
+  <main>
+    <h1>Explorer usage</h1>
+    <p class="intro">Reported activity across the spatial biology apps.</p>
+    <form id="filters">
+      <label>Reporting period<select id="period"><option value="7">Last 7 days</option><option value="30" selected>Last 30 days</option><option value="90">Last 90 days</option><option value="custom">Custom dates</option></select></label>
+      <label class="date" hidden>From<input type="date" id="from" required></label>
+      <label class="date" hidden>Through<input type="date" id="to" required></label>
+      <label>App<select id="tool"><option value="all">All apps</option><option value="imc">IMC Explorer</option><option value="mcd">MCD Explorer</option><option value="merscope">MERSCOPE Explorer</option></select></label>
+      <label>Affiliation<select id="affiliation"><option value="all">All affiliations</option><option value="manchester">University of Manchester</option><option value="external">External</option></select></label>
+      <button type="submit">Apply filters</button>
+    </form>
+    <p id="status" role="status">Loading usage totals…</p>
+    <div id="error" hidden role="alert"><span></span> <button type="button" id="retry">Try again</button></div>
+    <div id="report" hidden>
+      <section aria-label="Report totals" class="metrics">
+        <div><h2>App activity days</h2><strong id="activity_days"></strong></div>
+        <div><h2>Dataset opens</h2><strong id="dataset_opened"></strong></div>
+        <div><h2>Figure exports</h2><strong id="figure_exported"></strong></div>
+        <p id="participation" class="note"></p>
+        <p id="coverage" class="note"></p>
+      </section>
+      <section class="comparison" aria-labelledby="by-app"><div class="heading"><h2 id="by-app">Usage by app</h2><button type="button" id="app-csv">Download CSV</button></div>
+        <div class="scroll" tabindex="0" role="region" aria-label="Usage by app table"><table><thead><tr><th scope="col">App</th><th scope="col">Activity days</th><th scope="col">Dataset opens</th><th scope="col">Figure exports</th><th scope="col">Demo opens</th></tr></thead><tbody id="apps"></tbody></table></div>
+        <p class="note">The built-in demo is available in MCD Explorer.</p>
+      </section>
+      <section class="activity" aria-labelledby="activity"><div class="heading"><h2 id="activity">Daily activity</h2><label class="inline">Measure<select id="measure"><option value="activity_days">App activity days</option><option value="dataset_opened">Dataset opens</option><option value="figure_exported">Figure exports</option></select></label></div>
+        <div id="chart"></div>
+        <details><summary>Daily totals</summary><div class="heading"><span>Calendar days in UTC</span><button type="button" id="daily-csv">Download daily CSV</button></div>
+          <div class="scroll daily" tabindex="0" role="region" aria-label="Daily totals table"><table><thead><tr><th scope="col">Date</th><th scope="col">Activity days</th><th scope="col">Dataset opens</th><th scope="col">Figure exports</th><th scope="col">Demo opens</th></tr></thead><tbody id="days"></tbody></table></div>
+        </details>
+      </section>
+    </div>
+    <details class="definitions"><summary>How usage is counted</summary>
+      <p>Each explorer records an activity day when someone agrees to daily reporting. Reopening the app that day usually counts once. Each app counts separately. These totals measure activity rather than unique people.</p>
+      <p>Distinct names count different self-reported names across the selected apps and dates. People can share a name. Anonymous activity days count daily records from browsers where the user chose to remain anonymous.</p>
+      <p>Dataset opens count each time an explorer successfully reads a local dataset, including repeat opens. The MCD example has its own demo count. A figure export counts when the app generates an image for download.</p>
+      <p>Action reporting is a separate choice in each explorer’s Usage preferences. The public report contains only aggregate counts. Names, filenames and research data stay out of the report.</p>
+    </details>
+  </main>
+  <footer><span>SpatialBiologyToolkit</span><a id="api" href="/api/v1/usage">Usage API (JSON)</a></footer>
+</body>
+</html>

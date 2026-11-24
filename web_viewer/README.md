@@ -1,9 +1,13 @@
 # SBT IMC Explorer
 
-A standalone, read-only browser application for local AnnData, segmentation
-masks and IMC channel TIFFs. All scientific file reads happen on the user's
-computer. The production application has no API, upload endpoint, telemetry,
-external fonts, or CDN dependency.
+A standalone browser application for local AnnData, segmentation masks and IMC
+channel TIFFs. Source data is read-only. Connecting a writable project folder
+enables Mask QC, including projects with masks and DNA images alone. Named trials
+share feature measurements and save independent labels, models and cleaned-mask
+exports. All scientific file reads happen on the user's
+computer. The hosted application sends minimal, optional usage records to a
+separate Worker; see [usage tracking](../usage_tracking/README.md). There is no
+scientific-data upload endpoint, external font or CDN dependency.
 
 See the [IMC Explorer user guide](https://imcanalysis.readthedocs.io/en/latest/browser_tools/imc_explorer.html)
 and the [technical and format reference](../docs/source/guides/browser_viewer.md).
@@ -52,8 +56,9 @@ The production target is `https://imc.spatialbiology.app/`, using the
 `sbt-imc-explorer` Cloudflare Worker with static assets only. The checked-in
 `wrangler.jsonc` specifies the account, build directory and custom domain.
 `public/_headers` preserves the local launcher's security policy on Cloudflare,
-including WebAssembly and local file workers. No datasets, server code, database,
-telemetry or upload endpoint are deployed.
+including WebAssembly and local file workers, plus the dedicated usage endpoint.
+The viewer deployment contains no datasets or server code. The separate usage
+Worker/database stores only the fields described in the usage tracking guide.
 
 To publish an update from this directory, build and verify the viewer, authenticate
 Wrangler for the configured account, inspect `wrangler whoami`, then run
@@ -338,3 +343,11 @@ Workspace schema 13 retains these settings in panes, bookmarks and presets,
 and migrates versions 1–12 with visible legend entries and flattening disabled.
 Tests cover pixel preservation, uint32/unmapped IDs, background, union outlines,
 exported legend filtering, visit signatures and saved-state round trips.
+
+### Six linked views (0.7.0)
+
+Views supports up to six independently configured panes. Five and six panes use
+a three-column, two-row grid, with linked pan/zoom and the same grid for figure
+preview and export. Workspace schema 14 preserves all six panes and the selected
+pane in workspaces and bookmarks, while continuing to import versions 1–13.
+The existing display-memory and figure-export size limits still apply.

@@ -4,11 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; worker-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; worker-src 'self'; connect-src https://usage.spatialbiology.app; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="description" content="Open and explore imaging mass cytometry MCD files locally in your browser.">
   <link rel="stylesheet" href="./src/style.css">
   <link rel="icon" type="image/svg+xml" sizes="any" href="./src/assets/logo.svg">
   <title>SBT · MCD Explorer</title>
+  <script defer src="./usage.js" data-usage-tool="mcd" data-usage-endpoint="https://usage.spatialbiology.app/record" data-usage-hosts="mcd.spatialbiology.app,sbt-mcd-explorer.mrmichaelhaley.workers.dev"></script>
 </head>
 <body>
   <main>

@@ -1,3 +1,4 @@
+import { validateColourSettings } from "./colour-scale.mjs";
 export const elementKinds = ["images", "labels", "shapes", "points"];
 export const layerType = (kind) => (kind === "images" ? "image" : kind);
 export const elementKind = (type) => (type === "image" ? "images" : type);
@@ -34,6 +35,7 @@ export const pretty = (value) =>
 export function elementsFor(sdata, coordinateSystem) {
 	return elementKinds.flatMap((kind) =>
 		Object.entries(sdata[kind] || {})
+			.sort(([a], [b]) => a.localeCompare(b, "en", { numeric: true }))
 			.filter(([, element]) =>
 				element.coordinateSystems.includes(coordinateSystem),
 			)
@@ -92,19 +94,26 @@ export function createWorkspace(
 	coordinateSystem,
 	renderStack,
 	viewState,
+	cellBindings = {},
 ) {
 	return {
-		format: "sbt-spatialdata-explorer",
-		version: 1,
+		format: "sbt-merscope-explorer",
+		version: 2,
 		source,
 		inventory: inventory(sdata),
 		coordinateSystem,
 		renderStack,
 		viewState,
+		cellBindings,
 	};
 }
 export function validateWorkspace(value, sdata) {
-	if (value?.format !== "sbt-spatialdata-explorer" || value.version !== 1)
+	if (
+		!(
+			(value?.format === "sbt-spatialdata-explorer" && value.version === 1) ||
+			(value?.format === "sbt-merscope-explorer" && value.version === 2)
+		)
+	)
 		throw new Error("This is not a supported SpatialData Explorer view file.");
 	if (value.inventory !== inventory(sdata))
 		throw new Error(
@@ -185,6 +194,26 @@ export function validateWorkspace(value, sdata) {
 		}
 	}
 	const camera = value.viewState;
+	for (const [id, binding] of Object.entries(value.cellBindings || {})) {
+		validateColourSettings(binding);
+		const element = allowed.get(id),
+			table = sdata.tables?.[binding.table];
+		if (
+			element?.type !== "shapes" ||
+			!["none", "gene", "obs", "sum"].includes(binding.source) ||
+			!["linear", "log1p"].includes(binding.scale) ||
+			typeof binding.field !== "string" ||
+			(binding.table &&
+				(!table || !table.getObsColumnNames().includes(binding.idColumn)))
+		)
+			throw new Error("The saved cell-table link is invalid.");
+		if (
+			binding.source === "obs" &&
+			binding.field &&
+			!table?.getObsColumnNames().includes(binding.field)
+		)
+			throw new Error("The saved annotation is not in this table.");
+	}
 	if (
 		camera !== null &&
 		(!Array.isArray(camera?.target) ||

@@ -92,8 +92,8 @@ positioning metadata is missing, the photo is shown without ROI outlines.
 Unsupported optical images leave a coordinate map available. Instrument/version
 coverage needs testing with real MCD files.
 
-All code and fonts are local. The app's content security policy disallows
-network connections. The Node process serves app assets only and accepts no
+All code and fonts are local. The app's content security policy allows only the
+dedicated usage endpoint for network connections. See [usage tracking](../usage_tracking/README.md). The Node process serves app assets only and accepts no
 uploads. See THIRD-PARTY-NOTICES.txt for readimc attribution.
 
 Image exports are limited to 8,192 pixels in width, 16,384 pixels per side and
@@ -117,7 +117,7 @@ wrangler deploy
 Authenticate to the account in the configuration before deploying. The build
 contains only `index.html`, browser code and logo, license notices, and `_headers`.
 The headers preserve the local viewer's security policy, including
-`connect-src 'none'`. No file upload endpoint, dataset, test harness or local
+`connect-src https://usage.spatialbiology.app`. No file upload endpoint, dataset, test harness or local
 server is published. Selecting a local MCD on the hosted site reads it on the
 user's computer. Users must select their file again when changing origins.
 

@@ -9,6 +9,7 @@ export default {
 		baseURL: "http://127.0.0.1:8879",
 		channel: process.env.SBT_BROWSER_CHANNEL || "chrome",
 		headless: true,
+		screenshot: "only-on-failure",
 		viewport: { width: 1440, height: 1000 },
 		launchOptions: { args: ["--enable-unsafe-swiftshader"] },
 	},

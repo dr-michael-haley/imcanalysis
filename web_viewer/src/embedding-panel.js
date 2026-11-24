@@ -69,7 +69,7 @@ export function createEmbeddingPanel(state, $, actions) {
       ctx.globalAlpha = selected ? 1 : isContext ? .28 : 1;
       ctx.fillStyle = selected ? '#ffffff' : isContext && s.colourBy === 'view' ? '#8ca4b3' : scale ? `rgb(${scale.colour(value)})` : '#8ca4b3';
       ctx.beginPath(); ctx.arc(x, y, selected ? 4 : isContext ? 1.6 : 2.5, 0, 2 * Math.PI); ctx.fill();
-      if (selected) { ctx.strokeStyle = '#38d3c7'; ctx.lineWidth = 1; ctx.stroke(); }
+      if (selected) { ctx.strokeStyle = '#ffff00'; ctx.lineWidth = 1; ctx.stroke(); }
       points.push({ x, y, id, roi: region });
     }
     if (extra) extra.ids.forEach((id, i) => { if (extra.rois[i] !== roi) point(extra.coordinates, i, id, extra.rois[i], extra.values[i], true); });

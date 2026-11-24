@@ -14,6 +14,7 @@ from .project import (
     validate_project,
 )
 from .registry import MODE_REGISTRY, STAGE_REGISTRY, get_stage, stage_script_path
+from .slurm_options import resolve_slurm_overrides
 
 
 class PlanningError(RuntimeError):
@@ -250,6 +251,7 @@ def build_run_plan(
     include_dependencies: bool | None = None,
     backend: str = "slurm",
     ignore_missing_assets: bool = False,
+    slurm_overrides: Iterable[str] = (),
 ) -> RunPlan:
     """Build a plan whose readiness is governed by direct blocking inputs.
 
@@ -268,6 +270,9 @@ def build_run_plan(
 
     if backend not in {"slurm", "local"}:
         raise ValueError(f"Unsupported execution backend: {backend}")
+    overrides = list(slurm_overrides)
+    if overrides and backend != "slurm":
+        raise ValueError("--slurm requires --backend slurm.")
 
     requested_names = list(requested)
     expanded = expand_requested(requested_names)
@@ -279,6 +284,7 @@ def build_run_plan(
         context,
     )
     selected_names = {stage.name for stage in stages}
+    stage_overrides = resolve_slurm_overrides(overrides, (stage.name for stage in stages))
     conventional = resolve_dependencies(expanded)
     skipped_upstream = [
         stage.name for stage in conventional if stage.name not in selected_names
@@ -424,6 +430,7 @@ def build_run_plan(
         execution_backend="local" if backend == "local" else "slurm_scripts",
         dependency_policy=dependency_policy,
         ignore_missing_assets=ignore_missing_assets,
+        slurm_overrides=stage_overrides,
         ready=not errors,
         errors=errors,
         warnings=warnings,

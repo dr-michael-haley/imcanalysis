@@ -8,7 +8,7 @@ const alias = value => String(value ?? '').toLowerCase().replace(/[^\p{L}\p{N}]/
 export function channelAliases(header) {
   const result = new Map();
   const ambiguous = new Set();
-  header.markers.forEach((name, i) => {
+  header?.markers.forEach((name, i) => {
     for (const candidate of [name, header.channelNames[i], header.channelLabels[i],
       header.channelNames[i] && header.channelLabels[i] ? `${header.channelNames[i]}_${header.channelLabels[i]}` : null]) {
       const key = alias(candidate);

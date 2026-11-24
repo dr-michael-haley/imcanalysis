@@ -87,6 +87,8 @@ def run_preview_snapshot(
         "dependency_policy": plan.dependency_policy,
         "ignore_missing_assets": plan.ignore_missing_assets,
         "environment_overrides": dict(plan.environment_overrides),
+        # Keep existing preview tokens valid for runs using wrapper defaults.
+        **({"slurm_overrides": plan.slurm_overrides} if plan.slurm_overrides else {}),
         "execution_backend": plan.execution_backend,
         "use_active_environment": plan.use_active_environment,
         "external_dependency": (

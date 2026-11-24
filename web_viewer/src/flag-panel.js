@@ -1,4 +1,4 @@
-import { assignSelection } from './selection.js';
+import { assignSelection, CellSelection } from './selection.js';
 import { flagsCSV, validateFlags, cellCentres, pointInPolygon } from './flags.js';
 
 export function createFlagPanel(state, $, actions) {
@@ -47,20 +47,32 @@ export function createFlagPanel(state, $, actions) {
     const before = structuredClone(item); item.categories = item.categories.map(c => c.label === old ? { label, colour } : c); item.assignments = item.assignments.map(([r, i, l]) => [r, i, l === old ? label : l]);
     record(() => Object.assign(item, before)); sync(); $('flag-category').value = label; change(); }
   $('flag-category-name').onchange = $('flag-category-name').onblur = () => guarded(editCategory); $('flag-colour').onchange = () => guarded(editCategory);
-  for (const [id, clear] of [['flag-apply', false], ['flag-clear', true]]) $(id).onclick = () => guarded(() => { record(assignSelection(field(), state.selection, clear ? null : $('flag-category').value)); change(); });
+  for (const [id, clear] of [['flag-apply', false], ['flag-clear', true]]) $(id).onclick = async () => {
+    const item = field(), label = clear ? null : $('flag-category').value;
+    const selection = new CellSelection();
+    selection.rois = structuredClone(state.selection.rois);
+    try {
+      if (!clear && state.analysisData) {
+        const assignments = [...selection.rois].flatMap(([roi, ids]) => [...ids].map(id => [roi,id]));
+        await state.reader.call('validateFlagCells', [{assignments}]);
+      }
+      if (!state.flags.includes(item)) return;
+      record(assignSelection(item, selection, label)); change();
+    } catch (error) { message(error); }
+  };
   $('flag-undo').onclick = () => { history.pop()?.(); change(); };
   $('flag-delete').onclick = () => { const item = field(), index = state.flags.indexOf(item); state.flags.splice(index, 1); state.activeFlag = state.flags[0]?.id ?? ''; record(() => { state.flags.splice(index, 0, item); state.activeFlag = item.id; }); change(); };
   function setMode(value) { const changed = tool !== value; tool = value; for (const mode of ['inspect', 'click', 'lasso']) $(`selection-${mode}`).setAttribute('aria-pressed', String(mode === tool)); if (changed) actions.modeChanged?.(); }
-  const scope = () => space === 'embedding' && state.review.tab === 'embedding' && $('review-panels').open ? 'embedding' : 'tissue';
+  const scope = () => space === 'embedding' && !$('review-content').closest('.qc-open') && state.review.tab === 'embedding' && $('review-panels').open ? 'embedding' : 'tissue';
   for (const mode of ['inspect', 'click', 'lasso']) $(`selection-${mode}`).onclick = () => setMode(mode);
   $('selection-clear').onclick = () => { state.selection.clear(); selectionChanged(); actions.draw(); };
-  $('selection-visible').onclick = () => { if (!state.ready) return; if (scope() === 'embedding') { actions.selectEmbedding(); return; } state.region.ids.forEach((id, i) => { if (actions.included(i)) state.flagSelection.add(id); }); selectionChanged(); actions.draw(); };
+  $('selection-visible').onclick = () => { if (!state.ready) return; if (scope() === 'embedding') { actions.selectEmbedding(); return; } const ids = state.analysisOverlay?.objects ?? state.region.ids; for (const id of ids) if (actions.included(state.idToIndex.get(id))) state.flagSelection.add(id); selectionChanged(); actions.draw(); };
   $('flag-use').onclick = () => actions.use(field());
   function flush() { editName(); editCategory(); validateFlags(state.flags); }
   $('flag-export').onclick = () => guarded(() => { flush(); const item = field(), url = URL.createObjectURL(new Blob([flagsCSV(item, state.mapping)], { type: 'text/csv;charset=utf-8' })); const link = document.createElement('a'); link.href = url; link.download = `${item.name.replace(/[^a-z0-9_-]/gi, '_')}.flags.csv`; link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000); });
   return { sync, flush, selectionChanged, setMode, scope, mode: () => tool, space(value) { space = value; actions.selectionChanged?.(); },
-    click(id) { const i = state.idToIndex?.get(id); if (i === undefined || !actions.included(i)) return; if (state.flagSelection.has(id)) state.flagSelection.delete(id); else state.flagSelection.add(id); selectionChanged(); actions.draw(); },
-    lasso(polygon) { if (mask !== state.mask) { mask = state.mask; centres = cellCentres(mask.data, state.width, state.idToIndex); } for (const [id, [x, y]] of centres) if (pointInPolygon(x, y, polygon) && actions.included(state.idToIndex.get(id))) state.flagSelection.add(id); selectionChanged(); actions.draw(); },
+    click(id) { const i = state.idToIndex?.get(id); if ((!state.analysisOverlay?.objects.has(id) && i === undefined) || !actions.included(i)) return; if (state.flagSelection.has(id)) state.flagSelection.delete(id); else state.flagSelection.add(id); selectionChanged(); actions.draw(); },
+    lasso(polygon) { if (mask !== state.mask) { mask = state.mask; centres = cellCentres(mask.data, state.width); } for (const [id, [x, y]] of centres) if ((state.idToIndex.has(id) || state.analysisOverlay?.objects.has(id)) && pointInPolygon(x, y, polygon) && actions.included(state.idToIndex.get(id))) state.flagSelection.add(id); selectionChanged(); actions.draw(); },
     clearSelection() { state.selection.clear(); selectionChanged(); },
     reset() { history = []; mask = null; centres = null; state.selection.clear(); setMode('inspect'); message(); sync(); },
   };

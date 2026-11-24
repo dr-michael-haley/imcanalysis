@@ -12,12 +12,15 @@ import { assetPath } from './workspace-paths.js';
 import { validateNavigation, validateEmbedding } from './navigation.js';
 import { validateFigure, validateScaleBar } from './figure.js';
 import { validatePopulations } from './populations.js';
+import { MAX_VIEWS } from './view-layout.js';
+import { validateAnalysisProject } from './analysis-folder.js';
+import { materializeAssetFile } from './asset-files.js';
 
 export const WORKSPACE_FORMAT = 'sbt-tissue-explorer-workspace';
-export const WORKSPACE_VERSION = 13;
+export const WORKSPACE_VERSION = 15;
 export const MAX_WORKSPACE_BYTES = 10 * 1024 * 1024;
 const NEW_PANELS = ['section-roi-filter', 'section-roi-sort', 'section-representative', 'section-aligned-setup', 'section-aligned-view'];
-export const PANEL_IDS = ['section-data', 'section-roi', 'section-channels', 'section-normalization', 'section-overlay', 'identity-settings', 'normalization-settings', 'review-panels', ...NEW_PANELS];
+export const PANEL_IDS = ['section-data', 'section-roi', 'section-channels', 'section-normalization', 'section-overlay', 'identity-settings', 'normalization-settings', 'review-panels', ...NEW_PANELS, 'section-analysis-folder'];
 
 // Folder roots may move or be renamed. Match their relative TIFF paths and sizes,
 // without reading image contents or serialising every file into the workspace.
@@ -28,10 +31,13 @@ const folderCache = new WeakMap();
 export function folderReference(files) {
   if (!files.length) return Promise.resolve(null);
   if (!folderCache.has(files)) folderCache.set(files, (async () => {
+    // Mask QC indexes names alone. An AnnData workspace additionally records
+    // byte sizes, so obtain that metadata only if one is actually being saved.
+    for (const file of files) if (file.size === undefined) file.size = (await materializeAssetFile(file)).size;
     const entries = files.map(file => [relativeFilePath(file), file.size]).sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : a[1] - b[1]);
     const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify(entries)));
     return { name: files[0].webkitRelativePath?.split('/')[0] || 'TIFF files', count: files.length, signature: Array.from(new Uint8Array(hash), byte => byte.toString(16).padStart(2, '0')).join(''), ...(files.workspacePath ? { path: files.workspacePath } : {}) };
-  })());
+  })().catch(error => { folderCache.delete(files); throw error; }));
   return folderCache.get(files);
 }
 export function sameFile(expected, actual) { return Boolean(expected && actual && expected.name === actual.name && expected.size === actual.size); }
@@ -64,7 +70,7 @@ export function parseWorkspace(text) {
   try { input = JSON.parse(text.replace(/^\uFEFF/, '')); } catch { throw new Error('Invalid workspace JSON.'); }
   record(input, 'document');
   if (input.format !== WORKSPACE_FORMAT) throw new Error('This is not an SBT IMC Explorer workspace.');
-  if (![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, WORKSPACE_VERSION].includes(input.version)) throw new Error(`Unsupported workspace version: ${String(input.version)}. This viewer supports versions 1–${WORKSPACE_VERSION}.`);
+  if (!Number.isInteger(input.version) || input.version < 1 || input.version > WORKSPACE_VERSION) throw new Error(`Unsupported workspace version: ${String(input.version)}. This viewer supports versions 1–${WORKSPACE_VERSION}.`);
   const sources = record(input.sources, 'sources'), anndata = record(sources.anndata, 'AnnData reference');
   const layerSources = sources.layers ?? [];
   if (!Array.isArray(layerSources) || layerSources.length > MAX_LAYERS) invalid('aligned layer sources');
@@ -106,6 +112,7 @@ export function parseWorkspace(text) {
   const panels = record(view.panels, 'panels');
   const result = {
     format: WORKSPACE_FORMAT, version: WORKSPACE_VERSION,
+    ...(input.analysisProject != null && { analysisProject: validateAnalysisProject(input.analysisProject) }),
     sources: { anndata: { name: string(anndata.name, 'AnnData name', true), size: integer(anndata.size, 'AnnData size', 1), ...savedPath(anndata) }, masks: folder(sources.masks, 'Masks'), images: folder(sources.images, 'Images'), layers },
     view: {
       mapping: { roi: string(mapping.roi, 'ROI column', true), id: string(mapping.id, 'object ID column', true) },
@@ -113,22 +120,22 @@ export function parseWorkspace(text) {
       legendVisible: view.legendVisible === undefined ? true : boolean(view.legendVisible, 'legend visibility'),
       legendScale: view.legendScale === undefined ? 1 : number(view.legendScale, 'legend size', 0.7, 2),
       scaleBar: validateScaleBar(view.scaleBar), figure: validateFigure(view.figure),
-      overlay: { ...validateColourLimits(overlay), showInLegend: boolean(overlay.showInLegend ?? true, 'overlay legend visibility'), visible: boolean(overlay.visible, 'overlay visibility'), colourBy: string(overlay.colourBy, 'colour by'), source: string(overlay.source, 'expression source'), populations: validatePopulations(overlay), population: validatePopulations(overlay).length === 1 ? validatePopulations(overlay)[0] : '', style: overlay.style, opacity: number(overlay.opacity, 'opacity', 0, 1), colourmap: overlay.colourmap ?? 'legacy', reverse: overlay.reverse === undefined ? false : boolean(overlay.reverse, 'reverse colourmap') },
+      overlay: { ...(overlay.maskQC ? {maskQC:boolean(overlay.maskQC,'Mask QC overlay')} : {}), ...validateColourLimits(overlay), showInLegend: boolean(overlay.showInLegend ?? true, 'overlay legend visibility'), visible: boolean(overlay.visible, 'overlay visibility'), colourBy: string(overlay.colourBy, 'colour by'), source: string(overlay.source, 'expression source'), populations: validatePopulations(overlay), population: validatePopulations(overlay).length === 1 ? validatePopulations(overlay)[0] : '', style: overlay.style, opacity: number(overlay.opacity, 'opacity', 0, 1), colourmap: overlay.colourmap ?? 'legacy', reverse: overlay.reverse === undefined ? false : boolean(overlay.reverse, 'reverse colourmap') },
       embedding: string(view.embedding, 'embedding'), selected: view.selected === null ? null : integer(view.selected, 'selected cell', 1, 0xffffffff),
       normalization: { dictionary, name: string(normalization.name, 'dictionary name'), quantile: number(normalization.quantile, 'quantile', Number.MIN_VALUE, 1), minimum: number(normalization.minimum, 'minimum counts', 0) },
       camera: { fitted: boolean(camera.fitted, 'fitted view'), scale: number(camera.scale, 'zoom', Number.MIN_VALUE), centreX: number(camera.centreX, 'view centre'), centreY: number(camera.centreY, 'view centre') },
-      panels: Object.fromEntries(PANEL_IDS.map(id => [id, boolean(panels[id] ?? (NEW_PANELS.includes(id) ? true : undefined), `${id} open`)])),
+      panels: Object.fromEntries(PANEL_IDS.map(id => [id, boolean(panels[id] ?? (id === 'section-analysis-folder' ? false : NEW_PANELS.includes(id) ? true : undefined), `${id} open`)])),
     },
   };
   const panes = input.version === 1 ? [{ name: 'View 1', channels: result.view.channels, imagesVisible: result.view.imagesVisible, overlay: result.view.overlay }] : view.presets;
-  if (!Array.isArray(panes) || panes.length < 1 || panes.length > 4) invalid('one to four view presets are required');
+  if (!Array.isArray(panes) || panes.length < 1 || panes.length > MAX_VIEWS) invalid(`one to ${MAX_VIEWS} view presets are required`);
   result.view.presets = panes.map(pane => {
     record(pane, 'view preset');
     const parsed = input.version === 1 ? result.view : parseWorkspace(JSON.stringify({ ...input, version: 1, view: { ...view, ...pane, bookmarks: [], savedViews: [] } })).view;
     return { name: string(pane.name, 'view name', true).slice(0, 80), channels: parsed.channels, layers: parsed.layers, legendVisible: parsed.legendVisible, legendScale: parsed.legendScale, scaleBar: parsed.scaleBar, imagesVisible: parsed.imagesVisible, overlay: parsed.overlay };
   });
   result.view.selectedView = input.version === 1 ? 0 : integer(view.selectedView, 'selected view', 0, panes.length - 1);
-  result.view.tab = input.version === 1 ? 'setup' : ['setup', 'rois', 'views'].includes(view.tab) ? view.tab : invalid('sidebar tab');
+  result.view.tab = input.version === 1 ? 'setup' : ['setup', 'rois', 'views', 'analyses'].includes(view.tab) ? view.tab : invalid('sidebar tab');
   const order = input.version === 1 ? { mode: 'name', field: '', value: '', source: 'X', direction: 'asc', top: 10 } : record(view.order, 'ROI ordering');
   if (!['name', 'cells', 'population', 'obs', 'marker'].includes(order.mode) || !['asc', 'desc'].includes(order.direction)) invalid('ROI ordering');
   result.view.order = { mode: order.mode, direction: order.direction, field: string(order.field, 'ordering field'), value: category(order.value, 'ordering value'), source: string(order.source, 'ordering source'), top: integer(order.top, 'top ROIs', 1, 100) };

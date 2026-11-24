@@ -1,4 +1,6 @@
 import { defaultFigureFilename, validateFigureFilename } from './figure-filename.js';
+import { gridShape } from './view-layout.js';
+export { gridShape };
 
 export const defaultScaleBar = () => ({ visible: true, automatic: true, length: 100, thickness: 3, fontSize: 12, colour: '#ffffff', position: 'bottom-left' });
 export const defaultFigure = () => ({ mode: 'viewer', umPerPixel: 1, aspect: 'free', physicalLock: false, physicalWidth: 500, physicalHeight: 500, paneWidth: 1024, gap: 24, background: '#000000', foreground: '#ffffff', fontSize: 28, scaleFontSize: 28, legendSize: 24, legendRows: 24, showNames: true, showLegends: true, showScaleBars: true, overlayBackground: true, autoBookmark: true, format: 'png', filename: defaultFigureFilename() });
@@ -19,7 +21,6 @@ export function validateFigure(value) {
   for (const key of ['paneWidth', 'gap', 'legendRows']) if (!Number.isInteger(s[key])) throw new Error(`Figure ${key} must be a whole number.`);
   return Object.fromEntries(Object.keys(defaultFigure()).map(k => [k, s[k]]));
 }
-export const gridShape = count => ({ columns: count === 4 ? 2 : count, rows: count === 4 ? 2 : 1 });
 export function figureLayout(count, width, height, settings) {
   const { columns, rows } = gridShape(count);
   const ratio = settings.physicalLock ? settings.physicalWidth / settings.physicalHeight : settings.aspect === 'free' ? (width / columns) / (height / rows) : settings.aspect.split(':').reduce((a, b) => Number(a) / Number(b));

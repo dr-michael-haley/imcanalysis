@@ -374,6 +374,12 @@ not try to repair it by installing arbitrary packages.
 Run `sbt status latest`. A pending job is usually waiting for suitable CSF3
 resources. `sbt logs latest` becomes more useful after the job starts.
 
+For a future submission, request a wall time based on a comparable run. For
+example, if two hours is enough for Cellpose, preview the request with
+`sbt run cellpose --slurm cellpose.time=2h --dry-run`. Remove
+`--dry-run` to submit. Run `sbt slurm-help` from any directory for the available
+settings and CPU examples. See [per-run SLURM settings](../pipeline/cli.md#override-slurm-settings-for-a-run).
+
 ## Optional email and AI credentials
 
 Core processing does not require an OpenAI key. Set these only if a selected

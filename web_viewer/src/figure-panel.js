@@ -1,4 +1,4 @@
-import { validateFigure, validateScaleBar, figureLayout, paneFurniture } from './figure.js';
+import { validateFigure, validateScaleBar, figureLayout, gridShape, paneFurniture } from './figure.js';
 import { legendGroups } from './view-legend.js';
 import { figureFilename, validateFigureFilename } from './figure-filename.js';
 
@@ -157,10 +157,10 @@ export function createFigurePanel(state, $, actions) {
       view.furniture.innerHTML = state.ready ? paneFurniture(view, legendGroups(view, state.layers, state), s, rect.width, rect.height, state.scale, `preview-${i}`) : '';
     }
     if (state.ready && state.views[0].canvas) {
-      const rect = state.views[0].canvas.getBoundingClientRect(), l = figureLayout(state.views.length, rect.width * gridShapeWidth(), rect.height * (state.views.length === 4 ? 2 : 1), { ...s, aspect: 'free', physicalLock: false });
+      const { columns, rows } = gridShape(state.views.length);
+      const rect = state.views[0].canvas.getBoundingClientRect(), l = figureLayout(state.views.length, rect.width * columns, rect.height * rows, { ...s, aspect: 'free', physicalLock: false });
       $('figure-dimensions').textContent = `${(rect.width / state.scale * s.umPerPixel).toFixed(1)} × ${(rect.height / state.scale * s.umPerPixel).toFixed(1)} µm per pane · ${Math.round(l.outputWidth)} × ${Math.round(l.outputHeight)} px export`;
     }
   }
-  const gridShapeWidth = () => state.views.length === 4 ? 2 : state.views.length;
   sync(); return { sync, layout, draw, resetReturnCamera() { returnCamera = null; } };
 }

@@ -1,3 +1,4 @@
+import { usageComponentPlugin } from "../usage_tracking/vite-plugin.mjs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -14,6 +15,10 @@ const exact = (find, replacement) => ({
 	replacement,
 });
 const aliases = [
+	exact(
+		"zarrita",
+		join(engineRoot, "packages/core/node_modules/zarrita/dist/src/index.js"),
+	),
 	{
 		find: "@spatialdata/core/parquet-worker",
 		replacement: join(engineRoot, "packages/core/dist/parquet-worker.js"),
@@ -50,7 +55,7 @@ const version = JSON.parse(readFileSync(join(appRoot, "package.json"))).version;
 export default {
 	root: appRoot,
 	base: "./",
-	plugins: [react(), licensePlugin(engineRoot)],
+	plugins: [react(), licensePlugin(engineRoot), usageComponentPlugin()],
 	define: { __VIEWER_VERSION__: JSON.stringify(version) },
 	resolve: { alias: aliases, dedupe: ["react", "react-dom"] },
 	worker: { format: "es", plugins: () => [licensePlugin(engineRoot, false)] },

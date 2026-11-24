@@ -71,7 +71,7 @@ function reset() {
   $('view-title').textContent = 'Your tissue, a closer look.'; $('view-context').textContent = 'IMAGING MASS CYTOMETRY';
   message(''); busy(); controls(); status('Ready to open an MCD file');
 }
-async function openFile(file) {
+async function openFile(file, isDemo = false) {
   if (!file) return;
   if (!/\.mcd$/i.test(file.name)) return message('Choose an imaging mass cytometry .mcd file.');
   reset(); state.file = file;
@@ -83,6 +83,7 @@ async function openFile(file) {
     const xml = await runTask({ type: 'schema', file }, controller.signal);
     if (epoch !== state.fileEpoch) return;
     state.model = parseSchema(xml);
+    window.sbtRecordAction?.(isDemo ? 'demo_opened' : 'dataset_opened');
     const slides = state.model.slides.length ? state.model.slides : [{ id: '', name: 'All acquisitions' }];
     $('slide').replaceChildren(option('All slides', '*'), ...slides.map(s => option(s.name, s.id)));
     $('slide').disabled = slides.length < 2; $('search').disabled = false;
@@ -349,7 +350,7 @@ const chooseFile = () => $('file').click();
 $('open-file').onclick = $('welcome-open').onclick = chooseFile;
 $('file').onchange = () => openFile($('file').files[0]);
 $('close-file').onclick = reset;
-$('demo').onclick = () => openFile(createDemoFile());
+$('demo').onclick = () => openFile(createDemoFile(), true);
 $('dismiss-message').onclick = () => message('');
 $('cancel').onclick = () => { if (!state.model) reset(); else { abortLoad(); busy(); message('Loading cancelled. Click Auto all to load this acquisition again, or select another region.'); status('Loading cancelled'); } };
 $('acquisition').onchange = () => selectAcquisition($('acquisition').value);

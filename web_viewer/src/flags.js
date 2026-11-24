@@ -51,7 +51,7 @@ export function pointInPolygon(x, y, polygon) {
 export function cellCentres(mask, width, known) {
   const sums = new Map();
   for (let i = 0; i < mask.length; i++) {
-    const id = mask[i]; if (!id || !known.has(id)) continue;
+    const id = mask[i]; if (!id || (known && !known.has(id))) continue;
     const item = sums.get(id) ?? [0, 0, 0]; item[0] += i % width + 0.5; item[1] += Math.floor(i / width) + 0.5; item[2]++; sums.set(id, item);
   }
   return new Map([...sums].map(([id, [x, y, n]]) => [id, [x / n, y / n]]));

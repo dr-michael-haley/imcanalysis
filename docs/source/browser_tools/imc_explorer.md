@@ -13,6 +13,22 @@ and their AnnData measurements. You can compare channel combinations, inspect
 populations and embeddings, propose annotation changes, and export figures.
 Your selected files stay on your computer and are not rewritten by the viewer.
 
+## Usage preferences
+
+The hosted tool asks for your name (or **Remain anonymous**) and whether you are
+using it at the **University of Manchester** or externally. This helps demonstrate
+usage and support continued free maintenance. **Not now** skips recording.
+
+Your choice is remembered in this browser for this tool; use **Usage preferences**
+to change it. The record contains the tool, UTC date, affiliation and optional
+name. It does not contain your files, filenames or analysis data. Anonymous records
+have no persistent user identifier. Changes affect future records only. Reporting
+failures never prevent you from using the explorer. Localhost copies do not record.
+
+You can also choose to share anonymous counts of successful dataset opens and
+figure exports. The public dashboard shows totals by app, day and affiliation.
+[View explorer usage](https://usage.spatialbiology.app/).
+
 ## Prepare your data
 
 You normally need:
@@ -134,7 +150,8 @@ channel images only, not AnnData expression, cell IDs or source files.
 
 ## Compare views and review ROIs
 
-Use **Views → Add view** to duplicate the selected pane, up to four panes.
+Use **Views → Add view** to duplicate the selected pane, up to six panes.
+Five and six panes use a three-column, two-row layout with linked pan and zoom.
 Name them for the comparison, for example “Immune markers” and “Population
 labels”. Each pane has its own channel mix, colours, overlay and aligned-layer
 settings. Click its image/name or use **Selected view** to make it active.
@@ -308,6 +325,73 @@ Deleting a workspace removes its saved review annotations, not the source
 files. There are no recovery snapshots. Browser-local saves are not a backup:
 clearing site storage can remove them. JSON includes review settings and
 annotations, but not image pixels, expression matrices or file permissions.
+
+## Clean segmentation masks
+
+Mask QC works with a mask folder and the matching DNA channel images. You can
+start with these two folders in **Setup → 01 Open your dataset**, including
+when you have no AnnData yet. Use desktop Chrome or Edge for writable projects.
+
+1. In **Setup → 04 Analysis folder**, choose an output folder. To resume an
+   existing project from another browser or computer, choose **Open existing
+   analysis project**. **05 Compute resources** sets the number of ROIs processed
+   simultaneously and their shared pixel buffer budget.
+2. Choose **Analyses · Mask QC** in the bottom panel. In **01 Inputs**, name your analysis, select **Use masks and
+   images from Setup**, and choose the DNA channel. Optionally supply a
+   CellposeSAM metrics CSV with `ROI` and `ObjectNumber`. Mask and DNA columns
+   join the computed morphology and DNA features by these identifiers.
+3. Choose **Open in Views** to put the DNA channel in the first image slot of the selected pane, in white. Use the regular ROI controls and linked panes.
+   For example, show DNA and mask outlines in one pane and enable **Views →
+   Cell overlay → Show Mask QC decisions in this pane** in another. Pan, zoom
+   and view presets work as they do in a review. In a mask-only project, this browser remembers named presets and bookmarks for the feature set.
+4. Use **Select cells** or **Lasso** in the viewer toolbar. In **Label cells**,
+   click **Mark good**, **Mark artefact**, or **Remove label**. The action saves
+   immediately and applies to the whole selection, including cells in other ROIs.
+   Selected cells have yellow outlines. **Clear selection after mark** is on by default. Turn it off to keep the selection after applying or removing a label.
+   To edit one cell by ID, set **Apply to** to **Object number in this ROI**.
+   Marking a cell again replaces its label. Removing a label returns the cell
+   to its model prediction, or keeps it if it has no score.
+5. In **Train and review**, train after labelling examples of both classes.
+   Adjust the artefact score threshold to preview the removal decision. Manually
+   labelled good cells are bright green and manual artefacts are bright red. Classifier predictions use muted green and red. Cells without a label or score keep the ordinary overlay.
+   Training runs only when you click **Train classifier** or **Retrain classifier**.
+   Adding, changing or removing a manual label marks the classifier **Retraining
+   needed**. Its last predictions remain available. Reapplying an identical label,
+   changing the display or changing the decision threshold does not require retraining.
+6. **Export** writes a new folder containing a cleaned TIFF and a decision CSV per
+   selected ROI, plus a manifest recording the model and threshold. Removed
+   pixels become zero. Surviving cells keep their original mask IDs. Manual
+   labels override the model, and unscored objects are kept. You can also export
+   manual decisions before training.
+
+**Display** saves overlay settings with the analysis. In **Class labels**, each
+manual or predicted class has its own visibility, colour and filled or outline
+style. Choose **Classifier uncertainty** or **Artefact score** to inspect all
+scored cells, including manually labelled examples. Set the colourmap, style
+and lower and upper colour limits. Values outside the limits use the end
+colours. These settings apply to panes showing Mask QC and affect only the
+display. The artefact threshold in **Train and review** controls decisions.
+
+In **Label cells → Training ROIs**, click an ROI name to open it in the linked
+viewer. **Open next in order** advances through the filtered list of ROIs with DNA.
+Filter to ROIs with or without manual labels, or sort by fewest labels,
+highest mean uncertainty or most predicted artefacts. Manual counts come from
+the saved labels. Prediction counts and mean uncertainty include only scored
+cells without a manual label. Uncertainty is `1 − 2 × |artefact score − 0.5|`,
+so 1 means the model is evenly split. It measures model ambiguity, not accuracy.
+
+Opening an ROI scores it with the current model. **Score all ROIs** fills in and
+saves the remaining summaries, reusing existing features. An unscored ROI is
+marked **Not scored** and an ROI without the DNA image is marked **DNA missing**.
+Changing the classifier or decision threshold clears old summaries. Run
+**Score all ROIs** again to update the ranking.
+
+To compare a second trial, select **New Mask QC analysis** and choose the
+existing feature set. It reuses the per-ROI measurements and starts with its own
+labels, model and threshold. If you change the underlying masks or DNA images,
+create a **new feature set**. Explorer trusts a saved set's paths and cached
+measurements. **Locate masks** and **Locate images** reconnect its original
+inputs after moving a project.
 
 ## Supported inputs and limits
 

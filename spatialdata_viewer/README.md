@@ -1,18 +1,160 @@
-# SpatialData Explorer
+# MERSCOPE Explorer
 
-A read-only, browser-local SpatialData viewer with the dark sidebar and mint
-controls used by SBT IMC Explorer and MCD Explorer. Open a local SpatialData
+A read-only, browser-local transcriptomics viewer with the dark sidebar and mint
+controls used by SBT Tissue Explorer and MCD Explorer. Open a local SpatialData
 `.zarr` directory or ZIP, choose a coordinate system, and combine images,
-segmentation labels, shapes and points. Mix up to six image channels, colour
-cells by an associated table column, click features to inspect annotations,
-save/restore view settings and export the canvas as PNG.
+cell boundaries and transcript points. Colour boundaries by a gene in AnnData
+`X` or a categorical/numeric `obs` column, compare segmentation results,
+inspect cells, save views and export PNG, JPEG or layered SVG figures. The source directory remains
+`spatialdata_viewer/` for compatibility with existing build scripts.
 
-The app has no data server or Python runtime. A static host serves HTML, CSS,
-JavaScript, workers and WASM. The browser reads selected local files on demand;
-there is no upload endpoint. Folder selection enumerates file paths, so very
-large stores with many small files can take time to open. An uncompressed ZIP
-reduces that enumeration overhead and permits direct range reads; compressed
-entries may require decompression of the whole entry.
+## Explore cells and transcripts
+
+In Chrome or Edge, use **Open local / network folder** for large stores and mapped
+drives. This requests read-only directory access, uses consolidated Zarr metadata
+when available, and opens chunks on demand without recursively enumerating their
+folders. Groups and arrays omitted from an older consolidated index are discovered
+from their individual metadata files, so images added later remain available.
+Parquet partitions are discovered separately. **Open SpatialData folder
+(compatibility)** retains the original file-list picker for other browsers.
+
+Direct-folder workspaces resume by directory identity when you choose the same
+folder again. They are separate from the compatibility picker's existing local
+saves. To transfer those settings, export the workspace from the original view
+and import it after opening the folder directly. Directory handles stay in local
+browser storage and are excluded from exported workspace JSON.
+
+Opening a dataset shows its loading stage, elapsed time and file-read activity.
+Compatibility folder selection includes a waiting indicator while the browser enumerates files
+(particularly useful on mapped network drives). The browser supplies no file count
+until enumeration finishes, so progress is indeterminate. **Cancel loading** stops
+the viewer opening the store; already-issued operating-system reads may finish in
+the background. Subsequent image, transcript and table reads show a compact activity
+indicator without blocking navigation. Counts include successful reads, not unique
+files or a percentage of the entire store; data is still read on demand.
+
+**Report an issue** beneath the application name opens an email draft addressed to
+the same support contact as Tissue Explorer, with the viewer version in its subject.
+It does not attach dataset contents or send mail automatically.
+
+1. In **Setup**, open the SpatialData folder (or its single enclosing folder)
+   or a ZIP, then choose its coordinate system.
+2. In **Layers**, use **Add layers** to add a shapes layer to the active list.
+   Select its name to open **Shapes settings**. The picker can be hidden while
+   working; search and type filters help find layers in large stores.
+3. Check **Linked cell table**. The default comes from SpatialData association
+   metadata; select another table explicitly when needed. **Cell linking** lets
+   you choose its cell ID column. The table's region column scopes the join.
+4. Select **Gene expression · X** and search for a gene, or **Cell annotation ·
+   obs** and choose an annotation. The legend shows the scale or category colours.
+   Linear values are read as stored; log1p is a display transform only.
+5. Add/select the points layer to show transcripts. Use **Transcript genes**
+   to show all genes or select a subset. Click a cell to inspect its matched row
+   and current overlay value.
+
+Joins use exact string cell IDs within the selected region, preserving large
+integer identifiers. Unmatched boundaries remain visible and uncoloured by the
+table. Duplicate IDs are rejected. Equal row counts never imply a valid match.
+The UI reports how many boundaries match, and missing values are grey. Each
+shapes layer has independent table, field and scale settings, saved in view JSON.
+
+Active layers have separate visibility, drawing-order and removal controls.
+Removing a layer from the working list retains its display settings for adding
+it again. Image, Labels, Shapes and Points have matching type accents in their
+list entries and settings. **Inspect** contains picked-cell details and the
+dataset inventory. The toolbar can hide the sidebar to give the panes more room.
+
+**Apply across views** in the cell and Points controls copies choices to visible
+layers in all open panes, including other visible layers in the current pane.
+Each destination keeps its own table, cell ID column, geometry and visibility.
+Cell-to-cell copies include the field, expression scale, colour map and limits.
+Genes and workspace gene lists can be copied between cell and Points layers;
+obs fields apply only to cells. Missing obs fields, absent genes, ambiguous gene
+names and unreadable targets are skipped with a per-layer explanation. Partial
+gene-list matches are applied with a warning listing the missing genes.
+
+Multiple individually selected Points genes become a workspace list when copied
+to cells, which colour by their sum. An equivalent existing list is reused.
+Points-to-cell copies retain each cell layer's palette and display transform,
+and reset colour limits to auto. **All genes** can be copied between Points
+layers; choose selected genes or a list before applying to cells. Hidden layers
+are untouched, and copied settings are included in local saves and workspaces.
+
+## Views, bookmarks and gene lists
+
+The bottom **Workspace tools** drawer can be hidden or resized by dragging its
+upper edge (or using arrow keys on the resize handle).
+
+- **Views:** duplicate the selected pane, up to four panes. Click a pane header
+  to edit its layers, channels and cell overlays in the sidebar. Pan and zoom
+  are linked by default. Choose **Add independent view** to compare separate regions, or use **Navigation: Independent views** above the panes. Relinking aligns all cameras to the selected pane. Bookmarks and workspaces preserve independent positions.
+  All panes use the selected coordinate system. Changing it starts a new view
+  layout; bookmarks retain earlier layouts for returning to another ROI.
+  Each pane has legend, scale-bar and original SpatialData layer-name overlays.
+  **Customise overlays** edits the selected pane's positions, text sizes, legend
+  title, layer titles and individual channel/gene/category labels or omissions.
+  Colours and ranges follow the actual displayed data. Original layer names
+  default to the bottom-left corner; scale bars default to bottom-right.
+- **Bookmarks:** capture the complete viewer, including all pane settings,
+  cameras and gene-list definitions. Rename bookmarks, add notes and use
+  **Return** to restore them. A return restores the saved versions of lists
+  and retains unrelated lists added since the bookmark.
+- **Embeddings:** choose a table and an existing AnnData `obsm` projection
+  (UMAP, t-SNE, PCA or another numeric projection), then choose its two
+  dimensions. Colours can follow the selected tissue view or independently use
+  a gene, gene-list sum or `obs` field. Click points to inspect their table rows;
+  lasso cells to highlight matching boundaries in the tissue panes. **Centre
+  selected cell** locates the matching shape using its spatial transformation.
+  The **Square** and **Other regions** options mirror Tissue Explorer; context
+  points are faint and capped at the chosen sample limit. Export the plot as PNG.
+  Selection is temporary; projection and colour settings are saved in the
+  workspace and bookmarks. Tables without projections show an explicit empty
+  state. `obsm/spatial` is labelled as spatial coordinates, not UMAP/t-SNE.
+- **Gene lists:** create named lists manually or import CSV. One gene per row
+  works with or without a `gene` header. To import several lists, use
+  `list,gene` columns. Quoted fields and UTF-8 BOMs are accepted. Names match
+  exactly, including case; duplicate genes within a list count once.
+  **Check against table** compares the draft list with the selected cell table,
+  or another table you choose, and lists present and missing genes. It also
+  warns about missing/inconsistent `X` and duplicate gene names in `var`.
+  A present gene can still have zero expression; the check is for availability.
+- For transcript points, choose **Workspace gene list** under **Transcript
+  genes**. For shapes, choose **Gene list · sum of X** under **Overlay data**.
+  The cell overlay adds each matched gene's stored `X` value per cell, then
+  applies the optional log1p display scale. Missing genes are listed; a list
+  with no matching table genes shows an error instead of a zero-valued result.
+
+The toolbar provides coordinate-system navigation, Inspect/pan, click selection,
+lasso, display toggles, zoom/fit/fullscreen, bookmarks and figure export. Selection
+is shared with embeddings. **Select displayed** and tissue lasso select the
+transformed centres of visible Shapes layers; label masks support click selection.
+Escape returns to Inspect. Selection is temporary and is not part of exports.
+
+## Figures and calibration
+
+Use the toolbar's **Export** button or the **Figure** drawer, then **Figure mode**.
+Choose pane aspect ratio, export width and spacing; pan and zoom to compose.
+Returning to **Viewer mode** restores the cameras captured on entry. Set the
+background and foreground, view-name/legend/scale text sizes, legend row limits,
+overlay backgrounds and individual pane scale bars. View-specific legend labels
+and positions are shared with the **Views** drawer.
+
+SpatialData transformations do not always declare the physical unit of the
+target coordinate system. Scale bars therefore show **coordinate units** until
+you confirm **µm per coordinate unit**. This means the unit *after transforms*,
+not the native image-pixel size. After calibration, **Lock field of view in µm**
+sets each pane's physical width and height and disables zoom while preserving pan.
+Changing coordinate systems resets calibration; bookmarks restore it.
+
+PNG/JPEG render the complete composition at the requested resolution. SVG embeds
+each SpatialData layer as a separate raster group and retains editable vector
+legends, scale bars and labels. It does not turn cell boundaries or transcripts
+into vector geometry. Exports can automatically create bookmarks. File names
+can include a prefix, coordinate-system and view names, UTC timestamp, and
+selected table `obs` fields constant across the plotted regions. Read metadata
+again after reopening the Figure drawer to use saved metadata filename fields.
+Exports are cancellable and capped at 32 million pixels, 16,384 pixels per side,
+and 128 MiB of intermediate SVG. All rendering and encoding happen locally.
 
 ## Repository boundary
 

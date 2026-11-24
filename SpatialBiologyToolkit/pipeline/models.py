@@ -8,6 +8,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .slurm_options import SlurmOptions
+
 
 DependencyPolicy = Literal["assets", "none", "all"]
 
@@ -169,6 +171,7 @@ class RunPlan(PipelineModel):
     dependency_policy: DependencyPolicy = "assets"
     ignore_missing_assets: bool = False
     environment_overrides: dict[str, str] = Field(default_factory=dict)
+    slurm_overrides: dict[str, SlurmOptions] = Field(default_factory=dict)
     use_active_environment: bool = False
     ready: bool
     errors: list[str] = Field(default_factory=list)

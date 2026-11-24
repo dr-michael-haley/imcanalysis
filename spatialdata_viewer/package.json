@@ -1,16 +1,16 @@
 {
-  "name": "sbt-spatialdata-explorer",
-  "version": "0.1.0",
+  "name": "sbt-merscope-explorer",
+  "version": "0.5.6",
   "private": true,
   "type": "module",
-  "description": "A static, browser-local SpatialData viewer",
+  "description": "A static MERSCOPE transcriptomics viewer for local SpatialData",
   "engines": { "node": ">=24" },
   "scripts": {
     "prepare:engine": "node scripts/prepare-engine.mjs",
     "dev": "node scripts/run.mjs dev",
     "build": "node scripts/run.mjs build",
     "preview": "node scripts/serve.mjs",
-    "test": "node --test tests/model.test.mjs",
+    "test": "node --test tests/model.test.mjs tests/overlays.test.mjs tests/workspace.test.mjs tests/embedding.test.mjs tests/propagation.test.mjs tests/view-tools.test.mjs tests/loading.test.mjs tests/directory-store.test.mjs",
     "test:browser": "node scripts/run.mjs test:browser"
   }
 }

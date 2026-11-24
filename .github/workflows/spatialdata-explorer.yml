@@ -1,4 +1,4 @@
-name: Build SpatialData Explorer
+name: Build MERSCOPE Explorer
 on:
   workflow_dispatch:
 permissions:
@@ -21,7 +21,7 @@ jobs:
       - run: npm run build
       - uses: actions/upload-artifact@v4
         with:
-          name: sbt-spatialdata-explorer-static
+          name: sbt-merscope-explorer-static
           path: spatialdata_viewer/dist/
           include-hidden-files: true
           if-no-files-found: error

@@ -7,7 +7,7 @@ export function createReviewPanel(state, $, redraw) {
   const tabs = ['cells', 'embedding', 'remap', 'plots', 'flags', 'bookmarks', 'figure'];
   function sync() {
     const spec = state.review;
-    $('review-content').style.setProperty('--review-height', `${spec.height}px`);
+    $('review-panels').style.setProperty('--review-height', `${spec.height}px`);
     $('review-resize').setAttribute('aria-valuenow', String(Math.round(spec.height)));
     for (const tab of tabs) {
       $(`review-tab-${tab}`).setAttribute('aria-selected', String(tab === spec.tab));

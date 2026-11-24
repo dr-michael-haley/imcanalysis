@@ -1,4 +1,4 @@
-import { fromBlob } from 'geotiff';
+import { openTiffPlane, readScalarPlane } from './tiff-plane.js';
 import { normalizeImage } from './normalization.js';
 
 function checkSize(width, height) {
@@ -17,14 +17,9 @@ self.onmessage = async ({ data: { file, plane, mask, normalization, kind } }) =>
       } finally { bitmap.close(); }
       return;
     }
-    const tiff = await fromBlob(file);
-    const count = await tiff.getImageCount();
-    if (kind && count !== 1) throw new Error('Aligned layers require one 2-D image per ROI, not a TIFF stack.');
-    if (mask && count !== 1) throw new Error('Choose a single-plane segmentation mask; this file contains multiple planes.');
-    if (!Number.isInteger(plane) || plane < 0 || plane >= count) throw new Error(`This TIFF contains ${count} plane(s).`);
-    const image = await tiff.getImage(plane);
-    const width = image.getWidth(), height = image.getHeight();
-    checkSize(width, height);
+    const singlePlane = kind ? 'Aligned layers require one 2-D image per ROI, not a TIFF stack.'
+      : mask && 'Choose a single-plane segmentation mask; this file contains multiple planes.';
+    const { image, width, height, count } = await openTiffPlane(file, plane, singlePlane, checkSize);
     if (kind === 'rgb') {
       const samples = image.getSamplesPerPixel(), directory = image.fileDirectory;
       if (![3, 4].includes(samples) || directory.getValue('PhotometricInterpretation') !== 2) throw new Error('Choose an RGB/RGBA TIFF, or use Scalar image for a single-channel TIFF.');
@@ -39,10 +34,7 @@ self.onmessage = async ({ data: { file, plane, mask, normalization, kind } }) =>
       }
       self.postMessage({ result: { width, height, data: pixels, planes: count, kind } }, [pixels.buffer]); return;
     }
-    if (image.getSamplesPerPixel() !== 1) throw new Error('Choose scalar channel TIFFs. RGB/interleaved TIFFs are not supported in this version.');
-    const arrays = await image.readRasters({ samples: [0] });
-    const values = arrays[0];
-    if (typeof values[0] === 'bigint') throw new Error('64-bit integer TIFFs are not supported.');
+    const values = await readScalarPlane(image);
     const labels = new Set();
     if (kind === 'labels') for (const value of values) {
       if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) throw new Error('Categorical TIFFs require non-negative integer label IDs.');

@@ -5,6 +5,7 @@ import { channelAliases, channelName, discoverFiles, validateMask, contrast, col
 import { parseNormalization, findNormalization } from './normalization.js';
 import { WORKSPACE_FORMAT, WORKSPACE_VERSION, MAX_WORKSPACE_BYTES, PANEL_IDS, parseWorkspace, fileReference, folderReference, sameFile, sameFolder, relativeFilePath } from './workspace.js';
 import { newView, viewSettings, composeView, composeViewAsync, includedInView } from './views.js';
+import { MAX_VIEWS } from './view-layout.js';
 import { createLoadingState, yieldToBrowser } from './loading.js';
 import { createROIBrowser } from './roi-browser.js';
 import { applyRemap, remapRecipe, validateRemapSource } from './remaps.js';
@@ -20,9 +21,13 @@ import { createROIMetadataPanel } from './roi-metadata-panel.js';
 import { createAlignedPanel } from './aligned-panel.js';
 import { renderViewLegends } from './view-legend.js';
 import { createWorkspacePanel } from './workspace-panel.js';
+import { matchInputs, sourceFiles } from './analysis-tissue.js';
+import { relativeInput, savedAnalysisNavigation, rememberAnalysisNavigation } from './analysis-project.js';
+import { localInputMap } from './qc-data.js';
+import { createQCWorkbench } from './qc-workbench.js';
 import { imageCatalogue, channelChoices } from './image-channels.js';
 import { CellSelection } from './selection.js';
-import { defaultEmbedding, validateSnapshot, validatePane } from './navigation.js';
+import { defaultEmbedding, validateSnapshot, validatePane, validateNavigation } from './navigation.js';
 import { createNavigationPanel } from './navigation-panel.js';
 import { createColourLimitControls } from './colour-limit-controls.js';
 import { validateColourLimits } from './colour-limits.js';
@@ -38,6 +43,7 @@ import { defaultLayer } from './aligned-layers.js';
 import logoUrl from '../../images/Logo.svg';
 
 const $ = id => document.getElementById(id);
+let qcWorkbench;
 let workspacePanel = null, loadingActive = false, navigationPanel = null, embeddingPanel = null, viewerToolbar = null, figurePanel = null, roiMetadataPanel = null;
 const loading = createLoadingState(progress => {
   loadingActive = Boolean(progress);
@@ -170,6 +176,7 @@ $('add-channel').addEventListener('click', () => {
   updateChannelActions(); refresh(); $(`channel-${index}`).focus();
 });
 
+const sidebarTabs = ['setup', 'rois', 'views', 'analyses'];
 setupSidebar();
 const controlSections = [...document.querySelectorAll('.control-section')];
 const updateSectionAction = () => { $('collapse-sections').textContent = controlSections.some(section => section.open) ? 'Collapse all' : 'Expand all'; };
@@ -240,7 +247,6 @@ function imageNormalization(channel) {
 }
 
 function indexFiles() {
-  if (!state.header || !state.rois.length) return;
   state.files = discoverFiles(state.masks, state.images, state.rois.map(roi => roi.name), channelAliases(state.header));
   alignedPanel.index();
   for (const source of state.layers.filter(source => source.kind === 'imc')) for (const [roi, images] of source.rois) {
@@ -265,7 +271,7 @@ function updateChannels(first = false) {
   syncViewControls();
 }
 function rasterKey(file, plane, mask = false, normalization = null, kind = '') {
-  return `${rasterIdentity(file)}|${file.webkitRelativePath || file.name}|${file.size}|${file.lastModified}|${plane}|${mask}|${JSON.stringify(normalization)}|${kind}`;
+  return `${rasterIdentity(file)}|${plane}|${mask}|${JSON.stringify(normalization)}|${kind}`;
 }
 function raster(file, plane, mask = false, normalization = null, kind = '') {
   const key = rasterKey(file, plane, mask, normalization, kind);
@@ -313,6 +319,7 @@ bindFilePicker($('anndata-file'), '.h5ad', 'AnnData', async file => {
   finally { lockViewer(Boolean(workspace.pending)); }
 }, error => workspaceError(error.message));
 async function openAnnData(file) {
+  detachAnalysis();
   if (!workspace.pending) { state.figure = defaultFigure(); figurePanel?.resetReturnCamera(); }
   const dataset = ++state.dataset; workspace.attempt++; state.anndata = null; state.visits.clear();
   state.remaps = []; state.activeRemap = '';
@@ -332,6 +339,7 @@ async function openAnnData(file) {
     const header = await state.reader.call('open', file);
     if (dataset !== state.dataset) return;
     state.header = header; state.anndata = file; embeddingPanel.sync();
+    window.sbtRecordAction?.('dataset_opened');
     document.querySelector('.workspace').classList.remove('welcome-only');
     remapEditor.sync();
     plotPanel.sync();
@@ -359,13 +367,18 @@ async function openAnnData(file) {
 
 for (const [input, key, label] of [['mask-files', 'masks', 'masks-name'], ['image-files', 'images', 'images-name']]) {
   bindFolderPicker($(input), file => TIFF.test(file.name), files => {
+    if (state.analysisData) detachAnalysis();
     state[key] = files.filter(file => TIFF.test(file.name));
     if (files.workspaceHandle) state[key].workspaceHandle = files.workspaceHandle;
     $(label).textContent = `${state[key].length.toLocaleString()} TIFF files`;
     cancelPendingRasters(); state.cache.clear();
     if (workspace.pending) { restoreWorkspace(); return; }
+    if (!state.header) {
+      if (key === 'masks') flagPanel.clearSelection();
+      prepareMaskViewer(); status('Source folder selected. Open Views to inspect the tissue.'); return;
+    }
     try { indexFiles(); updateChannels(key === 'images'); refresh(true); } catch (error) { state.revision++; clearView(); fail(error); }
-  }, fail);
+  }, fail, () => !state.header && !workspace.pending);
 }
 $('apply-mapping').addEventListener('click', configure);
 $('roi').addEventListener('change', () => { storeViewControls(); roiMetadataPanel.summary(); cancelPendingRasters(); state.cache.clear(); updateChannels(); refresh(state.fitted); });
@@ -401,15 +414,15 @@ $('welcome-workspace').onclick = () => {
 };
 
 function setupSidebar() {
-  for (const [tab, ids] of [['setup', ['workspace-controls', 'section-data', 'section-normalization', 'section-aligned-setup']], ['rois', ['section-roi', 'section-roi-filter', 'section-roi-sort']], ['views', ['view-controls', 'section-channels', 'section-overlay', 'section-representative', 'section-aligned-view']]]) {
+  for (const [tab, ids] of [['setup', ['workspace-controls', 'section-data', 'section-normalization', 'section-aligned-setup', 'section-analysis-folder', 'section-analysis-compute']], ['rois', ['section-roi', 'section-roi-filter', 'section-roi-sort']], ['views', ['view-controls', 'section-channels', 'section-overlay', 'section-representative', 'section-aligned-view']], ['analyses', []]]) {
     ids.forEach(id => $(`panel-${tab}`).append($(id)));
     let step = 1;
     for (const label of $(`panel-${tab}`).querySelectorAll('.step')) label.textContent = String(step++).padStart(2, '0');
     $(`tab-${tab}`).addEventListener('click', () => showTab(tab));
     $(`tab-${tab}`).addEventListener('keydown', event => {
-      const tabs = ['setup', 'rois', 'views'], index = tabs.indexOf(tab);
+      const tabs = sidebarTabs.filter(name => !$('tab-' + name).hidden), index = tabs.indexOf(tab);
       if (['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
-        event.preventDefault(); const next = event.key === 'Home' ? 'setup' : event.key === 'End' ? 'views' : tabs[(index + (event.key === 'ArrowRight' ? 1 : 2)) % 3];
+        event.preventDefault(); const next = event.key === 'Home' ? tabs[0] : event.key === 'End' ? tabs.at(-1) : tabs[(index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length];
         showTab(next); $(`tab-${next}`).focus();
       }
     });
@@ -418,12 +431,22 @@ function setupSidebar() {
   showTab('setup');
 }
 function showTab(tab) {
+  if ($('tab-' + tab).hidden) tab = 'setup';
   state.tab = tab;
-  for (const name of ['setup', 'rois', 'views']) {
+  document.querySelector('.sidebar-toolbar').hidden = tab === 'analyses';
+  for (const name of sidebarTabs) {
     $(`panel-${name}`).hidden = name !== tab; $(`tab-${name}`).setAttribute('aria-selected', String(name === tab)); $(`tab-${name}`).tabIndex = name === tab ? 0 : -1;
   }
-  if (state.header && tab === 'views') { representativePanel.activate(); syncViewControls(); }
+  if (tab === 'views') { if (state.header) representativePanel.activate(); syncViewControls(); }
+  if ((tab === 'views' || tab === 'rois') && !state.header && state.rois.length && !state.ready && !loadingActive) refresh(true);
+  if (tab === 'analyses') qcWorkbench?.show();
+
 }
+$('manage-analysis-folder').onclick = () => {
+  showTab('setup');
+  $('section-analysis-folder').open = true;
+  $('section-analysis-folder').querySelector('summary').focus();
+};
 function updateViewLegends() {
   renderViewLegends(state); figurePanel?.draw();
   document.dispatchEvent(new Event('workspace-changed'));
@@ -432,17 +455,20 @@ $('overlay-legend').onchange = event => { activeView().overlay.showInLegend = ev
 function storeViewControls() {
   const view = activeView(); if (!view) return;
   const populations = [...$('population').selectedOptions].map(option => option.value);
-  view.overlay = { ...validateColourLimits(view.overlay), showInLegend: $('overlay-legend').checked, populations, colourBy: $('colour-by').value, source: $('expression-source').value, population: populations.length === 1 ? populations[0] : '', style: $('overlay-style').value, opacity: Number($('opacity').value), colourmap: $('marker-colourmap').value || 'viridis', reverse: $('marker-reverse').checked };
+  view.overlay = { ...validateColourLimits(view.overlay), ...(view.overlay.maskQC ? {maskQC:true} : {}), showInLegend: $('overlay-legend').checked, populations, colourBy: $('colour-by').value, source: $('expression-source').value, population: populations.length === 1 ? populations[0] : '', style: $('overlay-style').value, opacity: Number($('opacity').value), colourmap: $('marker-colourmap').value || 'viridis', reverse: $('marker-reverse').checked };
 }
+$('qc-overlay').onchange = () => { activeView().overlay.maskQC = $('qc-overlay').checked; compose(); updateViewLegends(); };
 function syncViewControls() {
   const view = activeView(), images = channelChoices(state.files, state.channelCatalogue, $('roi').value);
   fillSelect($('view-select'), state.views.map((pane, i) => ({ value: String(i), text: pane.name })), String(state.selectedView));
-  $('view-name').value = view.name; $('add-view').disabled = state.views.length === 4; $('remove-view').disabled = state.views.length === 1;
+  $('view-name').value = view.name; $('add-view').disabled = state.views.length >= MAX_VIEWS; $('remove-view').disabled = state.views.length === 1;
   for (const [id, value] of [['colour-by', view.overlay.colourBy], ['expression-source', view.overlay.source], ['overlay-style', view.overlay.style], ['opacity', view.overlay.opacity]]) $(id).value = String(value);
   $('expression-label').hidden = !view.overlay.colourBy.startsWith('var:');
   $('colourmap-controls').hidden = !view.overlay.colourBy.startsWith('var:') && !(view.overlay.colourBy && view.region && !view.region.categories);
   overlayLimits.sync(view.overlay);
   $('overlay-legend').checked = view.overlay.showInLegend !== false;
+  $('qc-overlay-control').hidden = !state.analysisData;
+  $('qc-overlay').checked = Boolean(view.overlay.maskQC);
   $('marker-colourmap').value = view.overlay.colourmap ?? 'viridis'; $('marker-reverse').checked = view.overlay.reverse ?? false;
   const keys = populationKeys(view.overlay), categories = new Map((view.region?.categories ?? []).map(value => [JSON.stringify(value), value]));
   for (const key of keys) if (!categories.has(key)) categories.set(key, JSON.parse(key));
@@ -546,7 +572,7 @@ $('view-name').addEventListener('input', event => {
   activeView().canvas.setAttribute('aria-label', `${activeView().name}: tissue and segmentation`); syncQuickTools(); renderViewLegends(state);
 });
 $('add-view').addEventListener('click', () => {
-  if (state.views.length >= 4) return;
+  if (state.views.length >= MAX_VIEWS) return;
   storeViewControls(); state.views.push(newView(`View ${state.views.length + 1}`, viewSettings(activeView()))); state.selectedView = state.views.length - 1;
   rebuildPanes(); updateChannels(); refresh(state.fitted);
 });
@@ -689,7 +715,8 @@ async function exportWorkspace(fileHandle = null) {
   workspace.saving = true; updateWorkspaceActions(); workspaceError();
   try {
     const payload = await captureWorkspace(), name = workspacePanel.name;
-    const text = JSON.stringify({ ...payload, name, applicationVersion: __VIEWER_VERSION__ }, null, 2);
+    const analysisProject = workspacePanel.analysisProject;
+    const text = JSON.stringify({ ...payload, name, ...(analysisProject && { analysisProject }), applicationVersion: __VIEWER_VERSION__ }, null, 2);
     parseWorkspace(text);
     if (fileHandle) {
       const stream = await fileHandle.createWritable();
@@ -861,11 +888,11 @@ async function refresh(fit = false) {
   plotPanel.roiChanged();
   storeViewControls();
   const roi = $('roi').value;
-  if (!state.reader || !state.rois.some(item => item.name === roi)) return;
+  if (!state.rois.some(item => item.name === roi)) return;
   const revision = ++state.revision;
   cancelPendingRasters();
   const entry = state.files.get(roi) ?? { masks: [], images: [] };
-  state.ready = false; clearSelection(); warning(); status(`Loading ${roi}…`);
+  state.ready = false; state.analysisOverlay = null; qcWorkbench?.loading(); clearSelection(); warning(); status(`Loading ${roi}…`);
   flagPanel.selectionChanged(); representativePanel.changed();
   $('view-title').textContent = roi; $('roi-summary').textContent = 'Loading images and cells…';
   roiBrowser.update(); drawEmbedding();
@@ -914,7 +941,13 @@ async function refresh(fit = false) {
       if (colourBy.startsWith('remap:') && !plan) throw new Error('This population remap is no longer available.');
       if (colourBy.startsWith('flag:') && !flag) throw new Error('This flag field is no longer available.');
       const readColour = flag ? '' : plan ? `obs:${plan.source}` : colourBy, key = JSON.stringify([readColour, source]);
-      if (!regions.has(key)) regions.set(key, await state.reader.call('region', roi, readColour, source, $('embedding').value));
+      if (!regions.has(key)) {
+        if (state.header) regions.set(key, await state.reader.call('region', roi, readColour, source, $('embedding').value));
+        else {
+          const ids = [...new Set(mask?.data ?? [])].filter(Boolean);
+          regions.set(key, { ids, rows: [], values: ids.map(() => null), categories:null, coordinates:null });
+        }
+      }
       if (revision !== state.revision) return;
       const rasters = [];
       for (const channel of snapshot.channels) {
@@ -956,8 +989,10 @@ async function refresh(fit = false) {
     }
     if (!current()) return;
     state.ready = true;
+    document.querySelector('.workspace').classList.remove('welcome-only');
+    if (!state.header) state.rois.find(item => item.name === roi).count = state.region.ids.length;
     $('view-title').textContent = roi;
-    $('roi-summary').textContent = `${state.region.rows.length.toLocaleString()} cells · ${entry.images.length} image files`;
+    $('roi-summary').textContent = `${state.region.ids.length.toLocaleString()} cells · ${entry.images.length} image files`;
     $('empty-state').hidden = Boolean(basis);
     syncViewControls(); draw(); scheduleVisits(); if (fit || dimensionsChanged) fitView(); drawEmbedding();
     flagPanel.sync(); navigationPanel.sync(); embeddingPanel.sync(); roiMetadataPanel.summary(); representativePanel.changed();
@@ -970,9 +1005,10 @@ async function refresh(fit = false) {
       if (missingLayers.length) notes.push(`${pane.name}: no aligned image for ${missingLayers.map(source => source.name).join(', ')} in this ROI.`);
     }
     if (coverage?.missing) notes.push(`${coverage.missing} AnnData cells are absent from this mask.`);
-    if (coverage?.context) notes.push(`${coverage.context} mask objects have no AnnData row and appear grey.`);
+    if (coverage?.context && !state.analysisData) notes.push(`${coverage.context} mask objects have no AnnData row and appear grey.`);
     warning(notes.join(' '));
-    status(`${roi} ready · ${state.region.rows.length.toLocaleString()} cells · ${basis ? `${basis.width} × ${basis.height} px · ` : ''}${state.views.length} linked view${state.views.length === 1 ? '' : 's'}`);
+    status(`${roi} ready · ${state.region.ids.length.toLocaleString()} cells · ${basis ? `${basis.width} × ${basis.height} px · ` : ''}${state.views.length} linked view${state.views.length === 1 ? '' : 's'}`);
+    qcWorkbench?.follow();
     return true;
   } catch (error) { if (revision === state.revision) { cancelPendingRasters(); state.cache.clear(); clearView(); fail(error); } }
   finally { activity.finish(); }
@@ -1012,6 +1048,7 @@ let viewportSize = null;
 function resizeCanvas() {
   figurePanel?.layout();
   const rect = viewportRect();
+  if (!rect.width || !rect.height) return;
   for (const view of state.views) if (view.canvas) { view.canvas.width = Math.round(rect.width * devicePixelRatio); view.canvas.height = Math.round(rect.height * devicePixelRatio); }
   if (state.figure.mode === 'figure' && state.figure.physicalLock && state.width) {
     const centreX = ((viewportSize?.width ?? rect.width) / 2 - state.x) / state.scale, centreY = ((viewportSize?.height ?? rect.height) / 2 - state.y) / state.scale;
@@ -1086,6 +1123,7 @@ async function selectCell(id) {
   if (!id) return;
   const index = state.idToIndex.get(id);
   $('cell-badge').textContent = `Object ${id}`;
+  if (!state.header) { $('cell-hint').textContent = 'Mask object in '+$('roi').value+'.'; return; }
   if (index === undefined) { $('cell-hint').textContent = 'This mask object has no AnnData row in this ROI.'; return; }
   $('cell-hint').textContent = 'Reading observations…';
   const revision = state.revision;
@@ -1121,7 +1159,7 @@ remapEditor.sync();
 const plotPanel = createPlotPanel(state, $, () => remapEditor.flush());
 plotPanel.sync();
 const flagPanel = createFlagPanel(state, $, { changed: flagsChanged, draw() { compose(); drawEmbedding(); }, included, selectEmbedding() { embeddingPanel.selectVisible(); },
-  selectionChanged() { viewerToolbar?.sync(); },
+  selectionChanged() { viewerToolbar?.sync(); qcWorkbench?.selectionChanged(); },
   modeChanged() { state.lasso = null; for (const view of state.views) view.canvas?.cancelGesture?.(); embeddingPanel?.cancelGesture(); viewerToolbar?.sync(); draw(); },
   use(field) { storeViewControls(); activeView().overlay.colourBy = `flag:${field.id}`; populationFilter(activeView().overlay, []); activeView().overlayVisible = true; syncRemapOptions(); syncViewControls(); showTab('views'); refresh(); },
 });
@@ -1139,7 +1177,13 @@ viewerToolbar = createViewerToolbar(state, $, { mode: flagPanel.mode, setMode: f
 navigationPanel = createNavigationPanel(state, $, {
   snapshot: captureSnapshot, restore: restoreSnapshot, preset: applyViewPreset,
   view() { storeViewControls(); return viewSettings(activeView()); },
-  open() { reviewPanel.select('bookmarks'); }, changed() { workspacePanel?.mark(); },
+  open() { qcWorkbench?.review(); reviewPanel.select('bookmarks'); },
+  changed() {
+    if (!state.header && state.analysisData) {
+      rememberAnalysisNavigation(state.analysisData.source.id,{bookmarks:state.bookmarks,savedViews:state.savedViews})
+        .catch(error => warning('Could not save mask-project bookmarks and presets: '+error.message));
+    } else workspacePanel?.mark();
+  },
   error: fail, locked: () => loadingActive || workspace.applying || Boolean(workspace.pending),
 });
 const figureFilenameContext = () => ({ roi: $('roi').value, viewNames: state.views.map(view => view.name), metadata: state.roiMetadata, metadataLoaded: roiMetadataPanel?.isLoaded() ?? false });
@@ -1148,7 +1192,7 @@ figurePanel = createFigurePanel(state, $, {
   async readMetadata() { await roiMetadataPanel.load(); if (!roiMetadataPanel.isLoaded()) throw new Error($('roi-metadata-status').textContent); },
   camera: () => captureSnapshot().camera, restoreCamera,
   modeChanged() { flagPanel.setMode('inspect'); compose(); }, layout() { resizeCanvas(); syncQuickTools(); }, draw,
-  changed() { workspacePanel?.mark(); }, open() { reviewPanel.select('figure'); },
+  changed() { workspacePanel?.mark(); }, open() { qcWorkbench?.review(); reviewPanel.select('figure'); },
   async export(progress) {
     if (loadingActive || !state.ready) throw new Error('Wait for the ROI to finish loading.');
     if (roiMetadataPanel?.isLoading()) throw new Error('Wait for ROI metadata to finish loading before exporting.');
@@ -1160,6 +1204,7 @@ figurePanel = createFigurePanel(state, $, {
       const blob = await createFigureExport({ ...state, exportROI: $('roi').value }, rect, message => { progress(message); activity.update(message); });
       if (state.figure.autoBookmark) navigationPanel.addExportBookmark(snapshot, filename);
       const url = URL.createObjectURL(blob), link = document.createElement('a'); link.href = url; link.download = filename; link.click(); setTimeout(() => URL.revokeObjectURL(url), 10000);
+      window.sbtRecordAction?.('figure_exported');
       return filename;
     } finally { lockViewer(false); activity.finish(); }
   },
@@ -1186,6 +1231,127 @@ rebuildPanes();
 new ResizeObserver(resizeCanvas).observe($('viewport'));
 new ResizeObserver(drawEmbedding).observe($('embedding-canvas'));
 resizeCanvas();
+function prepareMaskViewer() {
+  const previous = $('roi').value;
+  state.revision++; cancelPendingRasters(); state.cache.clear(); clearView();
+  state.rois = [...new Set(state.masks.map(stem))].sort((a,b) => a.localeCompare(b,undefined,{numeric:true})).map(name => ({name,count:null}));
+  state.ranking = state.rois; state.filteredRanking = null;
+  state.mapping = state.rois.length ? {roi:'ROI',id:'ObjectNumber'} : null;
+  fillSelect($('roi'), state.rois.map(({name}) => ({value:name,text:name})), previous);
+  fillSelect($('expression-source'), [{value:'X',text:'X'}], 'X');
+  for (const pane of state.views) pane.overlay.source = 'X';
+  fillSelect($('embedding'), [{value:'',text:'None'}]);
+  syncRemapOptions(); indexFiles(); updateChannels(true); roiBrowser.update();
+}
+
+function detachAnalysis() {
+  if (!state.analysisData) return;
+  const data = state.analysisData;
+  state.analysisData = null; state.analysisOverlay = null;
+  qcWorkbench?.unlinked();
+  for (const kind of ['masks','images']) if (data.provided?.[kind] === state[kind]) state[kind] = [];
+  state.selection.clear(); flagPanel.selectionChanged();
+  if (!state.header) {
+    state.bookmarks = []; state.savedViews = []; navigationPanel.sync(); prepareMaskViewer();
+  } else {
+    indexFiles(); updateChannels();
+    if (data.provided?.masks || data.provided?.images) { clearView(); void refresh(state.fitted); }
+    else compose();
+  }
+  syncViewControls();
+}
+
+async function attachAnalysis(data,signal,targetROI) {
+  const existing = state.analysisData === data;
+  let inputsChanged = false;
+  if (!existing) {
+    detachAnalysis();
+    const masks = state.masks, images = state.images, dataset = state.dataset;
+    const [navigation] = await Promise.all([
+      state.header ? null : savedAnalysisNavigation(data.source.id),
+      matchInputs(data,'masks',masks), matchInputs(data,'images',images)
+    ]);
+    signal.throwIfAborted();
+    if (dataset !== state.dataset || masks !== state.masks || images !== state.images) throw Error('Input folders changed. Open the analysis in Views again.');
+    data.provided = {};
+    for (const kind of ['masks','images']) {
+      if (state[kind].length) data.local[kind] = localInputMap(state[kind]);
+      else state[kind] = data.provided[kind] = sourceFiles(data,kind);
+    }
+    if (!state.header) {
+      if (navigation) Object.assign(state, validateNavigation(navigation.bookmarks,navigation.savedViews));
+      navigationPanel.sync();
+    }
+    state.analysisData = data;
+    data.roiIndex = new Map(data.source.rois.map((r,i) => [r.name,i]));
+    inputsChanged = Boolean(data.provided.masks || data.provided.images);
+    if (!state.header && (!state.ready || inputsChanged)) {
+      prepareMaskViewer();
+      for (const slot of activeView().channels) Object.assign(slot,{name:'',sourceId:'',file:null,raster:null});
+    } else if (inputsChanged) { indexFiles(); updateChannels(); }
+    if (!state.views.some(view => view.overlay.maskQC)) activeView().overlay.maskQC = true;
+  }
+  const current = $('roi').value;
+  if (targetROI && ![...$('roi').options].some(option => option.value === targetROI))
+    throw Error(targetROI + ' is outside the current viewer ROI list. Check the dataset and ROI filters.');
+  if ((targetROI && targetROI !== current) || !data.roiIndex.has(current)) {
+    const first = targetROI ? { value:targetROI } : [...$('roi').options].find(option => data.roiIndex.has(option.value));
+    if (!first) throw Error('No visible ROI belongs to this analysis. Check the dataset or ROI filters.');
+    $('roi').value = first.value; updateChannels();
+  }
+  const roi = $('roi').value;
+  if (targetROI && existing) {
+    if ((!state.ready || current !== roi) && !await refresh(state.fitted))
+      throw Error($('warning').textContent || 'The tissue could not be opened.');
+    return;
+  }
+  const saved = data.source.rois[data.roiIndex.get(roi)];
+  const images = state.files.get(roi)?.images ?? [];
+  const dna = saved.dna && images.find(item => !item.sourceId && relativeInput(item.file) === saved.dna);
+  const view = activeView(), channels = view.channels;
+  const name = dna?.name ?? data.source.channel;
+  const previous = channels.findIndex(slot => slot.active && !slot.sourceId && slot.name === name);
+  if (previous > 0) [channels[0], channels[previous]] = [channels[previous], channels[0]];
+  const first = channels[0];
+  if (first.file !== (dna?.file ?? null) || first.name !== name || first.plane !== 0 || first.sourceId)
+    Object.assign(first, { file:dna?.file ?? null, name, sourceId:'', plane:0, raster:null, auto:true });
+  Object.assign(first, { active:true, enabled:true, colour:'#ffffff' });
+  view.imagesVisible = true;
+  syncViewControls();
+  if (state.ready && current === roi && !inputsChanged && (!dna || first.raster)) { compose(); return; }
+  if (!await refresh(state.fitted)) throw Error($('warning').textContent || 'The tissue could not be opened.');
+}
+function analysisTissue(data) {
+  const roi = $('roi').value, index = data?.roiIndex?.get(roi);
+  if (!state.ready || !state.mask || state.analysisData !== data || index === undefined) return null;
+  const entry = state.files.get(roi), saved = data.source.rois[index];
+  if (!entry.masks[0] || relativeInput(entry.masks[0]) !== saved.mask) return null;
+  return { index,roi,mask:state.mask,dna:async () => {
+    const file = entry.images.find(item => !item.sourceId && relativeInput(item.file) === saved.dna)?.file;
+    if (!file) throw Error('The saved DNA image is unavailable for '+roi+'. Reconnect the images folder.');
+    const image = await raster(file,0);
+    if (image.planes !== 1) throw Error('Mask QC requires a single-plane DNA image.');
+    return image;
+  }};
+}
+qcWorkbench = createQCWorkbench($, () => ({ masks:state.masks, images:state.images }), () => showTab('analyses'), {
+  attach:attachAnalysis, detach:detachAnalysis, tissue:analysisTissue,
+  selection:() => state.selection,
+  deselect(selections) {
+    for (const [roi, ids] of selections) {
+      const selected = state.selection.rois.get(roi);
+      if (selected) for (const id of ids) selected.delete(id);
+    }
+    flagPanel.selectionChanged(); drawEmbedding();
+  },
+  overlay(value) { state.analysisOverlay = value; if (state.ready) compose(); },
+  linked: data => Boolean(data && state.analysisData === data),
+  roi: () => $('roi').value,
+  selectTool() {
+    if (flagPanel.mode() === 'inspect') flagPanel.setMode('click');
+    if (state.tab === 'analyses') showTab('views');
+  }
+});
 workspacePanel = createWorkspacePanel($, {
   assetHandles: () => new Map([['anndata', state.anndata?.workspaceHandle], ['masks', state.masks.workspaceHandle], ['images', state.images.workspaceHandle], ...state.layers.flatMap(source => [[`layer:${source.id}`, source.files.workspaceHandle], [`dictionary:${source.id}`, source.dictionary?.file.workspaceHandle]])].filter(([, handle]) => handle)),
   capture: captureWorkspace,
@@ -1195,6 +1361,11 @@ workspacePanel = createWorkspacePanel($, {
   loadFiles: loadWorkspaceAssets,
   assetValues: () => new Map([['anndata', state.anndata], ['masks', state.masks], ['images', state.images], ...state.layers.flatMap(source => [[`layer:${source.id}`, source.files], [`dictionary:${source.id}`, source.dictionary?.file]])].filter(([, value]) => value)),
   showSetup: () => showTab('setup'),
+  analysisConnected(connected, handle, project) {
+    $('tab-analyses').hidden = !connected;
+    qcWorkbench.connect(connected, handle, project);
+    if (!connected && state.tab === 'analyses') showTab('setup');
+  },
   activated() { workspaceFileHandle = null; $('write-workspace-file').textContent = 'Save to file…'; },
   freeze(locked) { lockViewer(locked || Boolean(workspace.pending) || workspace.applying); },
   rootBusy: () => workspace.applying || workspace.resolvingRoot,

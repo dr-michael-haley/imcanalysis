@@ -47,5 +47,5 @@ createServer(async (req, res) => {
 		res.end("Not found");
 	}
 }).listen(port, "127.0.0.1", () =>
-	console.log(`SpatialData Explorer: http://127.0.0.1:${port}`),
+	console.log(`MERSCOPE Explorer: http://127.0.0.1:${port}`),
 );

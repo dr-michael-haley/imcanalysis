@@ -12,13 +12,18 @@ const server = createServer(async (req, res) => {
   try {
     if (!['GET', 'HEAD'].includes(req.method)) { res.writeHead(405); res.end(); return; }
     const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+    if (pathname === '/usage.js') {
+      res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
+      res.end(await readFile(new URL('../usage_tracking/client/usage.js', import.meta.url)));
+      return;
+    }
     const targetPath = pathname === '/' ? '/index.html' : pathname;
     if (!allowed.has(targetPath) && !targetPath.startsWith('/src/')) throw new Error('Not found');
     const target = await realpath(resolve(root, `.${targetPath}`));
     const rel = relative(root, target);
     if (rel.startsWith('..') || isAbsolute(rel) || !(await stat(target)).isFile()) throw new Error('Not found');
     const content = await readFile(target);
-    res.writeHead(200, { 'Content-Type': types[extname(target)] || 'application/octet-stream', 'Content-Length': content.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; worker-src 'self'; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" });
+    res.writeHead(200, { 'Content-Type': types[extname(target)] || 'application/octet-stream', 'Content-Length': content.length, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; worker-src 'self'; connect-src https://usage.spatialbiology.app; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'" });
     res.end(req.method === 'HEAD' ? undefined : content);
   } catch { res.writeHead(404, { 'Content-Type': 'text/plain' }); res.end('Not found'); }
 });

@@ -1,9 +1,10 @@
 import { WorkspaceLibrary, WorkspaceConflict, createAutosave, nextWorkspaceName } from './workspace-library.js';
 import { createWorkspaceConnection } from './workspace-connection.js';
+import { createAnalysisFolderPanel } from './analysis-folder.js';
 import { parseWorkspace } from './workspace.js';
 import { assetPath, sourceLocations, referenceIdentity, resolvePickedPaths } from './workspace-paths.js';
 
-export function createWorkspacePanel($, { capture, canSave, hasData, beginRestore, loadFiles, showSetup, assetValues = () => new Map(), assetHandles = () => new Map(), activated = () => {}, freeze = () => {}, rootBusy = () => false }) {
+export function createWorkspacePanel($, { capture, canSave, hasData, beginRestore, loadFiles, showSetup, analysisConnected, assetValues = () => new Map(), assetHandles = () => new Map(), activated = () => {}, freeze = () => {}, rootBusy = () => false }) {
   const library = new WorkspaceLibrary();
   let active, records = [], available = false, loaded = false, busy = false, operation = false, lastPayload = '', queue = Promise.resolve(), requestedPersistence = false, pendingName = null, nameTimer;
   const locations = new Map(); let candidateRoot = null, fallbackRootName = '';
@@ -23,6 +24,13 @@ export function createWorkspacePanel($, { capture, canSave, hasData, beginRestor
   }
   $('workspace-locations').addEventListener('toggle', () => { if ($('workspace-locations').open) showLocations(); });
   const enqueue = task => { const result = queue.then(task); queue = result.catch(() => {}); return result; };
+  const analysisFolder = createAnalysisFolderPanel($, {
+    current: () => active, connected: analysisConnected, run,
+    save: (id, fields) => enqueue(async () => {
+      if (active?.id !== id) throw new WorkspaceConflict();
+      active = await library.put({ ...active, ...fields }, active.revision);
+    }),
+  });
   const message = (text, kind = '', detail = text) => { $('local-save-status').textContent = text; $('local-save-status').title = detail; $('local-save-status').dataset.state = kind; };
   const error = value => { if (value && connection.pending) { connection.status('Connection needs attention.', value.message || String(value)); return; } $('local-workspace-error').textContent = value?.message || String(value || ''); $('local-workspace-error').hidden = !value; };
   const autosave = createAutosave({
@@ -48,6 +56,7 @@ export function createWorkspacePanel($, { capture, canSave, hasData, beginRestor
   });
   function controls() {
     const locked = busy || operation || !available;
+    analysisFolder.controls(locked);
     for (const id of ['local-workspace-select', 'open-local-workspace', 'new-local-workspace', 'local-workspace-name', 'duplicate-local-workspace', 'delete-local-workspace']) $(id).disabled = locked || !active;
     $('connect-workspace-root').disabled = locked || !active || !loaded || !canSave();
     $('open-local-workspace').disabled ||= !records.some(record => record.id === $('local-workspace-select').value);
@@ -71,8 +80,8 @@ export function createWorkspacePanel($, { capture, canSave, hasData, beginRestor
     $('local-workspace-select').value = records.some(record => record.id === previous) ? previous : selection;
     controls();
   }
-  async function create(name, payload = null, rootHandle = null) {
-    const record = await library.put({ id: crypto.randomUUID(), name: name.slice(0, 120), payload, rootHandle, createdAt: Date.now(), dataset: payload ? parseWorkspace(payload).sources.anndata.name : '' });
+  async function create(name, payload = null, rootHandle = null, analysisProject = null) {
+    const record = await library.put({ id: crypto.randomUUID(), name: name.slice(0, 120), payload, rootHandle, analysisProject, analysisOwnerId: analysisProject?.id, createdAt: Date.now(), dataset: payload ? parseWorkspace(payload).sources.anndata.name : '' });
     await library.select(record.id); return record;
   }
   async function activate(record, isLoaded) {
@@ -81,6 +90,7 @@ export function createWorkspacePanel($, { capture, canSave, hasData, beginRestor
     if (record.payload) for (const item of sourceLocations(parseWorkspace(record.payload).sources)) if (item.ref.path) locations.set(item.key, { identity: referenceIdentity(item.ref), path: item.ref.path });
     active = record; loaded = isLoaded; lastPayload = record.payload || ''; autosave.reset();
     activated();
+    await analysisFolder.restore();
     await library.select(record.id); await refreshList(record.id); $('local-workspace-select').value = record.id;
     $('local-workspace-name').value = record.name; error(); controls();
   }
@@ -223,7 +233,7 @@ export function createWorkspacePanel($, { capture, canSave, hasData, beginRestor
   document.addEventListener('workspace-changed', mark);
   window.addEventListener('beforeunload', event => { if (autosave.dirty || pendingName !== null) { event.preventDefault(); event.returnValue = ''; } });
   for (const type of ['input', 'change', 'click', 'pointerup', 'wheel', 'keydown', 'toggle']) document.addEventListener(type, event => {
-    if (event.target.closest?.('#workspace-controls, .brand-area')) return;
+    if (event.target.closest?.('#workspace-controls, .brand-area, #qc-panel, #panel-analyses, #section-analysis-compute')) return;
     if (type === 'keydown' && !['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
     mark();
   }, type === 'toggle');
@@ -245,7 +255,8 @@ export function createWorkspacePanel($, { capture, canSave, hasData, beginRestor
       freeze(true);
       try {
         await flush();
-        if (available) await activate(await create(nextWorkspaceName(records, name), JSON.stringify(payload)), false);
+        const { analysisProject, ...viewPayload } = payload;
+        if (available) await activate(await create(nextWorkspaceName(records, name), JSON.stringify(viewPayload), null, analysisProject), false);
         await connection.prepare(payload); beginRestore(payload); showSetup(); message('Choose data folder', 'pending', 'Workspace imported. Choose its data folder below.');
       } finally { freeze(false); }
     },
@@ -255,6 +266,7 @@ export function createWorkspacePanel($, { capture, canSave, hasData, beginRestor
     },
     cancel() { connection.reset(); autosave.reset(); loaded = false; location.reload(); },
     get name() { return pendingName?.trim() || active?.name || 'Workspace'; },
+    get analysisProject() { return active?.analysisProject; },
     get available() { return available; },
     get loaded() { return loaded; },
   };

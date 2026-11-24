@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { defaultFigure, defaultScaleBar, validateFigure, validateScaleBar, figureLayout, scaleBarGeometry, paneFurniture } from '../src/figure.js';
+import { defaultFigure, defaultScaleBar, validateFigure, validateScaleBar, figureLayout, gridShape, scaleBarGeometry, paneFurniture } from '../src/figure.js';
 import { validatePopulations, populationFilter } from '../src/populations.js';
 import { includedInView, composeView } from '../src/views.js';
 import { defaultLayer, labelEdgeDistance, prepareLayer, blendLayer } from '../src/aligned-layers.js';
@@ -26,6 +26,26 @@ test('physical lock overrides aspect while all pane dimensions and gaps remain e
   const zoom = layout.paneWidth * .5 / 500;
   assert.ok(Math.abs(layout.paneHeight / zoom * .5 - 250) < 1e-8);
   assert.ok(layout.width <= 1200 && layout.height <= 700);
+});
+
+test('five and six panes use a three-column grid with equal frames and correct export dimensions', () => {
+  assert.deepEqual([1, 2, 3, 4, 5, 6].map(gridShape), [
+    { columns: 1, rows: 1 }, { columns: 2, rows: 1 }, { columns: 3, rows: 1 },
+    { columns: 2, rows: 2 }, { columns: 3, rows: 2 }, { columns: 3, rows: 2 },
+  ]);
+  for (const count of [5, 6]) {
+    const s = { ...defaultFigure(), physicalLock: true, physicalWidth: 500, physicalHeight: 250, paneWidth: 1000, gap: 40 };
+    const layout = figureLayout(count, 1200, 700, s);
+    assert.equal(layout.outputWidth, 3080); assert.equal(layout.outputHeight, 1040);
+    assert.equal(layout.paneWidth / layout.paneHeight, 2);
+    assert.ok(layout.width <= 1200 && layout.height <= 700);
+    const free = figureLayout(count, 1200, 800, { ...s, physicalLock: false });
+    assert.equal(free.outputHeight, 2040);
+    for (let i = 0; i < count; i++) {
+      assert.ok((i % layout.columns + 1) * 1000 + (i % layout.columns) * 40 <= layout.outputWidth);
+      assert.ok((Math.floor(i / layout.columns) + 1) * 500 + Math.floor(i / layout.columns) * 40 <= layout.outputHeight);
+    }
+  }
 });
 
 test('multiple population identities remain typed, combine filtering and preserve absent-ROI choices', () => {

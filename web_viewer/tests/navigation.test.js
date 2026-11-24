@@ -44,6 +44,27 @@ test('bookmarks and pane presets round-trip without losing camera, comments or o
   const old = document(8); delete old.view.bookmarks; delete old.view.savedViews; delete old.view.embeddingOptions;
   const migrated = parseWorkspace(JSON.stringify(old)); assert.deepEqual(migrated.view.bookmarks, []); assert.deepEqual(migrated.view.savedViews, []); assert.deepEqual(migrated.view.embeddingOptions, defaultEmbedding());
 });
+
+test('six-pane workspaces and bookmarks retain the sixth selected view and independent settings', () => {
+  const input = document();
+  const panes = Array.from({ length: 6 }, (_, i) => {
+    const view = pane(); view.name = `View ${i + 1}`; view.channels[0].low = i;
+    view.overlay.opacity = i / 10; return view;
+  });
+  input.view.presets = panes; input.view.selectedView = 5;
+  Object.assign(input.view.bookmarks[0].viewer, { panes: structuredClone(panes), selectedView: 5 });
+  const parsed = parseWorkspace(JSON.stringify(input));
+  assert.equal(parsed.view.presets.length, 6); assert.equal(parsed.view.selectedView, 5);
+  assert.deepEqual(parsed.view.presets.map(v => v.channels[0].low), [0, 1, 2, 3, 4, 5]);
+  assert.deepEqual(parsed.view.presets.map(v => v.overlay.opacity), [0, .1, .2, .3, .4, .5]);
+  assert.deepEqual(parsed.view.bookmarks[0].viewer, validateSnapshot(input.view.bookmarks[0].viewer));
+  assert.deepEqual(parseWorkspace(JSON.stringify(parsed)), parsed);
+  assert.equal(parseWorkspace(JSON.stringify(document(13))).version, WORKSPACE_VERSION);
+  input.view.presets.push(pane());
+  assert.throws(() => parseWorkspace(JSON.stringify(input)), /view presets/);
+  input.view.bookmarks[0].viewer.panes.push(pane());
+  assert.throws(() => validateSnapshot(input.view.bookmarks[0].viewer), /bookmark viewer state/);
+});
 test('saved states reject invalid cameras, channels, duplicate IDs and conflicting hotkeys', () => {
   const n = navigation(); assert.throws(() => validateNavigation(n.bookmarks, [...n.savedViews, { ...n.savedViews[0], id: 'p2' }]), /hotkey/);
   assert.throws(() => validateNavigation([...n.bookmarks, n.bookmarks[0]]), /duplicate/);

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { fileURLToPath } from 'node:url';
 import { mkdir, readFile } from 'node:fs/promises';
+import { WORKSPACE_VERSION } from '../src/workspace.js';
 const base = process.env.SBT_VIEWER_URL || 'http://127.0.0.1:8765/';
 const input = name => fileURLToPath(new URL(`../fixtures/${name}`, import.meta.url));
 const ready = (page, roi = 'ROI_A') => page.waitForFunction(name => document.getElementById('status').textContent.startsWith(`${name} ready`), roi);
@@ -21,7 +22,7 @@ async function load(page, workspace, root = '') {
   await page.waitForFunction(() => document.getElementById('workspace-status').textContent.startsWith('Workspace restored'), null, { timeout: 30000 });
 }
 
-test('four independent named views, linked pan/zoom, ROI recipes and root-folder workspace restoration', { timeout: 120000 }, async () => {
+test('six independent named views, linked pan/zoom, ROI recipes and root-folder workspace restoration', { timeout: 120000 }, async () => {
   const browser = await chromium.launch({ channel: process.env.SBT_BROWSER_CHANNEL || 'chrome', headless: true });
   const page = await browser.newPage({ viewport: { width: 1500, height: 1000 } });
   const errors = []; page.on('pageerror', error => errors.push(error.message));
@@ -48,19 +49,27 @@ test('four independent named views, linked pan/zoom, ROI recipes and root-folder
     await page.locator('#view-name').fill('Context');
     await page.locator('#view-menu-trigger').click(); await page.locator('#quick-images').click(); await page.locator('#view-menu-trigger').click();
     assert.equal(await page.locator('.view-pane').count(), 4);
+    assert.equal(await page.locator('#add-view').isDisabled(), false);
+    await page.locator('#add-view').click(); await ready(page);
+    await page.locator('#view-name').fill('Fifth');
+    assert.equal(await page.locator('.view-pane').count(), 5);
+    assert.equal(await page.locator('#add-view').isDisabled(), false);
+    await page.locator('#add-view').click(); await ready(page);
+    await page.locator('#view-name').fill('Sixth');
+    assert.equal(await page.locator('.view-pane').count(), 6);
     assert.equal(await page.locator('#add-view').isDisabled(), true);
-    assert.equal(await page.locator('.view-pane.selected').getAttribute('data-view'), '3');
+    assert.equal(await page.locator('.view-pane.selected').getAttribute('data-view'), '5');
     const before = await page.locator('.tissue-canvas').evaluateAll(nodes => nodes.map(node => node.toDataURL()));
     assert.notEqual(before[0], before[1]); assert.notEqual(before[1], before[2]);
     await page.locator('#tissue-1').hover(); await page.mouse.wheel(0, -120);
     await page.waitForTimeout(100);
     const zoomed = await page.locator('.tissue-canvas').evaluateAll(nodes => nodes.map(node => node.toDataURL()));
-    for (let i = 0; i < 4; i++) assert.notEqual(zoomed[i], before[i], `Pane ${i + 1} zooms with the others`);
+    for (let i = 0; i < 6; i++) assert.notEqual(zoomed[i], before[i], `Pane ${i + 1} zooms with the others`);
     assert.equal(await page.locator('.view-pane.selected').getAttribute('data-view'), '1');
     const rect = await page.locator('#tissue-2').boundingBox();
     await page.mouse.move(rect.x + rect.width / 2, rect.y + rect.height / 2); await page.mouse.down(); await page.mouse.move(rect.x + rect.width / 2 + 27, rect.y + rect.height / 2 + 13); await page.mouse.up();
     const panned = await page.locator('.tissue-canvas').evaluateAll(nodes => nodes.map(node => node.toDataURL()));
-    for (let i = 0; i < 4; i++) assert.notEqual(panned[i], zoomed[i]);
+    for (let i = 0; i < 6; i++) assert.notEqual(panned[i], zoomed[i]);
     await page.locator('#quick-next').click(); await ready(page, 'ROI_A_2');
     await page.locator('#view-select').selectOption('0');
     assert.equal(await page.locator('#low-0').inputValue(), '10');
@@ -68,8 +77,8 @@ test('four independent named views, linked pan/zoom, ROI recipes and root-folder
     assert.equal(await page.locator('#expression-source').inputValue(), 'layers/counts');
     await page.waitForTimeout(900);
     const saved = await save(page);
-    assert.deepEqual(saved.view.presets.map(view => view.name), ['Markers', 'Cells', 'CD20', 'Context']);
-    assert.equal(saved.version, 11);
+    assert.deepEqual(saved.view.presets.map(view => view.name), ['Markers', 'Cells', 'CD20', 'Context', 'Fifth', 'Sixth']);
+    assert.equal(saved.version, WORKSPACE_VERSION);
     const rendered = await page.locator('.tissue-canvas').evaluateAll(nodes => nodes.map(node => node.toDataURL()));
     await page.reload(); await load(page, saved);
     const again = await save(page);
@@ -79,7 +88,7 @@ test('four independent named views, linked pan/zoom, ROI recipes and root-folder
     assert.deepEqual(await page.locator('.tissue-canvas').evaluateAll(nodes => nodes.map(node => node.toDataURL())), rendered);
     await tab(page, 'views');
     await page.waitForTimeout(200);
-    await mkdir('test-results', { recursive: true }); await page.screenshot({ path: 'test-results/four-views.png', fullPage: true });
+    await mkdir('test-results', { recursive: true }); await page.screenshot({ path: 'test-results/six-views.png', fullPage: true });
     assert.deepEqual(errors, []);
   } catch (error) {
     console.error(await page.locator('#status').textContent(), await page.locator('#warning').textContent(), await page.locator('#workspace-error').textContent(), errors);

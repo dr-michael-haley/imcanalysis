@@ -381,6 +381,65 @@ required environment beforehand with `sbt env sync <key>`. `--dry-run` remains
 side-effect free: it validates and previews the workflow without checking or
 installing Conda environments.
 
+### Override SLURM settings for a run
+
+Run **`sbt slurm-help`** from any directory to list every supported key with an
+example. Add a stage name, as in `sbt slurm-help cellpose`, to see its wrapper's
+current directives. Use `--slurm [STAGE.]KEY=VALUE` with `sbt plan` or `sbt run`.
+Cellpose normally requests two days. If two hours is enough for your dataset,
+the first command previews the shorter request and the second submits it.
+
+```bash
+sbt run cellpose --slurm cellpose.time=2h --dry-run
+sbt run cellpose --slurm cellpose.time=2h
+```
+
+A stage prefix limits the setting to that job, including when it is part of a
+mode or selected as a dependency. A bare key applies to **every job** in the
+resolved plan. A stage-specific value takes precedence over a run-wide value
+regardless of argument order. The following plan gives Cellpose four hours
+and each other stage 90 minutes.
+
+```bash
+sbt plan segmentation --slurm time=90m --slurm cellpose.time=4h
+```
+
+| Key | Example value | SLURM request |
+| --- | --- | --- |
+| `time` | `2d`, `2h`, `1h30m`, `02:00:00`, `90`, `1-0` | Maximum wall-clock runtime |
+| `partition`, `gpus` | `gpuA`, `1` | Partition and GPU allocation |
+| `ntasks`, `cpus-per-task` | `6`, `1` | Task count and CPU cores per task |
+| `nodes`, `ntasks-per-node` | `1`, `6` | Node count and tasks per node |
+| `mem` | `32G` | Memory per node |
+| `mail-type`, `mail-user` | `FAIL`, `user@example.org` | Job notifications and recipient |
+
+Time shorthand accepts whole days (`d`), hours (`h`), minutes (`m`) and seconds
+(`s`), in that order. SBT converts it to whole minutes for SLURM, rounding up
+any remaining seconds. For example, `2h` appears as `--time=120` in a dry run.
+
+To change CPU cores, match the stage's allocation. Cellpose requests six task
+slots with one CPU each, so `cellpose.ntasks=8` requests eight CPUs.
+Cell2location runs one threaded task, so `cell2location.cpus-per-task=8`
+requests eight cores for that task. Both commands preview the allocation.
+
+```bash
+sbt run cellpose --slurm cellpose.ntasks=8 --dry-run
+sbt run cell2location --slurm cell2location.cpus-per-task=8 --dry-run
+```
+
+SBT passes each override to `sbatch` ahead of the stage script. Omitted
+settings use the existing wrapper and site defaults. SBT manages job names,
+log paths, working directories, environment export and dependencies. The
+resolved overrides are saved in `run_plan.yaml`, and `submitted_jobs.yaml`
+records the exact arguments for each attempted submission. Repeat the same
+settings when submitting with a dry-run token.
+
+On CSF3, a realistic time limit can help the scheduler start a job sooner.
+Choose a duration long enough for the job to finish. CSF3 ends jobs that
+reach their limit, and GPU partitions have their own CPU and GPU allocation
+limits. See Manchester's [wall-clock guidance](https://ri.itservices.manchester.ac.uk/csf3/batch-slurm/timelimits-slurm/)
+and [GPU job examples](https://ri.itservices.manchester.ac.uk/csf3/batch-slurm/gpu-jobs-slurm/).
+
 ### Per-run environment override
 
 `--environment` accepts a registered environment key or fixed Conda name and

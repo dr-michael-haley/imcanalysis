@@ -4,6 +4,7 @@ import { validateLayerSettings } from './aligned-layers.js';
 import { parseNormalization } from './normalization.js';
 import { validateFigure, validateScaleBar } from './figure.js';
 import { validatePopulations } from './populations.js';
+import { MAX_VIEWS } from './view-layout.js';
 
 export const PRESET_KEYS = ['F1', 'F2', 'F3', 'F4', 'F6', 'F7', 'F8', 'F9', 'F10'];
 const invalid = field => { throw new Error(`Invalid saved ${field}.`); };
@@ -24,7 +25,7 @@ export function validatePane(v) {
       if (!c || !/^#[0-9a-f]{6}$/i.test(c.colour) || !Number.isSafeInteger(c.plane) || c.plane < 0 || c.high <= c.low) invalid('channel');
       return { name: text(c.name, 'channel'), sourceId: text(c.sourceId ?? '', 'channel source'), path: '', showInLegend: bool(c.showInLegend ?? true, 'channel legend visibility'), active: bool(c.active, 'channel active'), enabled: bool(c.enabled, 'channel enabled'), auto: bool(c.auto, 'auto contrast'), colour: c.colour, plane: c.plane, low: num(c.low, 'contrast'), high: num(c.high, 'contrast') };
     }),
-    overlay: { ...validateColourLimits(o), showInLegend: bool(o.showInLegend ?? true, 'overlay legend visibility'), visible: bool(o.visible, 'overlay visibility'), colourBy: text(o.colourBy, 'overlay feature'), source: text(o.source, 'expression source'), populations: validatePopulations(o), population: validatePopulations(o).length === 1 ? validatePopulations(o)[0] : '', style: o.style, opacity: num(o.opacity, 'opacity', 0, 1), colourmap: o.colourmap ?? 'legacy', reverse: bool(o.reverse ?? false, 'reverse colourmap') },
+    overlay: { ...(o.maskQC ? {maskQC:bool(o.maskQC,'Mask QC overlay')} : {}), ...validateColourLimits(o), showInLegend: bool(o.showInLegend ?? true, 'overlay legend visibility'), visible: bool(o.visible, 'overlay visibility'), colourBy: text(o.colourBy, 'overlay feature'), source: text(o.source, 'expression source'), populations: validatePopulations(o), population: validatePopulations(o).length === 1 ? validatePopulations(o)[0] : '', style: o.style, opacity: num(o.opacity, 'opacity', 0, 1), colourmap: o.colourmap ?? 'legacy', reverse: bool(o.reverse ?? false, 'reverse colourmap') },
   };
 }
 export const defaultEmbedding = () => ({ colourBy: 'view', source: 'X', colourmap: 'viridis', square: false, context: false, contextLimit: 50000, vmin: null, vmax: null });
@@ -37,7 +38,7 @@ export function validateEmbedding(v = defaultEmbedding()) {
   return { ...validateColourLimits(s), colourBy: text(s.colourBy, 'embedding feature'), source: text(s.source, 'embedding expression source'), colourmap: s.colourmap, square: bool(s.square, 'square plot'), context: bool(s.context, 'embedding context'), contextLimit: num(s.contextLimit, 'context sample size', 1000, 200000) };
 }
 export function validateSnapshot(v) {
-  if (!v || !Array.isArray(v.panes) || !v.panes.length || v.panes.length > 4 || !Number.isInteger(v.selectedView) || v.selectedView < 0 || v.selectedView >= v.panes.length || !v.camera || !v.normalization) invalid('bookmark viewer state');
+  if (!v || !Array.isArray(v.panes) || !v.panes.length || v.panes.length > MAX_VIEWS || !Number.isInteger(v.selectedView) || v.selectedView < 0 || v.selectedView >= v.panes.length || !v.camera || !v.normalization) invalid('bookmark viewer state');
   const c = v.camera, n = v.normalization;
   if (v.selected !== null && (!Number.isInteger(v.selected) || v.selected < 1 || v.selected > 0xffffffff)) invalid('bookmarked cell');
   return { roi: text(v.roi, 'bookmark ROI', 16384, true), panes: v.panes.map(validatePane), selectedView: v.selectedView, selected: v.selected,

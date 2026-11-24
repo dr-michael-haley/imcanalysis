@@ -28,4 +28,5 @@ for (const asset of assets) {
   await mkdir(join(destination, '..'), { recursive: true });
   await copyFile(join(root, asset), destination);
 }
+await copyFile(new URL('../usage_tracking/client/usage.js', import.meta.url), join(output, 'usage.js'));
 console.log(`Packaged ${assets.length} app assets in ${output}. No datasets or server code included.`);

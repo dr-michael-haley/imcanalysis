@@ -316,6 +316,16 @@ class GatewayControlTests(unittest.TestCase):
 
             validate_preview_token(token, run_preview_snapshot(context, plan))
 
+    def test_run_token_rejects_changed_or_removed_slurm_override(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            context = initialize_project(Path(temp_dir) / "project")
+            plan = build_run_plan(context, ["debug"], slurm_overrides=["time=60"])
+            token = make_preview_token(run_preview_snapshot(context, plan))
+            for overrides in ([], ["time=90"]):
+                changed = build_run_plan(context, ["debug"], slurm_overrides=overrides)
+                with self.assertRaisesRegex(ValueError, "changed after preview"):
+                    validate_preview_token(token, run_preview_snapshot(context, changed))
+
     def test_guarded_preview_and_created_run_use_the_same_exact_identities(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             context = initialize_project(Path(temp_dir) / "project")

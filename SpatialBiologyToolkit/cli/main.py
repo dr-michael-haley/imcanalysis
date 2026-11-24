@@ -77,6 +77,7 @@ from SpatialBiologyToolkit.pipeline.migration import (
     plan_execution_layout_migration,
 )
 from SpatialBiologyToolkit.pipeline.planner import build_run_plan
+from SpatialBiologyToolkit.pipeline.slurm_options import SLURM_OPTIONS
 from SpatialBiologyToolkit.pipeline.project import (
     ProjectContext,
     adopt_project,
@@ -157,6 +158,10 @@ class DependencyPolicyOption(str, Enum):
 
 REPOSITORY_URL = "https://github.com/dr-michael-haley/imcanalysis"
 DOCUMENTATION_URL = "https://imcanalysis.readthedocs.io/en/latest/"
+SLURM_OVERRIDE_HELP = (
+    "Set a SLURM option for every job (time=2h) or one stage (cellpose.time=2h). "
+    "Repeat for more settings. Run 'sbt slurm-help' for all keys and CPU examples."
+)
 
 app = typer.Typer(
     name="sbt",
@@ -579,6 +584,10 @@ def _print_plan(plan) -> None:
             f"produces={produces}"
         )
         typer.echo(f"      script: {stage.slurm_script}")
+        if stage.name in plan.slurm_overrides:
+            options = plan.slurm_overrides[stage.name]
+            arguments = " ".join(f"--{key}={value}" for key, value in sorted(options.items()))
+            typer.echo(f"      SLURM overrides: {arguments}")
     if plan.warnings:
         typer.echo("")
         typer.echo("Warnings")
@@ -644,6 +653,49 @@ def main(
         raise typer.Exit()
     if context.invoked_subcommand is None:
         typer.echo(context.get_help())
+
+
+@app.command(
+    "slurm-help",
+    help="List SLURM settings and examples for changing time, cores, memory and GPUs.",
+)
+def slurm_help(
+    stage: str | None = typer.Argument(None, help="Show the SLURM directives in this stage's wrapper."),
+) -> None:
+    if stage:
+        try:
+            script = stage_script_path(get_stage(stage))
+            with script.open(encoding="utf-8") as wrapper:
+                typer.echo(f"{stage} wrapper directives ({script.name})")
+                for line in wrapper:
+                    directive = line.strip()
+                    if directive and not directive.startswith("#"):
+                        break
+                    if directive.startswith(("#SBATCH ", "#SBATCH\t")):
+                        typer.echo(f"  {directive}")
+        except (KeyError, OSError) as exc:
+            _fail(exc)
+        typer.echo()
+    else:
+        typer.echo("Add a stage name to inspect its wrapper settings, e.g. sbt slurm-help cellpose.")
+        typer.echo()
+    typer.echo("Use --slurm KEY=VALUE with sbt plan or sbt run. Repeat it for each setting.")
+    typer.echo("A bare key applies to every job, including dependencies.")
+    typer.echo("Use STAGE.KEY=VALUE to override a setting for just that stage.")
+    typer.echo()
+    for key, option in SLURM_OPTIONS.items():
+        example = f"{key}={option.example}"
+        typer.echo(f"  {example:<28} {option.description}")
+    typer.echo()
+    typer.echo("Time accepts 2d, 2h, 30m, 45s and combinations such as 1h30m.")
+    typer.echo("Use whole units in d/h/m/s order with a positive total. Partial minutes round up.")
+    typer.echo("Bare numbers are minutes. Native formats such as 02:00:00 and 2-0 also work.")
+    typer.echo()
+    typer.echo("Cellpose with eight task slots, one CPU each, and a two-hour limit")
+    typer.echo("  sbt run cellpose --slurm cellpose.ntasks=8 --slurm cellpose.time=2h --dry-run")
+    typer.echo("Cell2location with eight CPU cores for one threaded task")
+    typer.echo("  sbt run cell2location --slurm cell2location.cpus-per-task=8 --dry-run")
+    typer.echo("Remove --dry-run to submit with those settings.")
 
 
 @config_app.command("validate")
@@ -2166,6 +2218,9 @@ def plan_command(
         "slurm", "--backend", envvar="SBT_BACKEND",
         help="Execution backend: slurm or local.",
     ),
+    slurm: list[str] = typer.Option(
+        [], "--slurm", metavar="[STAGE.]KEY=VALUE", help=SLURM_OVERRIDE_HELP,
+    ),
     dependency_policy: DependencyPolicyOption = typer.Option(
         DependencyPolicyOption.assets,
         "--dependency-policy",
@@ -2192,6 +2247,7 @@ def plan_command(
             dependency_policy=dependency_policy.value,
             ignore_missing_assets=ignore_missing_assets,
             backend=backend,
+            slurm_overrides=slurm,
         )
     except Exception as exc:
         _fail(exc)
@@ -2278,6 +2334,9 @@ def run_command(
     backend: str = typer.Option(
         "slurm", "--backend", envvar="SBT_BACKEND",
         help="Execution backend: slurm or local.",
+    ),
+    slurm: list[str] = typer.Option(
+        [], "--slurm", metavar="[STAGE.]KEY=VALUE", help=SLURM_OVERRIDE_HELP,
     ),
     detach: bool = typer.Option(
         False, "--detach", help="Run a local workflow independently of the terminal.",
@@ -2372,6 +2431,7 @@ def run_command(
             dependency_policy=selected_policy.value,
             ignore_missing_assets=ignore_missing_assets,
             backend=backend,
+            slurm_overrides=slurm,
         )
         plan = apply_environment_override(plan, environment)
         plan.use_active_environment = use_active_env
